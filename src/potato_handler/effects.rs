@@ -170,7 +170,10 @@ impl GameNotification {
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum CradleEvent {
     OutboundMessage(Vec<u8>),
-    OutboundTransaction(SpendBundle),
+    /// A spend bundle to submit, with the optional absolute height at/after
+    /// which it can no longer be included (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
+    /// the handler threads explicitly rather than parsing back out of the bundle).
+    OutboundTransaction(SpendBundle, Option<u64>),
     Notification(GameNotification),
     Log(String),
     CoinSolutionRequest(CoinString),
@@ -220,7 +223,10 @@ pub enum Effect {
     PeerGameMessage(GameID, Vec<u8>),
 
     // WalletSpendInterface
-    SpendTransaction(SpendBundle),
+    /// Submit a spend bundle.  The optional `u64` is the absolute expiry height
+    /// (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`) threaded explicitly from the handler so
+    /// the transaction manager can track it without running the transaction.
+    SpendTransaction(SpendBundle, Option<u64>),
     RegisterCoin {
         coin: CoinString,
         timeout: Timeout,
@@ -298,8 +304,8 @@ pub fn apply_effects(
             Effect::PeerGameMessage(id, bytes) => {
                 system.send_message(&PeerMessage::Message(id, bytes))?;
             }
-            Effect::SpendTransaction(bundle) => {
-                system.spend_transaction_and_add_fee(&bundle)?;
+            Effect::SpendTransaction(bundle, expiry) => {
+                system.spend_transaction_and_add_fee(&bundle, expiry)?;
             }
             Effect::RegisterCoin {
                 coin,

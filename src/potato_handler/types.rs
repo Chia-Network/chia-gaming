@@ -71,8 +71,14 @@ pub trait SpendWalletReceiver {
 
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
-    /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
+    /// Enqueue an outbound transaction.  `expiry` is the absolute height at/after
+    /// which the bundle can no longer be included (threaded from the handler), or
+    /// `None` when the bundle has no expiry.
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &SpendBundle,
+        expiry: Option<u64>,
+    ) -> Result<(), Error>;
 
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.

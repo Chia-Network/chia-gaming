@@ -277,7 +277,11 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &SpendBundle,
+        _expiry: Option<u64>,
+    ) -> Result<(), Error> {
         self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
@@ -1328,7 +1332,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             CradleEvent::NeedCoinSpend(req) => {
                                 coin_spend_req = Some(req.clone());
                             }
-                            CradleEvent::OutboundTransaction(tx) => {
+                            CradleEvent::OutboundTransaction(tx, _) => {
                                 // The manager normally intercepts these; collect
                                 // any that still arrive for uniform handling.
                                 submissions_to_push.push(tx.clone());

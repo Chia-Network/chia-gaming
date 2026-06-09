@@ -1218,10 +1218,13 @@ impl OnChainGameHandler {
                             .to_parts()
                             .map(|(_, _, amt)| amt.clone())
                             .unwrap_or_default();
-                        effects.push(Effect::SpendTransaction(SpendBundle {
-                            name: Some("slash move".to_string()),
-                            spends: vec![*transaction.clone()],
-                        }));
+                        effects.push(Effect::SpendTransaction(
+                            SpendBundle {
+                                name: Some("slash move".to_string()),
+                                spends: vec![*transaction.clone()],
+                            },
+                            None,
+                        ));
                         let slash_coin = transaction.coin.clone();
                         let gt = old_definition.game_timeout.clone();
                         effects.push(Effect::Notify(GameNotification::GameStatus {
@@ -1428,13 +1431,16 @@ impl OnChainGameHandler {
             },
         );
 
-        Ok(Some(Effect::SpendTransaction(SpendBundle {
-            name: Some("on chain move".to_string()),
-            spends: vec![CoinSpend {
-                coin: current_coin.clone(),
-                bundle: transaction,
-            }],
-        })))
+        Ok(Some(Effect::SpendTransaction(
+            SpendBundle {
+                name: Some("on chain move".to_string()),
+                spends: vec![CoinSpend {
+                    coin: current_coin.clone(),
+                    bundle: transaction,
+                }],
+            },
+            None,
+        )))
     }
 
     pub fn do_on_chain_action(

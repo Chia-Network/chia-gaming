@@ -482,9 +482,13 @@ impl PacketSender for SynchronousGameCradleState {
 }
 
 impl WalletSpendInterface for SynchronousGameCradleState {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &SpendBundle,
+        expiry: Option<u64>,
+    ) -> Result<(), Error> {
         self.events
-            .push_back(CradleEvent::OutboundTransaction(bundle.clone()));
+            .push_back(CradleEvent::OutboundTransaction(bundle.clone(), expiry));
         Ok(())
     }
     fn register_coin(
@@ -1109,7 +1113,7 @@ impl SynchronousGameCradle {
 
             self.state
                 .events
-                .push_back(CradleEvent::OutboundTransaction(spends));
+                .push_back(CradleEvent::OutboundTransaction(spends, None));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?

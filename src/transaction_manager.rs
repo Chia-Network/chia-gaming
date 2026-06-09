@@ -21,8 +21,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::{AllocEncoder, CoinID, CoinString, Error, SpendBundle, Timeout};
-use crate::peer_container::{DrainResult, SynchronousGameCradle, WatchReport};
-use crate::potato_handler::effects::{CradleEvent, CradleEventQueue};
+use crate::peer_container::{DrainResult, GameCradle, SynchronousGameCradle, WatchReport};
+use crate::potato_handler::effects::{
+    ChannelState, CradleEvent, CradleEventQueue, GameNotification,
+};
 
 /// Raw per-coin chain state as reported by the polling layer for a single
 /// watched coin.  `created_height`/`spent_height` are `None` until the coin is
@@ -45,6 +47,17 @@ struct SubmittedTx {
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
+}
+
+/// Combine two optional expiry heights, keeping the tightest (smallest)
+/// constraint.  `None` means "no expiry" (effectively infinite), so it never
+/// wins against a concrete `Some`.
+fn min_expiry(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(v), None) | (None, Some(v)) => Some(v),
+        (None, None) => None,
+    }
 }
 
 /// Per-watched-coin bookkeeping owned by the manager.
@@ -141,7 +154,10 @@ pub struct TransactionManager<C> {
     /// Coins we are tracking, keyed by their full `CoinString`.
     watched_coins: HashMap<CoinString, WatchedCoin>,
     /// Transactions the cradle asked to submit, awaiting the hosting layer.
-    pending_submissions: Vec<SpendBundle>,
+    /// Each carries the optional absolute expiry height threaded from the
+    /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`), so it lands on the retained
+    /// `SubmittedTx` when drained.
+    pending_submissions: Vec<(SpendBundle, Option<u64>)>,
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
     pending_events: CradleEventQueue,
@@ -166,6 +182,17 @@ pub struct TransactionManager<C> {
     /// reported as created at its true appearance height (the inner cradle
     /// filters the diff to the coins it actually watches).
     present_coins: std::collections::HashSet<CoinString>,
+    /// Set once a coin created by the channel-creation transaction is observed
+    /// confirmed.  Durable: the channel coin can later be spent and evicted, but
+    /// having once been established means the funding deadline can never fail
+    /// (mirrors the handlers' `waiting_to_start`, which never flips back).
+    #[serde(default)]
+    channel_established: bool,
+    /// Set once the channel-creation transaction's expiry height is reached
+    /// without the channel coin ever confirming.  Drives the `Failed` channel
+    /// status the manager now owns (formerly computed by the handshake handlers).
+    #[serde(default)]
+    channel_expired: bool,
 }
 
 /// Default confirmation depth.  Chosen to be far deeper than any plausible
@@ -202,6 +229,8 @@ impl<C> TransactionManager<C> {
             present_coins: std::collections::HashSet::new(),
             vanished_coins: std::collections::HashSet::new(),
             submitted: Vec::new(),
+            channel_established: false,
+            channel_expired: false,
         }
     }
 
@@ -236,23 +265,27 @@ impl<C> TransactionManager<C> {
     /// be resubmitted if a reorg rolls them back.
     pub fn drain_submissions(&mut self) -> Vec<SpendBundle> {
         let out = std::mem::take(&mut self.pending_submissions);
-        for bundle in out.iter() {
+        for (bundle, expiry) in out.iter() {
             let spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
-            // Don't double-track the same creating transaction across resubmits.
-            if self
+            // Don't double-track the same creating transaction across resubmits;
+            // instead tighten the existing entry's expiry to the minimum of the
+            // two (a `None` expiry means no constraint, so any `Some` wins).
+            if let Some(existing) = self
                 .submitted
-                .iter()
-                .all(|t| t.spent_coin_ids != spent_coin_ids)
+                .iter_mut()
+                .find(|t| t.spent_coin_ids == spent_coin_ids)
             {
+                existing.expiry = min_expiry(existing.expiry, *expiry);
+            } else {
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
                     spent_coin_ids,
-                    expiry: None,
+                    expiry: *expiry,
                 });
             }
         }
-        out
+        out.into_iter().map(|(bundle, _)| bundle).collect()
     }
 
     /// Re-queue every retained submission for resubmission.  Used on reload: a
@@ -263,7 +296,8 @@ impl<C> TransactionManager<C> {
     /// submission is idempotent, so already-confirmed transactions are harmless.
     pub fn requeue_submitted(&mut self) {
         for tx in self.submitted.iter() {
-            self.pending_submissions.push(tx.bundle.clone());
+            self.pending_submissions
+                .push((tx.bundle.clone(), tx.expiry));
         }
     }
 
@@ -291,8 +325,8 @@ impl<C> TransactionManager<C> {
     fn absorb_events(&mut self, events: CradleEventQueue) {
         for event in events {
             match event {
-                CradleEvent::OutboundTransaction(tx) => {
-                    self.pending_submissions.push(tx);
+                CradleEvent::OutboundTransaction(tx, expiry) => {
+                    self.pending_submissions.push((tx, expiry));
                 }
                 CradleEvent::WatchCoin {
                     coin_string,
@@ -307,6 +341,23 @@ impl<C> TransactionManager<C> {
                 }
             }
         }
+    }
+}
+
+impl TransactionManager<SynchronousGameCradle> {
+    /// Whether the channel has failed.  True if the manager observed the
+    /// channel-creation transaction expire (the deadline it now owns) or if the
+    /// inner cradle reports a failure of its own (e.g. an on-chain failure).
+    /// Shadows the inner `is_failed` reachable via `Deref`.
+    pub fn is_failed(&self) -> bool {
+        self.channel_expired || self.cradle.is_failed()
+    }
+
+    /// Whether the channel has reached a terminal status.  ORs the manager's
+    /// own channel-creation expiry into the inner cradle's terminal check, since
+    /// the manager (not the inner cradle) now owns the expiry `Failed` signal.
+    pub fn channel_status_terminal(&self) -> bool {
+        self.channel_expired || self.cradle.channel_status_terminal()
     }
 }
 
@@ -443,7 +494,8 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 }
             }
         }
-        self.pending_submissions.extend(to_submit);
+        self.pending_submissions
+            .extend(to_submit.into_iter().map(|spend| (spend, None)));
 
         let report = WatchReport {
             created_watched,
@@ -453,6 +505,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
         self.cradle.cradle_new_block(allocator, height, &report)?;
 
         self.evict_confirmed_spends(height);
+        self.check_channel_expiry(height);
         Ok(())
     }
 
@@ -466,7 +519,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 None => continue,
             };
             // Find (and prune expired) the transaction that created this coin.
-            let mut resubmit: Option<SpendBundle> = None;
+            let mut resubmit: Option<(SpendBundle, Option<u64>)> = None;
             self.submitted.retain(|tx| {
                 if !tx.spent_coin_ids.contains(&parent) {
                     return true;
@@ -474,11 +527,11 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 if matches!(tx.expiry, Some(e) if height >= e) {
                     return false;
                 }
-                resubmit = Some(tx.bundle.clone());
+                resubmit = Some((tx.bundle.clone(), tx.expiry));
                 true
             });
-            if let Some(bundle) = resubmit {
-                self.pending_submissions.push(bundle);
+            if let Some(submission) = resubmit {
+                self.pending_submissions.push(submission);
             }
         }
     }
@@ -507,6 +560,58 @@ impl<C: ManagedCradle> TransactionManager<C> {
             self.submitted
                 .retain(|tx| !tx.spent_coin_ids.contains(&coin_id));
         }
+    }
+
+    /// Detect the channel-creation transaction expiring before the channel coin
+    /// confirms.  The funding transaction is the single retained submission that
+    /// carries an expiry (only channel creation threads one); the channel is
+    /// "established" once a watched coin created by that transaction (its parent
+    /// is one of the funding spends) has a confirmed birthday.  When the expiry
+    /// height is reached without establishment, emit a terminal `Failed` channel
+    /// status (the signal the handshake handlers used to compute themselves) and
+    /// stop resubmitting the dead funding transaction.
+    fn check_channel_expiry(&mut self, height: u64) {
+        if self.channel_expired || self.channel_established {
+            return;
+        }
+        let funding = match self
+            .submitted
+            .iter()
+            .find(|tx| tx.expiry.is_some())
+            .map(|tx| (tx.expiry.unwrap(), tx.spent_coin_ids.clone()))
+        {
+            Some(funding) => funding,
+            None => return,
+        };
+        let (expiry, spent_coin_ids) = funding;
+        // The channel is established once a coin created by the funding
+        // transaction (its parent is one of the funding spends) has confirmed.
+        // Record it durably: the coin may later be spent and evicted, but once
+        // established the deadline can no longer fail.
+        let established = self.watched_coins.iter().any(|(coin, w)| {
+            w.birthday.is_some()
+                && matches!(coin.to_parts(), Some((parent, _, _)) if spent_coin_ids.contains(&parent))
+        });
+        if established {
+            self.channel_established = true;
+            return;
+        }
+        if height < expiry {
+            return;
+        }
+        self.channel_expired = true;
+        self.submitted
+            .retain(|tx| tx.spent_coin_ids != spent_coin_ids);
+        self.pending_events
+            .push_back(CradleEvent::Notification(GameNotification::ChannelStatus {
+                state: ChannelState::Failed,
+                advisory: Some("channel coin not confirmed in time".to_string()),
+                coin: None,
+                our_balance: None,
+                their_balance: None,
+                game_allocated: None,
+                have_potato: None,
+            }));
     }
 
     /// Coins that vanished (reorged out) without a confirmed spend, whose
@@ -641,7 +746,7 @@ mod tests {
         let mut allocator = AllocEncoder::new();
         let mut mock = MockGameCradle::default();
         mock.queue_drain(vec![
-            CradleEvent::OutboundTransaction(test_bundle("tx-a")),
+            CradleEvent::OutboundTransaction(test_bundle("tx-a"), None),
             CradleEvent::Log("kept".to_string()),
         ]);
         let mut mgr = TransactionManager::new(mock);
@@ -866,7 +971,7 @@ mod tests {
         // The cradle wants to watch the child and submits the creating tx.
         mock.queue_drain(vec![
             watch_event(&child, 50),
-            CradleEvent::OutboundTransaction(creating_tx.clone()),
+            CradleEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
@@ -896,6 +1001,120 @@ mod tests {
         let resubmitted = mgr.drain_submissions();
         assert_eq!(resubmitted.len(), 1);
         assert_eq!(resubmitted[0].name.as_deref(), Some("create-child"));
+    }
+
+    /// Build a funding transaction spending `parent` and the channel coin it
+    /// creates (its parent is the funding spend).
+    fn funding_setup() -> (CoinString, CoinString, SpendBundle) {
+        use crate::common::types::{CoinSpend, Spend};
+        let parent = test_coin(30);
+        let channel_coin = CoinString::from_parts(
+            &parent.to_coin_id(),
+            &PuzzleHash::from_bytes([31; 32]),
+            &Amount::new(1),
+        );
+        let funding_tx = SpendBundle {
+            name: Some("channel-create".to_string()),
+            spends: vec![CoinSpend {
+                coin: parent.clone(),
+                bundle: Spend::default(),
+            }],
+        };
+        (parent, channel_coin, funding_tx)
+    }
+
+    fn count_failed_notifications(drain: &ManagerDrain) -> usize {
+        drain
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    CradleEvent::Notification(GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    })
+                )
+            })
+            .count()
+    }
+
+    #[test]
+    fn channel_creation_expiry_emits_failed_when_coin_never_confirms() {
+        let mut allocator = AllocEncoder::new();
+        let (_parent, channel_coin, funding_tx) = funding_setup();
+
+        let mut mock = MockGameCradle::default();
+        // Watch the channel coin and submit the funding tx with expiry 100.
+        mock.queue_drain(vec![
+            watch_event(&channel_coin, 1_000_000),
+            CradleEvent::OutboundTransaction(funding_tx, Some(100)),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+        // Drain so the funding tx is retained with its expiry.
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // Before the deadline: no failure even though the coin is absent.
+        mgr.report_coin_states(&mut allocator, 99, &[])
+            .expect("report");
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(count_failed_notifications(&drain), 0);
+
+        // At the deadline with the channel coin still unconfirmed: Failed fires
+        // once, and the dead funding tx is pruned.
+        mgr.report_coin_states(&mut allocator, 100, &[])
+            .expect("report");
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(count_failed_notifications(&drain), 1);
+
+        // A later report does not re-emit the terminal signal.
+        mgr.report_coin_states(&mut allocator, 101, &[])
+            .expect("report");
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(count_failed_notifications(&drain), 0);
+    }
+
+    #[test]
+    fn channel_creation_does_not_fail_when_coin_confirms_before_deadline() {
+        let mut allocator = AllocEncoder::new();
+        let (_parent, channel_coin, funding_tx) = funding_setup();
+
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&channel_coin, 1_000_000),
+            CradleEvent::OutboundTransaction(funding_tx, Some(100)),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // Channel coin confirms (gets a birthday) before the deadline.
+        mgr.report_coin_states(
+            &mut allocator,
+            50,
+            &[CoinStateRecord {
+                coin: channel_coin.clone(),
+                created_height: Some(50),
+                spent_height: None,
+            }],
+        )
+        .expect("report");
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+
+        // Past the deadline: the channel is established, so no failure.
+        mgr.report_coin_states(
+            &mut allocator,
+            150,
+            &[CoinStateRecord {
+                coin: channel_coin.clone(),
+                created_height: Some(50),
+                spent_height: None,
+            }],
+        )
+        .expect("report");
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(count_failed_notifications(&drain), 0);
     }
 
     #[test]
@@ -1118,7 +1337,10 @@ mod tests {
     fn requeue_submitted_replays_retained_transactions() {
         let mut allocator = AllocEncoder::new();
         let mut mock = MockGameCradle::default();
-        mock.queue_drain(vec![CradleEvent::OutboundTransaction(test_bundle("tx-a"))]);
+        mock.queue_drain(vec![CradleEvent::OutboundTransaction(
+            test_bundle("tx-a"),
+            None,
+        )]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
 
@@ -1152,7 +1374,7 @@ mod tests {
         let mut mock = MockGameCradle::default();
         mock.queue_drain(vec![
             watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone()),
+            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");

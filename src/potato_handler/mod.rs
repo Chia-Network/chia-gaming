@@ -546,10 +546,13 @@ impl PotatoHandler {
                 }));
             }
             PeerMessage::CleanShutdownComplete(coin_spend) => {
-                effects.push(Effect::SpendTransaction(SpendBundle {
-                    name: Some("Create unroll".to_string()),
-                    spends: vec![coin_spend.clone()],
-                }));
+                effects.push(Effect::SpendTransaction(
+                    SpendBundle {
+                        name: Some("Create unroll".to_string()),
+                        spends: vec![coin_spend.clone()],
+                    },
+                    None,
+                ));
                 if let Some((coin, shutdown_solution)) = self.pending_clean_shutdown.take() {
                     let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
                         self.channel_handler.take(),
@@ -808,10 +811,13 @@ impl PotatoHandler {
                 coin: coin.clone(),
                 bundle: spend,
             };
-            effects.push(Effect::SpendTransaction(SpendBundle {
-                name: Some("Create unroll".to_string()),
-                spends: vec![coin_spend.clone()],
-            }));
+            effects.push(Effect::SpendTransaction(
+                SpendBundle {
+                    name: Some("Create unroll".to_string()),
+                    spends: vec![coin_spend.clone()],
+                },
+                None,
+            ));
 
             effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
 
@@ -1359,7 +1365,7 @@ impl PotatoHandler {
                 saved,
                 "go on chain unroll",
             )?;
-            effects.push(Effect::SpendTransaction(bundle));
+            effects.push(Effect::SpendTransaction(bundle, None));
         }
 
         let channel_coin = {

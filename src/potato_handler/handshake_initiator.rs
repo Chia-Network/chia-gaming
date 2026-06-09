@@ -512,7 +512,10 @@ impl HandshakeInitiatorHandler {
 
             InitiatorState::Finished(_) => {
                 if let PeerMessage::HandshakeF { bundle } = msg_envelope.borrow() {
-                    effects.push(Effect::SpendTransaction(bundle.clone()));
+                    effects.push(Effect::SpendTransaction(
+                        bundle.clone(),
+                        self.channel_deadline,
+                    ));
                     self.transaction_pushed = true;
                 } else {
                     self.incoming_messages.push_front(msg_envelope);
@@ -785,19 +788,10 @@ impl PeerHandler for HandshakeInitiatorHandler {
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
-        if let Some(deadline) = self.channel_deadline {
-            if self.waiting_to_start && self.last_height >= deadline {
-                return Some(ChannelStatusSnapshot {
-                    state: ChannelState::Failed,
-                    advisory: Some("channel coin not confirmed in time".to_string()),
-                    coin: None,
-                    our_balance: None,
-                    their_balance: None,
-                    game_allocated: None,
-                    have_potato: None,
-                });
-            }
-        }
+        // The channel-creation expiry -> Failed signal now lives in the
+        // TransactionManager, which owns the deadline threaded onto the funding
+        // transaction.  `channel_deadline` here is retained only to thread that
+        // value; it no longer drives a status branch.
         if self.pending_coin_spend {
             return Some(ChannelStatusSnapshot {
                 state: ChannelState::WaitingForHeightToOffer,

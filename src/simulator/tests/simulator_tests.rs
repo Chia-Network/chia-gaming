@@ -826,7 +826,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 timeout: Timeout::new(100),
                 spend: None,
             },
-            CradleEvent::OutboundTransaction(creating_tx.clone()),
+            CradleEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(cradle);
         mgr.flush_and_collect(&mut allocator).expect("flush");

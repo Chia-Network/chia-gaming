@@ -1211,7 +1211,7 @@ mod gaming_wasm {
                 let _ = js_sys::Reflect::set(&obj, &"OutboundMessage".into(), &arr);
                 Ok(obj.into())
             }
-            CradleEvent::OutboundTransaction(bundle) => {
+            CradleEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
             CradleEvent::Notification(n) => {

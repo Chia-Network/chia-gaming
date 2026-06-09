@@ -267,7 +267,7 @@ impl SpendChannelCoinHandler {
         let ch = self.base.channel_handler()?;
         let bundle =
             build_channel_to_unroll_bundle(env, ch, &channel_coin, &saved, "impatience unroll")?;
-        Ok(vec![Effect::SpendTransaction(bundle)])
+        Ok(vec![Effect::SpendTransaction(bundle, None)])
     }
 
     #[cfg(test)]
@@ -626,7 +626,7 @@ impl SpendChannelCoinHandler {
 
         match outcome {
             UnrollOutcome::Preempted(bundle) => {
-                effects.push(Effect::SpendTransaction(bundle));
+                effects.push(Effect::SpendTransaction(bundle, None));
                 effects.push(Effect::Log(format!(
                     "[unroll-preempt] state={on_chain_state}",
                 )));
@@ -941,13 +941,16 @@ impl SpendChannelCoinHandler {
                     },
                 );
 
-                effects.push(Effect::SpendTransaction(SpendBundle {
-                    name: Some("on chain redo move".to_string()),
-                    spends: vec![CoinSpend {
-                        coin: coin.clone(),
-                        bundle: transaction,
-                    }],
-                }));
+                effects.push(Effect::SpendTransaction(
+                    SpendBundle {
+                        name: Some("on chain redo move".to_string()),
+                        spends: vec![CoinSpend {
+                            coin: coin.clone(),
+                            bundle: transaction,
+                        }],
+                    },
+                    None,
+                ));
             }
         }
 
