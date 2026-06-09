@@ -574,7 +574,7 @@ pub fn test_peer_smoke() {
                 &GameStart {
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
-                    game_type: GameType(b"ca1poker".to_vec()),
+                    game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(15),
                     my_turn: true,
                     parameters: nil,

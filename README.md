@@ -27,15 +27,16 @@ src/
   channel_handler/  — State channel management and the potato protocol
   referee/          — Referee coin logic (on-chain move validation, slashing)
   potato_handler/   — High-level game orchestration and on-chain actions
-  games/            — Game implementations (calpoker, debug game)
-  peer_container/   — Peer-to-peer game cradle (synchronous wrapper)
+  games/            — Game registration (calpoker, spacepoker, debug game)
+  peer_container.rs — Peer-to-peer game cradle (synchronous wrapper)
   simulator/        — Chia blockchain simulator and integration tests
   test_support/     — Shared test utilities
   common/           — Shared types, CLVM utilities, standard coin logic
-  shutdown/         — Clean shutdown conditions
+  shutdown.rs       — Clean shutdown conditions
 
 clsp/
   games/calpoker/   — Calpoker chialisp (handlers, validators, handcalc)
+  games/spacepoker/ — Space Poker chialisp (handlers, validators, hand eval)
   referee/onchain/  — Referee puzzle (on-chain arbitration)
   unroll/           — Unroll puzzle (state channel dispute resolution)
   test/             — Chialisp test programs

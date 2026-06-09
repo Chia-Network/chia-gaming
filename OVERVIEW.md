@@ -16,7 +16,7 @@ be expected.
 - [State Channels: The Core Idea](#state-channels-the-core-idea)
 - [Coin Hierarchy](#coin-hierarchy)
 - [The Potato Protocol](#the-potato-protocol)
-- [Calpoker: The Reference Game](#calpoker-the-reference-game)
+- [Reference Games](#reference-games)
 - [Handler Architecture](#handler-architecture)
 - [Code Organization](#code-organization)
 - [Key Types](#key-types)
@@ -359,7 +359,11 @@ handlers, not in `PotatoHandler` monolithic handshake state.
 The transition to `PotatoHandler` is driven by `coin_created` — the channel
 coin appearing on-chain. Since the coin cannot exist before E is sent, this
 is the ground truth for "the channel is live." A late-arriving `HandshakeF`
-after the transition is silently ignored by `PotatoHandler`.
+after the transition is silently ignored by `PotatoHandler`. Internally, the
+split handshake handlers move from `Finished` to `Done` during this handoff:
+`Finished` means the handshake's own protocol work is complete, while `Done`
+means the replacement `PotatoHandler` has been created and the old handshake
+handler no longer reports channel status.
 
 #### Security properties
 
@@ -438,10 +442,20 @@ puzzle hash and combined amount.
 ---
 ---
 
-## Calpoker: The Reference Game
+## Reference Games
 
-Calpoker is a poker variant used as the primary test game. Two players are dealt
-cards from a shared random deck and select hands through a commit-reveal
+The repository includes two reference games. **Calpoker** was implemented first
+and is the simpler example: a five-step commit-reveal poker variant with one
+main hand-evaluation payoff. **Space Poker** is also a reference game; it
+illustrates a more involved multi-round poker flow, repeated betting/open
+states, and heavier use of advisory message parsers. Together they show
+different ways to structure validators and off-chain handlers on the same
+channel/referee foundation.
+
+### Calpoker
+
+Calpoker is a poker variant used as the simplest reference game. Two players are
+dealt cards from a shared random deck and select hands through a commit-reveal
 protocol that prevents either player from cheating.
 
 ### Commit-Reveal Protocol
@@ -514,10 +528,19 @@ anyway, sending it early does no strategic damage to the sender — it simply
 lets the opponent start thinking sooner, making the UX feel simultaneous
 even though the underlying protocol is turn-based.
 
-The same mechanism is available to any game, not just calpoker. The
-`my_turn_handler` returns a `message_parser` (or nil if the game doesn't use
+The same mechanism is available to any game, not just calpoker. Space Poker
+uses message parsers for multi-round card reveal UX. The `my_turn_handler`
+returns a `message_parser` (or omits it / returns nil if the game doesn't use
 advisory messages), and the `their_turn_handler` returns `message_data` as an
 optional fourth element of its result.
+
+### Space Poker
+
+Space Poker is a Texas Hold'em-style reference game. It exercises a different
+part of the handler API than Calpoker: multi-round state, betting/open actions,
+and advisory messages that reveal derived card information early without making
+that information authoritative. It is registered alongside Calpoker in the Rust
+game collection and has dedicated handler and validation tests.
 
 **Key code:**
 
@@ -528,6 +551,9 @@ dispatches incoming messages via `received_message`
 - `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
 - `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
 - `src/test_support/calpoker.rs` — Rust-side calpoker registration/helpers
+- `clsp/games/spacepoker/onchain/*.clsp`
+- `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
+- `src/test_support/spacepoker.rs` — Rust-side Space Poker helpers
 
 ---
 
@@ -617,6 +643,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement             |
 | `clsp/games/calpoker/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step)      |
 | `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
+| `clsp/games/spacepoker/onchain/*.clsp`       | Space Poker validation programs                           |
+| `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
 | `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
@@ -627,6 +655,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | File                                        | Purpose                                                  |
 | ------------------------------------------- | -------------------------------------------------------- |
 | `src/test_support/calpoker.rs`              | Calpoker test registration and helpers                   |
+| `src/test_support/spacepoker.rs`            | Space Poker test registration and helpers                |
 | `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
 | `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/potato_handler.rs`   | Test peer helper                                         |

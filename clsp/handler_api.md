@@ -59,7 +59,7 @@ There are two kinds of handlers:
 
 ## Return values
 
-My-turn return (success, 10 elements):
+My-turn return (success, 9-10 elements):
   (
     label                          ; string, for UI/debug
     move                           ; bytes, the move to send on-chain
@@ -70,14 +70,14 @@ My-turn return (success, 10 elements):
     max_move_size                  ; int, max bytes the opponent may send
     mover_share                    ; int, our share if opponent times out
     their_turn_handler             ; program, handler for opponent's turn
-    message_parser                 ; program or nil (see Message Parser below)
+    message_parser                 ; optional program or nil (see Message Parser below)
   )
 
   "outgoing" = validates the move we just produced (our move).
   "incoming" = validates the move the opponent will produce next.
   The their_turn_handler receives the opponent's response.
-  message_parser, when non-nil, can parse out-of-band messages from
-  the opponent (see below).
+  message_parser may be absent. When present and non-nil, it can parse
+  out-of-band messages from the opponent (see below).
 
 My-turn return (rejection, 2 elements):
   (error_tag message_bytes)
@@ -91,12 +91,12 @@ My-turn return (error):
   A CLVM raise — the handler crashed. The Rust side raises ClvmErr.
 
 
-Their-turn return (normal move, 3-4 elements):
+Their-turn return (normal move, 2-4 elements):
   (
     readable_move                  ; clvm value, UI-displayable result
     evidence_list                  ; list of fraud proofs (may be empty/nil)
-    next_handler                   ; my-turn handler, or nil if game over
-    message                        ; bytes, optional out-of-band message
+    next_handler                   ; optional my-turn handler, or nil if game over
+    message                        ; optional bytes, out-of-band message
   )
 
   - If next_handler is nil or absent, this is a final move (game over).
@@ -112,8 +112,8 @@ Their-turn return (normal move, 3-4 elements):
     include it. When the handler is certain the move is fraudulent, it
     puts the evidence in the list and can return junk for the other
     fields (they are ignored when a slash succeeds).
-  - message is optional (element may be absent). When present, it is
-    sent out-of-band to the opponent and parsed by their message_parser.
+  - message is optional (element may be absent). When present and non-empty,
+    it is sent out-of-band to the opponent and parsed by their message_parser.
 
 
 ## Message Parser

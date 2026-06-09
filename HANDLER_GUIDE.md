@@ -25,7 +25,7 @@ program cost, argument checking), see `CLVM_DOS.md`.
 - [Message Parsers](#message-parsers)
 - [Nil Moves (Automatic Moves)](#nil-moves-automatic-moves)
 - [Messages as Pre-Reveals](#messages-as-pre-reveals)
-- [Worked Example: Calpoker](#worked-example-calpoker)
+- [Worked Examples: Reference Games](#worked-examples-reference-games)
 
 ---
 
@@ -85,7 +85,7 @@ move format.
 | `mover_share` | Current mover's share if timeout occurs |
 | `entropy` | 32 bytes of randomness for this turn |
 
-### Return: Success (10 elements)
+### Return: Success (9-10 elements)
 
 ```
 (
@@ -98,7 +98,7 @@ move format.
   max_move_size            ; int, max bytes the opponent may send
   mover_share              ; int, our share if opponent times out
   their_turn_handler       ; program for processing opponent's response (nil if game over)
-  message_parser           ; program or nil (see Message Parsers)
+  message_parser           ; optional program or nil (see Message Parsers)
 )
 ```
 
@@ -108,6 +108,8 @@ move format.
   This is passed forward so the referee knows how to validate the reply.
 - When `their_turn_handler` is nil, this is the final move of the game.
   `incoming_validator_hash` should also be nil in this case.
+- `message_parser` is optional. If the 10th element is absent or nil, the game
+  does not accept out-of-band readable messages for this state.
 
 ### Return: Rejection (2 elements)
 
@@ -156,14 +158,14 @@ their-turn handlers is the raw validation program hash because the framework has
 the validation program available at that call site. Referee coins commit to the
 validation info hash instead.
 
-### Return: Normal Move (3-4 elements)
+### Return: Normal Move (2-4 elements)
 
 ```
 (
   readable_move    ; clvm value, UI-displayable interpretation
   evidence_list    ; list of fraud proofs (may be empty/nil)
-  next_handler     ; my-turn handler, or nil if game over
-  message          ; bytes, optional out-of-band message
+  next_handler     ; optional my-turn handler, or nil if game over
+  message          ; optional bytes, out-of-band message
 )
 ```
 
@@ -179,8 +181,8 @@ validation info hash instead.
   handler is certain the move is fraudulent, it puts the evidence in the
   list and can return junk for the other fields (`readable_move`,
   `next_handler`, etc.) since they will never be used.
-- `message` is optional (the fourth element may be absent). When present,
-  it is sent out-of-band to the opponent and parsed by their
+- `message` is optional (the fourth element may be absent). When present and
+  non-empty, it is sent out-of-band to the opponent and parsed by their
   `message_parser`.
 
 ---
@@ -492,9 +494,9 @@ turn-taking protocol. The **message parser** mechanism enables this.
 
 ### How It Works
 
-1. A my-turn handler returns a `message_parser` program (element 10 of the
+1. A my-turn handler may return a `message_parser` program (element 10 of the
    return list). This program knows how to decode advisory messages for the
-   current game state.
+   current game state. If the element is absent or nil, no parser is installed.
 2. When the their-turn handler processes the opponent's reply, it can return
    an optional `message` (element 4 of the normal return). This message is
    sent to the opponent out-of-band.
@@ -612,11 +614,12 @@ arrives, Bob independently verifies the same information.
 
 ### Mechanics
 
-1. A **my-turn handler** returns a `message_parser` at position 9. This
-   parser knows how to decode messages for the current game state.
+1. A **my-turn handler** may return a `message_parser` at position 9. This
+   parser knows how to decode messages for the current game state. If the
+   element is absent or nil, no parser is installed.
 
-2. The **their-turn handler** processing the opponent's reply returns an
-   optional `message` at position 3. This message is sent out-of-band to
+2. The **their-turn handler** processing the opponent's reply may return an
+   optional `message` at position 3. A non-empty message is sent out-of-band to
    the opponent.
 
 3. The opponent's `message_parser` decodes the raw bytes into readable data
@@ -627,7 +630,14 @@ Messages arrive as `GameMessage` events in the frontend, distinct from
 
 ---
 
-## Worked Example: Calpoker
+## Worked Examples: Reference Games
+
+Calpoker and Space Poker are both reference games. Calpoker is the smaller,
+earlier example and is easiest to follow end-to-end. Space Poker exercises a
+different part of the API: multi-round poker state, repeated betting/open
+transitions, and advisory message parsers.
+
+### Calpoker
 
 Calpoker uses 5 protocol steps (a through e), each with a validator and
 corresponding handlers on both sides.
@@ -678,3 +688,17 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
 - Handler API reference: `clsp/handler_api.md`
+
+### Space Poker
+
+Space Poker is a Texas Hold'em-style reference game. It demonstrates how a game
+can keep more complex state across multiple rounds and use message parsers to
+send derived card information out-of-band while keeping the formal move protocol
+authoritative.
+
+**Key code:**
+
+- Handlers: `clsp/games/spacepoker/spacepoker_generate.clinc`
+- Validators: `clsp/games/spacepoker/onchain/*.clsp`
+- Rust tests: `src/test_support/spacepoker.rs`, `src/tests/spacepoker_handlers.rs`,
+  `src/tests/spacepoker_validation.rs`

@@ -179,14 +179,14 @@ Specific rules:
 
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
-| Hard disconnect (`close()`) | Always | If session off-chain: "This will force your game on-chain." | Pairing removed. Peer notified. Both go to `'waiting'`. Off-chain session transitions to on-chain. |
+| Hard disconnect (`close()`) | Always | None currently. | Pairing removed. Peer notified. Both go to `'waiting'`. Off-chain session transitions to on-chain via the peer-loss cascade. |
 | Reconnect | Not a user action | — | Handled by tracker auto-reconnect and `peer_reconnected` events. |
 
 ### Session
 
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
-| Go on-chain | When session = off-chain | "Are you sure? Your game will be resolved on the blockchain." | Session transitions to on-chain. Game messages stop. Chat continues. |
+| Go on-chain | When session = off-chain | None currently. | Session transitions to on-chain. Game messages stop. Chat continues. |
 | Clean shutdown | Between hands only, requires peer cooperation | None (it's the graceful path) | Cooperative close. Channel resolves cleanly. |
 
 ---
@@ -338,8 +338,10 @@ iframe-side protocol changes are needed — it is read-only for this signal.
 - **Tracker availability signaling**: `TrackerConnection.setAvailable()`
   sends `{ type: "set_status", available }` over the game WebSocket.
   The `identify` message on reconnect includes the current availability.
-  Shell calls `setAvailable(sessionPhase === 'none')` whenever the session
-  phase changes.
+  Shell calls `setAvailable(sessionPhase === 'none' || sessionPhase ===
+  'resolved')` whenever the session phase changes. A resolved session no longer
+  has an active game obligation, so the player can be available for a new match
+  even if the existing relay/chat is still visible.
 
 - **Tracker-side `set_status` handler**: The tracker server accepts
   `set_status` messages on the game channel. It updates the player's lobby
@@ -354,7 +356,7 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   tracker tab header allows explicit tracker disconnect. Gated by a cascade
   warning if peer/session would be affected.
 
-- **User-initiated peer disconnect**: An "End Peer" button in the Chat tab
+- **User-initiated peer disconnect**: A "Disconnect" button in the Chat tab
   sends `close()` via the tracker, ending the pairing. If the session is
   off-chain, losing the peer automatically cascades to on-chain.
 
@@ -363,9 +365,9 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   Shell automatically calls `goOnChain()` on the WASM cradle. No user
   prompt — this is the cascade rule: off-chain + no peer = on-chain.
 
-- **Cascade warning dialogs**: Confirmation dialogs warn before actions
-  that would cascade (e.g., disconnecting tracker while peer is up and
-  session is off-chain). Implemented via `confirmDialog` state in Shell.
+- **Cascade warning dialogs**: Confirmation dialogs currently warn before
+  disconnecting or switching trackers when a peer/session would be affected.
+  Peer disconnect and the explicit "Go On-Chain" button do not currently prompt.
 
 ---
 

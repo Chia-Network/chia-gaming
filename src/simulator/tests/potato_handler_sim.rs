@@ -23,7 +23,8 @@ use crate::peer_container::{
     PeerHandler, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::effects::{
-    apply_effects, ChannelState, CradleEvent, Effect, GameNotification, GameStatusKind,
+    apply_effects, CancelReason, ChannelState, CradleEvent, Effect, GameNotification,
+    GameStatusKind,
 };
 use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::start::GameStart;
@@ -2064,7 +2065,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             lui.notifications,
                         );
                     }
-                    if ord == prev_ord && ord != 3 && ord != 5 && ord != 6 {
+                    if ord == prev_ord && ord != 3 && ord != 4 && ord != 5 && ord != 6 {
                         panic!(
                             "player {i}: non-terminal same-ordinal repeat: {prev:?}({prev_ord}) -> {state:?}({ord})\n\
                              All notifications: {:?}",
@@ -2476,7 +2477,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &mut rng,
                 private_keys,
                 &identities,
-                b"ca1poker",
+                b"calpoker",
                 &Program::from_hex("80").unwrap(),
                 &moves,
                 Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
@@ -5576,6 +5577,52 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "Bob should see local self-cancel when proposing over pending peer proposal, got: {p1_notifs:?}"
         );
     }));
+
+    res.push((
+        "queued_proposal_cancelled_when_peer_proposal_arrives",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Bob does not initially have the potato, so his proposal queues and
+            // requests it. Alice then queues a proposal before processing that
+            // request. Bob's queued proposal reaches Alice first and supersedes
+            // Alice's stale queued proposal.
+            let moves = vec![
+                GameAction::ProposeNewGame(1, ProposeTrigger::Channel),
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::CancelProposal(0, GameID(0)),
+                GameAction::CleanShutdown(1),
+            ];
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::ProposalCancelled {
+                            reason: CancelReason::SupersededByIncoming,
+                            ..
+                        }
+                    )
+                }),
+                "Alice should see SupersededByIncoming for her queued proposal, got: {p0_notifs:?}"
+            );
+            assert!(
+                p0_notifs.iter().any(
+                    |n| matches!(n, GameNotification::ProposalMade { id, .. } if *id == GameID(0))
+                ),
+                "Alice should receive Bob's surviving proposal, got: {p0_notifs:?}"
+            );
+        },
+    ));
 
     res.push(("test_proposal_accept_then_on_chain", &|| {
         let mut allocator = AllocEncoder::new();

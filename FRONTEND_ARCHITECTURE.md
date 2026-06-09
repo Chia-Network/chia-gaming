@@ -23,11 +23,13 @@ The system consists of two separate deployable artifacts:
    third-party code — anyone can run one, and players choose which trackers to
    connect to. The tracker holds no cookies and requires no authentication.
 
-Currently the player app fetches a single tracker URL from a `/urls` endpoint on
-its own server. **Future direction:** the player app will maintain a **tracker
-list** — a set of tracker URLs that the user can add to or remove from, persisted
-in localStorage. The UX will present the tracker list as a set of lobbies the
-player can connect to.
+The player app is static code and does not fetch a tracker list from its own
+server. The user enters a tracker URL in `TrackerPicker` (or uses the local dev
+shortcut), and Shell creates both the lobby iframe and game relay connection from
+that origin. The selected tracker URL may be remembered in localStorage so the
+app can reconnect on reload, but the current UI does not maintain or display a
+history/list of previously used trackers. A richer local tracker list is future
+work.
 
 ### Peer Messaging
 
@@ -86,7 +88,7 @@ maps session → player internally.
 | `set_alias` | `{ id, alias }` | Save a new alias on the tracker |
 | `join` | `{ id, alias, session_id }` | Register in the lobby with a player ID and display alias |
 | `leave` | `{ id }` | Leave the lobby |
-| `challenge` | `{ from_id, target_id, game, amount, per_game }` | Challenge another player to a game |
+| `challenge` | `{ from_id, target_id, amount }` | Challenge another player with a channel buy-in amount |
 | `challenge_accept` | `{ challenge_id, accepter_id }` | Accept a pending challenge |
 | `challenge_decline` | `{ challenge_id }` | Decline a pending challenge |
 | `challenge_cancel` | `{ from_id }` | Cancel an outgoing challenge |
@@ -98,7 +100,7 @@ maps session → player internally.
 |-------|---------|---------|
 | `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
 | `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes). Each `Player` includes `status` (`'waiting'` or `'playing'`) and, when playing, `opponent_alias`. |
-| `challenge_received` | `{ challenge_id, from_id, from_alias, game, amount, per_game }` | Someone challenged you |
+| `challenge_received` | `{ challenge_id, from_id, from_alias, amount }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
 When a challenge is accepted, the tracker creates a **pairing** (two player IDs
@@ -124,8 +126,8 @@ pairing ends (game close or connection sweep), both players revert to
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `matched` | `{ token, game_type, amount, per_game, i_am_initiator }` | A fresh match has been made (challenge accepted for the first time). |
-| `connection_status` | `{ has_pairing, token?, game_type?, amount?, per_game?, i_am_initiator?, peer_connected? }` | Definitive status report sent on `identify`. The player app uses this to reconcile tracker state against its local save (see [Reconnect Reconciliation](#reconnect-reconciliation)). |
+| `matched` | `{ token, amount, i_am_initiator, my_alias?, peer_alias? }` | A fresh match has been made (challenge accepted for the first time). `amount` is the channel buy-in. |
+| `connection_status` | `{ has_pairing, token?, amount?, i_am_initiator?, peer_connected?, my_alias?, peer_alias? }` | Definitive status report sent on `identify`. The player app uses this to reconcile tracker state against its local save (see [Reconnect Reconciliation](#reconnect-reconciliation)). |
 | `peer_reconnected` | `{}` | The other player's game channel just re-registered. Tells this side to re-send un-acked messages. |
 | `message` | `{ data }` | A message from the paired peer, relayed verbatim. The payload is either a data message (`{ msgno, msg }`) or an ack (`{ ack }`), discriminated client-side (see [Peer Message Reliability](#peer-message-reliability)). |
 | `closed` | `{}` | The relay session is over. Sent to the peer when the other side sends `close`, AND echoed back to the sender of `close` as confirmation. |
@@ -139,7 +141,8 @@ pairing ends (game close or connection sweep), both players revert to
    previous game channel exists for this player, the tracker closes it and
    replaces it.
 4. The tracker always responds with `connection_status`, reporting whether a
-   pairing exists, its parameters, and whether the peer is currently connected.
+   pairing exists, its channel buy-in amount, and whether the peer is currently
+   connected.
 5. If a pairing exists and the peer is connected, the tracker also sends
    `peer_reconnected` to the peer's game channel.
 6. When a challenge is accepted in the lobby, the tracker sends `matched` to
@@ -152,12 +155,13 @@ pairing ends (game close or connection sweep), both players revert to
    `message` events until the `closed` echo arrives.
 
 **What the tracker holds per paired session:** Just the two channels and the
-pairing metadata (player IDs, token, game parameters). No message log, no
-delivery receipts, no game state. When a channel drops, messages to that peer are
-silently discarded. When a new game channel claims the slot (step 3), the tracker
-resumes routing. Lobby channel disconnects do NOT remove the player from the
-lobby — the 10-minute sweep in `lobbyState.ts` handles cleanup of truly departed
-players. The lobby iframe re-`join`s on reconnect, refreshing `lastActive`.
+pairing metadata (player IDs, token, aliases, and channel buy-in amount). No
+message log, no delivery receipts, no game state. When a channel drops, messages
+to that peer are silently discarded. When a new game channel claims the slot
+(step 3), the tracker resumes routing. Lobby channel disconnects do NOT
+immediately remove the player from the lobby — the tracker service applies a
+short TTL sweep to clean up truly departed players. The lobby iframe re-`join`s
+on reconnect, refreshing `lastActive`.
 
 #### Tracker Liveness
 
@@ -233,10 +237,10 @@ browser-level per-host connection throttling, causing multi-second freezes
 across all connections to that host — even connections from different browser
 contexts (e.g. the lobby iframe vs. the main app).
 
-**Future direction: lean `matched`.** The `matched` payload currently carries
-game parameters (game_type, amount, per_game) because the lobby UI negotiates
-them. In the future, `matched` may shrink to just `{ token, i_am_initiator }`
-with game terms negotiated directly between peers over the `message` channel.
+**Lobby scope:** The lobby negotiates only the channel buy-in amount. Game type
+and per-hand terms are negotiated inside the state-channel session via game
+proposals, which allows players to switch between supported games from hand to
+hand without rematching in the lobby.
 
 **Future direction: connection identifiers.** The MVP supports one paired
 session per game channel. A future extension adds a `connection_id` field to all
@@ -293,12 +297,14 @@ guarantees fresh entropy after every save/restore cycle.  The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).
 
-#### What is saved (`SessionSave`)
+#### What is saved (`SessionState`)
 
-An `appState` key in localStorage holds a JSON-serialized `AppState` object
-(version 2). The game session save lives at `appState.gameSave` as a
-`SessionSave`. All game-specific fields are optional — a save may contain only
-`blockchainType` (pre-game state) or the full set (mid-game state):
+An `appState` key in localStorage holds one flat JSON-serialized `SessionState`
+object. The current schema version is `3`; because the project is still alpha,
+older versions are wiped rather than migrated. The `version` field is kept as a
+future migration hook for when there is an installed base to preserve. All
+game-specific fields are optional — a save may contain only `blockchainType`
+(pre-game state) or the full set (mid-game state):
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -312,7 +318,6 @@ An `appState` key in localStorage holds a JSON-serialized `AppState` object
 | `iStarted` | `boolean?` | Whether this player was the initiator |
 | `amount` | `string?` | Channel buy-in (bigint as string) |
 | `perGameAmount` | `string?` | Per-hand amount (bigint as string) |
-| `pendingTransactions` | `string[]?` | CLVM blobs of transactions not yet confirmed |
 | `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound messages not yet acknowledged by the peer |
 | `history` | `string[]?` | Game notification log |
 | `log` | `string[]?` | Log history |
@@ -332,10 +337,10 @@ An `appState` key in localStorage holds a JSON-serialized `AppState` object
 | `gameTurnState` | `string?` | Whose turn it is |
 | `myRunningBalance` | `string?` | Running balance delta from initial amount |
 
-The surrounding `AppState` also holds `playerId`, `sessionId`, `alias`,
-`theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` — these persist
-across sessions. Note that `blockchainType` lives exclusively inside
-`SessionSave`, not at the `AppState` level.
+The same flat `SessionState` also holds app-level fields such as `playerId`,
+`sessionId`, `alias`, `theme`, `activeTab`, `defaultFee`, `feeUnit`,
+`trackerUrl`, and `savedGames`. The old `SessionSave` name is now only a
+deprecated TypeScript alias for `SessionState`.
 
 #### Save architecture
 
@@ -350,7 +355,7 @@ Session persistence is owned by the outer JavaScript layer, not by
    notifications, etc.
 
 `useGameSession` defines a `persistFullSession` callback that merges both
-sources into a single `SessionSave` and calls `saveSession()`. This callback
+sources into a single `SessionState` and calls `saveSession()`. This callback
 fires in two situations:
 
 - **JS state changes** — a React effect triggers `persistFullSession` whenever
@@ -358,8 +363,10 @@ fires in two situations:
 - **WASM state changes** — `WasmBlobWrapper.onSaveNeeded` is wired to
   `persistFullSession`. Inside WasmBlobWrapper, `scheduleSave()` debounces
   (500ms) and fires `onSaveNeeded`. `scheduleSave()` is called at the end of
-  every `processResult()` invocation, when outbound messages are added, when
-  pending transactions change, and when acks are received.
+  every `processResult()` invocation, when outbound messages are added, and
+  when acks are received. Transaction submission and resubmission bookkeeping is
+  owned by the Rust `TransactionManager`, not by a frontend
+  `pendingTransactions` save field.
 
 This means the outer JS layer always builds the complete, coherent save from
 both JS and WASM state at once.
@@ -516,11 +523,13 @@ The keepalive timer starts when `ChannelCreated` fires (or on restore when
 `channelReady` is already true). `WasmBlobWrapper.notePeerActivity()` is called
 on every inbound message delivery, ack reception, and keepalive reception.
 
-Peer liveness is **passive** — there is no automatic `goOnChain()` on timeout.
-Instead, `Shell.tsx` derives two liveness indicators using a 5-second polling
-interval. These feed into the **tab-dot connectivity indicators** — colored
-dots to the left of each tab label showing connection health (green / yellow /
-red / gray). They are also passed to `GameSession` for in-game display.
+Peer liveness is measured passively from relay traffic. `Shell.tsx` derives two
+liveness indicators using a 5-second polling interval. These feed into the
+**tab-dot connectivity indicators** — colored dots to the left of each tab label
+showing connection health (green / yellow / red / gray). They are also passed to
+`GameSession` for in-game display. Separately, Shell has a cascade rule: if the
+peer is marked lost while the session is still off-chain, it calls
+`goOnChain()` on the WASM cradle.
 
 **Tracker indicator** (`TrackerLiveness`) combines WebSocket connectivity with
 keepalive freshness into four states:
@@ -564,19 +573,21 @@ tracker — both on initial page load and on mid-session game channel reconnects
 #### Initial page load (`activePairingTokenRef` is null)
 
 On page reload, the client receives `connection_status` from the tracker and
-compares it against the local `SessionSave`. There are five cases:
+compares it against the local `SessionState`. There are five cases:
 
 | Tracker says | localStorage has | Action |
 |-------------|-----------------|--------|
 | `has_pairing: true, token: T` | Save with matching `pairingToken: T` | **Restore session.** |
 | `has_pairing: true, token: T` | No save at all | **Unrecognized pairing — request close.** |
-| `has_pairing: true, token: T` | Save with different `pairingToken: T2` | **Close unknown pairing, go on-chain for saved session.** |
-| `has_pairing: false` | Save exists | **Pairing lost — go on-chain.** |
+| `has_pairing: true, token: T` | Save with different `pairingToken: T2` | **Close unknown pairing and restore the saved session UI.** Peer remains inactive, so an off-chain restored session cascades on-chain. |
+| `has_pairing: false` | Full save exists | **Restore the saved session UI with no active peer.** If it is still off-chain, the peer-loss cascade calls `goOnChain()`. |
 | `has_pairing: false` | No save | **Idle — wait for new match.** |
 
-The go-on-chain paths deserialize the saved cradle and call `goOnChain()` to
-resolve the channel on the blockchain. This is the same path as receiving a
-`closed` event mid-session.
+The reconciliation handler itself mostly restores local session state, requests
+close for unknown pairings, or marks the peer inactive. On-chain escalation is
+centralized in Shell's cascade rule: off-chain session + lost peer =
+`goOnChain()`. This same cascade is used when a `closed` event arrives
+mid-session.
 
 #### Mid-session reconnect (`activePairingTokenRef` is set)
 
@@ -587,7 +598,7 @@ pairing:
 | Tracker says | Action |
 |-------------|--------|
 | `has_pairing: true, token` matches `activePairingTokenRef` | **Continue.** Call `resendUnacked()` to replay un-acked messages. |
-| Any other state (no pairing, or different token) | **Go on-chain.** The tracker lost the pairing while disconnected. |
+| Any other state (no pairing, or different token) | **Keep local session active and mark peer inactive.** If the session is still off-chain, the peer-loss cascade calls `goOnChain()`. |
 
 The `activePairingTokenRef` is set in `startSession()` and cleared on session
 end or reset.
@@ -661,16 +672,17 @@ The Shell is the top-level React component. It owns:
 
 - **Wallet connection** (WalletConnect or simulator) — the Wallet tab presents
   a QR code for WalletConnect and a simulator option via `SimulatorSetupModal`
-- **Tracker connection** — fetches the tracker URL, creates the
+- **Tracker connection** — accepts the selected tracker URL, creates the
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
 - **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
-The Shell does not know about game types or game protocol details. When the
-tracker emits `matched`, the Shell creates `GameSessionParams` and renders the
-`GameSession` component.
+The Shell does not know about game protocol details. When the tracker emits
+`matched`, the Shell creates `GameSessionParams` with the channel buy-in amount
+and renders the `GameSession` component. Specific game types and per-hand terms
+are chosen later inside the session through game proposals.
 
 ### Blockchain Connection Flow
 
@@ -716,7 +728,7 @@ to re-establish the connection automatically — no modals or QR codes are shown
 consistent with the principle that a reload should be invisible to the user.
 
 **Session persistence:** `blockchainType` is persisted as a minimal
-`SessionSave` (via `saveSession({ blockchainType })`) immediately when the
+`SessionState` (via `saveSession({ blockchainType })`) immediately when the
 user makes their choice, before the connection completes. This is the earliest
 point at which state is saved — even before a WASM cradle exists. Once the
 full game session is running, `useGameSession` takes over persistence and
@@ -869,7 +881,7 @@ In-game and between-hand events pushed to the game-scoped FIFO queue
 | Kind | Source |
 |---|---|
 | `game-terminal` | `GameStatus` ended during on-chain flow |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
 | `insufficient-bal` | `InsufficientBalance` notification |
 
 Timeout terminal labels use `game_finished` from `other_params` and the
@@ -969,7 +981,7 @@ protocol violations, not to limit concurrency.
 | `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue, `getWasmFields()` for persistence |
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
-| `front-end/src/hooks/save.ts` | `SessionSave` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
+| `front-end/src/hooks/save.ts` | `SessionState` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
 | `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
 | `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
