@@ -510,6 +510,10 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // is fully decoupled from the handler.
         let mut to_submit: Vec<SpendBundle> = Vec::new();
         for watched in self.watched_coins.values_mut() {
+            // No overflow: `height` and `birthday` (`b`) are bounded by
+            // MAX_REPORTED_HEIGHT at ingestion (see report_coin_states), and
+            // registered timeouts are small bounded constants, so this sum stays
+            // far below u64::MAX. checked_add is intentionally omitted.
             let ripe = matches!(watched.birthday, Some(b) if b + watched.timeout_blocks.to_u64() <= height);
             if !ripe {
                 continue;
@@ -576,6 +580,10 @@ impl<C: ManagedCradle> TransactionManager<C> {
         let depth = self.confirmation_depth;
         let mut evicted = Vec::new();
         self.watched_coins.retain(|coin, w| {
+            // No overflow: `height` and `spent_confirmed_at` (`s`) are bounded by
+            // MAX_REPORTED_HEIGHT at ingestion (see report_coin_states), and
+            // `depth` is the small constant confirmation depth, so this sum stays
+            // far below u64::MAX. checked_add is intentionally omitted.
             let buried = matches!(w.spent_confirmed_at, Some(s) if s + depth <= height);
             if buried {
                 evicted.push(coin.clone());
