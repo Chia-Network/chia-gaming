@@ -395,6 +395,7 @@ export interface UseGameSessionResult {
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
+  cleanShutdownStarted: boolean;
   goOnChain: () => void;
   betweenHands: boolean;
   lastOutcome: CalpokerOutcome | undefined;
@@ -1311,7 +1312,12 @@ export function useGameSession(
     setBetweenHandMode('compose-proposal');
   }, []);
 
+  const [cleanShutdownStarted, setCleanShutdownStarted] = useState(
+    () => gameObject.cleanShutdownCalled
+  );
+
   const startCleanShutdown = useCallback(() => {
+    setCleanShutdownStarted(true);
     gameObjectRef.current?.cleanShutdown();
   }, []);
 
@@ -1355,6 +1361,7 @@ export function useGameSession(
     acceptReviewedProposal,
     rejectReviewedProposal,
     startCleanShutdown,
+    cleanShutdownStarted,
     goOnChain,
     betweenHands: handKey > 0 && gameIds.length === 0,
     lastOutcome,

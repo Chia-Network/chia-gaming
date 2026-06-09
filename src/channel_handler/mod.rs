@@ -1425,10 +1425,6 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<'_>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
-        game_assert!(
-            self.have_potato,
-            "send_potato_clean_shutdown: must have potato"
-        );
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
 
@@ -1507,10 +1503,6 @@ impl ChannelHandler {
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        game_assert!(
-            !self.have_potato,
-            "received_potato_clean_shutdown: must not have potato"
-        );
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
