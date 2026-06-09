@@ -199,6 +199,16 @@ pub struct TransactionManager<C> {
 /// Chia reorg.
 pub const DEFAULT_CONFIRMATION_DEPTH: u64 = 32;
 
+/// Upper bound on any height reported to the manager.  Real Chia heights are in
+/// the single-digit millions and grow ~1.6M/year, so this is absurdly generous
+/// while leaving ~7 orders of magnitude below `u64::MAX` -- enough that adding
+/// the largest registered timeout (the channel coin's 1_000_000) to a bounded
+/// height can never overflow.  A height above this can only come from a corrupt
+/// or malicious source, so it is rejected at ingestion rather than silently
+/// clamped (which would let the bad value poison reorg detection and the
+/// created/deleted diff anyway).
+pub const MAX_REPORTED_HEIGHT: u64 = 1_000_000_000_000;
+
 /// Transparent access to the wrapped cradle for the many pass-through
 /// operations (game actions, status queries) the manager does not intercept.
 /// The manager's own inherent methods (`flush_and_collect`, etc.) take
@@ -373,6 +383,25 @@ impl<C: ManagedCradle> TransactionManager<C> {
         height: u64,
         records: &[CoinStateRecord],
     ) -> Result<(), Error> {
+        // Reject out-of-range heights before touching any state: a height above
+        // `MAX_REPORTED_HEIGHT` can only come from a corrupt/malicious source,
+        // and letting it through would both poison our bookkeeping and risk
+        // overflow in the ripeness/burial arithmetic.
+        if height > MAX_REPORTED_HEIGHT {
+            return Err(Error::StrErr(format!(
+                "report_coin_states: height {height} exceeds MAX_REPORTED_HEIGHT {MAX_REPORTED_HEIGHT}"
+            )));
+        }
+        for rec in records {
+            for h in [rec.created_height, rec.spent_height].into_iter().flatten() {
+                if h > MAX_REPORTED_HEIGHT {
+                    return Err(Error::StrErr(format!(
+                        "report_coin_states: coin height {h} exceeds MAX_REPORTED_HEIGHT {MAX_REPORTED_HEIGHT}"
+                    )));
+                }
+            }
+        }
+
         // A decrease in confirmed height means the chain rolled back.  Any
         // creation/spend we recorded above the new tip is no longer valid: it
         // may never reappear, or reappear at a different height.  Clear those
@@ -1115,6 +1144,42 @@ mod tests {
         .expect("report");
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
         assert_eq!(count_failed_notifications(&drain), 0);
+    }
+
+    #[test]
+    fn out_of_range_height_is_rejected_without_touching_state() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(7);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![watch_event(&coin, 50)]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        // A tip height above the ceiling is rejected and leaves state untouched.
+        assert!(mgr
+            .report_coin_states(&mut allocator, MAX_REPORTED_HEIGHT + 1, &[])
+            .is_err());
+        assert_eq!(mgr.last_height(), 0);
+
+        // A per-coin height above the ceiling is rejected too.
+        assert!(mgr
+            .report_coin_states(
+                &mut allocator,
+                100,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(MAX_REPORTED_HEIGHT + 1),
+                    spent_height: None,
+                }],
+            )
+            .is_err());
+        assert_eq!(mgr.last_height(), 0);
+        assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, None);
+
+        // The ceiling itself is accepted.
+        mgr.report_coin_states(&mut allocator, MAX_REPORTED_HEIGHT, &[])
+            .expect("boundary height accepted");
+        assert_eq!(mgr.last_height(), MAX_REPORTED_HEIGHT);
     }
 
     #[test]
