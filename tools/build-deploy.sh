@@ -12,6 +12,9 @@ SELF="$(basename "$0")"
 ARGS="$*"
 ABORTED=1
 on_exit() {
+    # Remove the build.rs we copy in from build.rs.disabled so it never lingers
+    # as an untracked file after the run (mirrors tools/build-chialisp.sh).
+    [ -n "$ROOT_DIR" ] && rm -f "$ROOT_DIR/build.rs"
     if [ "$ABORTED" -eq 1 ]; then
         echo "$SELF aborted."
     else
@@ -86,7 +89,7 @@ echo "=== Building WASM (web target, release) ==="
 # ── 3. Player app ────────────────────────────────────────────────────
 
 echo "=== Building player app ==="
-(cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
+(cd "$FE_DIR" && pnpm install --frozen-lockfile && CLSP_DIR="$CLSP_DIR" WASM_OUT_DIR="$FE_DIR/dist" pnpm run bundle)
 
 # ── 4. Lobby frontend ────────────────────────────────────────────────
 
@@ -95,7 +98,7 @@ echo "=== Building lobby frontend ==="
 # pnpm 10+ blocks by default. These packages ship pre-built binaries, so the
 # scripts are unnecessary and their absence avoids ERR_PNPM_IGNORED_BUILDS.
 (cd "$LOBBY_DIR" && pnpm install --frozen-lockfile --ignore-scripts)
-(cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-frontend run build)
+(cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-frontend run build:deploy)
 
 # ── 5. Lobby service ─────────────────────────────────────────────────
 
@@ -111,24 +114,16 @@ GAME_STAGE=$(mktemp -d)
 NONCE_DIR="$GAME_STAGE/app/$BUILD_NONCE"
 mkdir -p "$NONCE_DIR"
 
+# Relocatable bundle: verbatim copy of the clean dir produced by `pnpm run bundle`.
+cp -r "$FE_DIR/dist/app/." "$NONCE_DIR/"
+
+# Framing files at the staging root (small, fixed, structural set).
 cp "$FE_DIR/public/index.html" "$GAME_STAGE/index.html"
 [ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$GAME_STAGE/favicon.svg"
-cp "$ROOT_DIR/local-static-test-server.js" "$GAME_STAGE/local-static-test-server.js"
+cp "$ROOT_DIR/static-server.js" "$GAME_STAGE/static-server.js"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_STAGE/build-meta.json"
 
-cp "$FE_DIR/dist/js/index-rollup.js"          "$NONCE_DIR/index.js"
-cp "$FE_DIR/dist/css/index.css"                "$NONCE_DIR/index.css"
-cp "$FE_DIR/dist/chia_gaming_wasm.js"          "$NONCE_DIR/chia_gaming_wasm.js"
-cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm"     "$NONCE_DIR/chia_gaming_wasm_bg.wasm"
-[ -f "$FE_DIR/dist/js/index-rollup.js.map" ] && cp "$FE_DIR/dist/js/index-rollup.js.map" "$NONCE_DIR/index-rollup.js.map"
-[ -d "$FE_DIR/public/images" ] && cp -r "$FE_DIR/public/images" "$NONCE_DIR/images"
-
-mkdir -p "$NONCE_DIR/clsp"
-find "$CLSP_DIR" -name '*.hex' | while read -r hex; do
-    rel="${hex#"$CLSP_DIR/"}"
-    mkdir -p "$NONCE_DIR/clsp/$(dirname "$rel")"
-    cp "$hex" "$NONCE_DIR/clsp/$rel"
-done
+node "$ROOT_DIR/tools/verify-stage.mjs" "$GAME_STAGE"
 
 echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_player_app"
@@ -144,13 +139,15 @@ LOBBY_STAGE=$(mktemp -d)
 LOBBY_NONCE_DIR="$LOBBY_STAGE/app/$BUILD_NONCE"
 mkdir -p "$LOBBY_NONCE_DIR"
 
+# Relocatable bundle: verbatim copy of the clean dir produced by build:deploy.
+cp -r "$LOBBY_FRONTEND_DIR/dist/app/." "$LOBBY_NONCE_DIR/"
+
+# Framing/root files: page shell, generated nonce, and the node service.
 cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_STAGE/index.html"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_STAGE/build-meta.json"
-
-cp "$LOBBY_FRONTEND_DIR/public/index.js"       "$LOBBY_NONCE_DIR/index.js"
-cp "$LOBBY_FRONTEND_DIR/dist/css/index.css"    "$LOBBY_NONCE_DIR/index.css"
-
 cp "$LOBBY_SERVICE_DIR/dist/index-rollup.cjs"  "$LOBBY_STAGE/service.js"
+
+node "$ROOT_DIR/tools/verify-stage.mjs" "$LOBBY_STAGE"
 
 echo "=== Creating $LOBBY_TARBALL and $LOBBY_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_tracker"

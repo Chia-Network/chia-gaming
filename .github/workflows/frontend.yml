@@ -147,7 +147,7 @@ jobs:
       #         sleep 1
       #     done
 
-      #     node local-static-test-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
+      #     node static-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
       #     SERVER_PID=$!
 
       #     (cd lobby/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &

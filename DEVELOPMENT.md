@@ -177,7 +177,7 @@ trees; for production, copy the files instead.
 
 ```
 index.html              ← front-end/public/index.html
-local-static-test-server.js ← local-static-test-server.js
+static-server.js        ← static-server.js
 build-meta.json         ← {"basePath":"/app/NONCE/"}
 favicon.svg             ← front-end/public/favicon.svg (if present)
 app/
@@ -212,10 +212,10 @@ stack (`./run-local-demo.sh` starts the player app, tracker, and simulator).
 #### Player app
 
 ```bash
-node local-static-test-server.js front-end/serve 3002
+node static-server.js front-end/serve 3002
 ```
 
-Open `http://localhost:3002`. `local-static-test-server.js` is a
+Open `http://localhost:3002`. `static-server.js` is a
 zero-dependency Node server that sets correct MIME types (including `.wasm`)
 and cache headers. Do not use `python3 -m http.server` — it does not
 reliably serve `.wasm` with the correct MIME type.
@@ -228,12 +228,12 @@ tar -xzf deploy_player_app/chia-gaming-YYYYMMDD-HASH.tgz -C chia-gaming-player
 # unzip deploy_player_app/chia-gaming-YYYYMMDD-HASH.zip -d chia-gaming-player
 
 cd chia-gaming-player
-node local-static-test-server.js . 3002
+node static-server.js . 3002
 ```
 
 The `.` argument is the extracted root (the directory that contains
 `index.html`, `build-meta.json`, and `app/`). Production tarballs include
-`local-static-test-server.js` for this purpose.
+`static-server.js` for this purpose.
 
 #### Tracker
 
@@ -304,7 +304,7 @@ files via relative HTTP paths at runtime.
 WebSocket URLs. Mismatches cause connection failures.
 - **Caching rules.** Configure your production web server (nginx, Caddy,
 CloudFront, etc.) with these headers. The dev servers
-(`local-static-test-server.js` and the tracker service) already apply
+(`static-server.js` and the tracker service) already apply
 them automatically.
   - `index.html` and `build-meta.json`: `**Cache-Control: no-store`** (must
   always be fresh so the app picks up new nonces).

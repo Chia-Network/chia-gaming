@@ -155,7 +155,7 @@ if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
 fi
 
 echo "=== Starting player app static server (port $GAME_PORT) ==="
-node "$SCRIPT_DIR/local-static-test-server.js" "$GAME_SERVE" "$GAME_PORT" &
+node "$SCRIPT_DIR/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="
