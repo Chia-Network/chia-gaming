@@ -103,6 +103,15 @@ export class BlockchainPoller {
     }
 
     for (const { c, coins } of perCradle) {
+      // Never hand the manager a partial snapshot.  If any of this cradle's
+      // coins is still pending registration (so we couldn't query it), a coin
+      // the manager already knows is live would be absent from the snapshot and
+      // read as a deletion -- for a restored manager that looks like mass
+      // spends and drives spurious on-chain transitions.  Registration retries
+      // each tick, so reporting resumes once every coin is registered.
+      if (coins.some(({ coin_name }) => !this.registeredNames.has(coin_name))) {
+        continue;
+      }
       const csr: CoinStateRecord[] = [];
       for (const { coin_name, coin_string } of coins) {
         const rec = recordByName.get(coin_name);
