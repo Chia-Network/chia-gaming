@@ -202,6 +202,16 @@ const STATE_KEY = 'appState';
 const RESET_KEY = 'appState_hardReset';
 const CURRENT_VERSION = 3;
 
+// IndexedDB databases to delete when the browser can't enumerate them via
+// `indexedDB.databases()` (notably Safari).  These are the databases the app
+// and its dependencies are known to create; deleting a nonexistent one is a
+// harmless no-op.
+const KNOWN_INDEXED_DB_NAMES = [
+  'WALLET_CONNECT_V2_INDEXED_DB',
+  'walletconnect',
+  'walletconnect-v2',
+];
+
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
   return lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect');
@@ -260,12 +270,9 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
     }
   }
 
-  const knownDbNames = [
-    'WALLET_CONNECT_V2_INDEXED_DB',
-    'walletconnect',
-    'walletconnect-v2',
-  ];
-  await Promise.all(knownDbNames.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')));
+  await Promise.all(
+    KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+  );
 }
 
 function stopPersistenceForHardReset(): void {
@@ -290,7 +297,13 @@ function clearAllIndexedDbForHardReset(): void {
     if (typeof indexedDB === 'undefined') return;
     const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
     if (typeof dynamicDatabaseLookup.databases !== 'function') {
-      console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable');
+      // Browsers without `indexedDB.databases()` (notably Safari) can't be
+      // enumerated, so fall back to deleting the databases we know about (e.g.
+      // WalletConnect's) rather than leaving them behind.
+      console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
+      void Promise.all(
+        KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
+      );
       return;
     }
 

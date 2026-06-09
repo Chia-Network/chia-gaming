@@ -83,6 +83,11 @@ export class BlockchainPoller {
     }
     const names = [...allNames];
     await this.ensureRegistered(names);
+    // Only query coins we've successfully registered.  If a backend requires
+    // registration, querying an unregistered name can throw and turn a transient
+    // register failure into a polling failure loop; registration is retried each
+    // tick, so the coin gets picked up once it registers.
+    const namesToQuery = names.filter((n) => this.registeredNames.has(n));
 
     // Report the latest height even when it decreases: a drop signals a reorg,
     // which the transaction manager detects via height < last_height.  Clamping
@@ -90,7 +95,7 @@ export class BlockchainPoller {
     const height = await this.rpc.getHeightInfo();
     this.peak = height;
 
-    const records = names.length > 0 ? await this.rpc.getCoinRecordsByNames(names) : [];
+    const records = namesToQuery.length > 0 ? await this.rpc.getCoinRecordsByNames(namesToQuery) : [];
     const recordByName = new Map<string, CoinRecord>();
     for (const rec of records) {
       const name = await coinRecordToName(rec);
