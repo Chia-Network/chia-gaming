@@ -362,7 +362,7 @@ impl BareDebugGameHandler {
                         max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
                         max_move_size: self.max_move_size,
                     },
-                    validation_program_hash: ValidationInfoHash::Hash(
+                    validation_info_hash: ValidationInfoHash::Hash(
                         ValidationInfo::new_state_update(
                             allocator,
                             validation_program.clone(),
@@ -371,6 +371,7 @@ impl BareDebugGameHandler {
                         .hash()
                         .clone(),
                     ),
+                    validation_program_hash: Some(validation_program.hash().clone()),
                 },
             }),
             state_update_args: StateUpdateMoveArgs {
@@ -482,6 +483,13 @@ impl BareDebugGameHandler {
             Some(state) => {
                 let pre_state_node = self.state.to_nodeptr(allocator)?;
                 let state_node = state.to_clvm(allocator).into_gen()?;
+                let validation_info_hash = ValidationInfo::new_state_update(
+                    allocator,
+                    vprog.clone(),
+                    ProgramRef::new(state.clone()).p(),
+                )
+                .hash()
+                .clone();
                 (
                     state.clone(),
                     self.handler
@@ -506,9 +514,10 @@ impl BareDebugGameHandler {
                                         ),
                                         max_move_size: inputs.max_move_size,
                                     },
-                                    validation_program_hash: ValidationInfoHash::Hash(
-                                        vprog.hash().clone(),
+                                    validation_info_hash: ValidationInfoHash::Hash(
+                                        validation_info_hash,
                                     ),
+                                    validation_program_hash: Some(vprog.hash().clone()),
                                 },
                             },
                         )?,

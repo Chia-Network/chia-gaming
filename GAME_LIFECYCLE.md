@@ -45,8 +45,9 @@ absurdly high nonce.
 - **Amount consistency:** The proposal's `amount` must equal
 `my_contribution + their_contribution`. Prevents the peer from creating games
 where money appears or disappears.
-- **Timeout cap:** The proposal's `timeout` must not exceed `MAX_GAME_TIMEOUT`
-(10000 blocks). Prevents a peer from locking funds in unreasonably long games.
+- **Canonical timeout:** The proposal's `timeout` must be exactly 15 blocks.
+  Timeout negotiation has subtle protocol edge cases, so the current protocol
+  uses one hard-coded game timeout until negotiation is designed.
 - **Proposal count limit:** The total number of outstanding proposals must not
 exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
 exhaust memory or starve resources.
@@ -181,6 +182,12 @@ happens when accept_timeout hasn't been confirmed before going on-chain.
 ---
 
 ## AcceptTimeout Lifecycle
+
+`AcceptTimeout` is the protocol action for accepting the current game result.
+Depending on context this is also described as folding or timing out: all three
+settle the current game according to the same `mover_share` value. The
+difference is how the settlement is reached (off-chain agreement, local
+fold/accept, or an on-chain timeout claim after the timelock).
 
 Calling `accept_timeout()` off-chain does **not** immediately finalize the
 game. The full lifecycle is:

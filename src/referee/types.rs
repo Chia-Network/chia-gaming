@@ -83,7 +83,9 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ValidationInfoHash {
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct GameMoveDetails {
     pub basic: GameMoveStateInfo,
-    pub validation_program_hash: ValidationInfoHash,
+    pub validation_info_hash: ValidationInfoHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_program_hash: Option<Hash>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,7 +323,7 @@ where
             encoder.encode_atom(clvm_traits::Atom::Borrowed(
                 &self.game_move.basic.max_move_size_raw,
             ))?,
-            self.game_move.validation_program_hash.to_clvm(encoder)?,
+            self.game_move.validation_info_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
         ]
@@ -445,7 +447,7 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        let infohash_c: Option<Hash> = if self.new_move.validation_program_hash.is_some() {
+        let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
             let vi = ValidationInfo::new_state_update(
                 allocator,
                 self.validation_program.clone(),
@@ -575,17 +577,16 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c: Option<Hash> =
-                    if refmove.game_move.validation_program_hash.is_some() {
-                        let vi = ValidationInfo::new_state_update(
-                            encoder,
-                            refmove.validation_program.clone(),
-                            refmove.state.clone(),
-                        );
-                        Some(vi.hash().clone())
-                    } else {
-                        None
-                    };
+                let infohash_c: Option<Hash> = if refmove.game_move.validation_info_hash.is_some() {
+                    let vi = ValidationInfo::new_state_update(
+                        encoder,
+                        refmove.validation_program.clone(),
+                        refmove.state.clone(),
+                    );
+                    Some(vi.hash().clone())
+                } else {
+                    None
+                };
 
                 let max_move_size_node = Node(
                     encoder

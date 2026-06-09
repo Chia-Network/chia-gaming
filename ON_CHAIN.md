@@ -17,7 +17,7 @@ solution constraints, trust categories), see `CLVM_DOS.md`.
   - [On-Chain Referee Actions](#on-chain-referee-actions)
   - [Referee State Model](#referee-state-model)
   - [Reward Payout Signatures](#reward-payout-signatures)
-  - [Off-Chain Validation Signal and Initial State](#off-chain-validation-signal-and-initial-state)
+  - [Off-Chain Validation and Initial State](#off-chain-validation-and-initial-state)
   - [ValidationInfoHash and the Initial Sentinel](#validationinfohash-and-the-initial-sentinel)
 - [On-Chain Game State Tracking (our_turn)](#on-chain-game-state-tracking-our_turn)
 
@@ -505,11 +505,12 @@ RefereePuzzleArgs {
         basic: GameMoveStateInfo {
             move_made,      // the actual move data
             max_move_size,  // maximum allowed move size
-            mover_share,    // how much the mover gets if timeout occurs
+            mover_share,    // how much the mover gets if the result settles
         },
-        validation_info_hash,  // hash of the validation program + state
+        validation_info_hash,     // ValidationInfoHash commitment, or None for terminal
+        validation_program_hash,  // optional raw validator program hash when known
     },
-    previous_validation_info_hash,  // ValidationInfoHash: Initial (sentinel) for first coin, then hash of prior move
+    previous_validation_info_hash,  // ValidationInfoHash: Initial sentinel, or previous validation info hash
     validation_program,     // the chialisp program that validates moves
     nonce,                  // role-namespaced counter; also serves as the GameID
     referee_coin_puzzle_hash, // puzzle hash of the referee puzzle itself
@@ -522,15 +523,18 @@ args. After each move, the new game coin swaps `mover_pubkey` and
 is how the referee enforces alternating turns.
 
 `**mover_share` semantics.** On any game coin, `mover_share` is the amount the
-current mover receives if the coin times out (the waiter receives
-`amount - mover_share`). However, `mover_share` is *set by the previous move*:
-when a player moves, they declare `new_mover_share` as part of their move, and
-because roles swap, the value they declare becomes what their *opponent* (the
-new mover) would receive on timeout. In other words, when you set `mover_share`
-in your move you are choosing how much to leave the other player if they fail
-to respond. A game handler that wants to maximize its own timeout reward sets
-`mover_share` to zero (giving the opponent nothing); a fair split sets it to
-whatever the game rules dictate.
+current mover receives if the current result is accepted, folded, or claimed by
+timeout (the waiter receives `amount - mover_share`). These are the same
+settlement operation reached from different contexts: a player may accept/fold
+off-chain, or the opponent may claim the same result on-chain after the relative
+timelock expires. However, `mover_share` is *set by the previous move*: when a
+player moves, they declare `new_mover_share` as part of their move, and because
+roles swap, the value they declare becomes what their *opponent* (the new
+mover) would receive if that result is settled. In other words, when you set
+`mover_share` in your move you are choosing how much to leave the other player
+if they accept/fold or fail to respond. A game handler that wants to maximize
+its own settlement reward sets `mover_share` to zero (giving the opponent
+nothing); a fair split sets it to whatever the game rules dictate.
 
 The reward destination puzzle hashes are not curried into the referee — instead
 they are revealed at timeout or slash via `AGG_SIG_UNSAFE` (see
@@ -677,26 +681,49 @@ payouts.
 `reward_payout_message`, `verify_reward_payout_signature`;
 `src/referee/types.rs` — `RMFixed` (caches both signatures)
 
-### Off-Chain Validation Signal and Initial State
+### Off-Chain Validation and Initial State
 
-When running the chialisp validator off-chain, the `off_chain()` method on
-`RefereePuzzleArgs` sets `waiter_pubkey` to nil. This is a deliberate signal
-to the puzzle that it is running in off-chain validation mode rather than as
-a real on-chain spend. `waiter_pubkey` was chosen for this because it is the
-argument least likely to be needed for real validation logic.
+There is no special "off-chain mode" in `RefereePuzzleArgs`. Earlier versions
+used a sentinel argument to tell handlers they were being run off-chain, but
+that made handler logic hard to follow. The current code constructs normal
+referee arguments with real mover and waiter pubkeys, substitutes the incoming
+move and validation program, and uses the same state-update program that would
+be used by the on-chain referee when validating peer moves.
+
+When a move has a follow-on state, the state update is run off-chain first to
+validate the move and derive that state before the receiving player's
+their-turn handler interprets it. A terminal move is still a normal move, but
+it sets the next validation program to nil, so there is no follow-on state to
+derive for future moves. The their-turn handler still interprets the move and
+may provide slash evidence. Any evidence it provides is checked by running the
+normal state-update program with that evidence.
+
+This keeps off-chain and on-chain validation semantics aligned. Some games may
+repeat a small amount of logic between their on-chain validator and off-chain
+handler code, but avoiding a separate off-chain signal keeps the handler
+contract simpler.
 
 ### ValidationInfoHash and the Initial Sentinel
 
-`RefereePuzzleArgs` contains a `previous_validation_info_hash` field, which
-records the hash of the previous move's validation program (used by slash to
-prove a prior move was invalid). This field uses the `ValidationInfoHash`
-enum, which has three variants with distinct CLVM encodings:
+The terminology is easy to mix up:
+
+- A `validation_program_hash` is the tree hash of a validator program by
+  itself.
+- A validation info hash is
+  `sha256(validation_program_hash, shatree(state))`. It commits to both the
+  validator program and the state that program validates.
+
+The referee coin stores validation info hashes, not bare program hashes. The
+current move's commitment is stored in `game_move.validation_info_hash`, and the
+previous move's commitment is stored in `previous_validation_info_hash`. These
+fields use the `ValidationInfoHash` enum, which has three variants with
+distinct CLVM encodings:
 
 | Variant   | CLVM encoding         | Truthy? | When used |
 |-----------|-----------------------|---------|-----------|
 | `None`    | `()` (nil / empty atom) | No    | Game over — no further moves, only slash or timeout |
 | `Initial` | `0x78` (`'x'`, 1 byte) | Yes   | Initial game coin — no previous move exists |
-| `Hash(h)` | 32-byte atom          | Yes    | Normal play — hash of prior validation program |
+| `Hash(h)` | 32-byte atom          | Yes    | Normal play — validation info hash |
 
 The initial game coin's `previous_validation_info_hash` is set to `Initial`
 (the single-byte sentinel `0x78`). This is truthy in CLVM, which matters
@@ -706,13 +733,30 @@ only slash or timeout. The sentinel is a single byte rather than a full hash
 to save on-chain space, since there is no real previous validation program to
 reference and slashing is impossible when no moves have been made.
 
-Each move propagates the current `validation_info_hash` (`INFOHASH_B`) into
-the next coin's `previous_validation_info_hash` (`INFOHASH_A`). There is no
+Each move propagates the current validation info hash (`INFOHASH_B`) into the
+next coin's `previous_validation_info_hash` (`INFOHASH_A`). The move solution
+also supplies `infohash_c` for the next validator/state pair; on the move path
+the referee accepts this optimistically, and on the slash path it recomputes
+the infohash from the validator return and checks that it matches. There is no
 separate code path for the initial state — the same derivation logic applies
 uniformly to all moves.
 
+The raw validation program hash is not always carried alongside the referee
+coin. It is available when the code has the validation program itself (for
+example when invoking a their-turn handler or constructing a slash), but the
+durable on-chain commitment is the validation info hash. `GameMoveDetails`
+therefore keeps the raw program hash in the optional
+`validation_program_hash` field separately from the required
+`validation_info_hash` commitment.
+
+This is an on-chain size/cost optimization. Honest move spends present only the
+compact validation info hash for the next validator/state pair; they do not
+reveal the validation program or state separately. Those larger pieces are
+revealed only on the slash path, where the referee needs them to recompute the
+infohash and prove that the optimistic move commitment was invalid.
+
 **Key code:** `src/referee/types.rs` — `ValidationInfoHash`,
-`RefereePuzzleArgs::off_chain()`;
+`RefereePuzzleArgs`;
 `src/referee/my_turn.rs`, `src/referee/their_turn.rs`;
 `clsp/referee/onchain/referee.clsp`
 

@@ -954,9 +954,9 @@ before deciding what to do (see
 [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
 
 Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
-amount consistency, timeout caps — are validation/safety checks, not
-single-hand enforcement. They exist to prevent protocol violations, not to
-limit concurrency.
+amount consistency, and the current hard-coded 15-block game timeout — are
+validation/safety checks, not single-hand enforcement. They exist to prevent
+protocol violations, not to limit concurrency.
 
 ## Key Files
 

@@ -40,14 +40,21 @@ There are two kinds of handlers:
    - entropy: 32-byte random input for this turn
 
 2) Their-turn handler (opponent just moved)
-   (curried_args... amount pre_state state move validation_info_hash mover_share)
+   (curried_args... amount pre_state state move validation_program_hash mover_share)
 
    - amount: total game amount
    - pre_state: on-chain state BEFORE the opponent's move
    - state: on-chain state AFTER the opponent's move
    - move: opponent's move bytes
-   - validation_info_hash: hash of the validation program + state
+   - validation_program_hash: tree hash of the validation program for this move
    - mover_share: opponent's share claim
+
+   `validation_program_hash` is a raw program hash. It is not the validation
+   info hash used in referee coin commitments, which is
+   `sha256(validation_program_hash, shatree(state))`. Some existing handlers may
+   still use the name `validation_info_hash` for this argument; the value passed
+   here is the raw validation program hash because the framework has the
+   validation program available at handler invocation time.
 
 
 ## Return values
@@ -140,12 +147,17 @@ A handler returns two validators per move:
 The outgoing_validator_hash must match what the previous incoming_validator
 specified, creating a chain of validated state transitions.
 
-Validator return values: a non-nil payload list for valid moves
-`(next_validation_info_hash new_state max_move_size ...)`, or nil for slash.
-These are consumed both on-chain (referee verifies alignment with the committed
-next-state fields, or emits a reward on slash) and off-chain (Rust parses the
-result as Option — Some(new_state) for valid moves, None for slash — and uses
-None to initiate a slash).
+Validator return values are untagged: a non-nil payload list for valid moves
+`(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.
+Nil means the move is illegal for the supplied evidence. A non-nil result means
+the move is valid only if the returned values match the next-state commitments
+accepted by the move path; mismatched infohash or max-move-size values are
+slashable on-chain. Validator-returned extra conditions are also slashable on
+the slash path and are prepended to the payout conditions; this supports
+conditional slashes, such as requiring an aggregate signature that proves a
+challenged value falls in a committed range. Rust parses the result as Option —
+Some(new_state) for valid moves, None for slash — and uses None to initiate a
+slash.
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

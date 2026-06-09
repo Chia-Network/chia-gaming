@@ -135,7 +135,7 @@ Called when the opponent has moved and we need to interpret their move.
 ### Parameters
 
 ```
-(curried_args... amount pre_state state move validation_info_hash mover_share)
+(curried_args... amount pre_state state move validation_program_hash mover_share)
 ```
 
 | Parameter | Description |
@@ -144,8 +144,17 @@ Called when the opponent has moved and we need to interpret their move.
 | `pre_state` | On-chain state BEFORE the opponent's move |
 | `state` | On-chain state AFTER the opponent's move |
 | `move` | Opponent's move bytes |
-| `validation_info_hash` | Hash of the validation program + state for this move |
+| `validation_program_hash` | Tree hash of the validation program for this move |
 | `mover_share` | Opponent's declared share of the pot |
+
+`validation_program_hash` is not the same thing as a validation info hash. The
+program hash identifies a validator program by itself. A validation info hash is
+the referee commitment `sha256(validation_program_hash, shatree(state))`, which
+binds a validator program to a particular state. Some existing handler code may
+still name this argument `validation_info_hash`, but the value passed to
+their-turn handlers is the raw validation program hash because the framework has
+the validation program available at that call site. Referee coins commit to the
+validation info hash instead.
 
 ### Return: Normal Move (3-4 elements)
 
@@ -325,19 +334,20 @@ the game protocol. They run both **on-chain** (inside the referee puzzle
 during disputes) and **off-chain** (called by the Rust code during normal
 play).
 
-A validator takes the move and current state and returns a tagged result:
+A validator takes the move, current state, and optional evidence and returns an
+untagged result:
 
 ### Validator Return: Valid Move
 
 ```
-(new_validation_info_hash new_state max_move_size mover_share ...)
+(next_validation_program_hash new_state max_move_size mover_share ...)
 ```
 
-Tag `0` (`MAKE_MOVE`) means the move is legal. The returned values are used
-in two places:
+A non-nil result means the move is legal for the supplied evidence. The
+returned values are used in two places:
 
 - **On-chain**: The referee curries them into the new referee coin
-  (next validation hash, state, max move size, mover share).
+  after hashing `next_validation_program_hash` together with `new_state`.
 - **Off-chain**: The Rust code extracts `new_state` so the handler can
   determine the next game state without duplicating that logic.
 
@@ -347,10 +357,11 @@ in two places:
 ()
 ```
 
-Nil (`SLASH`) means the move is illegal. On-chain, the referee emits a reward coin giving
-the full game amount to the slasher. Off-chain, the Rust code represents
-validator results as `Option<Rc<Program>>` — `Some(new_state)` for
-valid payloads, `None` for slash — and initiates a slash when it gets `None`.
+Nil (`SLASH`) means the move is illegal for the supplied evidence. On-chain,
+the referee emits a reward coin giving the full game amount to the slasher.
+Off-chain, the Rust code represents validator results as `Option<Rc<Program>>`
+— `Some(new_state)` for valid payloads, `None` for slash — and initiates a
+slash when it gets `None`.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -366,11 +377,19 @@ play, saving cost and complexity.
 
 **Slash path** -- A player submits evidence along with the previous move's
 validator. The referee runs the validator with the evidence. If the
-validator returns nil (indicating an invalid move) or returns values whose
-infohash or max_move_size don't match the curried commitments, the slash
-succeeds and the slasher takes the full pot. If the validator raises (CLVM
-exception), the slash transaction itself fails to mine — validators must
-handle all inputs without raising.
+validator returns nil (indicating an invalid move for that evidence), the
+slash succeeds and the slasher takes the full pot. Otherwise the validator
+must return the same next-state commitments that were accepted optimistically
+by the move path; if the infohash or max_move_size do not match the curried
+commitments, that mismatch is also slashable. A validator may also return
+extra conditions after the normal fields; on the slash path, any extra
+conditions make the slash spend succeed and are prepended to the payout
+conditions. This is an intentional conditional-slash mechanism: for example, a
+future word game could allow a slash only when an aggregate signature over a
+particular dictionary range is also satisfied, proving that a challenged word
+was outside that range. If the validator raises (CLVM exception), the slash
+transaction itself fails to mine — validators must handle all inputs without
+raising.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover
@@ -433,8 +452,9 @@ Both players independently run the same validators and arrive at the same
 state. If they disagree, one of them will detect fraud when they try to
 validate the opponent's move.
 
-The validator's `MAKE_MOVE` return includes the new state, so the handler
-uses this directly rather than duplicating state-transition logic.
+The validator's non-nil return includes the new state, so the handler uses
+this directly rather than duplicating state-transition logic when there is a
+follow-on state to derive.
 
 ### On-Chain (Dispute)
 
@@ -449,9 +469,14 @@ state. From that point:
 - On the **move path**, the referee does **not** re-run the validator. It
   trusts the submitted state transition and advances the game. The
   enforcement mechanism is the threat of slashing: if a player cheats, the
-  opponent can submit evidence to the validator and take the full pot.
+  opponent can submit evidence to the validator and take the full pot. This
+  keeps honest moves small: they carry the next validation info hash, not the
+  full validation program and state.
 - On the **slash path**, the referee runs the validator with the provided
-  evidence. If it returns `SLASH`, the slasher wins.
+  evidence. If it returns nil, or returns values that do not match the
+  committed next-state fields, or returns extra conditions, the slasher wins.
+  The slash spend reveals the previous validation program and state so the
+  referee can recompute and check the committed infohash.
 
 The same validator programs are used both off-chain (by the Rust code, to
 verify moves as they happen) and on-chain (by the referee, for slash

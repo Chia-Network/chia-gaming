@@ -21,7 +21,7 @@ use crate::referee::types::GameMoveDetails;
 //        incoming_validator_hash max_move_size mover_share their_turn_handler message_parser)
 // Message parser takes (message state amount) and returns readable_info or raises
 //
-// Their turn handler takes (amount pre_state state move validation_info_hash mover_share) and returns
+// Their turn handler takes (amount pre_state state move validation_program_hash mover_share) and returns
 //       (readable_move evidence_list next_handler message_optional)
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,7 +285,7 @@ impl GameHandler {
                                 .into_gen()?,
                         ),
                         (
-                            inputs.new_move.validation_program_hash.clone(),
+                            inputs.new_move.validation_program_hash.as_ref(),
                             (inputs.new_move.basic.mover_share.clone(), ()),
                         ),
                     ),
