@@ -50,7 +50,7 @@ SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-server -- --nocapt
 When a test fails, use this sequence:
 
 1. **Isolate**: `./ct.sh -o failing_test` — run only that test while debugging.
-   Individual tests are fast (1–5s), so iteration is quick.
+   Individual tests are fast (<1s for most, ~3s for on-chain), so iteration is quick.
 2. **Full suite from that test**: Once the test passes, switch to
    `./ct.sh failing_test` (no `-o`). This runs all tests starting from the
    one you just fixed, then wraps around. The tests *before* it in the
@@ -62,10 +62,10 @@ When a test fails, use this sequence:
 
 | Scope | Typical time |
 |-------|-------------|
-| Single simple test | 1–3s |
-| Single on-chain test | 3–5s |
-| Full sim suite (parallel) | ~30s |
-| Build (`./cb.sh`) | ~10–20s (incremental) |
+| Single simple test | <1s |
+| Single on-chain test | ~3s |
+| Full sim suite (parallel) | ~8s |
+| Build (`./cb.sh`) | ~1s after a Rust edit; ~0s for hex-only changes |
 
 ### Environment variables
 
@@ -86,7 +86,7 @@ comment out its `res.push(...)` call in the relevant `test_funs()` function.
 ## Reading Test Output
 
 The output from `./ct.sh` is designed to be read directly. A passing run ends
-with a line like `All 48 tests passed in 28.31s`. A failing run prints
+with a line like `All 195 tests passed in 8.19s`. A failing run prints
 `PANIC IN TEST:` inline as each failure occurs, then ends with a summary:
 
 ```
@@ -98,7 +98,7 @@ with a line like `All 48 tests passed in 28.31s`. A failing run prints
   FAIL: test_bar
   another error message
 
-45 passed, 3 failed in 32.15s
+192 passed, 3 failed in 8.42s
 ```
 
 All tests run to completion regardless of failures — a single panic does not
@@ -391,7 +391,7 @@ Instead, replace the return expression itself:
 
 1. **Pick the midpoint** of the suspected code path.
 2. **Replace the return** at that point with `(x "MID" relevant_values)`.
-3. **Rebuild** (`tools/build-chialisp.sh` + `./cb.sh`; ~70s total).
+3. **Rebuild** (`tools/build-chialisp.sh` + `./cb.sh`; ~85s total).
 4. **Run the failing test** (`./ct.sh -o test_name`).
 5. **Interpret:**
    - If the error changes to `Raise(...)` with your marker → execution
@@ -423,8 +423,9 @@ Or use conditional asserts to test specific properties:
 
 Each chialisp change requires:
 1. `rm -f .build-chialisp.cache` (force rebuild)
-2. `bash tools/build-chialisp.sh` (~60–70s)
-3. `./cb.sh` (recompile Rust, picks up new .hex files, ~1–2s incremental)
+2. `bash tools/build-chialisp.sh` (~85s)
+3. `./cb.sh` (rebuild the test binary; ~1s after a Rust edit, ~0s otherwise —
+   `.hex` files are loaded at runtime, not compiled in)
 4. Run the test
 
 To speed things up, delete only the affected hex files instead of the
@@ -451,8 +452,10 @@ them all.
   polling wastes time and makes output harder to capture.
 - **AI agents: always run `./cb.sh` and `./ct.sh` in the foreground** with a
   high `block_until_ms` (120000 ms / 2 minutes). Never background these
-  commands. The full test suite completes in ~30 seconds; builds are faster.
-  Both scripts print overall elapsed time at completion.
+  commands. The Rust sim suite runs in well under 30 seconds (~8s); the
+  slowest step is the chialisp rebuild (~80s when `.clsp` sources change),
+  so 2 minutes is a safe ceiling. Both scripts print overall elapsed time
+  at completion.
 - **Don't use `sleep` to wait for processes.** When waiting for a command to
   finish, set `block_until_ms` to a value higher than the expected runtime.
   The tool returns as soon as the process exits or the timeout elapses,

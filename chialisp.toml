@@ -14,6 +14,7 @@ spacepoker-validator-begin-round = "clsp/games/spacepoker/onchain/begin_round.cl
 spacepoker-validator-mid-round = "clsp/games/spacepoker/onchain/mid_round.clsp"
 spacepoker-validator-end = "clsp/games/spacepoker/onchain/end.clsp"
 onchain-referee = "clsp/referee/onchain/referee.clsp"
+mock-validator = "clsp/test/mock_validator.clsp"
 handcalc-micro = "clsp/test/test_handcalc_micro.clsp"
 make-cards = "clsp/test/test_make_cards.clsp"
 deep-compare = "clsp/test/deep_compare.clsp"

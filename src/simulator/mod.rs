@@ -52,6 +52,8 @@ use crate::tests::channel_handler::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
 #[cfg(test)]
+use crate::tests::referee_conditions::test_funs as referee_conditions_tests;
+#[cfg(test)]
 use crate::tests::spacepoker_handlers::test_funs as spacepoker_handler_tests;
 #[cfg(test)]
 use crate::tests::spacepoker_validation::test_funs as spacepoker_validation_tests;
@@ -948,6 +950,7 @@ pub fn run_simulation_tests() {
         spacepoker_handler_tests(),
         calpoker_handler_tests(),
         channel_handler_tests(),
+        referee_conditions_tests(),
         debug_game_tests(),
         potato_handler_tests(),
         simulator_tests(),

@@ -20,6 +20,9 @@ pub mod transaction_manager;
 pub mod utils;
 
 #[cfg(test)]
+mod manifest_guards;
+
+#[cfg(test)]
 pub mod test_support;
 
 #[cfg(test)]
