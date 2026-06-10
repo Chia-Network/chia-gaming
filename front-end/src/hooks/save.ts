@@ -167,6 +167,9 @@ export interface SessionState {
   unackedMessages?: Array<{ msgno: number; msg: string }>;
   history?: string[];
   log?: string[];
+  humanHistory?: string[];
+  wasmNotificationHistory?: string[];
+  diagnosticLog?: string[];
   activeGameId?: string | null;
   activeGameType?: string;
   handState?: CalpokerHandState | null;

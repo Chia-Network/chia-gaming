@@ -406,6 +406,20 @@ fires in two situations:
 This means the outer JS layer always builds the complete, coherent save from
 both JS and WASM state at once.
 
+#### Session model ownership
+
+Restore-sensitive UX state is being moved behind a frontend session model in
+`front-end/src/lib/session/`.  The model records session facts from WASM,
+tracker, wallet/blockchain, restore snapshots, and user intents.  Selectors then
+derive the props consumed by `Shell`, `GameSession`, and game-specific views.
+
+The migration is intentionally incremental: existing screens should continue to
+look and behave the same while individual state slices move from scattered React
+state into selector-derived view models.  Local React state should remain for
+ephemeral display-only details such as input drafts, copied flags, hover state,
+and drag positions.  Restorable protocol/session facts should flow through the
+model so normal play and restore use the same projection path.
+
 **Pre-game saves:** `Shell.tsx` calls `saveSession({ blockchainType })` as
 soon as the user picks a connection type (before any WASM cradle exists). This
 ensures that even pre-game state is persisted and detected on reload.

@@ -1,12 +1,20 @@
 import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/WasmBlobWrapper';
+import {
+  createSessionModel,
+  selectRestoreBlocked,
+  selectShouldAdvertiseAvailable,
+  selectShouldAutoGoOnChain,
+} from './session/model';
 
 export function isRestoreBlocked(
   restoring: boolean,
   restoreStatus: RestoreStatus,
   trackerReconciled: boolean,
 ): boolean {
-  return restoring && (restoreStatus !== 'restored' || !trackerReconciled);
+  return selectRestoreBlocked(createSessionModel({
+    restore: { restoring, status: restoreStatus, trackerReconciled, error: null },
+  }));
 }
 
 export function shouldAutoGoOnChain(
@@ -14,12 +22,27 @@ export function shouldAutoGoOnChain(
   sessionPhase: SessionPhase,
   restoreBlocked: boolean,
 ): boolean {
-  return peerConnected === false && sessionPhase === 'off-chain' && !restoreBlocked;
+  return selectShouldAutoGoOnChain(createSessionModel({
+    restore: {
+      restoring: restoreBlocked,
+      status: restoreBlocked ? 'restoring' : 'restored',
+      trackerReconciled: !restoreBlocked,
+      error: null,
+    },
+    peer: { connected: peerConnected },
+  }), sessionPhase);
 }
 
 export function shouldAdvertiseAvailable(
   sessionPhase: SessionPhase,
   restoreBlocked: boolean,
 ): boolean {
-  return !restoreBlocked && (sessionPhase === 'none' || sessionPhase === 'resolved');
+  return selectShouldAdvertiseAvailable(createSessionModel({
+    restore: {
+      restoring: restoreBlocked,
+      status: restoreBlocked ? 'restoring' : 'restored',
+      trackerReconciled: !restoreBlocked,
+      error: null,
+    },
+  }), sessionPhase);
 }

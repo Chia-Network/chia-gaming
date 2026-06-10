@@ -544,7 +544,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   const hideGameInterfaceForBetweenHandDialog =
     session.betweenHands &&
     (session.betweenHandMode === 'compose-proposal' || session.betweenHandMode === 'review-incoming-proposal');
-  const showGameInterface = handEverStarted && !!session.displayGameId && !hideGameInterfaceForBetweenHandDialog;
+  const gameSpecificView = session.gameSpecificView;
+  const showGameInterface = handEverStarted && !!gameSpecificView.displayGameId && !hideGameInterfaceForBetweenHandDialog;
   const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
     ? 'Active \u{1F954}'
     : CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
@@ -586,7 +587,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text'>Game terms:</span>
-              <span className='font-medium'>{gameDisplayName(session.activeGameType)}</span>
+              <span className='font-medium'>{gameDisplayName(gameSpecificView.gameType)}</span>
               <span className='text-canvas-solid'>·</span>
               <span className='text-canvas-text'>Game size:</span>
               <span className='font-medium'>{formatMojos(session.currentHandAmount * 2n)}</span>
@@ -651,11 +652,11 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
           <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
           {showGameInterface && (
-            session.activeGameType === 'calpoker' ? (
+            gameSpecificView.gameType === 'calpoker' ? (
               <CalpokerHand
                 key={session.handKey}
                 gameObject={session.gameObject}
-                gameId={session.activeGameId ?? session.displayGameId ?? ''}
+                gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
                 iStarted={session.iStarted}
                 playerNumber={session.playerNumber}
                 gameplayEvent$={session.gameplayEvent$}
@@ -663,15 +664,15 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                 onTurnChanged={session.onTurnChanged}
                 appendGameLog={session.appendGameLog}
                 perGameAmount={session.currentHandAmount}
-                initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
+                initialHandState={session.handKey === 1 && gameSpecificView.handState ? gameSpecificView.handState : undefined}
                 myName={params.myAlias}
                 opponentName={params.opponentAlias}
               />
-            ) : session.activeGameType === 'spacepoker' ? (
+            ) : gameSpecificView.gameType === 'spacepoker' ? (
               <SpacePoker
                 key={session.handKey}
                 gameObject={session.gameObject}
-                gameId={session.activeGameId ?? session.displayGameId ?? ''}
+                gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
                 iStarted={session.iStarted}
                 gameplayEvent$={session.gameplayEvent$}
                 betSize={session.currentHandAmount}
@@ -682,7 +683,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             ) : (
               <div className='flex items-center justify-center py-20'>
                 <p className='text-canvas-text'>
-                  Game not supported: {gameDisplayName(session.activeGameType)}
+                  Game not supported: {gameDisplayName(gameSpecificView.gameType)}
                 </p>
               </div>
             )
@@ -693,7 +694,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
-          {handEverStarted && !session.displayGameId && !session.betweenHands && (
+          {handEverStarted && !gameSpecificView.displayGameId && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>

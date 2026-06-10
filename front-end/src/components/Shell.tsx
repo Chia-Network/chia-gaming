@@ -65,6 +65,14 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
+function humanHistoryFromSave(save: SessionState): string[] | undefined {
+  return save.humanHistory ?? save.history;
+}
+
+function diagnosticLogFromSave(save: SessionState): string[] | undefined {
+  return save.diagnosticLog ?? save.log;
+}
+
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
@@ -443,7 +451,11 @@ const Shell = () => {
 
   const appendHistory = useCallback((line: string) => {
     deferStateUpdate(() => {
-      setHistory(prev => [...prev, line]);
+      setHistory(prev => {
+        const next = [...prev, line];
+        saveSession({ humanHistory: next });
+        return next;
+      });
     });
   }, [deferStateUpdate]);
 
@@ -477,7 +489,11 @@ const Shell = () => {
   useEffect(() => {
     return subscribeLog((line) => {
       deferStateUpdate(() => {
-        setLogLines(prev => [...prev, line]);
+        setLogLines(prev => {
+          const next = [...prev, line];
+          saveSession({ diagnosticLog: next });
+          return next;
+        });
       });
     });
   }, [deferStateUpdate]);
@@ -604,8 +620,10 @@ const Shell = () => {
         });
         setPeerConn(stablePeerConn);
         if (save) {
-          if (save.history) setHistory(save.history);
-          if (save.log) setLogLines(save.log);
+          const savedHistory = humanHistoryFromSave(save);
+          const savedLog = diagnosticLogFromSave(save);
+          if (savedHistory) setHistory(savedHistory);
+          if (savedLog) setLogLines(savedLog);
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
           destroyBlobSingleton();
@@ -693,8 +711,10 @@ const Shell = () => {
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              if (save.history) setHistory(save.history);
-              if (save.log) setLogLines(save.log);
+              const savedHistory = humanHistoryFromSave(save);
+              const savedLog = diagnosticLogFromSave(save);
+              if (savedHistory) setHistory(savedHistory);
+              if (savedLog) setLogLines(savedLog);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           } else {
@@ -715,8 +735,10 @@ const Shell = () => {
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              if (save.history) setHistory(save.history);
-              if (save.log) setLogLines(save.log);
+              const savedHistory = humanHistoryFromSave(save);
+              const savedLog = diagnosticLogFromSave(save);
+              if (savedHistory) setHistory(savedHistory);
+              if (savedLog) setLogLines(savedLog);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           }
@@ -1028,8 +1050,10 @@ const Shell = () => {
       });
       setPeerConn(stablePeerConn);
     }
-    if (save.history) setHistory(save.history);
-    if (save.log) setLogLines(save.log);
+    const savedHistory = humanHistoryFromSave(save);
+    const savedLog = diagnosticLogFromSave(save);
+    if (savedHistory) setHistory(savedHistory);
+    if (savedLog) setLogLines(savedLog);
     if (save.chatMessages) setChatMessages(save.chatMessages);
 
     setBlockchainType(bcType);
