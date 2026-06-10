@@ -97,7 +97,7 @@ function SpCard({ rank, faceDown }: { rank?: number; faceDown?: boolean }) {
     );
   }
   return (
-    <div className={`${base} ${size} bg-canvas-bg border-canvas-line text-canvas-text-contrast`}>
+    <div className={`${base} ${size} bg-canvas-bg border-2 border-canvas-text-contrast text-canvas-text-contrast`}>
       {rank != null ? rankLabel(rank) : ''}
     </div>
   );
@@ -215,7 +215,7 @@ function ActionBar({ sp }: { sp: UseSpacepokerHandResult }) {
         </button>
       ) : (
         <button onClick={sp.handleCall} disabled={!actionsEnabled} className={`${btnClass} w-16`}>
-          Call
+          {sp.lastRaise > 0 ? 'Call' : 'Check'}
         </button>
       )}
       <div className='flex items-center gap-1'>

@@ -379,12 +379,12 @@ function ComposeProposalDialog({
   };
 
   return (
-    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
-      <div className='flex flex-col gap-3'>
+    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
+      <div className='flex flex-col items-center gap-3'>
         <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
-        <div className='flex flex-col gap-1'>
+        <div className='flex w-full flex-col items-center gap-1'>
           <label className='text-xs font-medium text-canvas-text'>Game</label>
-          <div className='flex flex-wrap gap-2'>
+          <div className='flex flex-wrap justify-center gap-2'>
             {GAME_REGISTRY.map(({ gameType, displayName }) => (
               <Button
                 key={gameType}
@@ -402,24 +402,24 @@ function ComposeProposalDialog({
 
         {isSpacepoker ? (
           <>
-            <div className='flex flex-col gap-1'>
+            <div className='flex w-full flex-col items-center gap-1'>
               <label className='text-xs font-medium text-canvas-text'>Unit size (mojos)</label>
               <input
                 type='number'
                 min={1}
-                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
                 value={spUnitSizeStr}
                 disabled={session.composeProposalSent}
                 onChange={(e) => setSpUnitSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
                 onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
               />
             </div>
-            <div className='flex flex-col gap-1'>
+            <div className='flex w-full flex-col items-center gap-1'>
               <label className='text-xs font-medium text-canvas-text'>Stack size (units per player)</label>
               <input
                 type='number'
                 min={1}
-                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
                 value={spStackSizeStr}
                 disabled={session.composeProposalSent}
                 onChange={(e) => setSpStackSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
@@ -452,6 +452,7 @@ function ComposeProposalDialog({
           variant='solid'
           color='primary'
           size='sm'
+          className='self-center'
           disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
           onClick={submit}
         >
@@ -749,8 +750,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             )}
 
             {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
-                <div className='flex flex-col gap-3'>
+              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
+                <div className='flex flex-col items-center gap-3'>
                   <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
                   <p className='text-xs text-canvas-text'>
                     Game: {gameDisplayName(session.reviewPeerProposal.terms.gameType)}
@@ -767,7 +768,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                       </p>
                     ) : null;
                   })()}
-                  <div className='flex flex-wrap items-center gap-3'>
+                  <div className='flex flex-wrap items-center justify-center gap-3'>
                     <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
                       Yes
                     </Button>

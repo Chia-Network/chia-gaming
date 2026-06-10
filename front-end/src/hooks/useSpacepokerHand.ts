@@ -371,6 +371,8 @@ export function useSpacepokerHand(
   // ── Auto-play: moves that don't need user input ──
   // CommitA, CommitB: always auto-play nil.
   // BeginRound N=4 when coin toss says opponent opens: auto-play nil (pong).
+  // BeginRound/MidRound all-in checks: auto-play only when there is no
+  // outstanding raise and we have no remaining raise capacity.
   // End: auto-play reveal or fold.
   useEffect(() => {
     const { handler, myTurn, N } = gs;
@@ -395,6 +397,31 @@ export function useSpacepokerHand(
       return;
     }
 
+    if (
+      (handler === SpHandler.BeginRound || handler === SpHandler.MidRound) &&
+      lastRaise === 0 &&
+      playerStack <= 0
+    ) {
+      try {
+        if (handler === SpHandler.BeginRound) {
+          go.makeMove(gid, Program.fromInt(0));
+          setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
+          transition({ handler: SpHandler.MidRound, myTurn: false, N });
+        } else {
+          go.makeMove(gid, null);
+          setHalfPot(prev => prev + lastRaiseRef.current);
+          setLastRaise(0);
+          setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
+          if (N === 1) {
+            transition({ handler: SpHandler.End, myTurn: false, N: 1 });
+          } else {
+            transition({ handler: SpHandler.BeginRound, myTurn: false, N: N - 1 });
+          }
+        }
+      } catch {}
+      return;
+    }
+
     if (handler === SpHandler.End && outcome) {
       handFinishedRef.current = true;
       if (outcome.result >= 0) {
@@ -405,7 +432,7 @@ export function useSpacepokerHand(
       transition({ handler: SpHandler.Showdown, myTurn: false, N });
       return;
     }
-  }, [gs, outcome, coinTossIOpen]);
+  }, [gs, outcome, coinTossIOpen, lastRaise, playerStack]);
 
   const handleCheck = useCallback(() => {
     const go = gameObjectRef.current;
@@ -439,7 +466,8 @@ export function useSpacepokerHand(
     go.makeMove(gid, null);
     setHalfPot(prev => prev + lastRaiseRef.current);
     setLastRaise(0);
-    setHandHistory(prev => [...prev, { player: 'you', action: 'call' }]);
+    const action = lastRaiseRef.current > 0 ? 'call' : 'check';
+    setHandHistory(prev => [...prev, { player: 'you', action }]);
     if (cur.N === 1) {
       transition({ handler: SpHandler.End, myTurn: false, N: 1 });
     } else {
