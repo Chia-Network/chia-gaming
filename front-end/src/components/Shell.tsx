@@ -65,6 +65,19 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
+function normalizeTrackerOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    if (url.hostname === '127.0.0.1' && url.port === '3003') {
+      url.hostname = 'localhost';
+      return url.origin;
+    }
+  } catch {
+    return origin;
+  }
+  return origin;
+}
+
 function humanHistoryFromSave(save: SessionState): string[] | undefined {
   return save.humanHistory ?? save.history;
 }
@@ -575,7 +588,8 @@ const Shell = () => {
   const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
 
   // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
-  const connectToTracker = useCallback((origin: string) => {
+  const connectToTracker = useCallback((rawOrigin: string) => {
+    const origin = normalizeTrackerOrigin(rawOrigin);
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
 

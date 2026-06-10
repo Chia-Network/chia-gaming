@@ -122,13 +122,9 @@ app.use(
   }),
 );
 
-// Prevent HTTP keep-alive from exhausting the browser's per-host connection
-// pool (typically 6 for HTTP/1.1), which would block WebSocket upgrades when
-// multiple tabs connect to the same tracker origin.
 // Assets under /app/<nonce>/ are immutable (cache-busted by build nonce);
 // everything else (index.html, build-meta.json, favicon) uses no-store.
 app.use((req, res, next) => {
-  res.set('Connection', 'close');
   res.set('Cache-Control',
     req.path.startsWith('/app/')
       ? 'public, max-age=31536000, immutable'
@@ -396,6 +392,7 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     logTracker('challenge_drop_unknown_sender', { sender_id: senderId ?? null, target_id });
     console.warn('[tracker] challenge dropped: unknown sender', { senderId, target: target_id });
     sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin lobby and retry.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
   if (!hasActiveGameConnection(target_id)) {
@@ -407,6 +404,7 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   if (fromPlayer.status === 'busy') {
     logTracker('challenge_drop_sender_busy', { sender_id: senderId, target_id });
     sendWs(ws, 'error', { error: 'You are in an active session. Finish it first.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
   const targetPlayer = lobby.players[target_id];
@@ -982,6 +980,10 @@ setInterval(() => {
 }, 15_000);
 
 const port = process.env.PORT || 5801;
+// Keep HTTP downloads reusable briefly, then close idle sockets by timeout.
+// WebSocket upgrades are long-lived and are not closed by this HTTP keep-alive timeout.
+httpServer.keepAliveTimeout = 5_000;
+httpServer.headersTimeout = 6_000;
 httpServer.listen({ host: '::', port }, () => {
   console.log(`Server running on port ${port}`);
 });

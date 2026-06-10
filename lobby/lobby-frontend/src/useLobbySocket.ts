@@ -74,6 +74,7 @@ export function useLobbySocket(
   const reconnectAttemptRef = useRef(0);
   const closingRef = useRef(false);
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
+  const joinedAliasRef = useRef<string | null>(null);
 
   useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
 
@@ -157,6 +158,20 @@ export function useLobbySocket(
           session_id: sessionId,
           unique_id: uniqueIdRef.current,
         });
+        if (joinedAliasRef.current) {
+          const payload = {
+            type: 'join',
+            id: uniqueIdRef.current,
+            session_id: sessionId,
+            alias: joinedAliasRef.current,
+          };
+          lobbyHsLog('join_resend_on_open', {
+            conn_id: connIdRef.current,
+            session_id: sessionId,
+            alias_len: joinedAliasRef.current.length,
+          });
+          ws.send(JSON.stringify(payload));
+        }
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
           lobbyHsLog('flush_buffered_outbound', {
@@ -309,16 +324,19 @@ export function useLobbySocket(
 
   const joinLobby = useCallback(
     (alias: string) => {
+      const trimmed = alias.trim();
+      if (!trimmed) return;
+      joinedAliasRef.current = trimmed;
       lobbyHsLog('join_call', {
         conn_id: connIdRef.current,
         session_id: sessionId,
-        alias_len: alias.trim().length,
+        alias_len: trimmed.length,
       });
       send({
         type: 'join',
         id: uniqueIdRef.current,
         session_id: sessionId,
-        alias: alias.trim(),
+        alias: trimmed,
       });
     },
     [send, sessionId],
@@ -374,7 +392,11 @@ export function useLobbySocket(
 
   const setLobbyAlias = useCallback(
     async (id: string, newAlias: string) => {
-      send({ type: 'change_alias', id, newAlias });
+      const trimmed = newAlias.trim();
+      if (id === uniqueIdRef.current && trimmed) {
+        joinedAliasRef.current = trimmed;
+      }
+      send({ type: 'change_alias', id, newAlias: trimmed });
     },
     [send],
   );

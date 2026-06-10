@@ -80,6 +80,11 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// Leave HTTP asset connections reusable briefly, then let Node close idle
+// keep-alives. This does not affect upgraded WebSocket connections.
+server.keepAliveTimeout = 5_000;
+server.headersTimeout = 6_000;
+
 server.listen(PORT, HOST, () => {
   console.log(`Static server: http://${HOST}:${PORT} -> ${ROOT}`);
 });
