@@ -408,10 +408,11 @@ both JS and WASM state at once.
 
 #### Session model ownership
 
-Restore-sensitive UX state is being moved behind a frontend session model in
-`front-end/src/lib/session/`.  The model records session facts from WASM,
-tracker, wallet/blockchain, restore snapshots, and user intents.  Selectors then
-derive the props consumed by `Shell`, `GameSession`, and game-specific views.
+Restore-sensitive UX state is being moved behind an MVC-style frontend session
+model in `front-end/src/lib/session/`.  The model records session facts from
+WASM, tracker, wallet/blockchain, restore snapshots, and user intents.  Selectors
+then derive the props consumed by `Shell`, `GameSession`, and game-specific
+views.
 
 The migration is intentionally incremental: existing screens should continue to
 look and behave the same while individual state slices move from scattered React
@@ -419,6 +420,12 @@ state into selector-derived view models.  Local React state should remain for
 ephemeral display-only details such as input drafts, copied flags, hover state,
 and drag positions.  Restorable protocol/session facts should flow through the
 model so normal play and restore use the same projection path.
+
+The motivation is reliability, not architectural ceremony: normal display and
+restore should be two ways of projecting the same session model. If a value needs
+to survive reload or affect protocol/availability decisions, prefer putting it in
+the model and deriving the view from selectors instead of maintaining a separate
+React-only copy that restore has to reconstruct by hand.
 
 **Pre-game saves:** `Shell.tsx` calls `saveSession({ blockchainType })` as
 soon as the user picks a connection type (before any WASM cradle exists). This

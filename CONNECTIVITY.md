@@ -233,15 +233,21 @@ state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`):
 
 1. The session is done.
 2. Shell is notified (via callback from `useGameSession`).
-3. Internal cleanup runs automatically: session save is cleared, WASM cradle
-   is destroyed, `sessionStartedRef` and `activePairingTokenRef` are reset.
-4. Shell tells the tracker/lobby that the player is available.
-5. The player can accept new challenges.
-6. The game UI remains visible showing the resolved state until a new match
-   replaces it. There is no manual "Close Session" button.
-7. The peer connection is not forcibly closed — chat can continue until a
+3. Live protocol interaction stops: the WASM cradle is no longer used for new
+   game actions, `sessionStartedRef` and `activePairingTokenRef` are reset, and
+   the finished session is treated as a read-only display.
+4. The resolved display is intentionally preserved so the user can see what just
+   happened. A reload may restore this finished view, but it should not resume
+   live protocol behavior.
+5. Shell tells the tracker/lobby that the player is available.
+6. The player can accept new challenges. This is intentional: terminal sessions
+   no longer impose a protocol obligation, so the UI should encourage continued
+   play instead of making the user manually clear the finished game.
+7. A new match replaces the old resolved display. There is no manual "Close
+   Session" button.
+8. The peer connection is not forcibly closed — chat can continue until a
    new match replaces the pairing or either side disconnects.
-8. Chat messages persist across session boundaries and are only cleared
+9. Chat messages persist across session boundaries and are only cleared
    when a new pairing starts (new match).
 
 ---
@@ -334,14 +340,14 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   the `onSessionPhaseChange` callback. Shell tracks this as `sessionPhase`
   and `sessionError` state. (`GameSession.tsx`, `Shell.tsx`)
 
-- **Terminal session detection and auto-cleanup**: When `sessionPhase`
+- **Terminal session detection and resolved display preservation**: When `sessionPhase`
   becomes `'resolved'` (derived from terminal channel states `ResolvedClean`,
-  `ResolvedUnrolled`, `ResolvedStale`, or `Failed`), Shell automatically
-  clears the session save, destroys the WASM cradle, resets internal refs
-  (`sessionStartedRef`, `activePairingTokenRef`), and marks the player as
-  available. The game UI stays visible showing the resolved state until a
-  new match replaces it. Chat persists across session boundaries and is
-  only cleared when a new pairing starts.
+  `ResolvedUnrolled`, `ResolvedStale`, or `Failed`), Shell stops live protocol
+  interaction, resets internal refs (`sessionStartedRef`, `activePairingTokenRef`),
+  and marks the player as available. The game UI stays visible as a read-only
+  resolved display until a new match replaces it, and a reload may restore that
+  finished view. Chat persists across session boundaries and is only cleared when
+  a new pairing starts.
 
 - **Game message filtering on-chain**: `WasmBlobWrapper` has an `onChain`
   flag. When set, `deliverMessage()` acks but does not deliver inbound game

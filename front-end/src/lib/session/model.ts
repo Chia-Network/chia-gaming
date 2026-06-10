@@ -358,6 +358,14 @@ export function selectShouldAdvertiseAvailable(model: SessionModel, phase: Sessi
   return !selectRestoreBlocked(model) && (phase === 'none' || phase === 'resolved');
 }
 
+export function selectDefaultCalpokerProposalMyTurn(iStarted: boolean): boolean {
+  return !iStarted;
+}
+
+export function selectDefaultCalpokerInitialTurn(iStarted: boolean): GameTurnState {
+  return iStarted ? 'their-turn' : 'my-turn';
+}
+
 export function selectDisplayGameId(model: SessionModel): string | null {
   return model.game.activeIds[0] ?? model.game.lastDisplayedId;
 }

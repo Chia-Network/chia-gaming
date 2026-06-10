@@ -92,6 +92,14 @@ rather than merely reorged out and replayable, that is outside the current
 reorg model and should be treated as future protocol work rather than a bug in
 the replay machinery.
 
+Coverage for this replay model lives in `src/transaction_manager.rs`: creator
+transactions are resubmitted when output coins vanish
+(`reorged_out_output_resubmits_creating_transaction`), timeout claims are
+re-armed when a watched coin's birthday rolls back
+(`eager_timeout_spend_resubmitted_after_birthday_rollback`), and re-mined coins
+clear stale vanished flags before later genuine spends are forwarded
+(`reorg_remine_in_same_report_clears_vanished_and_allows_later_spend`).
+
 **Notifications ride the observed spend.** Terminal notifications are emitted
 from `handle_game_coin_spent` (via the `coin_spent` → `coin_puzzle_and_solution`
 pipeline) by interpreting what the observed spend created — our reward coin
@@ -141,46 +149,36 @@ rather than by checking `initiated_on_chain` at runtime.
 ## Batch Rollback Scope
 
 When a `PeerMessage::Batch` is received, `pass_on_channel_handler_message`
-snapshots `channel_handler` before calling `process_received_batch` and
-restores it on error. This makes the peer's batch actions atomic with respect
-to channel state: if any action in the batch fails validation or signature
-verification fails, `channel_handler` reverts to the pre-batch state.
+snapshots both `channel_handler` and `game_action_queue` before calling
+`process_received_batch` and restores them on error. This makes the peer's batch
+actions atomic across the state that matters for later dispute recovery: if any
+action in the batch fails validation or signature verification fails, channel
+state and queued local actions both revert to the pre-batch state.
 
-Two fields — `have_potato` and `last_channel_coin_spend_info` — are set in
-`update_channel_coin_after_receive`, which runs *after* signature verification
-succeeds. They are outside the `channel_handler` snapshot scope. If
-`drain_queue_into_batch` (called at the end of `update_channel_coin_after_receive`)
-returns an error, `channel_handler` is restored but these two fields retain
-their post-batch values.
+The queue snapshot matters even though the peer cannot directly enqueue local
+actions. A valid prefix of a malicious peer batch can make our pre-existing
+queued local actions stale before a later action or signature check fails. If
+that stale queue leaked into `go_on_chain`, the on-chain handler could attempt
+local responses that were only stale because the failed peer batch partially ran.
+The invariant is therefore:
 
-This is safe for several reasons:
+- **Peer batch failure is atomic.** No `ChannelHandler` mutations and no
+  peer-induced `game_action_queue` changes survive a failed received batch.
+- **Bad peer data escalates.** Ordinary `PotatoHandler::received_message` errors
+  call `go_on_chain(..., true)` after rollback. That is the protocol response to
+  invalid peer data.
+- **Local queue drain errors are internal/local problems.**
+  `drain_queue_into_batch` processes user/UI actions queued through local APIs.
+  Those errors are not a normal peer-message recovery path.
 
-- **`drain_queue_into_batch` processes our own local action queue, not peer
-  data.** The `game_action_queue` is populated only by local API calls (user
-  actions queued while we didn't have the potato). The peer cannot inject
-  entries or trigger failures in it. The only way the drain errors is if our
-  own queued action became stale — e.g., the peer's batch removed a game for
-  which we had queued an `AcceptTimeout`.
-
-- **The error abandons the channel.** The error propagates as a
-  `CradleEvent::ReceiveError`, which puts the channel into a failed state and
-  triggers on-chain resolution. The leaked `have_potato` and
-  `last_channel_coin_spend_info` values are never consulted after channel
-  failure — no further off-chain protocol messages are processed.
-
-- **No effects escape on error.** Effects are accumulated in local `Vec`s
-  inside `process_received_batch` and `update_channel_coin_after_receive`.
-  On `Err`, these vecs are dropped — no notifications, peer messages, or
-  transactions are delivered to the JS/UX layer.
-
-- **Single-threaded execution.** The WASM runtime runs synchronously on the
-  JS thread. The event queue cannot be read by JavaScript until the Rust call
-  returns, so intermediate states are never observable even if effects were
-  being pushed during processing.
+Fields updated after successful signature verification, such as `have_potato`
+and `last_channel_coin_spend_info`, are outside the rollback problem because
+they are only advanced after the received batch is valid.
 
 **Key code:** `src/potato_handler/mod.rs` — `pass_on_channel_handler_message`
 (snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
-`drain_queue_into_batch`
+`drain_queue_into_batch`; regression:
+`failed_final_move_bad_signature_does_not_queue_accept_timeout`
 
 ---
 

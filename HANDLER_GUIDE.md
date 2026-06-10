@@ -637,8 +637,9 @@ Messages arrive as `GameMessage` events in the frontend, distinct from
 
 Calpoker and Space Poker are both reference games. Calpoker is the smaller,
 earlier example and is easiest to follow end-to-end. Space Poker exercises a
-different part of the API: multi-round poker state, repeated betting/open
-transitions, and advisory message parsers.
+different part of the API: multi-round poker state and repeated
+betting/open transitions, including advisory message parsers for pre-revealed
+card information.
 
 The `debug` game is registered for simulator tests only. It exists to exercise
 channel/on-chain mechanics with controlled `mover_share` values and is not a
@@ -699,9 +700,16 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 ### Space Poker
 
 Space Poker is a Texas Hold'em-style reference game. It demonstrates how a game
-can keep more complex state across multiple rounds and use message parsers to
-send derived card information out-of-band while keeping the formal move protocol
-authoritative.
+can keep more complex state across multiple rounds while keeping the formal move
+protocol authoritative. It also uses advisory message parsers: a my-turn handler
+can install a parser for the current state, and the opponent's their-turn handler
+can return an optional fourth `message` element to pre-reveal information that is
+already implied by, or will be independently derivable from, the formal move
+sequence. Calpoker uses this once for Alice's seed pre-reveal; Space Poker uses it
+at the beginning of each street for deal/open pre-reveals. Since there is no
+reason to fold before at least checking there, the player can preemptively send
+the reveal that will show the next street's cards, improving pacing without
+changing the authoritative move flow.
 
 **Key code:**
 

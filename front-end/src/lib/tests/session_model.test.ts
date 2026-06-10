@@ -2,6 +2,8 @@ import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
+  selectDefaultCalpokerInitialTurn,
+  selectDefaultCalpokerProposalMyTurn,
   selectGameSessionView,
   selectGameSpecificView,
   selectRestoreBlocked,
@@ -156,5 +158,13 @@ describe('session model selectors', () => {
       displayGameId: '7',
       turnState: 'replaying',
     });
+  });
+
+  it('maps frontend Calpoker starter role to the opposite initial mover', () => {
+    expect(selectDefaultCalpokerProposalMyTurn(true)).toBe(false);
+    expect(selectDefaultCalpokerInitialTurn(true)).toBe('their-turn');
+
+    expect(selectDefaultCalpokerProposalMyTurn(false)).toBe(true);
+    expect(selectDefaultCalpokerInitialTurn(false)).toBe('my-turn');
   });
 });

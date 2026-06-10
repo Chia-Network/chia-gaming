@@ -6688,6 +6688,43 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
+    res.push((
+        "test_handshake_era_invalid_batch_goes_on_chain",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let queued_bad_batch = bencodex::to_vec(&PeerMessage::Batch {
+                actions: vec![],
+                signatures: Default::default(),
+                clean_shutdown: None,
+            })
+            .expect("should encode bad batch");
+
+            let moves = vec![
+                GameAction::WaitBlocks(2, 0),
+                GameAction::InjectRawMessage(0, queued_bad_batch),
+                GameAction::WaitBlocks(20, 0),
+            ];
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
+                None,
+            )
+            .expect("should finish");
+
+            assert!(
+                outcome.cradles[0].is_on_chain(),
+                "invalid handshake-era future batch should escalate on-chain, got notifications: {:?}",
+                outcome.local_uis[0].notifications
+            );
+            assert!(
+                !outcome.cradles[0].is_failed(),
+                "invalid handshake-era future batch should not stop at ChannelState::Failed"
+            );
+        },
+    ));
+
     res.push(("test_wrong_parity_proposal_rejected", &|| {
         let mut allocator = AllocEncoder::new();
 

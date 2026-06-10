@@ -25,6 +25,8 @@ import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
 import {
   createSessionModel,
+  selectDefaultCalpokerInitialTurn,
+  selectDefaultCalpokerProposalMyTurn,
   selectGameSessionView,
   selectGameSpecificView,
   sessionModelFromSave,
@@ -721,7 +723,7 @@ export function useGameSession(
         timeout: 15,
         amount: terms.myContribution + terms.theirContribution,
         my_contribution: terms.myContribution,
-        my_turn: !iStarted,
+        my_turn: selectDefaultCalpokerProposalMyTurn(iStarted),
         parameters: null,
       });
       for (const id of ids) {
@@ -948,7 +950,7 @@ export function useGameSession(
       go?.setHandState(null);
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-      const startTurn: GameTurnState = iStarted ? 'their-turn' : 'my-turn';
+      const startTurn: GameTurnState = selectDefaultCalpokerInitialTurn(iStarted);
       turnStateRef.current = startTurn;
       setGameCoin({ coinHex: null, turnState: startTurn });
       setGameTerminal(INITIAL_GAME_TERMINAL);

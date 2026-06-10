@@ -223,13 +223,15 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    complete `CoinSpend` ready for on-chain submission.
 
 The receiver processes actions sequentially and rejects the entire batch if any
-action fails validation. Rejection uses a **rollback mechanism**: the
-`ChannelHandler` (which derives `Clone`) is snapshot-cloned before processing
-begins. If any action or signature verification fails, the snapshot is restored,
-undoing all intermediate mutations from earlier actions in the batch — including
-changes to `live_games`, `pending_accept_timeouts`, balances, `state_number`,
-`cached_last_actions`, and every other `ChannelHandler` field. The error then
-triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
+action fails validation. Rejection uses a **rollback mechanism**: before peer
+batch processing begins, `PotatoHandler` snapshots both the `ChannelHandler` and
+the local `game_action_queue`. If any action or signature verification fails,
+both snapshots are restored. This makes a peer batch atomic across all state that
+could otherwise affect dispute recovery: intermediate mutations to `live_games`,
+`pending_accept_timeouts`, balances, `state_number`, `cached_last_actions`, and
+queued local actions are not allowed to leak out of a failed peer batch. The
+error then triggers go-on-chain (the peer sent a bad batch, so we dispute
+on-chain).
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
@@ -268,10 +270,13 @@ unified pattern:
 This ensures that multiple user actions between potato receives are
 automatically batched together.
 
-The `game_action_queue` is populated only by local API calls (user/UI
-actions), never by received peer messages. `drain_queue_into_batch` processes
-this local queue when the potato is held; any errors during draining reflect
-bugs in our own queued actions, not adversarial peer data.
+The `game_action_queue` is populated only by local API calls (user/UI actions),
+never directly by received peer messages. Received batches can still make queued
+local actions stale as a side effect of valid peer state changes, so failed peer
+batch handling snapshots the queue as part of the atomic boundary. Separately,
+`drain_queue_into_batch` processes the local queue when we hold the potato; any
+errors during local draining reflect bugs or stale local intents, not a normal
+peer-data recovery path.
 
 ### Non-Potato Messages
 
@@ -446,11 +451,11 @@ puzzle hash and combined amount.
 
 The repository includes two reference games. **Calpoker** was implemented first
 and is the simpler example: a five-step commit-reveal poker variant with one
-main hand-evaluation payoff. **Space Poker** is also a reference game; it
-illustrates a more involved multi-round poker flow, repeated betting/open
-states, and heavier use of advisory message parsers. Together they show
-different ways to structure validators and off-chain handlers on the same
-channel/referee foundation.
+main hand-evaluation payoff and one optional advisory pre-reveal. **Space Poker**
+is also a reference game; it illustrates a more involved multi-round poker flow,
+repeated betting/open states, and heavier use of advisory message parsers.
+Together they show different ways to structure validators and off-chain handlers
+on the same channel/referee foundation.
 
 The Rust game collection also registers `debug` for simulator tests only. It is
 not a user-facing reference game.
@@ -531,19 +536,23 @@ anyway, sending it early does no strategic damage to the sender — it simply
 lets the opponent start thinking sooner, making the UX feel simultaneous
 even though the underlying protocol is turn-based.
 
-The same mechanism is available to any game, not just calpoker. Space Poker
-uses message parsers for multi-round card reveal UX. The `my_turn_handler`
-returns a `message_parser` (or omits it / returns nil if the game doesn't use
-advisory messages), and the `their_turn_handler` returns `message_data` as an
-optional fourth element of its result.
+The same mechanism is available to any game, not just Calpoker. In the current
+reference games, Calpoker uses it at one specific point where Alice can
+pre-reveal information Bob will derive from the next formal move anyway. Space
+Poker uses the same optional channel for deal/open pre-reveals that make newly
+derivable card information visible earlier. In Space Poker this happens at the
+beginning of each street: there is no reason to fold before at least checking,
+so the player preemptively sends the reveal that will show the next street's
+cards. The `my_turn_handler` returns a `message_parser` (or omits it / returns
+nil if the game doesn't use advisory messages), and the `their_turn_handler`
+returns `message_data` as an optional fourth element of its result.
 
 ### Space Poker
 
 Space Poker is a Texas Hold'em-style reference game. It exercises a different
-part of the handler API than Calpoker: multi-round state, betting/open actions,
-and advisory messages that reveal derived card information early without making
-that information authoritative. It is registered alongside Calpoker in the Rust
-game collection and has dedicated handler and validation tests.
+part of the handler API than Calpoker: multi-round state and betting/open
+actions. It is registered alongside Calpoker in the Rust game collection and has
+dedicated handler and validation tests.
 
 **Key code:**
 
