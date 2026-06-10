@@ -11,10 +11,13 @@
 //!   (`drain_submissions`) so the hosting layer becomes a thin RPC proxy.
 //! - It tracks which coins to poll (`get_coins_to_poll`).
 //!
-//! Phase 1 is a structural move: timeout firing still happens inside the inner
-//! cradle. The manager records per-coin birthdays and timeouts so that Phase 2
-//! can take over ripeness-based submission, resubmission of vanished outputs,
-//! and reorg handling.
+//! Reorg handling is replay-oriented. The manager assumes transactions that
+//! were valid before a reorg will usually still be valid on the new chain, and
+//! it tries to make those transactions land again by retaining submitted
+//! bundles, re-queueing them on restore, and resubmitting creators for vanished
+//! output coins. It does not attempt general "true invalidation" recovery where
+//! the new chain makes a previously valid transaction permanently invalid or
+//! requires rewinding arbitrary handler state.
 
 use std::collections::HashMap;
 

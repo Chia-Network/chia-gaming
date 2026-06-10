@@ -59,7 +59,7 @@ export async function configGameObject(
   return gameObject;
 }
 
-async function restoreSession(
+export async function restoreSession(
   gameObject: WasmBlobWrapper,
   save: SessionState,
   wasmStateInit: WasmStateInit,
@@ -72,11 +72,10 @@ async function restoreSession(
 
   const cradleBytes = base64ToUint8(save.serializedCradle);
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
-  gameObject.setGameCradle(cradle);
 
-  // The transaction manager (in the deserialized cradle) already knows which
-  // coins to watch; the poller will pick them up via get_coins_to_poll.
-
+  // Restore JS-side delivery state before installing the cradle. setGameCradle()
+  // can immediately spill buffered peer messages and replay unacked outbound
+  // messages, so it must observe the saved counters and queues.
   gameObject.messageNumber = save.messageNumber ?? 1;
   gameObject.remoteNumber = save.remoteNumber ?? 0;
   gameObject.channelReady = save.channelReady ?? false;
@@ -93,6 +92,10 @@ async function restoreSession(
   gameObject.lastOutcomeWin = save.lastOutcomeWin;
   gameObject.chatMessages = save.chatMessages ?? [];
   gameObject.markRestored();
+  gameObject.setGameCradle(cradle);
+
+  // The transaction manager (in the deserialized cradle) already knows which
+  // coins to watch; the poller will pick them up via get_coins_to_poll.
 
   log('[restore] session restored');
 }
@@ -142,15 +145,25 @@ export function getBlobSingleton(
   blobSingleton.kickSystem(2);
 
   if (sessionSave) {
+    const restoringObject = blobSingleton;
     const doRestore = async () => {
       try {
-        await restoreSession(blobSingleton!, sessionSave, wasmStateInit);
+        await restoreSession(restoringObject, sessionSave, wasmStateInit);
       } catch (e) {
         console.error('[blobSingleton] restoreSession error:', e);
         log(`[blobSingleton] restoreSession error: ${String(e)}`);
+        if (blobSingleton === restoringObject) {
+          restoringObject.cleanup();
+          blobSingleton = null;
+          initStarted = false;
+        }
+        throw e;
       }
     };
-    doRestore();
+    void restoringObject.beginRestore(doRestore()).catch(() => {
+      // The wrapper has already emitted an error event and the singleton has
+      // been cleared so a later resume cannot reuse partial restore state.
+    });
   } else {
     const newSession = async () => {
       try {

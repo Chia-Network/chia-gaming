@@ -465,10 +465,12 @@ The early-out fires at five distinct points.
 
 1. **On-chain move would produce mover_share == coin_amount.**  In
   `do_on_chain_move`, after computing the move result, if the new
-   `mover_share == game_amount` (we as the new waiter get zero) and the move
-   is non-terminal (`max_move_size > 0`), the move is not submitted and
-   `WeTimedOut(0)` fires.  Terminal moves (`max_move_size == 0`) are always
-   submitted because they resolve the game.
+   `mover_share == game_amount` (we as the new waiter get zero), the move is
+   not submitted and `WeTimedOut(0)` fires. This applies to terminal moves too:
+   if playing the terminal move gives the opponent everything, we have no
+   reward to claim and no incentive to spend fees or reveal more state. Games
+   that need to prevent a player from withholding a losing terminal move must
+   encode that incentive in the prior state's `mover_share`.
 2. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
   `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
    is removed and `WeTimedOut(0)` fires instead of setting `accepted = true`

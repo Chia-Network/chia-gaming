@@ -7,7 +7,9 @@ import {
   PeerConnectionResult,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { _resetForTests as resetSaveState } from '../../hooks/save';
+import { restoreSession } from '../../hooks/blobSingleton';
+import { WasmStateInit } from '../../hooks/WasmStateInit';
+import { _resetForTests as resetSaveState, uint8ToBase64 } from '../../hooks/save';
 
 const mockRpc = new Proxy({} as InternalBlockchainInterface, {
   get: () => () => Promise.resolve(undefined),
@@ -281,6 +283,86 @@ describe('resendUnacked', () => {
       { msgno: 1, msg: enc('a') },
       { msgno: 2, msg: enc('b') },
     ]);
+  });
+});
+
+describe('restore ordering', () => {
+  it('restores counters before spilling buffered messages and replaying unacked', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(
+      mockBlockchain,
+      'test',
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    activeBlob = blob;
+
+    const cradle = makeMockCradle();
+    const restoreWasmConnection = {} as unknown as WasmConnection;
+    const wasmStateInit = {
+      getWasmConnection: jest.fn(async () => restoreWasmConnection),
+      deserializeGame: jest.fn(() => cradle),
+    } as unknown as WasmStateInit;
+
+    blob.kickSystem(2);
+    blob.deliverMessage(1, enc('already-processed'));
+    const statuses: string[] = [];
+    const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
+
+    await blob.beginRestore(
+      restoreSession(
+        blob,
+        {
+          version: 3,
+          playerId: 'p1',
+          serializedCradle: uint8ToBase64(new Uint8Array([1, 2, 3])),
+          messageNumber: 5,
+          remoteNumber: 1,
+          unackedMessages: [{ msgno: 4, msg: uint8ToBase64(enc('outbound')) }],
+        },
+        wasmStateInit,
+      ),
+    );
+    unsubscribe();
+
+    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(sentAcks).toEqual([1]);
+    expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(blob.messageNumber).toBe(5);
+    expect(blob.remoteNumber).toBe(1);
+    expect(statuses).toEqual(['idle', 'restoring', 'restored']);
+    expect(blob.getRestoreStatus()).toBe('restored');
+  });
+
+  it('marks restore failures and emits an error event', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(
+      mockBlockchain,
+      'test',
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    activeBlob = blob;
+
+    const errors: string[] = [];
+    const sub = blob.getObservable().subscribe({
+      next: (evt) => {
+        if (evt.type === 'error') errors.push(evt.error);
+      },
+    });
+
+    await expect(blob.beginRestore(Promise.reject(new Error('restore broke'))))
+      .rejects
+      .toThrow('restore broke');
+    sub.unsubscribe();
+
+    expect(blob.getRestoreStatus()).toBe('failed');
+    expect(blob.getRestoreError()).toContain('restore broke');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('restore broke');
   });
 });
 

@@ -46,7 +46,9 @@ import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
+import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
+import { isRestoreBlocked, shouldAdvertiseAvailable, shouldAutoGoOnChain } from '../lib/restoreLifecycle';
 import { log } from '../services/log';
 import { Button } from './button';
 
@@ -233,6 +235,9 @@ const Shell = () => {
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
   const [sessionError, setSessionError] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreTrackerReconciled, setRestoreTrackerReconciled] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
   const trackerWsUpRef = useRef(false);
   const lastTrackerActivityRef = useRef(0);
@@ -577,6 +582,11 @@ const Shell = () => {
       sessionFinishedCleanupRef.current = false;
       activePairingTokenRef.current = token;
       peerConnTargetRef.current = conn.getPeerConnection();
+      if (!save) {
+        setRestoreStatus('idle');
+        setRestoreError(null);
+        setRestoreTrackerReconciled(true);
+      }
 
       const alreadyHydrated = !!sessionSaveRef.current;
       if (!alreadyHydrated) {
@@ -632,6 +642,9 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
+          if (sessionSaveRef.current?.serializedCradle) {
+            setRestoreTrackerReconciled(true);
+          }
           if (!status.has_pairing || status.peer_connected === false) {
             markPeerInactive();
           } else if (status.peer_connected === true) {
@@ -948,17 +961,31 @@ const Shell = () => {
     setActiveTab('tracker');
   }, [setActiveTab]);
 
+  const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
+    setRestoreStatus(status);
+    setRestoreError(error);
+    if (status === 'failed') {
+      setSessionError(true);
+    }
+  }, []);
+
+  const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
+
   useEffect(() => {
-    trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
-  }, [sessionPhase]);
+    trackerConnRef.current?.setAvailable(shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
+  }, [sessionPhase, restoreBlocked]);
 
   // Cascade rule: off-chain session without a peer must immediately go on-chain.
   useEffect(() => {
-    if (peerConnected === false && sessionPhase === 'off-chain') {
+    if (peerConnected === false && sessionPhase === 'off-chain' && restoreBlocked) {
+      console.log('[Shell] peer inactive during restore; waiting for restore/reconciliation');
+      return;
+    }
+    if (shouldAutoGoOnChain(peerConnected, sessionPhase, restoreBlocked)) {
       console.log('[Shell] peer lost while off-chain, auto going on-chain');
       blobSingleton?.goOnChain();
     }
-  }, [peerConnected, sessionPhase]);
+  }, [peerConnected, sessionPhase, restoreBlocked]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -978,6 +1005,11 @@ const Shell = () => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
+    setRestoreStatus('restoring');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setSessionPhase('none');
+    setSessionError(false);
 
     sessionSaveRef.current = save;
     let amount: bigint;
@@ -1603,7 +1635,20 @@ const Shell = () => {
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-            {keepSession ? (
+            {keepSession && restoreStatus === 'failed' ? (
+              <div className='w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8'>
+                <h2 className='text-lg font-semibold text-alert-text'>Restore failed</h2>
+                <p className='max-w-lg text-sm text-center select-text cursor-text'>
+                  {restoreError ?? 'The saved session could not be restored.'}
+                </p>
+                <button
+                  onClick={handleStartOver}
+                  className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                >
+                  Start over
+                </button>
+              </div>
+            ) : keepSession ? (
               <GameSessionErrorBoundary>
                 <GameSession
                   key={gameParams.pairingToken}
@@ -1616,6 +1661,8 @@ const Shell = () => {
                   sessionSave={sessionSaveRef.current ?? undefined}
                   onGameActivity={onGameActivity}
                   onSessionPhaseChange={handleSessionPhaseChange}
+                  onRestoreStatusChange={handleRestoreStatusChange}
+                  suppressPhaseReporting={restoreBlocked}
                 />
               </GameSessionErrorBoundary>
             ) : sessionCanMount ? (

@@ -68,6 +68,8 @@ function extractErrorMessage(e: unknown): string {
   return String(e);
 }
 
+export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
+
 export class WasmBlobWrapper implements PollingCradle {
   amount: bigint;
   perGameAmount: bigint;
@@ -106,6 +108,10 @@ export class WasmBlobWrapper implements PollingCradle {
   private reorderQueue: Map<number, Uint8Array> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
+  private restoreStatus: RestoreStatus = 'idle';
+  private restoreError: string | null = null;
+  private restorePromise: Promise<void> | null = null;
+  private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private beforeUnloadHandler: (() => void) | null = null;
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
@@ -215,6 +221,47 @@ export class WasmBlobWrapper implements PollingCradle {
 
   getObservable() {
     return this.rxjsMessageSingleton;
+  }
+
+  getRestoreStatus(): RestoreStatus {
+    return this.restoreStatus;
+  }
+
+  getRestoreError(): string | null {
+    return this.restoreError;
+  }
+
+  onRestoreStatusChange(listener: (status: RestoreStatus, error: string | null) => void): () => void {
+    this.restoreListeners.add(listener);
+    listener(this.restoreStatus, this.restoreError);
+    return () => {
+      this.restoreListeners.delete(listener);
+    };
+  }
+
+  beginRestore(promise: Promise<void>): Promise<void> {
+    if (this.restoreStatus === 'restoring' && this.restorePromise) {
+      return this.restorePromise;
+    }
+
+    this.setRestoreStatus('restoring', null);
+    this.restorePromise = promise.then(() => {
+      this.setRestoreStatus('restored', null);
+    }).catch((e) => {
+      const msg = extractErrorMessage(e);
+      this.setRestoreStatus('failed', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
+    });
+    return this.restorePromise;
+  }
+
+  private setRestoreStatus(status: RestoreStatus, error: string | null) {
+    this.restoreStatus = status;
+    this.restoreError = error;
+    for (const listener of this.restoreListeners) {
+      listener(status, error);
+    }
   }
 
   spillStoredMessages() {

@@ -77,6 +77,21 @@ A reorg that rolls back or shifts the coin's birthday re-arms `claim_submitted`,
 so the claim is resubmitted. This replaced the old lazy "build and submit at the
 moment the timeout fires" logic in the handlers.
 
+**Reorg strategy: replay, not invalidation recovery.** Current reorg handling is
+deliberately optimistic. It assumes that transactions which were valid before
+the reorg will either remain valid on the new chain or can be replayed until
+their outputs reappear. The manager supports that model by retaining submitted
+transactions, re-queuing retained submissions on restore, and resubmitting
+transactions whose output coins vanished because their creation was rolled back.
+
+There is not yet a general recovery mechanism for **true invalidation**, where
+the new chain makes a previously valid transaction permanently invalid or
+requires rebuilding handler state from an earlier point. Handler state is mostly
+forward-only after observing spends. If a transaction is genuinely invalidated
+rather than merely reorged out and replayable, that is outside the current
+reorg model and should be treated as future protocol work rather than a bug in
+the replay machinery.
+
 **Notifications ride the observed spend.** Terminal notifications are emitted
 from `handle_game_coin_spent` (via the `coin_spent` → `coin_puzzle_and_solution`
 pipeline) by interpreting what the observed spend created — our reward coin

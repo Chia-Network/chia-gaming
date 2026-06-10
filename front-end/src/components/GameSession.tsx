@@ -6,7 +6,7 @@ import { CalpokerHandState, CalpokerDisplaySnapshot, SessionState } from '../hoo
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
-import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
+import { WasmBlobWrapper, RestoreStatus } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 import SpacePoker from './SpacePoker';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
@@ -472,6 +472,8 @@ export interface GameSessionProps {
   sessionSave?: import('../hooks/save').SessionState;
   onGameActivity?: () => void;
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
+  onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
+  suppressPhaseReporting?: boolean;
 }
 
 const TRACKER_LIVENESS_LABELS: Record<string, string> = {
@@ -481,13 +483,17 @@ const TRACKER_LIVENESS_LABELS: Record<string, string> = {
   disconnected: 'Disconnected',
 };
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, suppressPhaseReporting }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
 
   useEffect(() => {
-    if (!onSessionPhaseChange) return;
+    onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
+  }, [session.restoreStatus, session.restoreError, onRestoreStatusChange]);
+
+  useEffect(() => {
+    if (!onSessionPhaseChange || suppressPhaseReporting) return;
     const phase = deriveSessionPhase(session.channelStatus.state, session.goOnChainPressed);
     const hasError =
       session.channelStatus.state === 'Failed' ||
@@ -496,7 +502,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
       session.gameTerminal.type === 'game-error' ||
       (session.gameTerminal.type === 'we-timed-out' && !session.gameTerminal.cleanEnd);
     onSessionPhaseChange(phase, hasError);
-  }, [session.channelStatus.state, session.goOnChainPressed, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange]);
+  }, [session.channelStatus.state, session.goOnChainPressed, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange, suppressPhaseReporting]);
 
   useEffect(() => {
     if (!onGameActivity) return;
@@ -546,6 +552,14 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
   const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';
   const gameCoinOrRewardHex = session.gameTerminal.rewardCoinHex ?? session.gameCoin.coinHex;
+
+  if (suppressPhaseReporting) {
+    return (
+      <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+        Restoring session...
+      </div>
+    );
+  }
 
   return (
     <div className='relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>

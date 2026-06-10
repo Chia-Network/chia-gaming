@@ -19,7 +19,7 @@ import {
   initStarted,
   setInitStarted,
 } from './blobSingleton';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { WasmBlobWrapper, RestoreStatus } from './WasmBlobWrapper';
 import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBase64 } from './save';
 import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
@@ -401,6 +401,8 @@ export interface UseGameSessionResult {
   lastOutcome: CalpokerOutcome | undefined;
   restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   goOnChainPressed: boolean;
+  restoreStatus: RestoreStatus;
+  restoreError: string | null;
   channelQueue: QueuedNotification[];
   gameQueue: QueuedNotification[];
   dismissChannel: () => void;
@@ -435,6 +437,9 @@ export function useGameSession(
 
   if (params.myAlias) gameObject.myAlias = params.myAlias;
   if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
+
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>(() => gameObject.getRestoreStatus());
+  const [restoreError, setRestoreError] = useState<string | null>(() => gameObject.getRestoreError());
 
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>(() =>
@@ -658,6 +663,13 @@ export function useGameSession(
 
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
   gameObjectRef.current = gameObject;
+
+  useEffect(() => {
+    return gameObject.onRestoreStatusChange((status, error) => {
+      setRestoreStatus(status);
+      setRestoreError(error);
+    });
+  }, [gameObject]);
 
   const cancelStalePeerProposals = useCallback((exceptId?: string) => {
     const go = gameObjectRef.current;
@@ -1367,6 +1379,8 @@ export function useGameSession(
     lastOutcome,
     restoredOutcomeWin,
     goOnChainPressed,
+    restoreStatus,
+    restoreError,
     channelQueue,
     gameQueue,
     dismissChannel,
