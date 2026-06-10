@@ -60,7 +60,6 @@ jobs:
 
   release:
     name: Build deploy tarballs (macOS)
-    if: github.event_name == 'release'
     needs: [test_macos_arm]
     runs-on: [macos-13-arm64]
     steps:
@@ -105,6 +104,7 @@ jobs:
         run: tools/test-deploy-archives.sh --platform=macos
 
       - name: Upload player app artifacts
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-macos
@@ -113,6 +113,7 @@ jobs:
             deploy_player_app/chia-gaming-macos-*.zip
 
       - name: Upload lobby artifacts
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-lobby-macos

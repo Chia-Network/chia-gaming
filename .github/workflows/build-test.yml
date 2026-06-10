@@ -92,7 +92,6 @@ jobs:
   release:
     runs-on: ubuntu-22.04
     name: Build deploy tarballs (Linux)
-    if: github.event_name == 'release'
     needs: [unit_tests]
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +127,7 @@ jobs:
         run: tools/e2e-docker-test.sh --platform=linux
 
       - name: Upload player app artifacts
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-linux
@@ -136,6 +136,7 @@ jobs:
             deploy_player_app/chia-gaming-linux-*.zip
 
       - name: Upload lobby artifacts
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-lobby-linux
