@@ -99,6 +99,27 @@ This produces four files in subdirectories (tgz and zip of each artifact):
 Both formats have identical contents, ready to extract onto their respective
 servers.
 
+### Verifying archives
+
+After building, run the deploy archive test to confirm both tgz and zip
+formats extract correctly, contain a complete staged tree, and serve over HTTP:
+
+```bash
+./tools/test-deploy-archives.sh
+```
+
+With a platform-tagged build (as in CI):
+
+```bash
+./tools/test-deploy-archives.sh --platform=linux
+```
+
+The test extracts each archive, runs `verify-stage.mjs`, floor-checks required
+bundle files (WASM, clsp hex, images, service.js, etc.), compares tgz vs zip
+trees for parity, and smoke-tests HTTP serving via `static-server.js` (player)
+and `service.js` (lobby). CI runs this automatically after `build-deploy.sh` in
+the Linux and macOS release jobs.
+
 # Build Details
 
 ## Building in CI
