@@ -128,6 +128,7 @@ node "$ROOT_DIR/tools/verify-stage.mjs" "$GAME_STAGE"
 echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_player_app"
 tar -czf "$ROOT_DIR/deploy_player_app/$GAME_TARBALL" -C "$GAME_STAGE" .
+rm -f "$ROOT_DIR/deploy_player_app/$GAME_ZIP"
 (cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
 rm -rf "$GAME_STAGE"
 
@@ -152,6 +153,7 @@ node "$ROOT_DIR/tools/verify-stage.mjs" "$LOBBY_STAGE"
 echo "=== Creating $LOBBY_TARBALL and $LOBBY_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_tracker"
 tar -czf "$ROOT_DIR/deploy_tracker/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
+rm -f "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP"
 (cd "$LOBBY_STAGE" && zip -rq "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP" .)
 rm -rf "$LOBBY_STAGE"
 
