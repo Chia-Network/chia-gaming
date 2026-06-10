@@ -118,47 +118,8 @@ jobs:
 
           kill "$SIM_PID" 2>/dev/null || true
 
-      # ── Headless browser test ───────────────────────────────────────
-
-      # - name: Run headless browser test
-      #   env:
-      #     DETECT_CHROMEDRIVER_VERSION: "true"
-      #     FIREFOX_HEADLESS: "true"
-      #   timeout-minutes: 20
-      #   run: |
-      #     set -x
-      #     sudo apt-get update
-      #     sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
-
-      #     GAME_PORT=3002
-      #     LOBBY_PORT=3003
-      #     SIM_PORT=5800
-      #     LOBBY_SERVICE_PORT=5801
-
-      #     SIM_BIN="./target/debug/chia-gaming-sim"
-      #     RUST_LOG=error "$SIM_BIN" &
-      #     SIM_PID=$!
-
-      #     for i in $(seq 1 30); do
-      #         if curl -s -X POST "http://localhost:${SIM_PORT}/get_peak" >/dev/null 2>&1; then
-      #             echo "Simulator ready"
-      #             break
-      #         fi
-      #         sleep 1
-      #     done
-
-      #     node static-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
-      #     SERVER_PID=$!
-
-      #     (cd lobby/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &
-
-      #     sleep 8
-
-      #     # Legacy Selenium harness removed in step-1 reorg.
-      #     # Add a new browser test harness here when reintroduced.
-
-      #     kill "$SIM_PID" "$SERVER_PID" $(jobs -p) 2>/dev/null || true
-      #     exit ${STATUS:-0}
+      # ── Headless browser E2E (deploy tarballs) ─────────────────────
+      # See tools/e2e-docker-test.sh — runs after build-deploy in build-test.yml release job.
 
       # ── Collect deployment artifacts ─────────────────────────────────
 

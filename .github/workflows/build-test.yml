@@ -124,6 +124,9 @@ jobs:
       - name: Verify deploy archives
         run: tools/test-deploy-archives.sh --platform=linux
 
+      - name: Run E2E docker test
+        run: tools/e2e-docker-test.sh --platform=linux
+
       - name: Upload player app artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -454,6 +454,7 @@ function ComposeProposalDialog({
           size='sm'
           disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
           onClick={submit}
+          data-testid='send-proposal'
         >
           {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
         </Button>
@@ -707,6 +708,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                   size='sm'
                   className='absolute right-2'
                   onClick={session.chooseDoNotUseCurrentProposal}
+                  data-testid='between-hand-close'
                   leadingIcon={<span className='text-base leading-none'>&times;</span>}
                 >
                   Close
@@ -722,6 +724,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                     color='primary'
                     size='sm'
                     onClick={session.startCleanShutdown}
+                    data-testid='end-session'
                   >
                     End Session
                   </Button>
@@ -753,7 +756,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                     ) : null;
                   })()}
                   <div className='flex flex-wrap items-center gap-3'>
-                    <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
+                    <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal} data-testid='accept-proposal'>
                       Yes
                     </Button>
                     <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>

@@ -1,0 +1,42 @@
+# E2E server: deploy tarballs + blockchain simulator.
+#
+# Build args (paths relative to repo root):
+#   PLAYER_TGZ  e.g. deploy_player_app/chia-gaming-linux-YYYYMMDD-HASH.tgz
+#   LOBBY_TGZ   e.g. deploy_tracker/chia-gaming-lobby-linux-YYYYMMDD-HASH.tgz
+
+FROM rust:1-bookworm AS sim-build
+WORKDIR /build
+COPY Cargo.toml Cargo.lock build.rs.disabled ./
+COPY bencodex ./bencodex
+COPY src ./src
+COPY clsp ./clsp
+RUN cp build.rs.disabled build.rs \
+    && cargo build --release --features sim-server --bin chia-gaming-sim
+
+FROM node:20-bookworm AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=sim-build /build/target/release/chia-gaming-sim /usr/local/bin/chia-gaming-sim
+
+ARG PLAYER_TGZ
+ARG LOBBY_TGZ
+COPY ${PLAYER_TGZ} /tmp/player.tgz
+COPY ${LOBBY_TGZ} /tmp/lobby.tgz
+
+RUN mkdir -p /opt/player /opt/tracker \
+    && tar -xzf /tmp/player.tgz -C /opt/player \
+    && tar -xzf /tmp/lobby.tgz -C /opt/tracker \
+    && rm /tmp/player.tgz /tmp/lobby.tgz
+
+COPY tools/e2e/server-entrypoint.sh /server-entrypoint.sh
+RUN chmod +x /server-entrypoint.sh
+
+EXPOSE 3002 3003 5800 5801
+
+HEALTHCHECK --interval=5s --timeout=5s --retries=12 --start-period=10s \
+  CMD-SHELL "curl -sf -X POST http://127.0.0.1:5800/get_peak && curl -sf http://127.0.0.1:3002/ && curl -sf http://127.0.0.1:3003/ || exit 1"
+
+ENTRYPOINT ["/server-entrypoint.sh"]

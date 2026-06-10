@@ -1,0 +1,8 @@
+{
+  "name": "chia-gaming-e2e",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "selenium-webdriver": "^4.27.0"
+  }
+}

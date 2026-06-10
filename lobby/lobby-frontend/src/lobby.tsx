@@ -116,6 +116,7 @@ const LobbyScreen = () => {
             value={myAlias}
             onChange={(e) => setMyAlias(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && confirmAlias()}
+            data-testid="lobby-alias"
           />
           <Button
             variant="solid"
@@ -123,6 +124,7 @@ const LobbyScreen = () => {
             size="default"
             onClick={confirmAlias}
             fullWidth
+            data-testid="lobby-join"
           >
             Join Tracker
           </Button>
@@ -211,7 +213,7 @@ const LobbyScreen = () => {
             </label>
           </div>
           <div className="flex gap-2">
-            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge}>
+            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge} data-testid="lobby-send-challenge">
               Send Challenge
             </Button>
             <Button variant="solid" size="sm" onClick={() => setChallengeTarget(null)}>
@@ -299,6 +301,7 @@ const LobbyScreen = () => {
                     disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget || iAmUnavailable}
                     onClick={() => openChallengeDialog(player.id, player.alias)}
                     leadingIcon={<Swords className="w-4 h-4" />}
+                    data-testid="lobby-challenge"
                   >
                     Challenge
                   </Button>
@@ -330,7 +333,7 @@ function IncomingChallengeDialog({
         Buy-in: {challenge.amount} mojos
       </p>
       <div className="flex gap-2">
-        <Button variant="solid" color="primary" size="sm" onClick={onAccept}>
+        <Button variant="solid" color="primary" size="sm" onClick={onAccept} data-testid="lobby-accept">
           Accept
         </Button>
         <Button variant="solid" size="sm" onClick={onDecline}>

@@ -105,6 +105,7 @@ export function SimulatorSetupModal({ open, onConnect, connecting }: SimulatorSe
         disabled={connecting}
         isLoading={connecting}
         loadingText='Connecting&#x2026;'
+        data-testid='sim-connect'
       >
         Connect
       </Button>
