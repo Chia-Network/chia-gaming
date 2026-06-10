@@ -18,6 +18,7 @@ export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
   private cradles = new Set<PollingCradle>();
   private registeredNames = new Set<string>();
+  private observedNames = new Set<string>();
   // Last (peak, records) snapshot reported to each cradle, so we only report on
   // a new block or an actual coin-state change (mirrors the old emit gating and
   // avoids redundant same-height work in the cradle).
@@ -100,6 +101,7 @@ export class BlockchainPoller {
     // Report the latest height even when it decreases: a drop signals a reorg,
     // which the transaction manager detects via height < last_height.  Clamping
     // this monotonically would hide reorgs from the manager.
+    const previousPeak = this.peak;
     const height = await this.rpc.getHeightInfo();
     this.peak = height;
 
@@ -109,6 +111,7 @@ export class BlockchainPoller {
       const name = await coinRecordToName(rec);
       if (name) recordByName.set(name, rec);
     }
+    for (const name of recordByName.keys()) this.observedNames.add(name);
 
     for (const { c, coins } of perCradle) {
       // Never hand the manager a partial snapshot.  If any of this cradle's
@@ -118,6 +121,14 @@ export class BlockchainPoller {
       // spends and drives spurious on-chain transitions.  Registration retries
       // each tick, so reporting resumes once every coin is registered.
       if (coins.some(({ coin_name }) => !this.registeredNames.has(coin_name))) {
+        continue;
+      }
+      // If a coin has previously appeared, a same-height/forward-height response
+      // that omits it is ambiguous and can be a transient RPC miss.  Do not turn
+      // that into a deletion.  Height decreases are different: they are the reorg
+      // signal the transaction manager needs, so omissions must be forwarded.
+      if (height >= previousPeak
+          && coins.some(({ coin_name }) => this.observedNames.has(coin_name) && !recordByName.has(coin_name))) {
         continue;
       }
       const csr: CoinStateRecord[] = [];

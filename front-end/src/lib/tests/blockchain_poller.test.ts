@@ -1,5 +1,7 @@
 import { BlockchainPoller, PollingCradle } from '../../hooks/BlockchainPoller';
 import { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { CoinRecord } from '../../types/rpc/CoinRecord';
+import { coinRecordToName } from '../../util/coinWatch';
 
 function makeRpc(heights: bigint[]): InternalBlockchainInterface {
   return new Proxy(
@@ -14,6 +16,25 @@ function makeRpc(heights: bigint[]): InternalBlockchainInterface {
         (() => Promise.resolve(undefined)),
     },
   );
+}
+
+function hexByte(byte: number): string {
+  return byte.toString(16).padStart(2, '0').repeat(32);
+}
+
+function makeCoinRecord(index: number): CoinRecord {
+  return {
+    coin: {
+      parentCoinInfo: `0x${hexByte(index)}`,
+      puzzleHash: `0x${hexByte(index + 16)}`,
+      amount: BigInt(index),
+    },
+    confirmedBlockIndex: 10n,
+    spentBlockIndex: 0n,
+    spent: false,
+    coinbase: false,
+    timestamp: 0n,
+  };
 }
 
 describe('BlockchainPoller', () => {
@@ -77,5 +98,46 @@ describe('BlockchainPoller', () => {
     registerOk = true;
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(reportedPeaks).toEqual([100n]);
+  });
+
+  it('skips transient partial snapshots for coins that were previously observed', async () => {
+    const recordA = makeCoinRecord(1);
+    const recordB = makeCoinRecord(2);
+    const nameA = await coinRecordToName(recordA);
+    const nameB = await coinRecordToName(recordB);
+    expect(nameA).toBeDefined();
+    expect(nameB).toBeDefined();
+
+    const responses = [[recordA, recordB], [recordA]];
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.resolve(responses.shift() ?? []),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const reports: Array<{ peak: bigint; coins: string[] }> = [];
+    const cradle: PollingCradle = {
+      getCoinsToPoll: () => [
+        { coin_name: nameA!, coin_string: 'coin-a' },
+        { coin_name: nameB!, coin_string: 'coin-b' },
+      ],
+      reportCoinStates: (peak, records) => {
+        reports.push({ peak, coins: records.map((r) => r.coin) });
+      },
+    };
+
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachCradle(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(reports).toEqual([{ peak: 100n, coins: ['coin-a', 'coin-b'] }]);
   });
 });

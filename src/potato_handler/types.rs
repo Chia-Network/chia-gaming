@@ -200,7 +200,7 @@ pub enum PotatoState {
     Present,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     #[serde(rename = "Accept")]

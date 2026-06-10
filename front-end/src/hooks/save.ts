@@ -402,6 +402,10 @@ function flushToLocalStorage(): void {
   }
 }
 
+export function flushSessionState(): void {
+  flushToLocalStorage();
+}
+
 function schedulePersist(): void {
   if (persistTimer || fenced) return;
   const timer = setTimeout(() => {

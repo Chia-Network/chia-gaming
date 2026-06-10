@@ -90,6 +90,13 @@ state tracking is **forward-only** — there is no rewind logic. Two cases:
 Games that existed off-chain but don't match any created coin are reported as
 `GameError` (these were accepted games that should have appeared on-chain).
 
+The state created by the unroll is not always the most advanced state known to
+the potato protocol.  If our last potato action has not round-tripped, the
+virtual game may be one step ahead locally while the latest mutually signed
+unroll can only materialize the previous version on-chain.  Redo is the bridge
+between those views: replay the cached last move on-chain, then continue from
+the actual coin the chain created.
+
 ### Step 4: Redo (if needed)
 
 If the game coin landed at the pre-move state, the redo transaction is emitted
@@ -813,6 +820,20 @@ stale, optimistically-advanced referee state).
 
 Both players maintain independent `game_map`s, and both should have
 complementary `our_turn` values for the same game coin.
+
+### Accepted On-Chain Coins
+
+`accepted: true` means this side has accepted the game outcome in its local
+potato-protocol state.  It does not mean the observed on-chain coin is already
+terminal.  The real chain coin might still represent the version captured by
+the unroll, which can be one step behind the local potato state, so an accepted
+coin may still advance to another game coin before timeout finality.
+
+When that happens, `handle_game_coin_spent` keeps tracking the created coin and
+registers the next timeout claim under `"accepted game coin advanced by redo"`.
+The accepted flag is carried forward as timeout intent: once the actual chain
+state reaches a reward-coin spend, the terminal `WeTimedOut` notification is
+emitted from the observed conditions.
 
 ### Moves for Finished Games Are Discarded
 

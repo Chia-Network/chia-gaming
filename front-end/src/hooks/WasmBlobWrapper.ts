@@ -19,6 +19,7 @@ import {
 } from '../util';
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
+import { flushSessionState } from './save';
 import type { CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
@@ -464,6 +465,7 @@ export class WasmBlobWrapper implements PollingCradle {
       if (this.onChain) return;
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
+      this.persistSessionNow();
       this.sendMessage(msgno, event.OutboundMessage);
     } else if ('Notification' in event) {
       const n = event.Notification;
@@ -553,6 +555,7 @@ export class WasmBlobWrapper implements PollingCradle {
       console.error('[wasm] deliver_message failed:', e);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
+    this.persistSessionNow();
     this.sendAck(msgno);
   }
 
@@ -630,7 +633,17 @@ export class WasmBlobWrapper implements PollingCradle {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
       this.onSaveNeeded?.();
+      flushSessionState();
     }
+  }
+
+  private persistSessionNow() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.onSaveNeeded?.();
+    flushSessionState();
   }
 
   getWasmFields(): WasmFields | null {

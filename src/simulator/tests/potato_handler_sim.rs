@@ -1017,7 +1017,9 @@ fn move_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver;
         return false;
     }
     match &moves[mn] {
-        GameAction::Move(who, gid, _, _) | GameAction::FakeMove(who, gid, _, _) => {
+        GameAction::Move(who, gid, _, _)
+        | GameAction::FakeMove(who, gid, _, _)
+        | GameAction::BadSignatureMove(who, gid, _) => {
             local_uis[*who].game_accepted_ids.contains(gid)
                 || local_uis[*who].opponent_moved_in_game.contains(gid)
         }
@@ -1172,6 +1174,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut start_step = 0;
     let mut num_steps = 0;
     let mut logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
+    let mut tamper_next_batch_signature = [false, false];
 
     // Give coins to the cradles.
     cradles[0].opening_coin(allocator, parent_coin_0)?;
@@ -1202,6 +1205,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::InjectRawMessage(_, _)
                     | GameAction::SelfAcceptProposal(_, _)
                     | GameAction::WrongParityProposal(_)
+                    | GameAction::BadSignatureMove(_, _, _)
             )
     };
     let has_explicit_go_on_chain = moves_input.iter().any(|m| {
@@ -1345,8 +1349,32 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 if cradles[i].is_peer_disconnected() {
                                     continue;
                                 }
+                                let delivered_msg = if tamper_next_batch_signature[i] {
+                                    let peer_message: PeerMessage =
+                                        bencodex::from_slice(msg).into_gen()?;
+                                    if let PeerMessage::Batch {
+                                        actions,
+                                        mut signatures,
+                                        clean_shutdown,
+                                    } = peer_message
+                                    {
+                                        signatures.my_channel_half_signature_peer =
+                                            Default::default();
+                                        tamper_next_batch_signature[i] = false;
+                                        bencodex::to_vec(&PeerMessage::Batch {
+                                            actions,
+                                            signatures,
+                                            clean_shutdown,
+                                        })
+                                        .into_gen()?
+                                    } else {
+                                        msg.clone()
+                                    }
+                                } else {
+                                    msg.clone()
+                                };
                                 let t_msg = std::time::Instant::now();
-                                cradles[i ^ 1].deliver_message(msg)?;
+                                cradles[i ^ 1].deliver_message(&delivered_msg)?;
                                 if timing_enabled {
                                     let msg_elapsed = t_msg.elapsed();
                                     if msg_elapsed.as_millis() > 10 {
@@ -1621,6 +1649,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 )))
                             }
                         })?;
+                    }
+                    GameAction::BadSignatureMove(who, gid, readable) => {
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "BadSignatureMove", gid, gid);
+                        }
+                        tamper_next_batch_signature[*who] = true;
+                        let entropy = rng.random();
+                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
+                        local_uis[*who].game_accepted_ids.remove(gid);
+                        local_uis[*who].opponent_moved_in_game.remove(gid);
                     }
                     GameAction::Cheat(who, gid, cheat_share) => {
                         if gid_diag_on {
@@ -2791,6 +2829,46 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             );
         },
     ));
+
+    res.push(("failed_final_move_bad_signature_does_not_queue_accept_timeout", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        let mut hand_moves = prefix_test_moves(&mut allocator, GameID(1));
+        let final_move = hand_moves
+            .pop()
+            .expect("calpoker fixture should include a final move");
+        moves.extend(hand_moves);
+        if let GameAction::Move(player, game_id, readable, _) = final_move {
+            moves.push(GameAction::BadSignatureMove(player, game_id, readable));
+        } else {
+            panic!("calpoker final fixture move should be a Move");
+        }
+        moves.push(GameAction::WaitBlocks(120, 0));
+
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+            .unwrap_or_else(|e| panic!("should finish bad-signature final move test, got: {e:?}"));
+
+        assert!(
+            outcome.local_uis[1].got_error,
+            "Bob should be forced on-chain by the malformed final move"
+        );
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            !p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    ..
+                }
+            )),
+            "Bob must not process an AcceptTimeout queued by a final move whose batch failed signature validation, got: {p1_notifs:?}"
+        );
+    }));
 
     res.push((
         "sim_test_with_peer_container_piss_off_peer_after_start_complete",

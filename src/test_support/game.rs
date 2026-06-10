@@ -180,6 +180,8 @@ mod sim_tests {
         Move(usize, GameID, ReadableMove, bool),
         /// Fake move (player, game_id, readable, sabotage bytes).
         FakeMove(usize, GameID, ReadableMove, Vec<u8>),
+        /// Make a normal move, but tamper the outbound batch signatures.
+        BadSignatureMove(usize, GameID, ReadableMove),
         /// Cheat (player, game_id, mover_share).
         Cheat(usize, GameID, Amount),
         /// Force-destroy a game coin (player, game_id).
@@ -243,6 +245,9 @@ mod sim_tests {
                 GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
                 GameAction::FakeMove(p, g, n, v) => {
                     write!(formatter, "FakeMove({p},{g:?},{n:?},{v:?})")
+                }
+                GameAction::BadSignatureMove(p, g, n) => {
+                    write!(formatter, "BadSignatureMove({p},{g:?},{n:?})")
                 }
                 GameAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
                 GameAction::ForceDestroyCoin(p, g) => {

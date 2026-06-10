@@ -500,6 +500,7 @@ impl PotatoHandler {
                 clean_shutdown,
             } => {
                 let ch_snapshot = self.channel_handler.clone();
+                let queue_snapshot = self.game_action_queue.clone();
                 match self.process_received_batch(
                     env,
                     &timeout,
@@ -512,6 +513,7 @@ impl PotatoHandler {
                     }
                     Err(e) => {
                         self.channel_handler = ch_snapshot;
+                        self.game_action_queue = queue_snapshot;
                         return Err(e);
                     }
                 }
