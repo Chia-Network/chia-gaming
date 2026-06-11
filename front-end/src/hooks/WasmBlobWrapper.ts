@@ -114,6 +114,10 @@ export class WasmBlobWrapper implements PollingCradle {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private beforeUnloadHandler: (() => void) | null = null;
+  private durabilityFlushScheduled = false;
+  private needsImmediateDurability = false;
+  private pendingOutboundSends: Array<{ msgno: number; msg: Uint8Array }> = [];
+  private pendingAcks: number[] = [];
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
@@ -181,6 +185,8 @@ export class WasmBlobWrapper implements PollingCradle {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
+    this.flushDurabilityAndSend();
+    this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
@@ -465,8 +471,8 @@ export class WasmBlobWrapper implements PollingCradle {
       if (this.onChain) return;
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
-      this.persistSessionNow();
-      this.sendMessage(msgno, event.OutboundMessage);
+      this.pendingOutboundSends.push({ msgno, msg: event.OutboundMessage });
+      this.markNeedsImmediateDurability();
     } else if ('Notification' in event) {
       const n = event.Notification;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
@@ -534,7 +540,12 @@ export class WasmBlobWrapper implements PollingCradle {
       return;
     }
     if (msgno <= this.remoteNumber) {
-      this.sendAck(msgno);
+      if (this.needsImmediateDurability) {
+        this.pendingAcks.push(msgno);
+        this.scheduleDurabilityFlush();
+      } else {
+        this.sendAck(msgno);
+      }
       return;
     }
     if (msgno > this.remoteNumber + 1) {
@@ -555,8 +566,8 @@ export class WasmBlobWrapper implements PollingCradle {
       console.error('[wasm] deliver_message failed:', e);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
-    this.persistSessionNow();
-    this.sendAck(msgno);
+    this.pendingAcks.push(msgno);
+    this.markNeedsImmediateDurability();
   }
 
   private flushReorderQueue() {
@@ -629,6 +640,7 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   flushPendingSave() {
+    this.flushDurabilityAndSend();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -637,13 +649,47 @@ export class WasmBlobWrapper implements PollingCradle {
     }
   }
 
-  private persistSessionNow() {
+  private markNeedsImmediateDurability() {
+    this.needsImmediateDurability = true;
+    this.scheduleDurabilityFlush();
+  }
+
+  private scheduleDurabilityFlush() {
+    if (this.durabilityFlushScheduled) return;
+    this.durabilityFlushScheduled = true;
+    const timer = setTimeout(() => {
+      this.durabilityFlushScheduled = false;
+      if (this.drainScheduled || this.eventQueue.length > 0) {
+        this.scheduleDurabilityFlush();
+        return;
+      }
+      this.flushDurabilityAndSend();
+    }, 0);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  }
+
+  private flushDurabilityAndSend() {
+    if (!this.needsImmediateDurability && this.pendingOutboundSends.length === 0 && this.pendingAcks.length === 0) {
+      return;
+    }
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    this.onSaveNeeded?.();
-    flushSessionState();
+    if (this.needsImmediateDurability) {
+      this.onSaveNeeded?.();
+      flushSessionState();
+      this.needsImmediateDurability = false;
+    }
+
+    const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
+    const acks = this.pendingAcks.splice(0, this.pendingAcks.length);
+    for (const { msgno, msg } of outbound) {
+      this.sendMessage(msgno, msg);
+    }
+    for (const ack of acks) {
+      this.sendAck(ack);
+    }
   }
 
   getWasmFields(): WasmFields | null {

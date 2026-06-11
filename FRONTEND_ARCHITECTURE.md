@@ -397,14 +397,37 @@ fires in two situations:
   any dependency in the JS-side state changes.
 - **WASM state changes** — `WasmBlobWrapper.onSaveNeeded` is wired to
   `persistFullSession`. Inside WasmBlobWrapper, `scheduleSave()` debounces
-  (500ms) and fires `onSaveNeeded`. `scheduleSave()` is called at the end of
-  every `processResult()` invocation, when outbound messages are added, and
-  when acks are received. Transaction submission and resubmission bookkeeping is
-  owned by the Rust `TransactionManager`, not by a frontend
-  `pendingTransactions` save field.
+  (500ms) and fires `onSaveNeeded` for ordinary state changes such as
+  notifications, history/log updates, and ack pruning. Delivery-critical message
+  state uses a stricter path described below. Transaction submission and
+  resubmission bookkeeping is owned by the Rust `TransactionManager`, not by a
+  frontend `pendingTransactions` save field.
 
 This means the outer JS layer always builds the complete, coherent save from
 both JS and WASM state at once.
+
+#### Delivery-critical saves
+
+Peer message counters and queues are part of the reliable transport protocol,
+so they are not allowed to wait for the normal debounce. When an outbound WASM
+message is produced, `WasmBlobWrapper` increments `messageNumber`, appends the
+message to `unackedMessages`, and queues the actual WebSocket send. When an
+inbound message is delivered, it advances `remoteNumber` and queues the ack. The
+queued sends/acks are held until the current WASM event drain is empty.
+
+At that point `WasmBlobWrapper` performs one immediate durability flush:
+
+1. Cancel any pending debounced save.
+2. Call `onSaveNeeded`, which serializes the cradle and merges the current
+   WASM/JS fields into `SessionState`.
+3. Call `flushSessionState()` to synchronously write the save to `localStorage`.
+4. Send all queued outbound messages and acks.
+
+This preserves the transport invariant across reloads: the peer only observes a
+message or ack after the local save contains the corresponding
+`messageNumber`/`unackedMessages` or `remoteNumber`/cradle state. A burst of
+events in one drain still causes only one full cradle serialization and one
+`localStorage` write instead of one write per message.
 
 #### Session model ownership
 
@@ -560,20 +583,24 @@ binary over time.
 #### Outbound
 
 Every outbound game message (including handshake messages) is assigned a
-monotonically increasing `messageNumber`, stored in `unackedMessages`, and sent
-as a binary frame via the tracker. On receiving an ack with number N, all
-entries with `msgno <= N` are pruned from the log.
+monotonically increasing `messageNumber` and stored in `unackedMessages`. The
+binary frame is not sent immediately; it is queued until the current WASM event
+drain is empty and the updated session state has been durably flushed. On
+receiving an ack with number N, all entries with `msgno <= N` are pruned from
+the log and persisted through the normal debounced save path.
 
 #### Inbound
 
 `WasmBlobWrapper.deliverMessage` enforces strict ordering:
 
 - `msgno <= remoteNumber`: duplicate, dropped. An ack is re-sent in case the
-  original ack was lost.
+  original ack was lost. If another message boundary is already waiting for a
+  durability flush, this duplicate ack is queued behind that flush too.
 - `msgno > remoteNumber + 1`: out-of-order, buffered in a `reorderQueue` map.
 - `msgno == remoteNumber + 1`: delivered to the WASM cradle, `remoteNumber`
-  incremented, ack sent, then contiguous messages are flushed from the reorder
-  queue.
+  incremented, ack queued, then contiguous messages are flushed from the reorder
+  queue. Acks are sent only after the updated `remoteNumber` and serialized
+  cradle have been written to the session save.
 
 #### Peer Liveness
 

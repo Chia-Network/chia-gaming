@@ -154,8 +154,16 @@ afterEach(() => {
   clearTestGlobal('localStorage');
 });
 
+async function flushDeferredWork(ticks = 4) {
+  for (let i = 0; i < ticks; i += 1) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
+}
+
 describe('in-order delivery', () => {
-  it('delivers messages 1, 2, 3 and ACKs each', () => {
+  it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
@@ -164,6 +172,8 @@ describe('in-order delivery', () => {
     blob.deliverMessage(3, enc('c'));
 
     expect(blob.remoteNumber).toBe(3);
+    expect(sentAcks).toEqual([]);
+    await flushDeferredWork();
     expect(sentAcks).toEqual([1, 2, 3]);
     expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
     expect(
@@ -173,7 +183,7 @@ describe('in-order delivery', () => {
 });
 
 describe('duplicate detection', () => {
-  it('delivers once but ACKs twice', () => {
+  it('delivers once but ACKs twice after pending durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
@@ -181,12 +191,13 @@ describe('duplicate detection', () => {
     blob.deliverMessage(1, enc('a'));
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
+    await flushDeferredWork();
     expect(sentAcks).toEqual([1, 1]);
   });
 });
 
 describe('out-of-order delivery with reorder queue', () => {
-  it('delivers 3, 1, 2 → cradle sees a, b, c in order', () => {
+  it('delivers 3, 1, 2 → cradle sees a, b, c in order', async () => {
     const delivered: Uint8Array[] = [];
     const { blob, sentAcks } = createReadyBlob((msg) => {
       delivered.push(msg);
@@ -200,12 +211,13 @@ describe('out-of-order delivery with reorder queue', () => {
 
     expect(delivered).toEqual([enc('a'), enc('b'), enc('c')]);
     expect(blob.remoteNumber).toBe(3);
+    await flushDeferredWork();
     expect(sentAcks).toEqual([1, 2, 3]);
   });
 });
 
 describe('buffering before system ready, then spill', () => {
-  it('buffers messages and delivers when system reaches qe=7', () => {
+  it('buffers messages and delivers when system reaches qe=7', async () => {
     const { blob, cradle, sentAcks } = createUnreadyBlob();
     activeBlob = blob;
 
@@ -217,6 +229,7 @@ describe('buffering before system ready, then spill', () => {
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
     expect(blob.remoteNumber).toBe(2);
+    await flushDeferredWork();
     expect(sentAcks).toEqual([1, 2]);
   });
 
@@ -319,6 +332,7 @@ describe('restore ordering', () => {
 
     blob.kickSystem(2);
     blob.deliverMessage(1, enc('already-processed'));
+    await flushDeferredWork();
     const statuses: string[] = [];
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
