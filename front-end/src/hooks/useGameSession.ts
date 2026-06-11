@@ -674,6 +674,11 @@ export function useGameSession(
       myRunningBalance,
       lastOutcomeWin: wasm.lastOutcomeWin,
     });
+    const modelSnapshot = snapshotFromSessionModel(model);
+    // Shell owns the human transcript and global diagnostic log.
+    delete modelSnapshot.humanHistory;
+    delete modelSnapshot.diagnosticLog;
+
     const save: Partial<SessionState> = {
       blockchainType: getBlockchainType(),
       serializedCradle: uint8ToBase64(wasm.serializedCradle),
@@ -692,7 +697,7 @@ export function useGameSession(
       myAlias: wasm.myAlias,
       opponentAlias: wasm.opponentAlias,
       lastOutcomeWin: wasm.lastOutcomeWin,
-      ...snapshotFromSessionModel(model),
+      ...modelSnapshot,
     };
     saveSession(save);
   }, [
