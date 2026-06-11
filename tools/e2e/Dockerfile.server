@@ -5,6 +5,9 @@
 #   LOBBY_TGZ   e.g. deploy_tracker/chia-gaming-lobby-linux-YYYYMMDD-HASH.tgz
 
 FROM rust:1-bookworm AS sim-build
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang llvm \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY Cargo.toml Cargo.lock build.rs.disabled ./
 COPY bencodex ./bencodex

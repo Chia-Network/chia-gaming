@@ -96,7 +96,9 @@ jobs:
           corepack prepare pnpm@10.33.0 --activate
 
       - name: Install LLVM (wasm32 clang)
-        run: brew install llvm
+        run: |
+          brew install llvm || true
+          test -x /opt/homebrew/opt/llvm/bin/clang || { echo "LLVM clang not found after install"; exit 1; }
 
       - name: Build deploy tarballs
         run: |
