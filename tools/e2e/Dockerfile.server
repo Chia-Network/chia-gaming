@@ -40,6 +40,6 @@ RUN chmod +x /server-entrypoint.sh
 EXPOSE 3002 3003 5800 5801
 
 HEALTHCHECK --interval=5s --timeout=5s --retries=12 --start-period=10s \
-  CMD-SHELL "curl -sf -X POST http://127.0.0.1:5800/get_peak && curl -sf http://127.0.0.1:3002/ && curl -sf http://127.0.0.1:3003/ || exit 1"
+  CMD ["sh", "-c", "curl -sf -X POST http://127.0.0.1:5800/get_peak && curl -sf http://127.0.0.1:3002/ && curl -sf http://127.0.0.1:3003/ || exit 1"]
 
 ENTRYPOINT ["/server-entrypoint.sh"]
