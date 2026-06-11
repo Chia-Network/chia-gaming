@@ -145,6 +145,10 @@ class WasmBlobWrapperAdapter {
     return !!this.blob?.isChannelReady();
   }
 
+  observedActiveStatus(): boolean {
+    return this.blob?.lastChannelStatus?.state === 'Active';
+  }
+
   outbound_messages(): Array<SimpleMessage> {
     let w = this.waiting_messages;
     this.waiting_messages = [];
@@ -169,6 +173,13 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
   return true;
 }
 
+async function yieldToWrapperDrain(): Promise<void> {
+  // WasmBlobWrapper drains events and then performs the durability/send flush
+  // on nested zero-delay timers.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 async function action_with_messages(
   poller: BlockchainPoller,
   cradle1: WasmBlobWrapperAdapter,
@@ -182,7 +193,7 @@ async function action_with_messages(
     if (c.blob) poller.attachCradle(c.blob);
   });
 
-  let evt_results: Array<boolean> = [false, false];
+  let evt_results: Array<boolean> = cradles.map((c) => c.observedActiveStatus());
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
       next: (evt: WasmEvent) => {
@@ -206,13 +217,13 @@ async function action_with_messages(
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
         }
       }
-      // Yield to async handlers without arbitrary sleep.
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await yieldToWrapperDrain();
+      evt_results = evt_results.map((seen, index) => seen || cradles[index].observedActiveStatus());
     }
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
-      throw 'we expected running state in both cradles';
+      throw new Error(`we expected running state in both cradles, got active=${evt_results.join(',')} ready=${cradles.map((c) => c.handshaked()).join(',')}`);
     }
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
