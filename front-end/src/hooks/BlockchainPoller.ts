@@ -2,6 +2,7 @@ import { InternalBlockchainInterface, CoinStateRecord } from '../types/ChiaGamin
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { coinRecordToName } from '../util/coinWatch';
 import { log } from '../services/log';
+import { jsonStringify } from '../util/jsonSafe';
 
 /**
  * A cradle that the poller drives with raw chain state.  The transaction
@@ -139,15 +140,15 @@ export class BlockchainPoller {
         // is its true creation height (including height 0); the record's presence,
         // not confirmedBlockIndex > 0, is what marks it created.  Spend is driven
         // by the authoritative `spent` flag rather than spentBlockIndex > 0.
-        const created = Number(rec.confirmedBlockIndex);
-        const spent = rec.spent ? Number(rec.spentBlockIndex) : null;
+        const created = rec.confirmedBlockIndex;
+        const spent = rec.spent ? rec.spentBlockIndex : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
       // Sort by coin so the dedup key is independent of the order coins come
       // back in (get_coins_to_poll iterates a HashMap, whose order can shift on
       // mutation or after a reload re-seeds the map).
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
-      const key = `${this.peak}:${JSON.stringify(csr)}`;
+      const key = `${this.peak}:${jsonStringify(csr)}`;
       if (this.lastReported.get(c) === key) continue;
       this.lastReported.set(c, key);
       c.reportCoinStates(this.peak, csr);

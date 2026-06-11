@@ -102,9 +102,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         }
 
         if (data.id !== undefined) {
-          const p = this.pending.get(Number(data.id));
+          const id = Number(data.id);
+          const p = this.pending.get(id);
           if (p) {
-            this.pending.delete(data.id);
+            this.pending.delete(id);
             if (data.error) {
               p.reject(new Error(data.error));
             } else {

@@ -225,7 +225,7 @@ export function useCalpokerHand(
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     if (!go || !gid) return;
-    go.cheat(gid, 0);
+    go.cheat(gid, 0n);
   }, []);
 
   const handleNerf = useCallback(() => {

@@ -34,7 +34,7 @@ import {
 } from '../lib/session/model';
 
 export type GameplayEvent =
-  | { ProposalAccepted: { id: number | string } }
+  | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: number[] } }
   | { GameMessage: { readable: number[] } }
   | { _terminal: true; notification: WasmNotification };
@@ -104,7 +104,7 @@ export type NotificationKind =
   | 'insufficient-bal';
 
 export interface QueuedNotification {
-  id: number;
+  id: bigint;
   kind: NotificationKind;
   title: string;
   message: string;
@@ -359,11 +359,21 @@ function parseIncomingProposal(value: unknown): BetweenHandProposal | null {
   const idRaw = obj.id;
   const gameType = parseGameTypeFromNotification(obj);
   const terms = parseTermsFromNotificationValue(value, gameType);
-  if (!terms || (typeof idRaw !== 'number' && typeof idRaw !== 'string')) return null;
+  if (!terms || (typeof idRaw !== 'bigint' && typeof idRaw !== 'number' && typeof idRaw !== 'string')) return null;
   return {
     id: String(idRaw),
     terms,
   };
+}
+
+function maxQueuedNotificationId(...queues: QueuedNotification[][]): bigint {
+  let max = 0n;
+  for (const queue of queues) {
+    for (const notification of queue) {
+      if (notification.id > max) max = notification.id;
+    }
+  }
+  return max;
 }
 
 export interface UseGameSessionResult {
@@ -479,10 +489,9 @@ export function useGameSession(
     restoredModel?.game.queue as QueuedNotification[] ?? []
   );
   const notifIdRef = useRef(
-    Math.max(
-      0,
-      ...((restoredModel?.channel.queue ?? []) as QueuedNotification[]).map(n => n.id),
-      ...((restoredModel?.game.queue ?? []) as QueuedNotification[]).map(n => n.id),
+    maxQueuedNotificationId(
+      (restoredModel?.channel.queue ?? []) as QueuedNotification[],
+      (restoredModel?.game.queue ?? []) as QueuedNotification[],
     )
   );
 
@@ -734,7 +743,7 @@ export function useGameSession(
     try {
       const ids = go.proposeGame({
         game_type: terms.gameType,
-        timeout: 15,
+        timeout: 15n,
         amount: terms.myContribution + terms.theirContribution,
         my_contribution: terms.myContribution,
         my_turn: selectDefaultCalpokerProposalMyTurn(iStarted),
@@ -973,7 +982,7 @@ export function useGameSession(
       setRejectedOnceTerms(null);
       setGameQueue(prev => prev.filter(n => n.kind !== 'proposal-rejected'));
       setBetweenHandMode('decision');
-      gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as number | string } });
+      gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as bigint | number | string } });
     } else if ('GameStatus' in n) {
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;

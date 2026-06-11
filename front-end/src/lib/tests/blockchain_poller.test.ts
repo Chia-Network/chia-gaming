@@ -121,14 +121,14 @@ describe('BlockchainPoller', () => {
           (() => Promise.resolve(undefined)),
       },
     );
-    const reports: Array<{ peak: bigint; coins: string[] }> = [];
+    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
     const cradle: PollingCradle = {
       getCoinsToPoll: () => [
         { coin_name: nameA!, coin_string: 'coin-a' },
         { coin_name: nameB!, coin_string: 'coin-b' },
       ],
       reportCoinStates: (peak, records) => {
-        reports.push({ peak, coins: records.map((r) => r.coin) });
+        reports.push({ peak, records });
       },
     };
 
@@ -138,6 +138,12 @@ describe('BlockchainPoller', () => {
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
-    expect(reports).toEqual([{ peak: 100n, coins: ['coin-a', 'coin-b'] }]);
+    expect(reports).toEqual([{
+      peak: 100n,
+      records: [
+        { coin: 'coin-a', created_height: 10n, spent_height: null },
+        { coin: 'coin-b', created_height: 10n, spent_height: null },
+      ],
+    }]);
   });
 });

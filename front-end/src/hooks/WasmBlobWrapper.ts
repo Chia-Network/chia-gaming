@@ -766,7 +766,7 @@ export class WasmBlobWrapper implements PollingCradle {
     this.processResult(result);
   }
 
-  cheat(gameId: string, moverShare: number): void {
+  cheat(gameId: string, moverShare: bigint): void {
     if (!this.cradle) throw new Error('no cradle');
     const result = this.cradle.cheat(gameId, moverShare);
     this.processResult(result);

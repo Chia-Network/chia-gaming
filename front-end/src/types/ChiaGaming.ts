@@ -1,5 +1,6 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
+import { jsonStringify } from '../util/jsonSafe';
 
 export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
@@ -28,8 +29,8 @@ export interface SpendBundle {
 export interface CoinStateRecord {
   /** Full coin string, hex-encoded. */
   coin: string;
-  created_height: number | null;
-  spent_height: number | null;
+  created_height: bigint | null;
+  spent_height: bigint | null;
 }
 
 export type CradleEvent =
@@ -63,7 +64,7 @@ export interface CoinsetOrgBlockSpend {
 
 export interface ProposeGameParams {
   game_type: string;
-  timeout: number;
+  timeout: bigint;
   amount: bigint;
   my_contribution: bigint;
   my_turn: boolean;
@@ -340,7 +341,7 @@ export class ChiaGame {
     return this.wasm.make_move_with_entropy_for_testing(this.cradle, id, readable, new_entropy);
   }
 
-  cheat(game_id: string, mover_share: number): WasmResult | undefined {
+  cheat(game_id: string, mover_share: bigint): WasmResult | undefined {
     return this.wasm.cheat(this.cradle, game_id, String(mover_share));
   }
 
@@ -390,7 +391,7 @@ export class ChiaGame {
 
   /** Report raw per-coin chain state; the manager computes the diff internally. */
   report_coin_states(height: bigint, records: CoinStateRecord[]): WasmResult | undefined {
-    return this.wasm.report_coin_states(this.cradle, height, JSON.stringify(records));
+    return this.wasm.report_coin_states(this.cradle, height, jsonStringify(records));
   }
 
   /** Coins the host should poll for on-chain state. */

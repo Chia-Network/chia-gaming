@@ -9,7 +9,7 @@ import {
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { restoreSession } from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { _resetForTests as resetSaveState, uint8ToBase64 } from '../../hooks/save';
+import { _resetForTests as resetSaveState, type SessionState, uint8ToBase64 } from '../../hooks/save';
 
 const mockRpc = new Proxy({} as InternalBlockchainInterface, {
   get: () => () => Promise.resolve(undefined),
@@ -343,10 +343,10 @@ describe('restore ordering', () => {
           version: 3,
           playerId: 'p1',
           serializedCradle: uint8ToBase64(new Uint8Array([1, 2, 3])),
-          messageNumber: 5,
-          remoteNumber: 1,
-          unackedMessages: [{ msgno: 4, msg: uint8ToBase64(enc('outbound')) }],
-        },
+          messageNumber: 5n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 4n, msg: uint8ToBase64(enc('outbound')) }],
+        } as unknown as SessionState,
         wasmStateInit,
       ),
     );

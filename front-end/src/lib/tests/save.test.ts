@@ -191,6 +191,47 @@ describe('flat state', () => {
     expect(state.playerId).not.toBe('old-player');
     expect(state.version).toBe(3);
   });
+
+  it('normalizes number-bound fields revived as bigint on load', () => {
+    _writeRawState({
+      version: 3,
+      playerId: 'p1',
+      messageNumber: 5,
+      remoteNumber: 3,
+      unackedMessages: [{ msgno: 4, msg: 'hello' }],
+      chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 123, isMine: true }],
+      handState: {
+        playerHand: [1, 2],
+        opponentHand: [3, 4],
+        moveNumber: 2,
+        isPlayerTurn: true,
+        cardSelections: [1],
+        displaySnapshot: {
+          gameState: 'selecting',
+          playerCardIds: [1, 2],
+          opponentCardIds: [3, 4],
+          cardSelections: [1],
+          winner: null,
+          playerBestHandCardIds: [1],
+          opponentBestHandCardIds: [3],
+          playerHaloCardIds: [2],
+          opponentHaloCardIds: [4],
+          playerDisplayText: 'player',
+          opponentDisplayText: 'opponent',
+        },
+      },
+    });
+
+    const state = loadAppState();
+
+    expect(typeof state.messageNumber).toBe('number');
+    expect(typeof state.remoteNumber).toBe('number');
+    expect(typeof state.unackedMessages?.[0].msgno).toBe('number');
+    expect(typeof state.chatMessages?.[0].timestamp).toBe('number');
+    expect(typeof state.handState?.moveNumber).toBe('number');
+    expect(typeof state.handState?.playerHand[0]).toBe('number');
+    expect(typeof state.handState?.displaySnapshot?.playerCardIds[0]).toBe('number');
+  });
 });
 
 describe('hard reset', () => {

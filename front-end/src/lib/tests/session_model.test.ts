@@ -121,6 +121,24 @@ describe('session model selectors', () => {
     expect(restored.betweenHand.mode).toBe(live.betweenHand.mode);
   });
 
+  it('normalizes restored notification ids to bigint', () => {
+    const save = {
+      version: 3,
+      playerId: 'p1',
+      channelNotifQueue: [
+        { id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' },
+      ],
+      gameNotifQueue: [
+        { id: '8', kind: 'game-terminal', title: 'Game', message: 'Done' },
+      ],
+    } as unknown as SessionState;
+
+    const restored = sessionModelFromSave(save);
+
+    expect(restored.channel.queue[0].id).toBe(7n);
+    expect(restored.game.queue[0].id).toBe(8n);
+  });
+
   it('separates history, diagnostic log, chat, and wasm notification history in snapshots', () => {
     const model = createSessionModel({
       history: {

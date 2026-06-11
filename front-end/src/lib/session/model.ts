@@ -60,7 +60,7 @@ export interface GameTerminalModel {
 }
 
 export interface QueuedNotificationModel {
-  id: number;
+  id: bigint;
   kind: NotificationKind;
   title: string;
   message: string;
@@ -476,6 +476,30 @@ function parseProposalSnapshot(
   };
 }
 
+function parseNotificationId(id: unknown): bigint {
+  if (typeof id === 'bigint') return id;
+  if (typeof id === 'number' && Number.isInteger(id)) return BigInt(id);
+  if (typeof id === 'string') {
+    try {
+      return BigInt(id);
+    } catch {
+      return 0n;
+    }
+  }
+  return 0n;
+}
+
+function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
+  if (!Array.isArray(queue)) return [];
+  return queue.map((notification) => {
+    const n = notification as QueuedNotificationModel & { id?: unknown };
+    return {
+      ...n,
+      id: parseNotificationId(n.id),
+    };
+  });
+}
+
 export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): SessionModel {
   const fallbackTerms: HandTermsModel = {
     gameType: 'calpoker',
@@ -513,7 +537,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       goOnChainPressed: false,
       cleanShutdownStarted: false,
       dismissedChannelState: (save.dismissedChannelState as ChannelState | undefined) ?? null,
-      queue: (save.channelNotifQueue ?? []) as QueuedNotificationModel[],
+      queue: parseQueuedNotifications(save.channelNotifQueue),
     },
     game: {
       coin: {
@@ -534,7 +558,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       lastDisplayedId: save.activeGameId ?? null,
       activeGameType: save.activeGameType ?? 'calpoker',
       handState: save.handState ?? null,
-      queue: (save.gameNotifQueue ?? []) as QueuedNotificationModel[],
+      queue: parseQueuedNotifications(save.gameNotifQueue),
     },
     betweenHand: {
       mode: (save.betweenHandMode as BetweenHandModeModel | undefined) ?? 'decision',

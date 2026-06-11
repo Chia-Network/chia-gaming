@@ -191,16 +191,18 @@ function HandHistoryPanel({ history }: { history: SpHandEntry[] }) {
 }
 
 function ActionBar({ sp }: { sp: UseSpacepokerHandResult }) {
-  const [raiseAmount, setRaiseAmount] = useState(1);
+  const [raiseAmount, setRaiseAmount] = useState(1n);
   const { handler, myTurn, N } = sp.gameState;
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
-  const maxRaise = sp.playerStack - (sp.lastRaise > 0 ? sp.lastRaise : 0);
+  const maxRaise = sp.playerStack - (sp.lastRaise > 0n ? sp.lastRaise : 0n);
+  const maxRaiseInput = Math.max(1, Number(maxRaise));
+  const raiseAmountInput = Math.min(Number(raiseAmount), maxRaiseInput);
   const isBeginRound = handler === SpHandler.BeginRound;
   const autoPong = isBeginRound && N === 4 && sp.coinTossIOpen === false;
   const actionsEnabled = myTurn && inBetting && !autoPong;
 
   const doRaise = useCallback(() => {
-    if (!actionsEnabled || raiseAmount < 1 || raiseAmount > maxRaise) return;
+    if (!actionsEnabled || raiseAmount < 1n || raiseAmount > maxRaise) return;
     sp.handleRaise(raiseAmount);
   }, [actionsEnabled, raiseAmount, maxRaise, sp]);
 
@@ -215,23 +217,23 @@ function ActionBar({ sp }: { sp: UseSpacepokerHandResult }) {
         </button>
       ) : (
         <button onClick={sp.handleCall} disabled={!actionsEnabled} className={`${btnClass} w-16`}>
-          {sp.lastRaise > 0 ? 'Call' : 'Check'}
+          {sp.lastRaise > 0n ? 'Call' : 'Check'}
         </button>
       )}
       <div className='flex items-center gap-1'>
-        <button onClick={doRaise} disabled={!actionsEnabled || maxRaise < 1} className={btnClass}>
+        <button onClick={doRaise} disabled={!actionsEnabled || maxRaise < 1n} className={btnClass}>
           Raise
         </button>
         <input
           type='range'
           min={1}
-          max={Math.max(1, maxRaise)}
-          value={Math.min(raiseAmount, Math.max(1, maxRaise))}
-          onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
+          max={maxRaiseInput}
+          value={raiseAmountInput}
+          onChange={(e) => setRaiseAmount(BigInt(e.target.value))}
           disabled={!actionsEnabled}
           className='w-20 sm:w-32 disabled:opacity-40'
         />
-        <span className='text-xs text-canvas-text-contrast w-6 text-center'>{raiseAmount}</span>
+        <span className='text-xs text-canvas-text-contrast w-6 text-center'>{String(raiseAmount)}</span>
       </div>
       <button onClick={sp.handleFold} disabled={!actionsEnabled || isBeginRound} className={btnClass}>
         Fold
@@ -297,7 +299,7 @@ export default function SpacePoker({
   let turnLine = '';
   if (myTurn && inBetting && !(handler === SpHandler.BeginRound && N === 4 && sp.coinTossIOpen === false)) {
     turnLine =
-      handler === SpHandler.MidRound && sp.lastRaise > 0
+      handler === SpHandler.MidRound && sp.lastRaise > 0n
         ? `Your turn, ${sp.lastRaise} to call`
         : 'Your turn';
   } else if (myTurn && handler === SpHandler.BeginRound && N === 4 && sp.coinTossIOpen === false) {
@@ -314,7 +316,7 @@ export default function SpacePoker({
       {/* Opponent cards row with stack on left */}
       <div className='relative flex justify-center w-full'>
         <div className='absolute left-0 top-1/2 -translate-y-1/2'>
-          <AmountBadge>{sp.opponentStack}</AmountBadge>
+          <AmountBadge>{String(sp.opponentStack)}</AmountBadge>
         </div>
         <HoleCardsGroup boosted={sp.opponentHoleCards ? sp.opponentBoost ?? false : false}>
           {sp.opponentHoleCards ? (
@@ -338,7 +340,7 @@ export default function SpacePoker({
       {/* Community cards row with pot on left */}
       <div className='relative flex justify-center w-full'>
         <div className='absolute left-0 top-1/2 -translate-y-1/2'>
-          <AmountBadge>{sp.pot}</AmountBadge>
+          <AmountBadge>{String(sp.pot)}</AmountBadge>
         </div>
         <div className='flex gap-1.5 items-center'>
           {Array.from({ length: communitySlots }).map((_, i) => {
@@ -369,7 +371,7 @@ export default function SpacePoker({
       {/* Player cards row with stack on left */}
       <div className='relative flex justify-center w-full'>
         <div className='absolute left-0 top-1/2 -translate-y-1/2'>
-          <AmountBadge>{sp.playerStack}</AmountBadge>
+          <AmountBadge>{String(sp.playerStack)}</AmountBadge>
         </div>
         <HoleCardsGroup boosted={sp.playerHoleCards ? sp.playerBoost : false}>
           {sp.playerHoleCards ? (

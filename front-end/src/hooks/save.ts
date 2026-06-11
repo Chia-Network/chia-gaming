@@ -186,8 +186,8 @@ export interface SessionState {
   gameTerminalRewardCoin?: string | null;
   gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
-  channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
-  gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
+  channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
+  gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   dismissedChannelState?: string;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
@@ -461,6 +461,80 @@ function freshState(): SessionState {
   return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
+function parseFiniteNumber(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function normalizeNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => parseFiniteNumber(item, 0));
+}
+
+function normalizeDisplaySnapshot(value: unknown): CalpokerDisplaySnapshot | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const snapshot = value as CalpokerDisplaySnapshot;
+  return {
+    ...snapshot,
+    playerCardIds: normalizeNumberArray(snapshot.playerCardIds),
+    opponentCardIds: normalizeNumberArray(snapshot.opponentCardIds),
+    cardSelections: normalizeNumberArray(snapshot.cardSelections),
+    playerBestHandCardIds: normalizeNumberArray(snapshot.playerBestHandCardIds),
+    opponentBestHandCardIds: normalizeNumberArray(snapshot.opponentBestHandCardIds),
+    playerHaloCardIds: normalizeNumberArray(snapshot.playerHaloCardIds),
+    opponentHaloCardIds: normalizeNumberArray(snapshot.opponentHaloCardIds),
+  };
+}
+
+function normalizeHandState(value: unknown): CalpokerHandState | null | undefined {
+  if (value == null) return value;
+  if (typeof value !== 'object') return undefined;
+  const hand = value as CalpokerHandState;
+  return {
+    ...hand,
+    playerHand: normalizeNumberArray(hand.playerHand),
+    opponentHand: normalizeNumberArray(hand.opponentHand),
+    moveNumber: parseFiniteNumber(hand.moveNumber, 0),
+    cardSelections: hand.cardSelections ? normalizeNumberArray(hand.cardSelections) : undefined,
+    displaySnapshot: normalizeDisplaySnapshot(hand.displaySnapshot),
+  };
+}
+
+function normalizeChatMessages(value: unknown): SessionState['chatMessages'] {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((message) => {
+    const msg = message as NonNullable<SessionState['chatMessages']>[number];
+    return {
+      ...msg,
+      timestamp: parseFiniteNumber(msg.timestamp, Date.now()),
+    };
+  });
+}
+
+function normalizeLoadedState(state: SessionState): SessionState {
+  state.version = parseFiniteNumber(state.version, CURRENT_VERSION);
+  if (state.messageNumber !== undefined) {
+    state.messageNumber = parseFiniteNumber(state.messageNumber, 1);
+  }
+  if (state.remoteNumber !== undefined) {
+    state.remoteNumber = parseFiniteNumber(state.remoteNumber, 0);
+  }
+  if (state.unackedMessages) {
+    state.unackedMessages = state.unackedMessages.map((message) => ({
+      ...message,
+      msgno: parseFiniteNumber(message.msgno, 0),
+    }));
+  }
+  state.handState = normalizeHandState(state.handState);
+  state.chatMessages = normalizeChatMessages(state.chatMessages);
+  return state;
+}
+
 export function loadState(): SessionState {
   if (cached) return cached;
   try {
@@ -469,7 +543,7 @@ export function loadState(): SessionState {
       const json = deobfuscate(raw);
       const parsed = jsonParse(json);
       if (parsed.version == CURRENT_VERSION) {
-        cached = parsed as SessionState;
+        cached = normalizeLoadedState(parsed as SessionState);
         return cached;
       }
     }

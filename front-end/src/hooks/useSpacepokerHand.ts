@@ -28,7 +28,7 @@ export interface SpGameState {
 export interface SpHandEntry {
   player: 'you' | 'opponent';
   action: 'check' | 'raise' | 'call' | 'fold';
-  units?: number;
+  units?: bigint;
 }
 
 export interface SpOutcome {
@@ -46,17 +46,17 @@ export interface UseSpacepokerHandResult {
   opponentHoleCards: [number, number] | null;
   opponentBoost: boolean | null;
   communityCards: (number | null)[];
-  pot: number;
-  playerStack: number;
-  opponentStack: number;
-  betUnit: number;
+  pot: bigint;
+  playerStack: bigint;
+  opponentStack: bigint;
+  betUnit: bigint;
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
-  lastRaise: number;
+  lastRaise: bigint;
   coinTossIOpen: boolean | null;
 
   handleCheck: () => void;
-  handleRaise: (units: number) => void;
+  handleRaise: (units: bigint) => void;
   handleCall: () => void;
   handleFold: () => void;
 }
@@ -84,9 +84,9 @@ export function useSpacepokerHand(
   betSize: bigint,
   onTurnChanged: (isMyTurn: boolean) => void,
 ): UseSpacepokerHandResult {
-  const betUnit = Number(betSize) / 10;
-  const stackSize = 10;
-  const anteUnits = 1;
+  const betUnit = betSize / 10n;
+  const stackSize = 10n;
+  const anteUnits = 1n;
 
   // The game always starts with CommitA as the first my-turn handler
   // for whoever goes first. The protocol tells us via the first
@@ -111,16 +111,16 @@ export function useSpacepokerHand(
   const [opponentBoost, setOpponentBoost] = useState<boolean | null>(null);
   const [communityCards, setCommunityCards] = useState<(number | null)[]>([null, null, null, null, null]);
   const [halfPot, setHalfPot] = useState(anteUnits);
-  const [lastRaise, setLastRaise] = useState(0);
+  const [lastRaise, setLastRaise] = useState(0n);
   const [iRaisedLast, setIRaisedLast] = useState(false);
   const [handHistory, setHandHistory] = useState<SpHandEntry[]>([]);
   const [outcome, setOutcome] = useState<SpOutcome | null>(null);
   // Coin toss result: true = I open, false = opponent opens, null = not yet known
   const [coinTossIOpen, setCoinTossIOpen] = useState<boolean | null>(null);
 
-  const pot = 2 * halfPot + lastRaise;
-  const playerStack = stackSize - halfPot - (iRaisedLast ? lastRaise : 0);
-  const opponentStack = stackSize - halfPot - (iRaisedLast ? 0 : lastRaise);
+  const pot = 2n * halfPot + lastRaise;
+  const playerStack = stackSize - halfPot - (iRaisedLast ? lastRaise : 0n);
+  const opponentStack = stackSize - halfPot - (iRaisedLast ? 0n : lastRaise);
 
   const gsRef = useRef(gs);
   const gameObjectRef = useRef(_gameObject);
@@ -154,6 +154,11 @@ export function useSpacepokerHand(
     gsRef.current = next;
     setGs(next);
     onTurnChanged(next.myTurn);
+  }
+
+  function unitsFromMojos(mojos: bigint): bigint {
+    if (betUnit === 0n) return 0n;
+    return mojos / betUnit;
   }
 
   // ── OpponentMoved: the opponent made a move, it's now my turn ──
@@ -216,9 +221,8 @@ export function useSpacepokerHand(
           // "open": opponent opened a betting round. We respond in
           // mid_round. Format: ("open" raise half_pot [hole1 hole2 boost | cards...])
           if (tag === 'open') {
-            const raiseAmt = Number(items[1].toBigInt());
-            const raiseUnits = Math.round(raiseAmt / betUnit);
-            const halfPotUnits = Math.round(Number(items[2].toBigInt()) / betUnit);
+            const raiseUnits = unitsFromMojos(items[1].toBigInt());
+            const halfPotUnits = unitsFromMojos(items[2].toBigInt());
 
             if (items.length > 3 && cur.N === 4) {
               setPlayerHoleCards([items[3].toInt(), items[4].toInt()]);
@@ -230,7 +234,7 @@ export function useSpacepokerHand(
             setHalfPot(halfPotUnits);
             setLastRaise(raiseUnits);
             setIRaisedLast(false);
-            if (raiseUnits > 0) {
+            if (raiseUnits > 0n) {
               setHandHistory(prev => [...prev, { player: 'opponent', action: 'raise', units: raiseUnits }]);
             } else {
               setHandHistory(prev => [...prev, { player: 'opponent', action: 'check' }]);
@@ -242,9 +246,8 @@ export function useSpacepokerHand(
           // "raise": opponent raised in mid_round.
           // Format: ("raise" new_raise half_pot)
           if (tag === 'raise') {
-            const raiseAmt = Number(items[1].toBigInt());
-            const raiseUnits = Math.round(raiseAmt / betUnit);
-            const halfPotUnits = Math.round(Number(items[2].toBigInt()) / betUnit);
+            const raiseUnits = unitsFromMojos(items[1].toBigInt());
+            const halfPotUnits = unitsFromMojos(items[2].toBigInt());
             setHalfPot(halfPotUnits);
             setLastRaise(raiseUnits);
             setIRaisedLast(false);
@@ -257,13 +260,13 @@ export function useSpacepokerHand(
           // and current N. If N=1 and full hand data is present, we
           // have showdown info.
           if (tag === 'call') {
-            const halfPotMojos = Number(items[1].toBigInt());
+            const halfPotMojos = items[1].toBigInt();
             const N = items[2].toInt();
             setHandHistory(prev => [...prev, { player: 'opponent', action: 'call' }]);
 
-            const halfPotUnits = Math.round(halfPotMojos / betUnit);
+            const halfPotUnits = unitsFromMojos(halfPotMojos);
             setHalfPot(halfPotUnits);
-            setLastRaise(0);
+            setLastRaise(0n);
 
             if (N === 1 && items.length > 3) {
               const yourCards = clvmListToInts(items[3]);
@@ -399,18 +402,18 @@ export function useSpacepokerHand(
 
     if (
       (handler === SpHandler.BeginRound || handler === SpHandler.MidRound) &&
-      lastRaise === 0 &&
-      playerStack <= 0
+      lastRaise === 0n &&
+      playerStack <= 0n
     ) {
       try {
         if (handler === SpHandler.BeginRound) {
-          go.makeMove(gid, Program.fromInt(0));
+          go.makeMove(gid, Program.fromBigInt(0n));
           setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
           transition({ handler: SpHandler.MidRound, myTurn: false, N });
         } else {
           go.makeMove(gid, null);
           setHalfPot(prev => prev + lastRaiseRef.current);
-          setLastRaise(0);
+          setLastRaise(0n);
           setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
           if (N === 1) {
             transition({ handler: SpHandler.End, myTurn: false, N: 1 });
@@ -439,18 +442,18 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    go.makeMove(gid, Program.fromInt(0));
+    go.makeMove(gid, Program.fromBigInt(0n));
     setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
     transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
   }, []);
 
-  const handleRaise = useCallback((units: number) => {
+  const handleRaise = useCallback((units: bigint) => {
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    const mojoAmount = Math.round(units * betUnit);
-    go.makeMove(gid, Program.fromInt(mojoAmount));
+    const mojoAmount = units * betUnit;
+    go.makeMove(gid, Program.fromBigInt(mojoAmount));
     setHalfPot(prev => prev + lastRaiseRef.current);
     setLastRaise(units);
     setIRaisedLast(true);
@@ -465,8 +468,8 @@ export function useSpacepokerHand(
     const cur = gsRef.current;
     go.makeMove(gid, null);
     setHalfPot(prev => prev + lastRaiseRef.current);
-    setLastRaise(0);
-    const action = lastRaiseRef.current > 0 ? 'call' : 'check';
+    setLastRaise(0n);
+    const action = lastRaiseRef.current > 0n ? 'call' : 'check';
     setHandHistory(prev => [...prev, { player: 'you', action }]);
     if (cur.N === 1) {
       transition({ handler: SpHandler.End, myTurn: false, N: 1 });

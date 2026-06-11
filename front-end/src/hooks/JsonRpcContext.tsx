@@ -130,7 +130,7 @@ async function request<T, D extends object = object>(
 
   const params: Record<string, unknown> = {
     ...data,
-    fingerprint: Number.parseInt(address, 10),
+    fingerprint: address,
   };
 
   const startedAt = Date.now();
