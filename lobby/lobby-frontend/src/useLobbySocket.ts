@@ -337,7 +337,7 @@ export function useLobbySocket(
         id: uniqueIdRef.current,
         session_id: sessionId,
         alias: trimmed,
-      });
+      }, false);
     },
     [send, sessionId],
   );
