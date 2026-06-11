@@ -310,6 +310,15 @@ function termsEqual(a: HandTerms | null, b: HandTerms | null): boolean {
   return !!a && !!b && a.gameType === b.gameType && a.myContribution === b.myContribution && a.theirContribution === b.theirContribution;
 }
 
+function balanceCanCover(balance: string | null, amount: bigint): boolean {
+  if (balance == null) return true;
+  try {
+    return BigInt(balance) >= amount;
+  } catch {
+    return true;
+  }
+}
+
 function hexToString(hex: string): string {
   const bytes = [];
   for (let i = 0; i < hex.length; i += 2) {
@@ -1168,9 +1177,10 @@ export function useGameSession(
   }, []);
 
   const chooseNewHandSameTerms = useCallback(() => {
+    const lastTerms = lastHandTermsRef.current;
     const cached = cachedPeerProposalRef.current;
     if (cached) {
-      if (termsEqual(cached.terms, lastHandTermsRef.current)) {
+      if (termsEqual(cached.terms, lastTerms)) {
         try {
           gameObjectRef.current?.acceptProposal(cached.id);
         } catch (e) {
@@ -1185,10 +1195,23 @@ export function useGameSession(
       setBetweenHandMode('review-incoming-proposal');
       return;
     }
+
+    if (
+      !balanceCanCover(channelStatus.ourBalance, lastTerms.myContribution) ||
+      !balanceCanCover(channelStatus.theirBalance, lastTerms.theirContribution)
+    ) {
+      sameTermsRequestedRef.current = false;
+      setNewHandRequested(false);
+      setComposeProposalSent(false);
+      setComposePerHandAmount(lastTerms.myContribution);
+      setComposeGameType(lastTerms.gameType);
+      setBetweenHandMode('compose-proposal');
+      return;
+    }
     sameTermsRequestedRef.current = true;
     setNewHandRequested(true);
-    proposeNewGame(lastHandTermsRef.current);
-  }, [proposeNewGame]);
+    proposeNewGame(lastTerms);
+  }, [channelStatus.ourBalance, channelStatus.theirBalance, proposeNewGame]);
 
   const chooseDoNotUseCurrentProposal = useCallback(() => {
     const cached = cachedPeerProposalRef.current;

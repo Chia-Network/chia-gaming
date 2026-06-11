@@ -360,16 +360,29 @@ function ComposeProposalDialog({
   session: import('../hooks/useGameSession').UseGameSessionResult;
   maxPerHandMojos: bigint | null;
 }) {
+  const defaultSpacePokerStackSize = 10;
   const isSpacepoker = session.composeGameType === 'spacepoker';
-  const [spUnitSizeStr, setSpUnitSizeStr] = useState('1');
-  const [spStackSizeStr, setSpStackSizeStr] = useState('10');
-  const spUnitSize = (() => { try { const v = BigInt(spUnitSizeStr); return v > 0n ? v : 0n; } catch { return 0n; } })();
+  const [spUnitSize, setSpUnitSize] = useState(() => {
+    const stake = session.composePerHandAmount;
+    if (stake <= 0n) return 1n;
+    return (stake + BigInt(defaultSpacePokerStackSize - 1)) / BigInt(defaultSpacePokerStackSize);
+  });
+  const [spStackSizeStr, setSpStackSizeStr] = useState(String(defaultSpacePokerStackSize));
   const spStackSize = parseInt(spStackSizeStr) || 0;
+
+  useEffect(() => {
+    if (!isSpacepoker || spStackSize <= 0) return;
+    const stake = session.composePerHandAmount;
+    setSpUnitSize(stake > 0n ? (stake + BigInt(spStackSize - 1)) / BigInt(spStackSize) : 1n);
+  }, [isSpacepoker, session.composePerHandAmount, spStackSize]);
 
   const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
   const spTotalGame = spBetSize * 2n;
   const spExceedsBalance = maxPerHandMojos != null && spBetSize > maxPerHandMojos;
   const spValid = isSpacepoker && spUnitSize > 0n && spStackSize > 0 && !spExceedsBalance;
+  const spMaxUnitSize = maxPerHandMojos != null && spStackSize > 0
+    ? maxPerHandMojos / BigInt(spStackSize)
+    : null;
 
   const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
 
@@ -383,7 +396,6 @@ function ComposeProposalDialog({
       <div className='flex flex-col items-center gap-3'>
         <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
         <div className='flex w-full flex-col items-center gap-1'>
-          <label className='text-xs font-medium text-canvas-text'>Game</label>
           <div className='flex flex-wrap justify-center gap-2'>
             {GAME_REGISTRY.map(({ gameType, displayName }) => (
               <Button
@@ -402,18 +414,16 @@ function ComposeProposalDialog({
 
         {isSpacepoker ? (
           <>
-            <div className='flex w-full flex-col items-center gap-1'>
-              <label className='text-xs font-medium text-canvas-text'>Unit size (mojos)</label>
-              <input
-                type='number'
-                min={1}
-                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
-                value={spUnitSizeStr}
-                disabled={session.composeProposalSent}
-                onChange={(e) => setSpUnitSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
-                onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
-              />
-            </div>
+            <AmountInput
+              valueMojos={spUnitSize}
+              onChange={setSpUnitSize}
+              maxMojos={spMaxUnitSize}
+              onUseMax={spMaxUnitSize != null && spMaxUnitSize > 0n ? () => setSpUnitSize(spMaxUnitSize) : undefined}
+              disabled={session.composeProposalSent}
+              label='Unit size'
+              exceedsLabel='Exceeds available reserve.'
+              onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
+            />
             <div className='flex w-full flex-col items-center gap-1'>
               <label className='text-xs font-medium text-canvas-text'>Stack size (units per player)</label>
               <input
@@ -429,9 +439,6 @@ function ComposeProposalDialog({
             <div className='text-xs text-canvas-text'>
               Per-player stake: {formatMojos(spBetSize)} · Total game size: {formatMojos(spTotalGame)}
             </div>
-            {spExceedsBalance && (
-              <p className='text-xs text-alert-text'>Exceeds available reserve.</p>
-            )}
           </>
         ) : (
           <AmountInput
