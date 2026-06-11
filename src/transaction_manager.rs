@@ -11,13 +11,17 @@
 //!   (`drain_submissions`) so the hosting layer becomes a thin RPC proxy.
 //! - It tracks which coins to poll (`get_coins_to_poll`).
 //!
-//! Reorg handling is replay-oriented. The manager assumes transactions that
-//! were valid before a reorg will usually still be valid on the new chain, and
-//! it tries to make those transactions land again by retaining submitted
-//! bundles, re-queueing them on restore, and resubmitting creators for vanished
-//! output coins. It does not attempt general "true invalidation" recovery where
-//! the new chain makes a previously valid transaction permanently invalid or
-//! requires rewinding arbitrary handler state.
+//! Reorg boundary: protocol handlers are deliberately written as if reorgs do
+//! not happen. They register watched coins and hand this manager any
+//! timeout/safety spends that should be submitted once mature. This manager owns
+//! height tracking, maturity, retained submissions, rollback detection, and
+//! replay. It should not surface repeated handler-level events merely because a
+//! reorg made a transaction need resubmission.
+//!
+//! Current limitation: this replay model does not resolve cases where a
+//! conflicting transaction successfully confirms or otherwise permanently
+//! invalidates a retained spend plan. Those paths are future
+//! protocol/error-handling work.
 
 use std::collections::HashMap;
 

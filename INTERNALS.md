@@ -77,20 +77,28 @@ A reorg that rolls back or shifts the coin's birthday re-arms `claim_submitted`,
 so the claim is resubmitted. This replaced the old lazy "build and submit at the
 moment the timeout fires" logic in the handlers.
 
-**Reorg strategy: replay, not invalidation recovery.** Current reorg handling is
-deliberately optimistic. It assumes that transactions which were valid before
-the reorg will either remain valid on the new chain or can be replayed until
-their outputs reappear. The manager supports that model by retaining submitted
-transactions, re-queuing retained submissions on restore, and resubmitting
-transactions whose output coins vanished because their creation was rolled back.
+**Reorg boundary: leaf logic pretends reorgs do not happen.** Protocol handlers
+are intentionally written against a simplified lifecycle: they register coins,
+hand the transaction manager any timeout/safety spend that should be submitted
+when mature, and then react to the semantic lifecycle events they observe. They
+do not own maturity polling, reorg replay, or repeated resubmission decisions.
 
-There is not yet a general recovery mechanism for **true invalidation**, where
-the new chain makes a previously valid transaction permanently invalid or
-requires rebuilding handler state from an earlier point. Handler state is mostly
-forward-only after observing spends. If a transaction is genuinely invalidated
-rather than merely reorged out and replayable, that is outside the current
-reorg model and should be treated as future protocol work rather than a bug in
-the replay machinery.
+The transaction manager is the boundary that absorbs chain churn. It tracks
+creation and spend heights, detects rollback, re-arms stored timeout claims when
+a watched coin's birthday changes, retains submitted transactions across
+restore, and resubmits transactions whose output coins vanished because their
+creation was rolled back. Handler-level logic should not receive repeated
+semantic events merely because a reorg made the same transaction need replaying.
+
+**Reorg strategy: replay, not conflict resolution.** Current reorg handling is
+deliberately optimistic. It assumes that transactions which were valid before
+the reorg will usually remain valid on the new chain or can be replayed until
+their outputs reappear. There is not yet a general recovery mechanism for
+**true invalidation**, where the new chain makes a previously valid transaction
+permanently invalid, a conflicting transaction successfully confirms, or handler
+state would need to be rebuilt from an earlier point. Those conflict-resolution
+paths are future protocol/error-handling work rather than part of the current
+transaction manager replay model.
 
 Coverage for this replay model lives in `src/transaction_manager.rs`: creator
 transactions are resubmitted when output coins vanish
