@@ -78,6 +78,21 @@ function clearTestGlobal(key: string) {
   Reflect.deleteProperty(globalThis, key);
 }
 
+function describeThrown(e: unknown): string {
+  if (e instanceof Error) {
+    return `${e.name}: ${e.message}\n${e.stack ?? ''}`;
+  }
+  try {
+    return `non-Error thrown: ${JSON.stringify(e)}`;
+  } catch {
+    return `non-Error thrown: ${String(e)}`;
+  }
+}
+
+function testLog(message: string): void {
+  process.stderr.write(`[load_wasm] ${message}\n`);
+}
+
 beforeAll(() => {
   setTestGlobal('localStorage', makeStorage());
 });
@@ -100,7 +115,7 @@ function addActiveCradle(cradle: WasmBlobWrapperAdapter): WasmBlobWrapperAdapter
   return cradle;
 }
 
-function cleanupActiveResources() {
+async function cleanupActiveResources() {
   while (activeSubscriptions.length > 0) {
     activeSubscriptions.pop()?.unsubscribe();
   }
@@ -109,11 +124,11 @@ function cleanupActiveResources() {
   }
   testPoller?.stop();
   testPoller = null;
-  void fakeBlockchainInfo.disconnect();
+  await fakeBlockchainInfo.disconnect();
 }
 
-afterEach(() => {
-  cleanupActiveResources();
+afterEach(async () => {
+  await cleanupActiveResources();
   resetSaveState();
 });
 
@@ -210,7 +225,10 @@ async function action_with_messages(
     })));
   });
   try {
+    let iterations = 0;
+    const startedAt = Date.now();
     while (!all_handshaked(cradles)) {
+      iterations++;
       for (let c = 0; c < 2; c++) {
         let outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
@@ -219,6 +237,14 @@ async function action_with_messages(
       }
       await yieldToWrapperDrain();
       evt_results = evt_results.map((seen, index) => seen || cradles[index].observedActiveStatus());
+      if (Date.now() - startedAt > 30_000) {
+        throw new Error(
+          `handshake loop timed out after ${iterations} iterations` +
+          ` ready=${cradles.map((c) => c.handshaked()).join(',')}` +
+          ` active=${cradles.map((c) => c.observedActiveStatus()).join(',')}` +
+          ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}`,
+        );
+      }
     }
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
@@ -288,19 +314,21 @@ async function isSimulatorAvailable(): Promise<boolean> {
 it(
   'loads',
   async () => {
-    if (!(await isSimulatorAvailable())) {
-      console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
-      return;
-    }
-    const setup = await fakeBlockchainInfo.beginConnect('block-producer');
-    await setup.finalize();
-    testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
-    testPoller.start();
-    const poller = testPoller;
-
-    const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
-    const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
     try {
+      if (!(await isSimulatorAvailable())) {
+        console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
+        return;
+      }
+      testLog('simulator available');
+      const setup = await fakeBlockchainInfo.beginConnect('block-producer');
+      await setup.finalize();
+      testLog('after finalize');
+      testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
+      testPoller.start();
+      const poller = testPoller;
+
+      const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
+      const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
       let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
@@ -320,6 +348,7 @@ it(
         wasm_init1
       );
       cradle1.set_blob(wasm_blob1);
+      testLog('after cradle1 init');
 
       let peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
@@ -339,11 +368,13 @@ it(
         wasm_init2
       );
       cradle2.set_blob(wasm_blob2);
+      testLog('after cradle2 init');
 
+      testLog('before action_with_messages');
       await action_with_messages(poller, cradle1, cradle2);
-    } finally {
-      cradle1.shutdown();
-      cradle2.shutdown();
+      testLog('after action_with_messages');
+    } catch (e) {
+      throw new Error(`[load_wasm loads failed]\n${describeThrown(e)}`);
     }
   },
   120 * 1000,

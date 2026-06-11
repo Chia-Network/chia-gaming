@@ -123,14 +123,14 @@ async function request<T, D extends object = object>(
   if (!walletConnectState.getSession())
     throw new Error('Session is not connected');
 
-  const address = walletConnectState.getAddress();
-  if (!address) {
+  const fingerprint = walletConnectState.getAddress();
+  if (!fingerprint) {
     throw new Error('no fingerprint set in walletconnect');
   }
 
   const params: Record<string, unknown> = {
     ...data,
-    fingerprint: address,
+    fingerprint,
   };
 
   const startedAt = Date.now();
