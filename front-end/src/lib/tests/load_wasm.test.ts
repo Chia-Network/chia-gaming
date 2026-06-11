@@ -24,7 +24,7 @@ import {
   PeerConnectionResult,
   WasmEvent,
 } from '../../types/ChiaGaming';
-import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_WS_URL } from '../../settings';
+import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
@@ -93,11 +93,23 @@ function testLog(message: string): void {
   process.stderr.write(`[load_wasm] ${message}\n`);
 }
 
+function onUnhandledRejection(reason: unknown): void {
+  testLog(`unhandledRejection ${describeThrown(reason)}`);
+}
+
+function onUncaughtException(error: unknown): void {
+  testLog(`uncaughtException ${describeThrown(error)}`);
+}
+
 beforeAll(() => {
   setTestGlobal('localStorage', makeStorage());
+  process.on('unhandledRejection', onUnhandledRejection);
+  process.on('uncaughtException', onUncaughtException);
 });
 
 afterAll(() => {
+  process.off('unhandledRejection', onUnhandledRejection);
+  process.off('uncaughtException', onUncaughtException);
   clearTestGlobal('localStorage');
 });
 
@@ -128,8 +140,15 @@ async function cleanupActiveResources() {
 }
 
 afterEach(async () => {
-  await cleanupActiveResources();
-  resetSaveState();
+  try {
+    testLog('cleanup start');
+    await cleanupActiveResources();
+    testLog('cleanup after resources');
+    resetSaveState();
+    testLog('cleanup done');
+  } catch (e) {
+    throw new Error(`[load_wasm cleanup failed]\n${describeThrown(e)}`);
+  }
 });
 
 class WasmBlobWrapperAdapter {
@@ -188,6 +207,21 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
   return true;
 }
 
+function debugCradleState(cradle: WasmBlobWrapperAdapter): string {
+  const blob = cradle.blob as any;
+  if (!blob) return 'no-blob';
+  return [
+    `ready=${cradle.handshaked()}`,
+    `active=${cradle.observedActiveStatus()}`,
+    `outbound=${cradle.waiting_messages.length}`,
+    `system=${blob.systemState?.()}`,
+    `queue=${blob.eventQueue?.length}`,
+    `drain=${blob.drainScheduled}`,
+    `launcher=${blob.launcherProvided}`,
+    `pendingSends=${blob.pendingOutboundSends?.length}`,
+  ].join('/');
+}
+
 async function yieldToWrapperDrain(): Promise<void> {
   // WasmBlobWrapper drains events and then performs the durability/send flush
   // on nested zero-delay timers.
@@ -240,9 +274,11 @@ async function action_with_messages(
       if (Date.now() - startedAt > 30_000) {
         throw new Error(
           `handshake loop timed out after ${iterations} iterations` +
+          ` connected=${fakeBlockchainInfo.isConnected()}` +
           ` ready=${cradles.map((c) => c.handshaked()).join(',')}` +
           ` active=${cradles.map((c) => c.observedActiveStatus()).join(',')}` +
-          ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}`,
+          ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}` +
+          ` states=${cradles.map(debugCradleState).join(' | ')}`,
         );
       }
     }
@@ -295,14 +331,6 @@ async function isSimulatorAvailable(): Promise<boolean> {
     }
     try {
       await fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' });
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const WS = (globalThis as any).WebSocket ?? require('ws');
-      await new Promise<void>((resolve, reject) => {
-        const ws = new WS(BLOCKCHAIN_WS_URL);
-        const timeout = setTimeout(() => { try { ws.close(); } catch { /* ignore */ } reject(new Error('timeout')); }, 2000);
-        ws.onopen = () => { clearTimeout(timeout); try { ws.close(); } catch { /* ignore */ } resolve(); };
-        ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
-      });
       return true;
     } catch {
       // Retry; simulator may still be starting up.
@@ -314,6 +342,9 @@ async function isSimulatorAvailable(): Promise<boolean> {
 it(
   'loads',
   async () => {
+    const offConnectionLog = fakeBlockchainInfo.onConnectionChange((connected) => {
+      testLog(`sim connection=${connected}`);
+    });
     try {
       if (!(await isSimulatorAvailable())) {
         console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
@@ -322,9 +353,10 @@ it(
       testLog('simulator available');
       const setup = await fakeBlockchainInfo.beginConnect('block-producer');
       await setup.finalize();
-      testLog('after finalize');
+      testLog(`after finalize connected=${fakeBlockchainInfo.isConnected()}`);
       testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
       testPoller.start();
+      testLog(`after poller start connected=${fakeBlockchainInfo.isConnected()}`);
       const poller = testPoller;
 
       const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
@@ -375,6 +407,8 @@ it(
       testLog('after action_with_messages');
     } catch (e) {
       throw new Error(`[load_wasm loads failed]\n${describeThrown(e)}`);
+    } finally {
+      offConnectionLog();
     }
   },
   120 * 1000,
