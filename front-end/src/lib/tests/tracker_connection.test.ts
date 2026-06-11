@@ -71,10 +71,10 @@ class MockWebSocket {
   }
 }
 
-(globalThis as any).WebSocket = MockWebSocket;
+const originalWebSocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
 
 // ---------------------------------------------------------------------------
-// Imports (after mocks are installed)
+// Imports
 // ---------------------------------------------------------------------------
 
 import {
@@ -90,6 +90,22 @@ import {
 
 let trackerDisconnectCount = 0;
 let expectedTrackerDisconnects = 0;
+
+beforeAll(() => {
+  Object.defineProperty(globalThis, 'WebSocket', {
+    configurable: true,
+    writable: true,
+    value: MockWebSocket,
+  });
+});
+
+afterAll(() => {
+  if (originalWebSocketDescriptor) {
+    Object.defineProperty(globalThis, 'WebSocket', originalWebSocketDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, 'WebSocket');
+  }
+});
 
 function makeCallbacks(): TrackerConnectionCallbacks {
   return {
