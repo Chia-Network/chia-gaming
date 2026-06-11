@@ -95,6 +95,9 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.0 --activate
 
+      - name: Install LLVM (wasm32 clang)
+        run: brew install llvm
+
       - name: Build deploy tarballs
         run: |
           export PATH=~/.cargo/bin:$PATH

@@ -13,7 +13,7 @@ COPY clsp ./clsp
 RUN cp build.rs.disabled build.rs \
     && cargo build --release --features sim-server --bin chia-gaming-sim
 
-FROM node:20-bookworm AS runtime
+FROM node:22-bookworm AS runtime
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
