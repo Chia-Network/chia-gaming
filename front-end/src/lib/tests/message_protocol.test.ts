@@ -131,15 +131,27 @@ function createUnreadyBlob(
 
 let activeBlob: WasmBlobWrapper | null = null;
 
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function clearTestGlobal(key: string) {
+  Reflect.deleteProperty(globalThis, key);
+}
+
 beforeEach(() => {
-  (global as any).localStorage = makeStorage();
+  setTestGlobal('localStorage', makeStorage());
 });
 
 afterEach(() => {
   activeBlob?.cleanup();
   activeBlob = null;
   resetSaveState();
-  delete (global as any).localStorage;
+  clearTestGlobal('localStorage');
 });
 
 describe('in-order delivery', () => {

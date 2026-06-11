@@ -66,12 +66,24 @@ function makeStorage(): Storage {
   };
 }
 
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function clearTestGlobal(key: string) {
+  Reflect.deleteProperty(globalThis, key);
+}
+
 beforeAll(() => {
-  (global as any).localStorage = makeStorage();
+  setTestGlobal('localStorage', makeStorage());
 });
 
 afterAll(() => {
-  delete (global as any).localStorage;
+  clearTestGlobal('localStorage');
 });
 
 const activeSubscriptions: Subscription[] = [];

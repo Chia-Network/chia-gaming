@@ -40,6 +40,18 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function clearTestGlobal(key: string) {
+  Reflect.deleteProperty(globalThis, key);
+}
+
 const sampleSession: Partial<SessionState> = {
   serializedCradle: '{"some":"data"}',
   pairingToken: 'tok-123',
@@ -56,16 +68,16 @@ const sampleSession: Partial<SessionState> = {
 
 beforeEach(() => {
   _resetForTests();
-  (global as any).localStorage = makeStorage();
-  (global as any).sessionStorage = makeStorage();
-  (global as any).__buildNonce = '/app/test-nonce/';
+  setTestGlobal('localStorage', makeStorage());
+  setTestGlobal('sessionStorage', makeStorage());
+  setTestGlobal('__buildNonce', '/app/test-nonce/');
 });
 
 afterEach(() => {
-  delete (global as any).localStorage;
-  delete (global as any).sessionStorage;
-  delete (global as any).indexedDB;
-  delete (global as any).__buildNonce;
+  clearTestGlobal('localStorage');
+  clearTestGlobal('sessionStorage');
+  clearTestGlobal('indexedDB');
+  clearTestGlobal('__buildNonce');
 });
 
 describe('session persistence', () => {
@@ -90,7 +102,7 @@ describe('session persistence', () => {
     const first = peekSession();
     expect(first?.buildNonce).toBe('/app/test-nonce/');
 
-    (global as any).__buildNonce = '/app/different-nonce/';
+    setTestGlobal('__buildNonce', '/app/different-nonce/');
     const stale = peekSession();
     expect(stale).not.toBeNull();
     expect(stale!.buildNonce).toBe('/app/test-nonce/');
@@ -112,7 +124,7 @@ describe('session persistence', () => {
       firstCall = false;
       origSetItem(key, value);
     };
-    (global as any).localStorage = storage;
+    setTestGlobal('localStorage', storage);
     getPlayerId();
     expect(() => saveSession(sampleSession)).not.toThrow();
     spy.mockRestore();
@@ -199,14 +211,14 @@ describe('hard reset', () => {
       setTimeout(() => request.onsuccess?.(), 0);
       return request;
     });
-    (global as any).indexedDB = {
+    setTestGlobal('indexedDB', {
       databases: jest.fn().mockResolvedValue([
         { name: 'app-state' },
         { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
         { name: undefined },
       ]),
       deleteDatabase,
-    };
+    });
 
     hardReset();
     await flushPromises();
@@ -224,7 +236,7 @@ describe('hard reset', () => {
       return request;
     });
     // No `databases` function: mimics browsers that can't enumerate.
-    (global as any).indexedDB = { deleteDatabase };
+    setTestGlobal('indexedDB', { deleteDatabase });
 
     hardReset();
     await flushPromises();
@@ -241,12 +253,12 @@ describe('hard reset', () => {
     local.clear = () => { throw new Error('local clear failed'); };
     const session = makeStorage();
     session.clear = () => { throw new Error('session clear failed'); };
-    (global as any).localStorage = local;
-    (global as any).sessionStorage = session;
-    (global as any).indexedDB = {
+    setTestGlobal('localStorage', local);
+    setTestGlobal('sessionStorage', session);
+    setTestGlobal('indexedDB', {
       databases: jest.fn().mockRejectedValue(new Error('database list failed')),
       deleteDatabase: jest.fn(),
-    };
+    });
 
     expect(() => hardReset()).not.toThrow();
     await flushPromises();
