@@ -30,7 +30,7 @@ type RelayPayload =
 type LobbyInboundMessage =
   | { type: 'join'; id: string; alias?: string; session_id?: string }
   | { type: 'leave'; id: string }
-  | { type: 'challenge'; from_id: string; target_id: string; amount?: string }
+  | { type: 'challenge'; from_id: string; target_id: string; amount: string }
   | { type: 'challenge_accept'; challenge_id: string; accepter_id: string }
   | { type: 'challenge_decline'; challenge_id: string }
   | { type: 'challenge_cancel'; from_id: string }
@@ -415,10 +415,22 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     return;
   }
 
+  if (!amount || !/^[1-9][0-9]*$/.test(amount)) {
+    sendWs(ws, 'error', { error: 'Invalid amount: must be a positive integer.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+  const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n;
+  if (BigInt(amount) > MAX_AMOUNT_MOJOS) {
+    sendWs(ws, 'error', { error: 'Amount exceeds maximum (1,000,000 XCH).' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+
   const challenge = lobby.createChallenge(
     fromPlayer.id,
     target_id,
-    amount || '100',
+    amount,
   );
 
   sendLobbyEvent(target_id, 'challenge_received', {
