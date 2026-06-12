@@ -597,8 +597,12 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   takes the full game amount) when the validator returns nil *or* returns
   values whose infohash or max_move_size don't match the curried commitments
   - If the validator *raises* (CLVM exception), the slash transaction itself
-  fails to mine — this is why validators must handle all input lengths and
-  formats without raising (see `CLVM_DOS.md`, "Game-Specific Responsibilities")
+  fails to mine — this is why validators must classify malicious moves as
+  slashable before any evidence-sensitive code can raise (see `CLVM_DOS.md`,
+  "Game-Specific Responsibilities")
+  - Validator raises are acceptable only for invalid slash attempts, such as
+  malformed evidence against an otherwise valid move. A malicious move itself
+  must be classified as slashable before evidence-sensitive code can raise.
   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
   pre-signed payout authorization used by timeouts, so no additional signing
   is needed at slash time

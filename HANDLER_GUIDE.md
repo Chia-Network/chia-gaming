@@ -135,6 +135,16 @@ A CLVM raise -- the handler crashed. The Rust side raises `ClvmErr`.
 
 Called when the opponent has moved and we need to interpret their move.
 
+Their-turn handlers run on adversarial peer input. A handler crash, expensive
+loop, or allocation blowup caused by a peer-supplied move is a security bug by
+default, not a normal parse failure. Generic referee-envelope checks such as
+`max_move_size` happen before the handler, so handlers may assume those bounds,
+but game-rule failures must be represented through validator/slash behavior and
+evidence candidates, not CLVM raises. The framework tries nil evidence before
+calling the handler, including for terminal moves; if that succeeds as a slash,
+the handler is skipped. Handlers are responsible for safely processing the
+peer-controlled moves that survive that precheck.
+
 ### Parameters
 
 ```
@@ -391,8 +401,28 @@ conditions. This is an intentional conditional-slash mechanism: for example, a
 future word game could allow a slash only when an aggregate signature over a
 particular dictionary range is also satisfied, proving that a challenged word
 was outside that range. If the validator raises (CLVM exception), the slash
-transaction itself fails to mine — validators must handle all inputs without
-raising.
+transaction itself fails to mine. Validators must not let malicious moves reach
+a CLVM exception; exceptions are only appropriate when rejecting an invalid
+slash attempt, such as malformed evidence against an otherwise valid move.
+
+Validators have a two-sided security contract:
+
+- Every malicious move that the referee move path can accept optimistically must
+  be slashable. For those inputs the validator must return nil, or another
+  slash-triggering result, without raising. This includes malformed lengths,
+  bad popcounts, bad preimage reveals, wrong mover shares, and invalid
+  next-state commitments.
+- Every invalid slash attempt against a valid move must fail. The validator may
+  fail that slash by returning the valid move payload or, for malformed
+  evidence, by raising so the slash transaction cannot be mined. Evidence
+  assertions are only safe after the move itself has already been classified as
+  valid; otherwise malformed evidence could mask a malicious move by causing an
+  exception instead of a slash.
+
+In practice, validators should cheaply classify move shape before any
+length-sensitive `substr`, hand-evaluation helper, or evidence processing.
+Only after the move is known to be valid should the validator inspect evidence
+that might intentionally reject an invalid slash.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover

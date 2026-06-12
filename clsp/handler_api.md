@@ -115,6 +115,17 @@ Their-turn return (normal move, 2-4 elements):
   - message is optional (element may be absent). When present and non-empty,
     it is sent out-of-band to the opponent and parsed by their message_parser.
 
+Security rule: their-turn handlers run on adversarial peer moves. If a
+peer-controlled move can make a their-turn handler raise, run expensively, or
+allocate excessively before returning slash evidence, treat that as a security
+bug by default. Referee-envelope violations such as `max_move_size` are checked
+before the handler; game-rule violations that survive that envelope must be
+handled as slashable validator outcomes/evidence, not handler crashes. Terminal
+their-turn handlers get the same nil-evidence precheck as non-terminal handlers:
+if nil evidence successfully slashes, the framework skips the handler. Inputs
+that survive that precheck are still peer-controlled and must be safe for the
+handler to process.
+
 
 ## Message Parser
 An optional program returned by a my-turn handler. It runs on the
@@ -158,6 +169,12 @@ conditional slashes, such as requiring an aggregate signature that proves a
 challenged value falls in a committed range. Rust parses the result as Option —
 Some(new_state) for valid moves, None for slash — and uses None to initiate a
 slash.
+
+Validator security rule: malicious moves must be slashable without validator
+exceptions, while invalid slash attempts against valid moves must fail. Check
+move length/shape before `substr` or expensive helpers, return nil for any
+malicious move shape or rule violation, and only then inspect evidence that may
+raise to reject malformed evidence.
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

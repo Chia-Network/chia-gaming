@@ -321,6 +321,23 @@ impl TheirTurnReferee {
         });
         let is_terminal = details.validation_info_hash == ValidationInfoHash::None;
         let new_state: Rc<Program> = if is_terminal {
+            if let Ok(None) = self.run_state_update(
+                allocator,
+                offchain_puzzle_args.clone(),
+                state.clone(),
+                evidence.clone(),
+            ) {
+                return Ok((
+                    None,
+                    TheirTurnMoveResult {
+                        puzzle_hash_for_unroll: None,
+                        readable_move: Program(vec![0x80]).into(),
+                        mover_share: details.basic.mover_share.clone(),
+                        message: vec![],
+                        slash: Some(Evidence::nil()?),
+                    },
+                ));
+            }
             Program(vec![0x80]).into()
         } else {
             let state_update = self.run_state_update(

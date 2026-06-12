@@ -331,6 +331,7 @@ enum TestType {
     Normal,
     MutateMoverShare,
     CheckForSlashEvidence,
+    TerminalShortMoveSlash,
 }
 
 struct HandlerMove {
@@ -461,13 +462,46 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
         };
 
         if is_terminal {
+            let move_bytes_node = if matches!(hm.test_type, TestType::TerminalShortMoveSlash) {
+                let move_bytes = atom_bytes(allocator, my_turn.move_bytes_node);
+                allocator
+                    .allocator()
+                    .new_atom(&move_bytes[..16])
+                    .expect("short terminal move atom")
+            } else {
+                my_turn.move_bytes_node
+            };
+
+            if matches!(hm.test_type, TestType::TerminalShortMoveSlash) {
+                let (code, _) = run_validator(
+                    allocator,
+                    waiter_vp_hash,
+                    move_bytes_node,
+                    effective_mover_share,
+                    waiter_max_move_size,
+                    waiter_state,
+                    if is_alice_waiter {
+                        alice_their_turn_validator
+                    } else {
+                        bob_their_turn_validator
+                    },
+                    NodePtr::NIL,
+                );
+                assert_eq!(
+                    code,
+                    MoveCode::Slash,
+                    "step {step_idx}: terminal validator should slash short final move"
+                );
+                return;
+            }
+
             let their_turn = call_their_turn_handler(
                 allocator,
                 waiter_handler,
                 AMOUNT,
                 waiter_state,
                 NodePtr::NIL,
-                my_turn.move_bytes_node,
+                move_bytes_node,
                 waiter_vp_hash,
                 effective_mover_share,
             );
@@ -818,6 +852,113 @@ fn test_spacepoker_happy_path_alice_pongs() {
         entropy: entropy_bob,
         expected_mover_share: None,
         test_type: TestType::Normal,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
+fn test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+
+    let entropy_alice = make_entropy(&mut allocator, "alice_entropy_1027");
+    let entropy_bob = make_entropy(&mut allocator, "bob_entropy_1027");
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let zero_raise = 0i64.to_clvm(&mut allocator).unwrap();
+
+    let mut moves = vec![
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+    ];
+
+    for _street in 0..4 {
+        moves.push(HandlerMove {
+            input_move: zero_raise,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+    }
+
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_alice,
+        expected_mover_share: None,
+        test_type: TestType::TerminalShortMoveSlash,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
+fn test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+    let (entropy_alice, entropy_bob) =
+        find_bob_seed_for_outcome(&mut allocator, "alice_pongs_terminal_short_seed", false);
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let zero_raise = 0i64.to_clvm(&mut allocator).unwrap();
+
+    let mut moves = vec![
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+    ];
+
+    for _street in 0..4 {
+        moves.push(HandlerMove {
+            input_move: zero_raise,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+    }
+
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_bob,
+        expected_mover_share: None,
+        test_type: TestType::TerminalShortMoveSlash,
     });
 
     run_handler_game(&mut allocator, &setup, &moves);
@@ -1663,6 +1804,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_happy_path_alice_pongs",
             &test_spacepoker_happy_path_alice_pongs,
+        ),
+        (
+            "test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move",
+            &test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move,
+        ),
+        (
+            "test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move",
+            &test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move,
         ),
         (
             "test_spacepoker_raise_and_call",
