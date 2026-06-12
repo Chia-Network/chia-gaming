@@ -18,7 +18,7 @@ use crate::referee::referee_initial_setup;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
     canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed,
-    ValidationInfoHash,
+    StateUpdateResult, ValidationInfoHash,
 };
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
@@ -394,6 +394,17 @@ impl MyTurnReferee {
         };
 
         let puzzle_args = self.spend_this_coin();
+        if self.enable_cheating.is_none()
+            && result.move_bytes.len() > args.game_move.basic.max_move_size
+        {
+            return Err(Error::StrErr(format!(
+                "local move exceeds max_move_size: nonce={}, move_len={}, max_move_size={}",
+                args.nonce,
+                result.move_bytes.len(),
+                args.game_move.basic.max_move_size,
+            )));
+        }
+
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let v = ValidationInfo::new_state_update(
             allocator,
@@ -443,6 +454,26 @@ impl MyTurnReferee {
                 Evidence::nil()?,
             )?
         } else {
+            // Terminal validators often require real evidence to fully prove a
+            // valid payoff, but nil evidence still catches terminal moves that
+            // are malformed enough to be immediately slashable.
+            match self.run_validator_for_my_move_raw(
+                allocator,
+                offchain_puzzle_args,
+                state_to_update.clone(),
+                Evidence::nil()?,
+            ) {
+                Ok(None) if self.enable_cheating.is_none() => {
+                    return Err(Error::StrErr(format!(
+                        "pre-send terminal validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}",
+                        args.nonce,
+                        result.move_bytes.len(),
+                        result.mover_share,
+                        state_to_update,
+                    )));
+                }
+                _ => {}
+            }
             state_to_update.clone()
         };
 
@@ -520,15 +551,12 @@ impl MyTurnReferee {
         state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<Rc<Program>, Error> {
-        let validator_move_args = InternalStateUpdateArgs {
-            validation_program: referee_args.validation_program.clone(),
-            referee_args: Rc::new(referee_args.swap()),
-            state_update_args: StateUpdateMoveArgs {
-                evidence: evidence.to_program(),
-                state: state.clone(),
-            },
-        };
-        let result = validator_move_args.run(allocator);
+        let result = self.run_validator_for_my_move_raw(
+            allocator,
+            referee_args.clone(),
+            state.clone(),
+            evidence,
+        );
         match result {
             Err(e) => {
                 if self.enable_cheating.is_some() {
@@ -552,5 +580,23 @@ impl MyTurnReferee {
             }
             Ok(Some(new_state)) => Ok(new_state.clone()),
         }
+    }
+
+    fn run_validator_for_my_move_raw(
+        &self,
+        allocator: &mut AllocEncoder,
+        referee_args: Rc<RefereePuzzleArgs>,
+        state: Rc<Program>,
+        evidence: Evidence,
+    ) -> Result<StateUpdateResult, Error> {
+        let validator_move_args = InternalStateUpdateArgs {
+            validation_program: referee_args.validation_program.clone(),
+            referee_args: Rc::new(referee_args.swap()),
+            state_update_args: StateUpdateMoveArgs {
+                evidence: evidence.to_program(),
+                state: state.clone(),
+            },
+        };
+        validator_move_args.run(allocator)
     }
 }

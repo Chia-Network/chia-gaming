@@ -7,6 +7,16 @@ reference games, the player app, tracker service, and lobby frontend. Findings
 below were first gathered by focused sub-agents, then rechecked against the
 cited code paths. Wallet-call error handling was intentionally skipped.
 
+## Resolved Since Audit
+
+- Malformed terminal Calpoker/Space Poker moves now get a shared terminal
+  nil-evidence precheck before their-turn handlers run, so shape-invalid
+  terminal moves can be slashed without relying on handler assertions.
+- Local outgoing moves now get a generic max-move-size check before being
+  accepted. Non-terminal moves keep strict pre-send validator execution, and
+  terminal moves now also run a nil-evidence validator precheck to catch
+  immediately slashable terminal output.
+
 ## Findings
 
 ### Critical: Public lobby updates expose bearer session tokens
@@ -261,55 +271,6 @@ Fix direction: persist and restore Space Poker's UI/FSM state before auto-play
 effects run, or disable Space Poker restore/auto-play until the state model is
 complete.
 
-### High: Malformed Calpoker terminal moves can avoid automatic slashing
-
-Paths: `src/referee/their_turn.rs`,
-`clsp/games/calpoker/calpoker_generate.clinc`,
-`clsp/games/calpoker/onchain/e.clsp`
-
-`TheirTurnReferee::their_turn_move_off_chain()` skips validator execution for
-terminal moves and calls the their-turn handler directly. Calpoker's Bob
-terminal handler asserts final move shape before returning slash evidence, while
-the on-chain `e.clsp` validator treats malformed terminal moves as slashable by
-returning nil.
-
-Bad scenario: Alice makes a terminal Calpoker move with malformed length or bad
-discard/select popcounts and a favorable `mover_share`. Bob's off-chain handler
-raises instead of producing evidence, so the on-chain handler reports an error
-instead of building the slash that the validator would allow.
-
-Why tests miss it: validator tests cover invalid `e.clsp` moves directly, but
-not the `their_turn_coin_spent`/on-chain handler path for malformed terminal
-moves.
-
-Fix direction: validate terminal moves before calling game-specific their-turn
-handlers, or make terminal handlers return candidate evidence without asserting
-on untrusted move shape.
-
-### Medium: Local move output is not checked against the current max move size
-
-Paths: `src/referee/my_turn.rs`,
-`clsp/referee/onchain/referee.clsp`,
-`clsp/games/spacepoker/spacepoker_generate.clinc`
-
-The referee puzzle enforces `strlen(new_move) <= MAX_MOVE_SIZE` for on-chain
-moves, and received peer moves are checked against the current max size. But
-`MyTurnReferee::my_turn_make_move()` accepts handler output without checking
-that `result.move_bytes` fits the current move limit before signing and caching
-the state.
-
-Bad scenario: Space Poker handlers concatenate raw raise atoms. A noncanonical
-but numerically valid raise atom can produce move bytes longer than the current
-limit. The local side advances and sends a state that the peer or on-chain
-referee rejects.
-
-Why tests miss it: Space Poker tests use canonical raise atoms and do not fuzz
-oversized-but-numerically-valid atoms.
-
-Fix direction: add a Rust post-handler check against the current
-`args.game_move.basic.max_move_size` before accepting/signing any local move.
-Also canonicalize or length-check Space Poker raise atoms.
-
 ### Medium: Peer proposal amount addition can overflow
 
 Paths: `src/channel_handler/mod.rs`, `src/common/types/amount.rs`
@@ -418,8 +379,6 @@ High-value missing tests:
   reconciliation.
 - Message protocol test for `deliver_message` throwing.
 - Space Poker restore tests and pending outgoing proposal restore tests.
-- On-chain Calpoker malformed terminal move test through
-  `their_turn_coin_spent`.
 
 ## Reviewed Scope
 
