@@ -160,28 +160,58 @@ jobs:
       #     kill "$SIM_PID" "$SERVER_PID" $(jobs -p) 2>/dev/null || true
       #     exit ${STATUS:-0}
 
-      # ── Collect deployment artifacts ─────────────────────────────────
+      # ── Stage deployment artifacts ────────────────────────────────────
+      #
+      # Produces the nonce-based runtime layout used by static-server.js and
+      # service.js. Zipping this staging tree directly means the zip root is
+      # immediately runnable after extraction — no user-side staging required.
+      #
+      # Player app layout (chia-gaming-deploy/g/):
+      #   index.html, favicon.svg, static-server.js, build-meta.json
+      #   app/NONCE/{index.js, index.css, chia_gaming_wasm*, clsp/, images/}
+      #
+      # Lobby layout (chia-gaming-deploy/l/):
+      #   index.html, build-meta.json, service.js
+      #   app/NONCE/{index.js, index.css}
 
-      - name: Collect deployment artifacts
+      - name: Stage deployment artifacts
         run: |
           GW="${{ github.workspace }}"
-          TARGET="${GW}/chia-gaming-deploy"
+          GAME_STAGE="${GW}/chia-gaming-deploy/g"
+          LOBBY_STAGE="${GW}/chia-gaming-deploy/l"
+          BUILD_NONCE=$(date +%s%3N)
 
-          GAME="${TARGET}/g/chia-gaming-game"
-          mkdir -p "${GAME}/dist/js" "${GAME}/dist/css" "${GAME}/public" "${GAME}/clsp"
+          # ── Player app ──────────────────────────────────────────────────
+          NONCE_DIR="${GAME_STAGE}/app/${BUILD_NONCE}"
+          mkdir -p "${NONCE_DIR}/clsp"
 
-          cp -r front-end/dist/*.* "${GAME}/dist/" 2>/dev/null || true
-          cp front-end/dist/js/index-rollup.js "${GAME}/dist/js/" 2>/dev/null || true
-          cp front-end/dist/css/index.css "${GAME}/dist/css/" 2>/dev/null || true
-          cp -r front-end/public/* "${GAME}/public/"
-          cp -r clsp/* "${GAME}/clsp/"
+          cp front-end/dist/js/index-rollup.js        "${NONCE_DIR}/index.js"
+          cp front-end/dist/css/index.css             "${NONCE_DIR}/index.css"
+          cp front-end/dist/chia_gaming_wasm.js       "${NONCE_DIR}/chia_gaming_wasm.js"
+          cp front-end/dist/chia_gaming_wasm_bg.wasm  "${NONCE_DIR}/chia_gaming_wasm_bg.wasm"
+          echo '{"version":3,"sources":[],"mappings":""}' > "${NONCE_DIR}/chia_gaming_wasm_bg.wasm.map"
 
-          LOBBY="${TARGET}/l/chia-gaming-lobby"
-          mkdir -p "${LOBBY}/public" "${LOBBY}/dist/css"
+          (cd clsp && find . -name '*.hex' | while read -r f; do
+              mkdir -p "${NONCE_DIR}/clsp/$(dirname "$f")"
+              cp "$f" "${NONCE_DIR}/clsp/$f"
+          done)
 
-          cp -r lobby/lobby-frontend/public/* "${LOBBY}/public/"
-          cp lobby/lobby-frontend/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
-          cp lobby/lobby-service/dist/index-rollup.cjs "${LOBBY}/service.js"
+          [ -d front-end/public/images ] && cp -r front-end/public/images "${NONCE_DIR}/images"
+
+          cp front-end/public/index.html  "${GAME_STAGE}/index.html"
+          cp front-end/public/favicon.svg "${GAME_STAGE}/favicon.svg" 2>/dev/null || true
+          cp static-server.js             "${GAME_STAGE}/static-server.js"
+          echo "{\"basePath\":\"/app/${BUILD_NONCE}/\"}" > "${GAME_STAGE}/build-meta.json"
+
+          # ── Lobby ───────────────────────────────────────────────────────
+          LOBBY_NONCE_DIR="${LOBBY_STAGE}/app/${BUILD_NONCE}"
+          mkdir -p "${LOBBY_NONCE_DIR}"
+
+          cp lobby/lobby-frontend/public/index.js      "${LOBBY_NONCE_DIR}/index.js"
+          cp lobby/lobby-frontend/dist/css/index.css   "${LOBBY_NONCE_DIR}/index.css"
+          cp lobby/lobby-frontend/public/index.html    "${LOBBY_STAGE}/index.html"
+          cp lobby/lobby-service/dist/index-rollup.cjs "${LOBBY_STAGE}/service.js"
+          echo "{\"basePath\":\"/app/${BUILD_NONCE}/\"}" > "${LOBBY_STAGE}/build-meta.json"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4
@@ -221,8 +251,10 @@ jobs:
         if: env.RELEASE == 'true'
         run: |
           cd ${{ github.workspace }}/artifacts || exit 1
-          zip -r chia-gaming-frontend.zip chia-gaming-frontend
-          zip -r chia-gaming-lobby.zip chia-gaming-lobby
+          # Zip from inside each staged dir so the zip root IS the staging root.
+          # After extraction users can run immediately without any path adjustment.
+          (cd chia-gaming-frontend && zip -rq ../chia-gaming-frontend.zip .)
+          (cd chia-gaming-lobby    && zip -rq ../chia-gaming-lobby.zip    .)
 
       - name: Upload Release Artifacts
         if: env.RELEASE == 'true'
