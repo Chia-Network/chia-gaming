@@ -963,9 +963,19 @@ impl ChannelHandler {
             )));
         }
 
-        // 4.6: amount must equal the sum of contributions.
-        let expected_amount = start_info.my_contribution_this_game.clone()
-            + start_info.their_contribution_this_game.clone();
+        // 4.6: amount must equal the sum of contributions (checked for overflow).
+        let sum = start_info
+            .my_contribution_this_game
+            .to_u64()
+            .checked_add(start_info.their_contribution_this_game.to_u64())
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "proposal contributions overflow: {} + {}",
+                    start_info.my_contribution_this_game.to_u64(),
+                    start_info.their_contribution_this_game.to_u64(),
+                ))
+            })?;
+        let expected_amount = Amount::new(sum);
         if start_info.amount != expected_amount {
             return Err(Error::StrErr(format!(
                 "proposal amount {} != my_contribution {} + their_contribution {}",
