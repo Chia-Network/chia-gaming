@@ -27,7 +27,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::common::types::{AllocEncoder, CoinID, CoinString, Error, SpendBundle, Timeout};
+use crate::common::types::{
+    AllocEncoder, CoinCondition, CoinID, CoinString, Error, SpendBundle, Timeout,
+};
 use crate::peer_container::{DrainResult, GameCradle, SynchronousGameCradle, WatchReport};
 use crate::potato_handler::effects::{
     ChannelState, CradleEvent, CradleEventQueue, GameNotification,
@@ -51,9 +53,40 @@ struct SubmittedTx {
     /// Coin ids this transaction spends.  An output coin's parent is one of
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
+    /// Output coins this transaction should create, derived from its
+    /// `CREATE_COIN` conditions.  These let us distinguish the transaction
+    /// winning from a conflicting spend of the same input winning.
+    #[serde(default)]
+    expected_output_coins: Vec<CoinString>,
+    /// Set once any expected output is observed on-chain.
+    #[serde(default)]
+    landed: bool,
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
+}
+
+fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
+    let mut allocator = AllocEncoder::new();
+    let mut out = Vec::new();
+    for spend in &bundle.spends {
+        let puzzle = spend.bundle.puzzle.to_program();
+        let solution = spend.bundle.solution.p();
+        let Ok(conditions) =
+            CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution)
+        else {
+            continue;
+        };
+        let parent = spend.coin.to_coin_id();
+        out.extend(conditions.into_iter().filter_map(|cond| {
+            if let CoinCondition::CreateCoin(ph, amount) = cond {
+                Some(CoinString::from_parts(&parent, &ph, &amount))
+            } else {
+                None
+            }
+        }));
+    }
+    out
 }
 
 /// Combine two optional expiry heights, keeping the tightest (smallest)
@@ -269,7 +302,12 @@ impl<C> TransactionManager<C> {
 
     /// Coin strings the hosting layer should poll for on-chain state.
     pub fn get_coins_to_poll(&self) -> Vec<CoinString> {
-        self.watched_coins.keys().cloned().collect()
+        let mut coins: std::collections::BTreeSet<CoinString> =
+            self.watched_coins.keys().cloned().collect();
+        for tx in &self.submitted {
+            coins.extend(tx.expected_output_coins.iter().cloned());
+        }
+        coins.into_iter().collect()
     }
 
     /// Coin string for a watched coin, if tracked.
@@ -298,6 +336,8 @@ impl<C> TransactionManager<C> {
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
                     spent_coin_ids,
+                    expected_output_coins: expected_output_coins(bundle),
+                    landed: false,
                     expiry: *expiry,
                 });
             }
@@ -308,9 +348,9 @@ impl<C> TransactionManager<C> {
     /// Re-queue every retained submission for resubmission.  Used on reload: a
     /// transaction drained to the host before a reload may not have reached the
     /// network, and the manager's reorg-vanish path only replays a transaction
-    /// once one of its outputs is observed and then rolled back.  Replaying the
-    /// full retained set on restore covers the in-flight gap; on-chain
-    /// submission is idempotent, so already-confirmed transactions are harmless.
+    /// once one of its outputs is observed and then rolled back.  Conflicting
+    /// local intents are pruned as soon as another spend of the same input is
+    /// observed to win, so the retained set is the set still valid to replay.
     pub fn requeue_submitted(&mut self) {
         for tx in self.submitted.iter() {
             self.pending_submissions
@@ -467,6 +507,40 @@ impl<C: ManagedCradle> TransactionManager<C> {
                     watched.spent_confirmed_at = Some(spent_height);
                 }
             }
+        }
+
+        // Retained submissions are replay intents, not timeless wishes.  Once a
+        // coin they spend is observed spent, keep only submissions that appear
+        // to have won by creating one of their expected outputs.  The rest are
+        // conflicting local intents and must not be resurrected on reload/reorg.
+        let observed_created: std::collections::HashSet<CoinString> = records
+            .iter()
+            .filter(|rec| rec.created_height.is_some())
+            .map(|rec| rec.coin.clone())
+            .collect();
+        let spent_inputs: std::collections::HashSet<CoinID> = records
+            .iter()
+            .filter(|rec| rec.spent_height.is_some())
+            .map(|rec| rec.coin.to_coin_id())
+            .collect();
+        for tx in self.submitted.iter_mut() {
+            if !tx.landed
+                && tx
+                    .expected_output_coins
+                    .iter()
+                    .any(|coin| observed_created.contains(coin))
+            {
+                tx.landed = true;
+            }
+        }
+        if !spent_inputs.is_empty() {
+            self.submitted.retain(|tx| {
+                let spends_observed_input = tx
+                    .spent_coin_ids
+                    .iter()
+                    .any(|coin_id| spent_inputs.contains(coin_id));
+                !spends_observed_input || tx.landed || tx.expected_output_coins.is_empty()
+            });
         }
 
         // Created/deleted are the symmetric difference against the previous
@@ -695,8 +769,12 @@ impl<C: ManagedCradle> TransactionManager<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::{Amount, CoinID, Hash, PuzzleHash};
+    use crate::common::constants::CREATE_COIN;
+    use crate::common::types::{
+        Amount, CoinID, CoinSpend, Hash, Program, Puzzle, PuzzleHash, Spend, ToQuotedProgram,
+    };
     use crate::potato_handler::effects::CradleEvent;
+    use clvm_traits::ToClvm;
 
     fn test_coin(tag: u8) -> CoinString {
         CoinString::from_parts(
@@ -710,6 +788,31 @@ mod tests {
         SpendBundle {
             name: Some(name.to_string()),
             spends: vec![],
+        }
+    }
+
+    fn test_bundle_spending_creating(
+        name: &str,
+        input: &CoinString,
+        output: &CoinString,
+    ) -> SpendBundle {
+        let mut allocator = AllocEncoder::new();
+        let (_, output_ph, output_amount) = output.to_parts().expect("valid output coin");
+        let conditions = [(CREATE_COIN, (output_ph, (output_amount, ())))];
+        let conditions_node = conditions.to_clvm(&mut allocator).expect("conditions");
+        let puzzle = conditions_node
+            .to_quoted_program(&mut allocator)
+            .expect("quoted puzzle");
+        SpendBundle {
+            name: Some(name.to_string()),
+            spends: vec![CoinSpend {
+                coin: input.clone(),
+                bundle: Spend {
+                    puzzle: Puzzle::from(puzzle),
+                    solution: Program::from_bytes(&[0x80]).into(),
+                    signature: Default::default(),
+                },
+            }],
         }
     }
 
@@ -1506,19 +1609,15 @@ mod tests {
     }
 
     #[test]
-    fn buried_spend_prunes_retained_submission() {
-        use crate::common::types::{CoinSpend, Spend};
-
+    fn conflicting_spend_prunes_retained_submission_immediately() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(30);
-        // A transaction that spends the watched coin.
-        let spend_tx = SpendBundle {
-            name: Some("spend-coin".to_string()),
-            spends: vec![CoinSpend {
-                coin: coin.clone(),
-                bundle: Spend::default(),
-            }],
-        };
+        let child = CoinString::from_parts(
+            &coin.to_coin_id(),
+            &PuzzleHash::from_bytes([31; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
         let mut mock = MockGameCradle::default();
         mock.queue_drain(vec![
             watch_event(&coin, 50),
@@ -1529,10 +1628,11 @@ mod tests {
 
         // Host submits the spend; the manager retains it.
         assert_eq!(mgr.drain_submissions().len(), 1);
-        let depth = mgr.confirmation_depth();
+        assert!(mgr.get_coins_to_poll().contains(&child));
 
-        // The coin is created at 10 and spent at 12 (shallow).  The retained tx
-        // still replays because the spend can still be reorged out.
+        // The input is spent, but the retained tx's expected child did not
+        // appear.  A conflicting transaction won, so this local intent must be
+        // forgotten immediately rather than replayed on reload/reorg.
         mgr.report_coin_states(
             &mut allocator,
             12,
@@ -1544,11 +1644,56 @@ mod tests {
         )
         .expect("report");
         mgr.requeue_submitted();
+        assert!(mgr.drain_submissions().is_empty());
+    }
+
+    #[test]
+    fn winning_spend_retains_submission_for_replay() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(32);
+        let child = CoinString::from_parts(
+            &coin.to_coin_id(),
+            &PuzzleHash::from_bytes([33; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
         assert_eq!(mgr.drain_submissions().len(), 1);
 
-        // Once the spend is buried confirmation_depth deep the coin is evicted
-        // and the retained tx spending it is pruned: it can never be included
-        // again, so replay must produce nothing.
+        // The input is spent and the retained tx's expected child appears.  That
+        // means this transaction won, so it stays retained for replay if a later
+        // reload or reorg needs it.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[
+                CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(10),
+                    spent_height: Some(12),
+                },
+                CoinStateRecord {
+                    coin: child.clone(),
+                    created_height: Some(12),
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("report");
+        mgr.requeue_submitted();
+        let replay = mgr.drain_submissions();
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].name.as_deref(), Some("spend-coin"));
+
+        // Once the spent input is buried deeply enough, the input coin is evicted
+        // and the winning transaction no longer needs to be retained.
+        let depth = mgr.confirmation_depth();
         mgr.report_coin_states(&mut allocator, 12 + depth, &[])
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());

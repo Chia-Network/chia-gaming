@@ -90,22 +90,46 @@ restore, and resubmits transactions whose output coins vanished because their
 creation was rolled back. Handler-level logic should not receive repeated
 semantic events merely because a reorg made the same transaction need replaying.
 
-**Reorg strategy: replay, not conflict resolution.** Current reorg handling is
-deliberately optimistic. It assumes that transactions which were valid before
-the reorg will usually remain valid on the new chain or can be replayed until
-their outputs reappear. There is not yet a general recovery mechanism for
-**true invalidation**, where the new chain makes a previously valid transaction
-permanently invalid, a conflicting transaction successfully confirms, or handler
-state would need to be rebuilt from an earlier point. Those conflict-resolution
-paths are future protocol/error-handling work rather than part of the current
-transaction manager replay model.
+**Retained transaction replay.** When the manager drains a transaction for
+submission, it keeps a retained copy for reload/reorg recovery and derives the
+output coins that transaction should create from its `CREATE_COIN` conditions.
+Those expected outputs are included in `get_coins_to_poll()`.
+
+The replay rule is deliberately narrow:
+
+- If one of the retained transaction's expected outputs is observed on-chain,
+  that transaction is considered to have won. It remains retained so a later
+  reload or reorg can replay it if its output vanishes.
+- If an input coin is observed spent but the retained transaction's expected
+  output does not appear, a conflicting transaction won. The retained local
+  intent is forgotten immediately and must not be replayed after reload or
+  reorg.
+
+This prevents stale local intentions from being resurrected after the protocol
+has already accepted a different chain path. For example, if we were trying to
+clean-shutdown but an unroll spend wins the channel coin, the clean-shutdown
+transaction is no longer a replay candidate.
+
+**Reorg strategy: replay, not general conflict resolution.** The manager's job is
+still not to solve every possible reorg/conflict rabbit hole. It handles
+retained transaction replay, output-vanish replay, timeout-claim re-arming, and
+the narrow "conflicting spend won, forget our obsolete local intent" cache
+pruning above. There is not yet a general recovery mechanism for deeper
+**true invalidation** cases where handler state would need to be rebuilt from an
+earlier point or a new chain path needs protocol-specific interpretation beyond
+the observed coin lifecycle. Those paths are future protocol/error-handling work
+rather than part of the current transaction manager replay model.
 
 Coverage for this replay model lives in `src/transaction_manager.rs`: creator
 transactions are resubmitted when output coins vanish
 (`reorged_out_output_resubmits_creating_transaction`), timeout claims are
 re-armed when a watched coin's birthday rolls back
-(`eager_timeout_spend_resubmitted_after_birthday_rollback`), and re-mined coins
-clear stale vanished flags before later genuine spends are forwarded
+(`eager_timeout_spend_resubmitted_after_birthday_rollback`), conflicting
+retained submissions are pruned when their input is spent by another transaction
+(`conflicting_spend_prunes_retained_submission_immediately`), winning submissions
+remain replayable after their expected output appears
+(`winning_spend_retains_submission_for_replay`), and re-mined coins clear stale
+vanished flags before later genuine spends are forwarded
 (`reorg_remine_in_same_report_clears_vanished_and_allows_later_spend`).
 
 **Notifications ride the observed spend.** Terminal notifications are emitted

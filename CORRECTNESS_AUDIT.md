@@ -16,6 +16,29 @@ cited code paths. Wallet-call error handling was intentionally skipped.
   accepted. Non-terminal moves keep strict pre-send validator execution, and
   terminal moves now also run a nil-evidence validator precheck to catch
   immediately slashable terminal output.
+- Player-app BigInt handling now has explicit persistence and React-boundary
+  rules. Session persistence uses lossless tagged BigInt JSON helpers, domain
+  hooks/session state keep protocol values as `bigint`, and game view props are
+  adapted to string/number display values where React/dev diagnostics can
+  otherwise trip over native BigInt serialization.
+- Calpoker mid-hand display state now uses the canonical hand arrays as the
+  single card-order source. Legacy duplicated snapshot card-order fields are
+  dropped on restore, and the end-of-hand proposal dialog hides the completed
+  game interface instead of leaving the final table visible behind it.
+- Space Poker now persists and restores its hook/FSM display state instead of
+  restarting from `CommitA` after reload, avoiding accidental auto-play against
+  a restored mid-hand WASM state.
+- Space Poker terminal settlement now distinguishes game-level accept/concession
+  from poker actions. Normal betting folds and losing showdown concessions both
+  call the accept hook rather than encoding a fold move, but only normal betting
+  folds appear in hand history; if the final reveal is elided, the winning side
+  sees that they won without seeing the loser's hidden hole-card/showdown data.
+- The transaction manager now prunes obsolete retained submissions when a
+  conflicting transaction wins. Retained submissions track expected output coins:
+  if an input is spent and the expected output appears, that transaction is
+  considered the winner and remains replayable; if the input is spent without
+  the expected output appearing, the cached local intent is forgotten rather than
+  replayed after reload/reorg.
 
 ## Findings
 
@@ -89,32 +112,6 @@ guard is frontend UI state.
 
 Fix direction: enforce `status === 'waiting'` for both challenger and target
 when creating and accepting challenges. Treat UI disabling as cosmetic only.
-
-### Medium: Transaction-manager replay does not resolve confirmed conflicts
-
-Path: `src/transaction_manager.rs`
-
-The transaction manager deliberately acts as the reorg boundary: handlers
-register watched coins and timeout/safety spends, while the manager owns
-maturity, retained submissions, rollback detection, and replay. This keeps leaf
-protocol logic from needing to model reorg churn.
-
-The current model is replay-oriented, not conflict-resolution-oriented. It does
-not attempt to recover when a conflicting transaction successfully confirms or
-otherwise permanently invalidates a retained spend plan.
-
-Bad scenario: two different spends for the same coin become relevant across a
-reorg or race. The manager can retain/replay transactions that were valid before
-the reorg, but it does not yet have a policy for detecting that a different
-confirmed spend has made the retained plan permanently invalid and surfacing a
-clear protocol error.
-
-Why tests miss it: tests cover replay of vanished outputs, timeout re-arming,
-and pruning buried spends, but not confirmed conflicting-spend resolution.
-
-Fix direction: document this as the current replay boundary, then add an
-explicit conflict-resolution/error path if the protocol needs to recover from
-confirmed competing spends.
 
 ### High: Stale-unroll preemption is not managed for retry or reorg
 
@@ -248,29 +245,6 @@ basic snapshots, not pending outgoing proposal acceptance after restore.
 Fix direction: persist and restore proposal terms by ID, or derive accepted
 terms from restored WASM/session facts rather than ephemeral refs.
 
-### High: Space Poker cannot safely restore mid-hand
-
-Paths: `front-end/src/hooks/useSpacepokerHand.ts`,
-`front-end/src/components/GameSession.tsx`,
-`front-end/src/hooks/WasmBlobWrapper.ts`
-
-Calpoker has persisted display hand state, but Space Poker starts its React FSM
-from `SpHandler.CommitA` with `myTurn` based on the initial side. Auto-play
-effects then immediately call `makeMove(null)` for commit handlers when
-`myTurn` is true.
-
-Bad scenario: reload during a Space Poker hand after the WASM cradle restores a
-later protocol state. The React hook starts from the opening commit state and
-can auto-send a nil move against the restored active game, causing invalid moves
-or UI/protocol desynchronization.
-
-Why tests miss it: there are no Space Poker restore tests, and saved `handState`
-is Calpoker-shaped.
-
-Fix direction: persist and restore Space Poker's UI/FSM state before auto-play
-effects run, or disable Space Poker restore/auto-play until the state model is
-complete.
-
 ### Medium: Peer proposal amount addition can overflow
 
 Paths: `src/channel_handler/mod.rs`, `src/common/types/amount.rs`
@@ -353,12 +327,8 @@ committed image from state before deriving cards.
 
 ## Coverage and Test Results
 
-- An existing `./ct.sh` run in a terminal completed successfully earlier:
-  Rust build/tests and all eight frontend/WASM suites passed.
-- A later existing `./ct.sh` run failed in the JS/WASM phase: two frontend tests
-  failed, including a `load_wasm.test.ts` 120s timeout and a
-  `BlockchainPoller` assertion. This appears to be baseline suite health, not a
-  result of this audit, because no code changes had been made.
+- Latest post-fix `./ct.sh` run completed successfully: Rust build/tests,
+  Chialisp build, lobby build, and all frontend/WASM suites passed.
 - Ran `pnpm test` in `lobby/lobby-service`: passed TypeScript check.
 - Ran `pnpm test` in `lobby/lobby-frontend`: passed TypeScript check.
 - Ran targeted frontend audit suites:
@@ -378,7 +348,8 @@ High-value missing tests:
 - Frontend Shell integration tests for restore-first `connection_status`
   reconciliation.
 - Message protocol test for `deliver_message` throwing.
-- Space Poker restore tests and pending outgoing proposal restore tests.
+- Space Poker restore regression tests for mid-hand reload, terminal
+  accept/concession display, and pending outgoing proposal restore tests.
 
 ## Reviewed Scope
 

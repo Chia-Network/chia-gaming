@@ -7,6 +7,7 @@ import { log } from '../services/log';
 import { PersistedGameState } from './save';
 
 const SPACEPOKER_PERSISTED_STATE_VERSION = 1;
+const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;
 
 export type SpacepokerDisplayMode = 'xch' | 'mojos' | 'units';
 
@@ -192,9 +193,14 @@ function normalizeOutcome(value: unknown): SpOutcome | null {
   };
 }
 
-function normalizeDisplayMode(value: unknown): SpacepokerDisplayMode {
+function defaultDisplayModeForUnit(unitSizeMojos: bigint): SpacepokerDisplayMode {
+  return unitSizeMojos > SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS ? 'xch' : 'mojos';
+}
+
+function normalizeDisplayMode(value: unknown, fallback: SpacepokerDisplayMode): SpacepokerDisplayMode {
   if (value === 'units' || value === 'mojos') return value;
-  return 'xch';
+  if (value === 'xch') return value;
+  return fallback;
 }
 
 function normalizeTerminalState(value: unknown, state: SpGameState, history: SpHandEntry[]): SpTerminalState {
@@ -239,7 +245,8 @@ function spacepokerStateFromPersisted(
   const state = persisted.state as SpacepokerHandState;
   const gameState = normalizeGameState(state.gameState, iStarted);
   const handHistory = normalizeHistory(state.handHistory);
-  const displayMode = normalizeDisplayMode(state.displayMode);
+  const unitSizeMojos = finiteBigint(state.unitSizeMojos, fallbackUnitSize);
+  const displayMode = normalizeDisplayMode(state.displayMode, defaultDisplayModeForUnit(unitSizeMojos));
   return {
     gameState,
     playerHoleCards: holeCards(state.playerHoleCards),
@@ -254,7 +261,7 @@ function spacepokerStateFromPersisted(
     outcome: normalizeOutcome(state.outcome),
     terminalState: normalizeTerminalState(state.terminalState, gameState, handHistory),
     coinTossIOpen: state.coinTossIOpen == null ? null : !!state.coinTossIOpen,
-    unitSizeMojos: finiteBigint(state.unitSizeMojos, fallbackUnitSize),
+    unitSizeMojos,
     displayMode,
   };
 }
@@ -279,6 +286,7 @@ export function useSpacepokerHand(
 ): UseSpacepokerHandResult {
   const fallbackUnitSizeRaw = unitSizeMojos && unitSizeMojos > 0n ? unitSizeMojos : betSize / 10n;
   const fallbackUnitSize = fallbackUnitSizeRaw > 0n ? fallbackUnitSizeRaw : 1n;
+  const fallbackDisplayMode = defaultDisplayModeForUnit(fallbackUnitSize);
   const initialHandState = useMemo(
     () => spacepokerStateFromPersisted(initialPersistedState, _iStarted, fallbackUnitSize),
     [initialPersistedState, _iStarted, fallbackUnitSize],
@@ -317,7 +325,7 @@ export function useSpacepokerHand(
   const [terminalState, setTerminalState] = useState<SpTerminalState>(initialHandState?.terminalState ?? 'none');
   // Coin toss result: true = I open, false = opponent opens, null = not yet known
   const [coinTossIOpen, setCoinTossIOpen] = useState<boolean | null>(initialHandState?.coinTossIOpen ?? null);
-  const [displayMode, setDisplayMode] = useState<SpacepokerDisplayMode>(initialHandState?.displayMode ?? 'xch');
+  const [displayMode, setDisplayMode] = useState<SpacepokerDisplayMode>(initialHandState?.displayMode ?? fallbackDisplayMode);
 
   const pot = 2n * halfPot + lastRaise;
   const playerStack = stackSize - halfPot - (iRaisedLast ? lastRaise : 0n);
