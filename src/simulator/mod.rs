@@ -678,6 +678,26 @@ impl Simulator {
             }
         }
 
+        if let Some(before_height) = validated.before_height_absolute {
+            if state.height >= before_height {
+                if self.strict {
+                    panic!(
+                        "Strict mode: ASSERT_BEFORE_HEIGHT_ABSOLUTE violated: \
+                         current height {} >= required before-height {}",
+                        state.height, before_height,
+                    );
+                }
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(20),
+                    diagnostic: format!(
+                        "ASSERT_BEFORE_HEIGHT_ABSOLUTE not satisfied: height {} >= {}",
+                        state.height, before_height,
+                    ),
+                });
+            }
+        }
+
         // Check for duplicate or conflicting transactions already in the mempool.
         for existing in state.mempool.iter() {
             if existing.fingerprint == tx_fingerprint {

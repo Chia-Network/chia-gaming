@@ -222,10 +222,16 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     offer: { [walletId: string]: bigint },
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
-    _maxHeight?: bigint,
+    maxHeight?: bigint,
   ): Promise<any | null> {
     const params: any = { who: uniqueId, offer };
-    if (extraConditions) params.extraConditions = extraConditions;
+    const conditions = [...(extraConditions ?? [])];
+    if (maxHeight !== undefined) {
+      const hex = maxHeight.toString(16);
+      const padded = hex.length % 2 === 1 ? '0' + hex : hex;
+      conditions.push({ opcode: 87n, args: [padded] });
+    }
+    if (conditions.length > 0) params.extraConditions = conditions;
     if (coinIds) params.coinIds = coinIds;
     const raw = await this.sendRequest('create_offer_for_ids', params);
     if (!raw) return null;
