@@ -1250,6 +1250,21 @@ fn call_message_parser(
     run_clvm(allocator, parser, args)
 }
 
+fn message_parser_succeeds(
+    allocator: &mut AllocEncoder,
+    parser: NodePtr,
+    message: NodePtr,
+    state: NodePtr,
+    amount: i64,
+) -> bool {
+    let amount_node = amount.to_clvm(allocator).unwrap();
+    let a = allocator.allocator();
+    let tail = a.new_pair(amount_node, NodePtr::NIL).unwrap();
+    let tail = a.new_pair(state, tail).unwrap();
+    let args = a.new_pair(message, tail).unwrap();
+    run_program(allocator.allocator(), &chia_dialect(), parser, args, 0).is_ok()
+}
+
 fn readable_tag(allocator: &mut AllocEncoder, readable: NodePtr) -> String {
     let items = proper_list(allocator.allocator(), readable, true).unwrap();
     let tag_bytes = allocator.allocator().atom(items[0]).to_vec();
@@ -1517,6 +1532,30 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
     let tag_bytes = allocator.allocator().atom(parsed_items[0]).to_vec();
     assert_eq!(String::from_utf8(tag_bytes).unwrap(), "cards");
     assert!(parsed_items.len() > 1, "'cards' should have values");
+
+    let short_message = allocator.allocator().new_atom(&[1, 2, 3]).unwrap();
+    assert!(
+        !message_parser_succeeds(
+            &mut allocator,
+            b_call.message_parser,
+            short_message,
+            bob_state,
+            AMOUNT,
+        ),
+        "open advisory parser should reject non-32-byte messages"
+    );
+
+    let wrong_preimage = allocator.allocator().new_atom(&[0x55; 32]).unwrap();
+    assert!(
+        !message_parser_succeeds(
+            &mut allocator,
+            b_call.message_parser,
+            wrong_preimage,
+            bob_state,
+            AMOUNT,
+        ),
+        "open advisory parser should reject preimages that do not hash to committed image"
+    );
 
     bob_waiter_vp_hash = b_call.validator_for_their_move_hash;
     bob_waiter_validator = b_call.validator_for_their_next_move;
