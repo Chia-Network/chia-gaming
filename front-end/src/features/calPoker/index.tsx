@@ -1,24 +1,26 @@
 import React, { useEffect, useRef } from 'react';
 
-import { CalpokerOutcome } from '../../types/ChiaGaming';
-import { CalpokerDisplaySnapshot } from '../../hooks/save';
-
 import { CaliforniaPoker } from './components';
+import {
+  CalpokerDisplaySnapshotView,
+  CalpokerOutcomeView,
+} from '../../types/californiaPoker/CaliforniapokerProps';
 
 export interface CalpokerProps {
-  outcome: CalpokerOutcome | undefined;
-  moveNumber: number;
+  outcome: CalpokerOutcomeView | undefined;
+  moveNumber: string;
   playerNumber: number;
-  playerHand: number[];
-  opponentHand: number[];
-  cardSelections: number[];
-  setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
+  playerHand: string[];
+  opponentHand: string[];
+  cardSelections: string[];
+  setCardSelections: (n: string[] | ((prev: string[]) => string[])) => void;
+  setHandOrder: (playerHand: string[], opponentHand?: string[]) => void;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
   onGameLog: (lines: string[]) => void;
-  onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
-  initialSnapshot?: CalpokerDisplaySnapshot;
+  onSnapshotChange: (snapshot: CalpokerDisplaySnapshotView) => void;
+  initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
 }
@@ -31,6 +33,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   opponentHand,
   cardSelections,
   setCardSelections,
+  setHandOrder,
   handleMakeMove,
   handleCheat,
   handleNerf,
@@ -89,6 +92,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           opponentHand={opponentHand}
           cardSelections={cardSelections}
           setCardSelections={setCardSelections}
+          setHandOrder={setHandOrder}
           handleMakeMove={handleMakeMove}
           outcome={outcome}
           myWinOutcome={myWinOutcome}

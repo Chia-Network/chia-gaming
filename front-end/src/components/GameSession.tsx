@@ -2,14 +2,19 @@ import { Component, useCallback, useEffect, useRef, useState, type RefObject, ty
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, deriveSessionPhase, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerHandState, CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
+import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
 import { WasmBlobWrapper, RestoreStatus } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
+import {
+  CalpokerDisplaySnapshotView,
+  CalpokerOutcomeView,
+} from '../types/californiaPoker/CaliforniapokerProps';
 import SpacePoker from './SpacePoker';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
+import { selectHideGameInterfaceForBetweenHandDialog } from '../lib/session/model';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -18,17 +23,70 @@ import { Button } from './button';
 import { AmountInput } from './AmountInput';
 
 interface ErrorBoundaryProps { children: ReactNode; }
-interface ErrorBoundaryState { error: string | null; }
+interface ErrorBoundaryState {
+  error: string | null;
+  componentStack: string | null;
+  dialogDismissed: boolean;
+}
+
+function RenderErrorDialog({
+  title,
+  error,
+  componentStack,
+  onDismiss,
+  onReload,
+}: {
+  title: string;
+  error: string;
+  componentStack: string | null;
+  onDismiss?: () => void;
+  onReload?: () => void;
+}) {
+  return (
+    <div
+      className='fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4'
+      role='alertdialog'
+      aria-modal='true'
+      aria-labelledby='render-error-title'
+    >
+      <div className='flex max-h-[90vh] w-full max-w-2xl flex-col gap-3 overflow-hidden rounded-lg border border-alert-text bg-canvas-bg p-4 text-canvas-text shadow-xl'>
+        <div>
+          <h2 id='render-error-title' className='text-lg font-semibold text-alert-text'>{title}</h2>
+          <p className='mt-1 text-sm text-canvas-text'>
+            The game UI hit a render error. The session shell is still running; details are shown below.
+          </p>
+        </div>
+        <pre className='max-h-56 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text'>{error}</pre>
+        {componentStack && (
+          <pre className='max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text'>{componentStack}</pre>
+        )}
+        <div className='flex flex-wrap justify-end gap-2'>
+          {onDismiss && (
+            <Button variant='outline' size='sm' onClick={onDismiss}>
+              Dismiss
+            </Button>
+          )}
+          {onReload && (
+            <Button variant='solid' size='sm' onClick={onReload}>
+              Reload
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null };
+  state: ErrorBoundaryState = { error: null, componentStack: null, dialogDismissed: false };
 
   static getDerivedStateFromError(err: Error): ErrorBoundaryState {
-    return { error: err.stack || err.message };
+    return { error: err.stack || err.message, componentStack: null, dialogDismissed: false };
   }
 
   componentDidCatch(err: Error, info: ErrorInfo) {
     console.error('[GameSession] render crash:', err, info.componentStack);
+    this.setState({ componentStack: info.componentStack ?? null });
   }
 
   render() {
@@ -36,7 +94,13 @@ export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, Erro
       return (
         <div className='flex flex-col items-center justify-center gap-4 w-full h-full p-8 text-canvas-text'>
           <h2 className='text-xl font-semibold text-alert-text'>Something went wrong</h2>
-          <pre className='text-xs whitespace-pre-wrap break-all max-w-lg max-h-[40vh] overflow-auto select-text cursor-text bg-canvas-bg p-4 rounded border border-canvas-line'>{this.state.error}</pre>
+          <p className='text-sm text-canvas-text'>The session renderer crashed. Reloading is the safest recovery.</p>
+          <RenderErrorDialog
+            title='Session renderer crashed'
+            error={this.state.error}
+            componentStack={this.state.componentStack}
+            onReload={() => window.location.reload()}
+          />
           <button
             className='px-4 py-2 rounded bg-canvas-solid text-canvas-bg-subtle hover:opacity-90'
             onClick={() => window.location.reload()}
@@ -49,6 +113,56 @@ export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, Erro
     return this.props.children;
   }
 }
+
+interface GameAreaErrorBoundaryProps {
+  children: ReactNode;
+  resetKey: string;
+}
+
+class GameAreaErrorBoundary extends Component<GameAreaErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null, componentStack: null, dialogDismissed: false };
+
+  static getDerivedStateFromError(err: Error): ErrorBoundaryState {
+    return { error: err.stack || err.message, componentStack: null, dialogDismissed: false };
+  }
+
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error('[GameSession] game render crash:', err, info.componentStack);
+    this.setState({ componentStack: info.componentStack ?? null });
+  }
+
+  componentDidUpdate(prevProps: GameAreaErrorBoundaryProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null, componentStack: null, dialogDismissed: false });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <>
+          {!this.state.dialogDismissed && (
+            <RenderErrorDialog
+              title='Game renderer crashed'
+              error={this.state.error}
+              componentStack={this.state.componentStack}
+              onDismiss={() => this.setState({ dialogDismissed: true })}
+            />
+          )}
+          <div className='rounded-md border border-alert-text bg-canvas-bg p-4 text-sm text-canvas-text'>
+            <h2 className='mb-2 font-semibold text-alert-text'>Game renderer crashed</h2>
+            <p className='mb-3 text-canvas-text'>The rest of the session is still available.</p>
+            <Button variant='outline' size='sm' onClick={() => this.setState({ dialogDismissed: false })}>
+              Show Error Details
+            </Button>
+          </div>
+        </>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function CoinId({ hex }: { hex: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -232,7 +346,7 @@ function NotificationOverlay({
 
   return (
     <motion.div
-      key={notification.id}
+      key={String(notification.id)}
       ref={cardRef}
       drag
       dragControls={dragControls}
@@ -285,9 +399,44 @@ interface CalpokerHandProps {
   onTurnChanged: (isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
-  initialHandState?: CalpokerHandState;
   myName?: string;
   opponentName?: string;
+}
+
+function stringifyCalpokerSnapshot(snapshot: CalpokerDisplaySnapshot | undefined): CalpokerDisplaySnapshotView | undefined {
+  if (!snapshot) return undefined;
+  return {
+    ...snapshot,
+    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(String),
+    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(String),
+    playerHaloCardIds: snapshot.playerHaloCardIds.map(String),
+    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(String),
+  };
+}
+
+function parseCalpokerSnapshotView(snapshot: CalpokerDisplaySnapshotView): CalpokerDisplaySnapshot {
+  return {
+    ...snapshot,
+    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(BigInt),
+    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(BigInt),
+    playerHaloCardIds: snapshot.playerHaloCardIds.map(BigInt),
+    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(BigInt),
+  };
+}
+
+function stringifyCalpokerOutcome(outcome: CalpokerOutcome | undefined): CalpokerOutcomeView | undefined {
+  if (!outcome) return undefined;
+  return {
+    my_win_outcome: outcome.my_win_outcome,
+    my_cards: outcome.my_cards.map(String),
+    their_cards: outcome.their_cards.map(String),
+    my_final_hand: outcome.my_final_hand.map(String),
+    their_final_hand: outcome.their_final_hand.map(String),
+    my_used_cards: outcome.my_used_cards.map(String),
+    their_used_cards: outcome.their_used_cards.map(String),
+    my_hand_value: outcome.my_hand_value.map(String),
+    their_hand_value: outcome.their_hand_value.map(String),
+  };
 }
 
 function CalpokerHand({
@@ -300,7 +449,6 @@ function CalpokerHand({
   onTurnChanged,
   appendGameLog,
   perGameAmount,
-  initialHandState,
   myName,
   opponentName,
 }: CalpokerHandProps) {
@@ -309,6 +457,7 @@ function CalpokerHand({
     opponentHand,
     cardSelections,
     setCardSelections,
+    setHandOrder,
     moveNumber,
     outcome,
     handleMakeMove,
@@ -323,7 +472,7 @@ function CalpokerHand({
     gameplayEvent$,
     onOutcome,
     onTurnChanged,
-    initialHandState,
+    gameObject.handState ?? undefined,
   );
 
   const handleGameLog = useCallback((lines: string[]) => {
@@ -332,21 +481,38 @@ function CalpokerHand({
     appendGameLog('');
   }, [appendGameLog, perGameAmount]);
 
+  const setUiCardSelections = useCallback((next: string[] | ((prev: string[]) => string[])) => {
+    setCardSelections((prev) => {
+      const prevView = prev.map(String);
+      const nextView = typeof next === 'function' ? next(prevView) : next;
+      return nextView.map(BigInt);
+    });
+  }, [setCardSelections]);
+
+  const handleSnapshotChange = useCallback((snapshot: CalpokerDisplaySnapshotView) => {
+    saveDisplaySnapshot(parseCalpokerSnapshotView(snapshot));
+  }, [saveDisplaySnapshot]);
+
+  const setUiHandOrder = useCallback((nextPlayerHand: string[], nextOpponentHand?: string[]) => {
+    setHandOrder(nextPlayerHand.map(BigInt), nextOpponentHand?.map(BigInt));
+  }, [setHandOrder]);
+
   return (
     <Calpoker
-      outcome={outcome}
-      moveNumber={moveNumber}
+      outcome={stringifyCalpokerOutcome(outcome)}
+      moveNumber={String(moveNumber)}
       playerNumber={playerNumber}
-      playerHand={playerHand}
-      opponentHand={opponentHand}
-      cardSelections={cardSelections}
-      setCardSelections={setCardSelections}
+      playerHand={playerHand.map(String)}
+      opponentHand={opponentHand.map(String)}
+      cardSelections={cardSelections.map(String)}
+      setCardSelections={setUiCardSelections}
+      setHandOrder={setUiHandOrder}
       handleMakeMove={handleMakeMove}
       handleCheat={handleCheat}
       handleNerf={handleNerf}
       onGameLog={handleGameLog}
-      onSnapshotChange={saveDisplaySnapshot}
-      initialSnapshot={initialDisplaySnapshot}
+      onSnapshotChange={handleSnapshotChange}
+      initialSnapshot={stringifyCalpokerSnapshot(initialDisplaySnapshot)}
       myName={myName}
       opponentName={opponentName}
     />
@@ -363,18 +529,24 @@ function ComposeProposalDialog({
   const defaultSpacePokerStackSize = 10;
   const isSpacepoker = session.composeGameType === 'spacepoker';
   const [spUnitSize, setSpUnitSize] = useState(() => {
+    const remembered = session.lastHandTerms.gameType === 'spacepoker'
+      ? session.lastHandTerms.spacepokerUnitSize
+      : undefined;
+    if (remembered && remembered > 0n) return remembered;
     const stake = session.composePerHandAmount;
     if (stake <= 0n) return 1n;
     return (stake + BigInt(defaultSpacePokerStackSize - 1)) / BigInt(defaultSpacePokerStackSize);
   });
-  const [spStackSizeStr, setSpStackSizeStr] = useState(String(defaultSpacePokerStackSize));
+  const [spStackSizeStr, setSpStackSizeStr] = useState(() => {
+    const remembered = session.lastHandTerms.gameType === 'spacepoker'
+      ? session.lastHandTerms.spacepokerUnitSize
+      : undefined;
+    if (remembered && remembered > 0n && session.composePerHandAmount > 0n) {
+      return String(session.composePerHandAmount / remembered);
+    }
+    return String(defaultSpacePokerStackSize);
+  });
   const spStackSize = parseInt(spStackSizeStr) || 0;
-
-  useEffect(() => {
-    if (!isSpacepoker || spStackSize <= 0) return;
-    const stake = session.composePerHandAmount;
-    setSpUnitSize(stake > 0n ? (stake + BigInt(spStackSize - 1)) / BigInt(spStackSize) : 1n);
-  }, [isSpacepoker, session.composePerHandAmount, spStackSize]);
 
   const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
   const spTotalGame = spBetSize * 2n;
@@ -388,7 +560,11 @@ function ComposeProposalDialog({
 
   const submit = () => {
     if (perHandAmount <= 0n || session.composeProposalSent) return;
-    session.submitComposedProposal(perHandAmount, session.composeGameType);
+    session.submitComposedProposal(
+      perHandAmount,
+      session.composeGameType,
+      isSpacepoker ? spUnitSize : undefined,
+    );
   };
 
   return (
@@ -549,11 +725,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   })();
 
   const handEverStarted = session.handKey > 0;
-  const hideGameInterfaceForBetweenHandDialog =
-    session.betweenHands &&
-    (session.betweenHandMode === 'compose-proposal' || session.betweenHandMode === 'review-incoming-proposal');
+  const hasPersistedGameState = !!session.gameSpecificView.handState;
+  const hideGameInterfaceForBetweenHandDialog = selectHideGameInterfaceForBetweenHandDialog(
+    session.betweenHands,
+    session.betweenHandMode,
+  );
   const gameSpecificView = session.gameSpecificView;
-  const showGameInterface = handEverStarted && !!gameSpecificView.displayGameId && !hideGameInterfaceForBetweenHandDialog;
+  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
   const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
     ? 'Active \u{1F954}'
     : CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
@@ -660,41 +838,47 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
           <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
           {showGameInterface && (
-            gameSpecificView.gameType === 'calpoker' ? (
-              <CalpokerHand
-                key={session.handKey}
-                gameObject={session.gameObject}
-                gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                iStarted={session.iStarted}
-                playerNumber={session.playerNumber}
-                gameplayEvent$={session.gameplayEvent$}
-                onOutcome={session.onHandOutcome}
-                onTurnChanged={session.onTurnChanged}
-                appendGameLog={session.appendGameLog}
-                perGameAmount={session.currentHandAmount}
-                initialHandState={session.handKey === 1 && gameSpecificView.handState ? gameSpecificView.handState : undefined}
-                myName={params.myAlias}
-                opponentName={params.opponentAlias}
-              />
-            ) : gameSpecificView.gameType === 'spacepoker' ? (
-              <SpacePoker
-                key={session.handKey}
-                gameObject={session.gameObject}
-                gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                iStarted={session.iStarted}
-                gameplayEvent$={session.gameplayEvent$}
-                betSize={session.currentHandAmount}
-                onTurnChanged={session.onTurnChanged}
-                myName={params.myAlias}
-                opponentName={params.opponentAlias}
-              />
-            ) : (
-              <div className='flex items-center justify-center py-20'>
-                <p className='text-canvas-text'>
-                  Game not supported: {gameDisplayName(gameSpecificView.gameType)}
-                </p>
-              </div>
-            )
+            <GameAreaErrorBoundary
+              resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
+            >
+              {gameSpecificView.gameType === 'calpoker' ? (
+                <CalpokerHand
+                  key={session.handKey}
+                  gameObject={session.gameObject}
+                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                  iStarted={session.iStarted}
+                  playerNumber={session.playerNumber}
+                  gameplayEvent$={session.gameplayEvent$}
+                  onOutcome={session.onHandOutcome}
+                  onTurnChanged={session.onTurnChanged}
+                  appendGameLog={session.appendGameLog}
+                  perGameAmount={session.currentHandAmount}
+                  myName={params.myAlias}
+                  opponentName={params.opponentAlias}
+                />
+              ) : gameSpecificView.gameType === 'spacepoker' ? (
+                <SpacePoker
+                  key={session.handKey}
+                  gameObject={session.gameObject}
+                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                  iStarted={session.iStarted}
+                  gameplayEvent$={session.gameplayEvent$}
+                  betSize={String(session.currentHandAmount)}
+                  unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
+                    ? String(session.lastHandTerms.spacepokerUnitSize)
+                    : undefined}
+                  onTurnChanged={session.onTurnChanged}
+                  myName={params.myAlias}
+                  opponentName={params.opponentAlias}
+                />
+              ) : (
+                <div className='flex items-center justify-center py-20'>
+                  <p className='text-canvas-text'>
+                    Game not supported: {gameDisplayName(gameSpecificView.gameType)}
+                  </p>
+                </div>
+              )}
+            </GameAreaErrorBoundary>
           )}
 
           {!handEverStarted && (
@@ -702,7 +886,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
-          {handEverStarted && !gameSpecificView.displayGameId && !session.betweenHands && (
+          {handEverStarted && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>
@@ -768,10 +952,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                   </p>
                   {session.reviewPeerProposal.terms.gameType === 'spacepoker' && (() => {
                     const betSize = session.reviewPeerProposal!.terms.myContribution;
-                    const betUnit = betSize / 10n;
-                    return betUnit > 0n ? (
+                    const betUnit = session.reviewPeerProposal!.terms.spacepokerUnitSize;
+                    return betUnit && betUnit > 0n ? (
                       <p className='text-xs text-canvas-text'>
-                        Unit size: {formatMojos(betUnit)} · Stack: 10 units
+                        Unit size: {formatMojos(betUnit)} · Stack: {String(betSize / betUnit)} units
                       </p>
                     ) : null;
                   })()}

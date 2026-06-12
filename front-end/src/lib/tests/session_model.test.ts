@@ -6,9 +6,11 @@ import {
   selectDefaultCalpokerProposalMyTurn,
   selectGameSessionView,
   selectGameSpecificView,
+  selectHideGameInterfaceForBetweenHandDialog,
   selectRestoreBlocked,
   selectSessionPhase,
   selectShellView,
+  sessionAmountsFromSave,
   sessionModelFromSave,
   snapshotFromSessionModel,
   updateSessionModel,
@@ -102,10 +104,10 @@ describe('session model selectors', () => {
         cachedPeerProposal: null,
         reviewPeerProposal: {
           id: '42',
-          terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n },
+          terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n, spacepokerUnitSize: 2n },
         },
         rejectedOnceTerms: null,
-        lastTerms: { gameType: 'spacepoker', myContribution: 10n, theirContribution: 10n },
+        lastTerms: { gameType: 'spacepoker', myContribution: 10n, theirContribution: 10n, spacepokerUnitSize: 1n },
         composePerHandAmount: 10n,
         composeGameType: 'spacepoker',
         composeProposalSent: false,
@@ -137,6 +139,27 @@ describe('session model selectors', () => {
 
     expect(restored.channel.queue[0].id).toBe(7n);
     expect(restored.game.queue[0].id).toBe(8n);
+  });
+
+  it('hides completed hand UI while compose or review dialogs are open between hands', () => {
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'decision')).toBe(false);
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal')).toBe(true);
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal')).toBe(true);
+    expect(selectHideGameInterfaceForBetweenHandDialog(false, 'compose-proposal')).toBe(false);
+  });
+
+  it('parses saved session amounts through a shared bigint adapter', () => {
+    expect(sessionAmountsFromSave(
+      { amount: '123', perGameAmount: '45' },
+      1n,
+      2n,
+    )).toEqual({ amount: 123n, perGameAmount: 45n });
+
+    expect(sessionAmountsFromSave(
+      { amount: 'bad', perGameAmount: undefined },
+      1n,
+      2n,
+    )).toEqual({ amount: 1n, perGameAmount: 2n });
   });
 
   it('separates history, diagnostic log, chat, and wasm notification history in snapshots', () => {

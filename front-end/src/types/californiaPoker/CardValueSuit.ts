@@ -2,7 +2,7 @@ type SuitName = 'Q' |'♠' | '♥' | '♦' | '♣';
 interface CardValueSuit {
   rank: number;
   suit: SuitName;
-  cardId?: number;
+  cardId?: string;
 }
 
 export type { CardValueSuit, SuitName };

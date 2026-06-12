@@ -124,6 +124,7 @@ pub enum GameNotification {
         my_contribution: Amount,
         their_contribution: Amount,
         initial_validation_program_hash: Hash,
+        initial_state: ProgramRef,
         game_type: GameType,
     },
     ProposalAccepted {

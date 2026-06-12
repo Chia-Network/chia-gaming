@@ -49,6 +49,7 @@ import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockc
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldAdvertiseAvailable, shouldAutoGoOnChain } from '../lib/restoreLifecycle';
+import { sessionAmountsFromSave } from '../lib/session/model';
 import { log } from '../services/log';
 import { Button } from './button';
 
@@ -84,6 +85,53 @@ function humanHistoryFromSave(save: SessionState): string[] | undefined {
 
 function diagnosticLogFromSave(save: SessionState): string[] | undefined {
   return save.diagnosticLog ?? save.log;
+}
+
+function reactPropSafeValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const copy = value.map(reactPropSafeValue);
+    value.forEach((item, index) => {
+      if (typeof item === 'bigint') {
+        Object.defineProperty(copy, index, {
+          value: item,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+    });
+    return copy as T;
+  }
+
+  const copy = { ...(value as Record<string, unknown>) };
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === 'bigint') {
+      Object.defineProperty(copy, key, {
+        value: nested,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    } else if (nested !== null && typeof nested === 'object') {
+      copy[key] = reactPropSafeValue(nested);
+    }
+  }
+  return copy as T;
+}
+
+function sessionSaveForReactProps(save: SessionState | null): SessionState | undefined {
+  if (!save) return undefined;
+  const propSafeSave = reactPropSafeValue(save);
+  if (Object.prototype.hasOwnProperty.call(save, 'handState')) {
+    Object.defineProperty(propSafeSave, 'handState', {
+      value: save.handState,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return propSafeSave;
 }
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
@@ -698,10 +746,7 @@ const Shell = () => {
           const save = peekSession();
           if (status.has_pairing && status.token) {
             if (save && save.pairingToken === status.token) {
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
               startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
             } else if (!save) {
               console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
@@ -710,10 +755,7 @@ const Shell = () => {
             } else if (save.serializedCradle) {
               console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
               conn.close();
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
               sessionSaveRef.current = save;
               setGameParams({
                 iStarted: save.iStarted ?? false,
@@ -734,10 +776,7 @@ const Shell = () => {
           } else {
             if (save && save.serializedCradle) {
               console.warn('[Shell] connection_status: no pairing but have full save, going on-chain');
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
               sessionSaveRef.current = save;
               setGameParams({
                 iStarted: save.iStarted ?? false,
@@ -818,10 +857,7 @@ const Shell = () => {
 
     const initialSave = peekSession();
     if (initialSave && initialSave.pairingToken) {
-      let amount: bigint;
-      let perGame: bigint;
-      try { amount = BigInt(initialSave.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-      try { perGame = BigInt(initialSave.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+      const { amount, perGameAmount: perGame } = sessionAmountsFromSave(initialSave, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
       startSession(
         conn,
         initialSave.iStarted ?? false,
@@ -1048,10 +1084,7 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    let amount: bigint;
-    let perGame: bigint;
-    try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-    try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+    const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
     if (save.pairingToken) {
       setGameParams({
         iStarted: save.iStarted ?? false,
@@ -1696,7 +1729,7 @@ const Shell = () => {
                   peerConnected={peerConnected}
                   registerMessageHandler={registerMessageHandler}
                   appendGameLog={appendHistory}
-                  sessionSave={sessionSaveRef.current ?? undefined}
+                  sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
                   onGameActivity={onGameActivity}
                   onSessionPhaseChange={handleSessionPhaseChange}
                   onRestoreStatusChange={handleRestoreStatusChange}

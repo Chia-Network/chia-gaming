@@ -20,7 +20,7 @@ import {
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionState } from './save';
-import type { CalpokerHandState } from './save';
+import type { PersistedGameState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
 export interface WasmFields {
@@ -36,7 +36,7 @@ export interface WasmFields {
   history: string[];
   log: string[];
   activeGameId: string | null;
-  handState: CalpokerHandState | null;
+  handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
@@ -119,7 +119,7 @@ export class WasmBlobWrapper implements PollingCradle {
   private pendingOutboundSends: Array<{ msgno: number; msg: Uint8Array }> = [];
   private pendingAcks: number[] = [];
   activeGameId: string | null = null;
-  handState: CalpokerHandState | null = null;
+  private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
@@ -128,12 +128,26 @@ export class WasmBlobWrapper implements PollingCradle {
   onSaveNeeded: (() => void) | null = null;
   getFee: () => bigint = () => 0n;
 
+  get handState(): PersistedGameState | null {
+    return this._handState;
+  }
+
+  set handState(state: PersistedGameState | null) {
+    this._handState = state;
+  }
+
   constructor(
     blockchain: BlockchainPoller,
     uniqueId: string,
     amount: bigint,
     peer_conn: PeerConnectionResult,
   ) {
+    Object.defineProperty(this, '_handState', {
+      value: null,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
     const { sendMessage, sendAck } = peer_conn;
     this.uniqueId = uniqueId;
     this.pairingToken = '';
@@ -721,7 +735,7 @@ export class WasmBlobWrapper implements PollingCradle {
     }
   }
 
-  setHandState(state: CalpokerHandState | null) {
+  setHandState(state: PersistedGameState | null) {
     this.handState = state;
     this.scheduleSave();
   }

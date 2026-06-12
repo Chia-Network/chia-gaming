@@ -1,5 +1,5 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
-import { jsonParse, jsonStringify } from '../util/jsonSafe';
+import { jsonParseLossless, jsonStringifyLossless } from '../util/jsonSafe';
 
 export function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -104,25 +104,28 @@ interface SavedGame {
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
-  playerCardIds: number[];
-  opponentCardIds: number[];
-  cardSelections: number[];
   winner: string | null;
-  playerBestHandCardIds: number[];
-  opponentBestHandCardIds: number[];
-  playerHaloCardIds: number[];
-  opponentHaloCardIds: number[];
+  playerBestHandCardIds: bigint[];
+  opponentBestHandCardIds: bigint[];
+  playerHaloCardIds: bigint[];
+  opponentHaloCardIds: bigint[];
   playerDisplayText: string;
   opponentDisplayText: string;
 }
 
 export interface CalpokerHandState {
-  playerHand: number[];
-  opponentHand: number[];
-  moveNumber: number;
+  playerHand: bigint[];
+  opponentHand: bigint[];
+  moveNumber: bigint;
   isPlayerTurn: boolean;
-  cardSelections?: number[];
+  cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+}
+
+export interface PersistedGameState<T = unknown> {
+  gameType: string;
+  version: number;
+  state: T;
 }
 
 type BlockchainType = 'simulator' | 'walletconnect';
@@ -172,7 +175,7 @@ export interface SessionState {
   diagnosticLog?: string[];
   activeGameId?: string | null;
   activeGameType?: string;
-  handState?: CalpokerHandState | null;
+  handState?: PersistedGameState | null;
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;
@@ -192,10 +195,10 @@ export interface SessionState {
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
   betweenHandComposeGameType?: string;
-  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
+  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
@@ -396,7 +399,7 @@ function flushToLocalStorage(): void {
     persistTimer = null;
   }
   try {
-    localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(cached)));
+    localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(cached)));
   } catch (e) {
     console.error('[save] failed to persist state:', e);
   }
@@ -444,7 +447,7 @@ if (typeof window !== 'undefined') {
 
 /** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
 export function _writeRawState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(obj)));
+  localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(obj)));
 }
 
 /** @internal — reset module state between test cases */
@@ -471,37 +474,73 @@ function parseFiniteNumber(value: unknown, fallback: number): number {
   return fallback;
 }
 
-function normalizeNumberArray(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => parseFiniteNumber(item, 0));
+function parseBigint(value: unknown, fallback: bigint): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value === 'string') {
+    try {
+      return BigInt(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
-function normalizeDisplaySnapshot(value: unknown): CalpokerDisplaySnapshot | undefined {
+function parseBigintArray(value: unknown): bigint[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => parseBigint(item, 0n));
+}
+
+function normalizeCalpokerDisplaySnapshot(value: unknown): CalpokerDisplaySnapshot | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const snapshot = value as CalpokerDisplaySnapshot;
   return {
-    ...snapshot,
-    playerCardIds: normalizeNumberArray(snapshot.playerCardIds),
-    opponentCardIds: normalizeNumberArray(snapshot.opponentCardIds),
-    cardSelections: normalizeNumberArray(snapshot.cardSelections),
-    playerBestHandCardIds: normalizeNumberArray(snapshot.playerBestHandCardIds),
-    opponentBestHandCardIds: normalizeNumberArray(snapshot.opponentBestHandCardIds),
-    playerHaloCardIds: normalizeNumberArray(snapshot.playerHaloCardIds),
-    opponentHaloCardIds: normalizeNumberArray(snapshot.opponentHaloCardIds),
+    gameState: typeof snapshot.gameState === 'string' ? snapshot.gameState : 'selecting',
+    winner: snapshot.winner ?? null,
+    playerBestHandCardIds: parseBigintArray(snapshot.playerBestHandCardIds),
+    opponentBestHandCardIds: parseBigintArray(snapshot.opponentBestHandCardIds),
+    playerHaloCardIds: parseBigintArray(snapshot.playerHaloCardIds),
+    opponentHaloCardIds: parseBigintArray(snapshot.opponentHaloCardIds),
+    playerDisplayText: typeof snapshot.playerDisplayText === 'string' ? snapshot.playerDisplayText : '',
+    opponentDisplayText: typeof snapshot.opponentDisplayText === 'string' ? snapshot.opponentDisplayText : '',
   };
 }
 
-function normalizeHandState(value: unknown): CalpokerHandState | null | undefined {
+function normalizeCalpokerHandState(value: unknown): CalpokerHandState | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const state = value as CalpokerHandState;
+  return {
+    playerHand: parseBigintArray(state.playerHand),
+    opponentHand: parseBigintArray(state.opponentHand),
+    moveNumber: parseBigint(state.moveNumber, 0n),
+    isPlayerTurn: !!state.isPlayerTurn,
+    cardSelections: state.cardSelections ? parseBigintArray(state.cardSelections) : undefined,
+    displaySnapshot: normalizeCalpokerDisplaySnapshot(state.displaySnapshot),
+  };
+}
+
+export function normalizePersistedGameState(value: unknown): PersistedGameState | null | undefined {
   if (value == null) return value;
   if (typeof value !== 'object') return undefined;
-  const hand = value as CalpokerHandState;
+  const hand = value as PersistedGameState;
+  if (typeof hand.gameType === 'string' && 'state' in hand) {
+    const state = hand.gameType === 'calpoker'
+      ? normalizeCalpokerHandState(hand.state) ?? hand.state
+      : hand.state;
+    return {
+      gameType: hand.gameType,
+      version: parseFiniteNumber(hand.version, 0),
+      state,
+    };
+  }
+
+  // Version 3 saves only had Calpoker hand state. Wrap that legacy payload in
+  // the generic game-state envelope so in-progress hands still restore.
   return {
-    ...hand,
-    playerHand: normalizeNumberArray(hand.playerHand),
-    opponentHand: normalizeNumberArray(hand.opponentHand),
-    moveNumber: parseFiniteNumber(hand.moveNumber, 0),
-    cardSelections: hand.cardSelections ? normalizeNumberArray(hand.cardSelections) : undefined,
-    displaySnapshot: normalizeDisplaySnapshot(hand.displaySnapshot),
+    gameType: 'calpoker',
+    version: 1,
+    state: normalizeCalpokerHandState(value) ?? value,
   };
 }
 
@@ -530,7 +569,7 @@ function normalizeLoadedState(state: SessionState): SessionState {
       msgno: parseFiniteNumber(message.msgno, 0),
     }));
   }
-  state.handState = normalizeHandState(state.handState);
+  state.handState = normalizePersistedGameState(state.handState);
   state.chatMessages = normalizeChatMessages(state.chatMessages);
   return state;
 }
@@ -541,7 +580,7 @@ export function loadState(): SessionState {
     const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
       const json = deobfuscate(raw);
-      const parsed = jsonParse(json);
+      const parsed = jsonParseLossless(json);
       if (parsed.version == CURRENT_VERSION) {
         cached = normalizeLoadedState(parsed as SessionState);
         return cached;

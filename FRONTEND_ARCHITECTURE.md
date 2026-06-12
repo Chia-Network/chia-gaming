@@ -349,7 +349,7 @@ full mid-game session state:
 | `log` | `string[]?` | Diagnostic log history. |
 | `activeGameId` | `string \| null?` | Current live game ID, if any. |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
-| `handState` | `CalpokerHandState \| null?` | Calpoker display/state snapshot for mid-hand restore. |
+| `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
 | `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching. |
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
@@ -888,6 +888,34 @@ utilities in `front-end/src/util/jsonSafe.ts`:
 - `jsonStringify` — hand-rolled serializer that emits BigInts as bare numeric
   literals (via `toString()` directly into the JSON string), avoiding both the
   `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
+- `jsonParseLossless` / `jsonStringifyLossless` — persistence helpers for
+  `SessionState`. These encode BigInts as tagged objects so reload can restore
+  large values exactly, including values too large to round-trip through JSON
+  numbers.
+
+#### UX BigInt policy
+
+Domain values in the player app should stay as `bigint` for as long as they are
+protocol, money, card, move, or persisted session values. This includes WASM
+bridge data, game hooks, session-model facts, `PersistedGameState`, balance
+math, and move construction. Do not convert these values to `number` for
+convenience; JavaScript numbers are floating-point and can silently lose
+precision for Chia amounts or CLVM integers.
+
+The conversion boundary is the view layer. React components that only render or
+edit a value should receive view-safe props: usually decimal strings for money
+and CLVM integers, or small `number`s only for genuinely UI-local quantities
+such as input step counts, array indices, CSS/layout values, and enum-like
+controls. Game-specific wrappers such as `GameSession` should build these view
+models explicitly, and convert back to `bigint` only when calling hook actions
+that construct protocol moves.
+
+This boundary is also defensive. Native `JSON.stringify` throws on BigInts, and
+React development diagnostics may enumerate props or error payloads in ways that
+hit JSON serialization. Avoid passing BigInt-rich domain objects directly into
+deep component trees. Prefer explicit string/number view props; if a domain
+object must cross a React boundary, keep BigInt-heavy implementation details out
+of ordinary enumerable props.
 
 ### Lobby Iframe (Tracker)
 

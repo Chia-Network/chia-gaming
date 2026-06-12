@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Subject, Observable } from 'rxjs';
+import { Program } from 'clvm-lib';
 import {
   GameConnectionState,
   GameSessionParams,
@@ -294,6 +295,7 @@ export interface HandTerms {
   gameType: string;
   myContribution: bigint;
   theirContribution: bigint;
+  spacepokerUnitSize?: bigint;
 }
 
 export interface BetweenHandProposal {
@@ -307,7 +309,12 @@ export type BetweenHandMode =
   | 'review-incoming-proposal';
 
 function termsEqual(a: HandTerms | null, b: HandTerms | null): boolean {
-  return !!a && !!b && a.gameType === b.gameType && a.myContribution === b.myContribution && a.theirContribution === b.theirContribution;
+  return !!a
+    && !!b
+    && a.gameType === b.gameType
+    && a.myContribution === b.myContribution
+    && a.theirContribution === b.theirContribution
+    && (a.spacepokerUnitSize ?? null) === (b.spacepokerUnitSize ?? null);
 }
 
 function balanceCanCover(balance: string | null, amount: bigint): boolean {
@@ -336,17 +343,32 @@ function parseGameTypeFromNotification(value: Record<string, unknown>): string {
   return 'calpoker';
 }
 
+function parseProgramBigInt(value: unknown): bigint | undefined {
+  if (!Array.isArray(value) || !value.every((b): b is number => typeof b === 'number')) {
+    return undefined;
+  }
+  try {
+    return Program.deserialize(Uint8Array.from(value)).toBigInt();
+  } catch {
+    return undefined;
+  }
+}
+
 function parseTermsFromNotificationValue(value: unknown, gameType?: string): HandTerms | null {
   if (typeof value !== 'object' || value === null) return null;
   const obj = value as Record<string, unknown>;
   const mine = parseAmount(obj.my_contribution);
   const theirs = parseAmount(obj.their_contribution);
   if (!mine || !theirs) return null;
+  const resolvedGameType = gameType ?? parseGameTypeFromNotification(obj);
   try {
     return {
-      gameType: gameType ?? parseGameTypeFromNotification(obj),
+      gameType: resolvedGameType,
       myContribution: BigInt(mine),
       theirContribution: BigInt(theirs),
+      spacepokerUnitSize: resolvedGameType === 'spacepoker'
+        ? parseProgramBigInt(obj.initial_state)
+        : undefined,
     };
   } catch {
     return null;
@@ -399,6 +421,7 @@ export interface UseGameSessionResult {
   betweenHandMode: BetweenHandMode;
   cachedPeerProposal: BetweenHandProposal | null;
   reviewPeerProposal: BetweenHandProposal | null;
+  lastHandTerms: HandTerms;
   composePerHandAmount: bigint;
   chooseNewHandSameTerms: () => void;
   chooseDoNotUseCurrentProposal: () => void;
@@ -408,7 +431,7 @@ export interface UseGameSessionResult {
   setComposeGameType: (value: string) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
-  submitComposedProposal: (perHandAmount: bigint, gameType: string) => void;
+  submitComposedProposal: (perHandAmount: bigint, gameType: string, spacepokerUnitSize?: bigint) => void;
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
@@ -466,7 +489,7 @@ export function useGameSession(
         ?? { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
     );
   const [myRunningBalance, setMyRunningBalance] = useState(() =>
-    sessionSave?.myRunningBalance ? BigInt(sessionSave.myRunningBalance) : 0n
+    restoredModel?.myRunningBalance ?? 0n
   );
   const [goOnChainPressed, setGoOnChainPressed] = useState(false);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
@@ -747,7 +770,9 @@ export function useGameSession(
         amount: terms.myContribution + terms.theirContribution,
         my_contribution: terms.myContribution,
         my_turn: selectDefaultCalpokerProposalMyTurn(iStarted),
-        parameters: null,
+        parameters: terms.gameType === 'spacepoker' && terms.spacepokerUnitSize
+          ? Program.fromBigInt(terms.spacepokerUnitSize)
+          : null,
       });
       for (const id of ids) {
         proposalTermsByIdRef.current[id] = terms;
@@ -1256,12 +1281,13 @@ export function useGameSession(
     setBetweenHandMode('compose-proposal');
   }, []);
 
-  const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string) => {
+  const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string, spacepokerUnitSize?: bigint) => {
     if (perHandAmount <= 0n) return;
     proposeNewGame({
       gameType,
       myContribution: perHandAmount,
       theirContribution: perHandAmount,
+      spacepokerUnitSize: gameType === 'spacepoker' ? spacepokerUnitSize : undefined,
     });
     setComposeProposalSent(true);
   }, [proposeNewGame]);
@@ -1373,6 +1399,7 @@ export function useGameSession(
     betweenHandMode,
     cachedPeerProposal,
     reviewPeerProposal,
+    lastHandTerms,
     composePerHandAmount,
     composeGameType,
     setComposeGameType,

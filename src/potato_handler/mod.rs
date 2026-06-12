@@ -616,11 +616,13 @@ impl PotatoHandler {
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
                     let ivp_hash = gsi.initial_validation_program.hash().clone();
+                    let initial_state = gsi.initial_state.clone();
                     effects.push(Effect::Notify(GameNotification::ProposalMade {
                         id: game_id,
                         my_contribution,
                         their_contribution,
                         initial_validation_program_hash: ivp_hash,
+                        initial_state,
                         game_type: resolved_game_type,
                     }));
                 }
@@ -1110,6 +1112,7 @@ impl PotatoHandler {
                 starter.program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
+                &game_start.parameters,
             )?;
             let alice_result: Vec<Rc<GameStartInfo>> = alice_game
                 .starts
@@ -1131,6 +1134,7 @@ impl PotatoHandler {
                 starter.program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
+                &game_start.parameters,
             )?;
             let bob_result: Vec<Rc<GameStartInfo>> = bob_game
                 .starts

@@ -106,7 +106,7 @@ function HandDisplay(props: HandDisplayProps) {
     formatHandDescription,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
-  const [draggingCardId, setDraggingCardId] = useState<number | null>(null);
+  const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
@@ -389,7 +389,7 @@ function HandDisplay(props: HandDisplayProps) {
     isDraggingRef.current = true;
 
     setAnyDragging(true);
-    setDraggingCardId(card.cardId ?? index);
+    setDraggingCardId(card.cardId ?? String(index));
     setHoleSlots(nextHoleSlots);
     setActiveDrag(nextActiveDrag);
     pendingDragRef.current = null;
@@ -609,13 +609,13 @@ function HandDisplay(props: HandDisplayProps) {
 
   const isWinner = winner === winnerType;
 
-  const handleCardClick = (cardId: number) => {
+  const handleCardClick = (cardId: string) => {
     if (isDraggingRef.current) return;
     onCardClick?.(cardId);
   };
 
   const renderCard = (card: CardValueSuit, idx: number, showDragOutline = false) => {
-    const cardId = card.cardId ?? idx;
+    const cardId = card.cardId ?? String(idx);
     const isPostRevealPhase = gameState === GAME_STATES.FINAL && !!bestHand?.cards?.length;
     const isInBestHand =
       isPostRevealPhase &&
@@ -624,8 +624,8 @@ function HandDisplay(props: HandDisplayProps) {
           bestCard.cardId != null &&
           bestCard.cardId === card.cardId,
       );
-    const hasHalo = haloCardIds.includes(card.cardId ?? -1);
-    const hideForSwap = swapHiddenCardIds.includes(card.cardId ?? -1);
+    const hasHalo = haloCardIds.includes(card.cardId ?? '-1');
+    const hideForSwap = swapHiddenCardIds.includes(card.cardId ?? '-1');
 
     return (
       <Card
@@ -691,7 +691,7 @@ function HandDisplay(props: HandDisplayProps) {
           style={{ ...groupStyle, pointerEvents: dropAnim ? 'none' : 'auto' }}
         >
           {visibleSlots.map((slotCard, idx) => {
-            const slotCardId = slotCard?.cardId ?? idx;
+            const slotCardId = slotCard?.cardId ?? String(idx);
             const isDragging = draggingCardId === slotCardId;
             const hideForShift =
               !!slotCard &&

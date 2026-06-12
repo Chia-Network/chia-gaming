@@ -425,11 +425,11 @@ export interface WatchReport {
   deleted_watched: string[];
 }
 
-function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
+function select_cards_using_bits<T>(card: T[], mask: bigint): T[][] {
   const result0: T[] = [];
   const result1: T[] = [];
   card.forEach((c, i) => {
-    if (mask & (1 << i)) {
+    if ((mask & (1n << BigInt(i))) !== 0n) {
       result1.push(c);
     } else {
       result0.push(c);
@@ -438,7 +438,7 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
   return [result0, result1];
 }
 
-function compare_card(a: number, b: number): number {
+function compare_card(a: bigint, b: bigint): number {
   const aRankSuit = cardIdToRankSuit(a);
   const bRankSuit = cardIdToRankSuit(b);
   const rankdiff = aRankSuit.rank - bRankSuit.rank;
@@ -457,41 +457,41 @@ export interface PeerConnectionResult {
 }
 
 export class CalpokerOutcome {
-  alice_discards: number;
-  bob_discards: number;
+  alice_discards: bigint;
+  bob_discards: bigint;
 
-  alice_selects: number;
-  bob_selects: number;
+  alice_selects: bigint;
+  bob_selects: bigint;
 
-  alice_hand_value: number[];
-  bob_hand_value: number[];
+  alice_hand_value: bigint[];
+  bob_hand_value: bigint[];
 
-  win_direction: number;
+  win_direction: bigint;
   my_win_outcome: 'win' | 'lose' | 'tie';
 
-  alice_cards: number[];
-  bob_cards: number[];
+  alice_cards: bigint[];
+  bob_cards: bigint[];
 
-  alice_final_hand: number[];
-  bob_final_hand: number[];
+  alice_final_hand: bigint[];
+  bob_final_hand: bigint[];
 
-  alice_used_cards: number[];
-  bob_used_cards: number[];
+  alice_used_cards: bigint[];
+  bob_used_cards: bigint[];
 
-  my_cards: number[];
-  their_cards: number[];
-  my_final_hand: number[];
-  their_final_hand: number[];
-  my_used_cards: number[];
-  their_used_cards: number[];
-  my_hand_value: number[];
-  their_hand_value: number[];
+  my_cards: bigint[];
+  their_cards: bigint[];
+  my_final_hand: bigint[];
+  their_final_hand: bigint[];
+  my_used_cards: bigint[];
+  their_used_cards: bigint[];
+  my_hand_value: bigint[];
+  their_hand_value: bigint[];
 
   constructor(
     iStarted: boolean,
-    myDiscards: number,
-    alice_cards: number[],
-    bob_cards: number[],
+    myDiscards: bigint,
+    alice_cards: bigint[],
+    bob_cards: bigint[],
     readableBytes: number[],
   ) {
     const program = Program.deserialize(Uint8Array.from(readableBytes));
@@ -499,24 +499,24 @@ export class CalpokerOutcome {
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
 
-    this.alice_selects = result_list[1].toInt();
-    this.bob_selects = result_list[2].toInt();
-    this.alice_hand_value = result_list[3].toList().map(v => v.toInt());
-    this.bob_hand_value = result_list[4].toList().map(v => v.toInt());
-    let raw_win_direction = result_list[5].toInt();
+    this.alice_selects = result_list[1].toBigInt();
+    this.bob_selects = result_list[2].toBigInt();
+    this.alice_hand_value = result_list[3].toList().map(v => v.toBigInt());
+    this.bob_hand_value = result_list[4].toList().map(v => v.toBigInt());
+    let raw_win_direction = result_list[5].toBigInt();
     if (iStarted) {
-      raw_win_direction *= -1;
-      this.alice_discards = result_list[0].toInt();
+      raw_win_direction *= -1n;
+      this.alice_discards = result_list[0].toBigInt();
       this.bob_discards = myDiscards;
     } else {
       this.alice_discards = myDiscards;
-      this.bob_discards = result_list[0].toInt();
+      this.bob_discards = result_list[0].toBigInt();
     }
 
     this.win_direction = raw_win_direction;
-    const alice_win = this.win_direction < 0;
+    const alice_win = this.win_direction < 0n;
 
-    if (this.win_direction === 0) {
+    if (this.win_direction === 0n) {
       this.my_win_outcome = 'tie';
     } else if (alice_win) {
       this.my_win_outcome = iStarted ? 'win' : 'lose';
@@ -610,12 +610,13 @@ export interface InternalBlockchainInterface {
 
 export interface OutcomeHandType {
   name: string;
-  values: number[];
+  values: bigint[];
 }
 
-export function cardIdToRankSuit(cardId: number): { rank: number; suit: number } {
-  const rank = Math.floor(cardId / 4) + 2;
-  const suit = (cardId % 4) + 1;
+export function cardIdToRankSuit(cardId: bigint | number): { rank: number; suit: number } {
+  const id = typeof cardId === 'bigint' ? Number(cardId) : cardId;
+  const rank = Math.floor(id / 4) + 2;
+  const suit = (id % 4) + 1;
   return { rank, suit };
 }
 
@@ -637,10 +638,10 @@ function rget<T>(array: T[], start: number, end: number, def: T): T[] {
 }
 
 export function handValueToDescription(
-  handValue: number[],
-  myCards: number[],
+  handValue: bigint[],
+  myCards: bigint[],
 ): OutcomeHandType {
-  const handType = rget(handValue, 0, 3, 0);
+  const handType = rget(handValue, 0, 3, 0n);
 
   // Hand encoding from onehandcalc.clinc:
   //   straight flush: (5 high_card)
@@ -657,31 +658,31 @@ export function handValueToDescription(
     case '3,1,3':
       return {
         name: 'Flush',
-        values: rget(handValue, 3, 8, 0),
+        values: rget(handValue, 3, 8, 0n),
       };
 
     case '3,1,2':
       return {
         name: 'Straight',
-        values: [aget(handValue, 3, 0)],
+        values: [aget(handValue, 3, 0n)],
       };
 
     case '3,1,1':
       return {
         name: 'Three of a kind',
-        values: rget(handValue, 3, 6, 0),
+        values: rget(handValue, 3, 6, 0n),
       };
 
     case '2,2,1':
       return {
         name: 'Two Pair',
-        values: rget(handValue, 3, 6, 0),
+        values: rget(handValue, 3, 6, 0n),
       };
 
     case '2,1,1':
       return {
         name: 'Pair',
-        values: rget(handValue, 4, 8, 0),
+        values: rget(handValue, 4, 8, 0n),
       };
   }
 
@@ -691,25 +692,25 @@ export function handValueToDescription(
     case '4,1':
       return {
         name: 'Four of a kind',
-        values: rget(handValue, 2, 4, 0),
+        values: rget(handValue, 2, 4, 0n),
       };
 
     case '3,2':
       return {
         name: 'Full house',
-        values: rget(handValue, 2, 4, 0),
+        values: rget(handValue, 2, 4, 0n),
       };
   }
 
-  if (handType[0] == 5) {
+  if (handType[0] === 5n) {
     return {
       name: 'Straight flush',
-      values: [aget(handValue, 1, 0)],
+      values: [aget(handValue, 1, 0n)],
     };
   }
 
   return {
     name: 'High card',
-    values: rget(handValue, 5, 10, 0),
+    values: rget(handValue, 5, 10, 0n),
   };
 }

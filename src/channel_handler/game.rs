@@ -117,14 +117,21 @@ pub struct Game {
 }
 
 impl Game {
-    /// Run calpoker_make_proposal(bet_size) and parse the result into
+    /// Run make_proposal(bet_size[, parameters]) and parse the result into
     /// (wire_data, handler, validator, game_spec fields).
     fn run_make_proposal(
         allocator: &mut AllocEncoder,
         proposal_program: Puzzle,
         bet_size: &Amount,
+        parameters: &Program,
     ) -> Result<(NodePtr, GameHandler, NodePtr, ProposalGameSpec), Error> {
-        let args = (bet_size.clone(), ()).to_clvm(allocator).into_gen()?;
+        let args = if parameters.bytes() == [0x80] {
+            (bet_size.clone(), ()).to_clvm(allocator).into_gen()?
+        } else {
+            (bet_size.clone(), (parameters.clone(), ()))
+                .to_clvm(allocator)
+                .into_gen()?
+        };
         let proposal_clvm = proposal_program.to_clvm(allocator).into_gen()?;
         let result = run_program(
             allocator.allocator(),
@@ -257,9 +264,10 @@ impl Game {
         proposal_program: Puzzle,
         parser_program: Option<Puzzle>,
         my_contribution: &Amount,
+        parameters: &Program,
     ) -> Result<Game, Error> {
         let (wire_data, alice_handler, alice_validator_node, spec) =
-            Self::run_make_proposal(allocator, proposal_program, my_contribution)?;
+            Self::run_make_proposal(allocator, proposal_program, my_contribution, parameters)?;
 
         let (handler, validator_node) = if as_alice {
             (alice_handler, alice_validator_node)

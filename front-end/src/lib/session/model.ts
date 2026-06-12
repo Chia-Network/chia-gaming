@@ -5,7 +5,7 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/WasmBlobWrapper';
-import type { CalpokerHandState, SessionState } from '../../hooks/save';
+import type { PersistedGameState, SessionState } from '../../hooks/save';
 
 export type GameTurnState =
   | 'my-turn'
@@ -71,6 +71,7 @@ export interface HandTermsModel {
   gameType: string;
   myContribution: bigint;
   theirContribution: bigint;
+  spacepokerUnitSize?: bigint;
 }
 
 export interface BetweenHandProposalModel {
@@ -110,7 +111,7 @@ export interface GameModel {
   activeIds: string[];
   lastDisplayedId: string | null;
   activeGameType: string;
-  handState: CalpokerHandState | null;
+  handState: PersistedGameState | null;
   queue: QueuedNotificationModel[];
 }
 
@@ -374,6 +375,14 @@ export function selectBetweenHands(model: SessionModel): boolean {
   return model.game.handKey > 0 && model.game.activeIds.length === 0;
 }
 
+export function selectHideGameInterfaceForBetweenHandDialog(
+  betweenHands: boolean,
+  betweenHandMode: BetweenHandModeModel,
+): boolean {
+  return betweenHands
+    && (betweenHandMode === 'compose-proposal' || betweenHandMode === 'review-incoming-proposal');
+}
+
 export interface ShellViewModel {
   restoreBlocked: boolean;
   canAdvertiseAvailable: boolean;
@@ -422,7 +431,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
 export interface GameSpecificViewModel {
   gameType: string;
   displayGameId: string | null;
-  handState: CalpokerHandState | null;
+  handState: PersistedGameState | null;
   turnState: GameTurnState;
   terminal: GameTerminalModel;
 }
@@ -446,27 +455,52 @@ function parseBigintString(value: string | undefined, fallback: bigint): bigint 
   }
 }
 
+export function sessionAmountsFromSave(
+  save: Pick<SessionState, 'amount' | 'perGameAmount'>,
+  fallbackAmount: bigint,
+  fallbackPerGameAmount: bigint,
+): { amount: bigint; perGameAmount: bigint } {
+  return {
+    amount: parseBigintString(save.amount, fallbackAmount),
+    perGameAmount: parseBigintString(save.perGameAmount, fallbackPerGameAmount),
+  };
+}
+
+type SavedHandTerms = {
+  my_contribution: string;
+  their_contribution: string;
+  game_type?: string;
+  spacepoker_unit_size?: string;
+};
+
+type SavedProposal = SavedHandTerms & { id: string };
+
 function parseTermsSnapshot(
-  saved: { my_contribution: string; their_contribution: string; game_type?: string } | null | undefined,
+  saved: SavedHandTerms | null | undefined,
   fallback: HandTermsModel,
 ): HandTermsModel {
   if (!saved) return fallback;
+  const gameType = saved.game_type ?? fallback.gameType;
+  const myContribution = parseBigintString(saved.my_contribution, fallback.myContribution);
   return {
-    gameType: saved.game_type ?? fallback.gameType,
-    myContribution: parseBigintString(saved.my_contribution, fallback.myContribution),
+    gameType,
+    myContribution,
     theirContribution: parseBigintString(saved.their_contribution, fallback.theirContribution),
+    spacepokerUnitSize: gameType === 'spacepoker'
+      ? parseBigintString(saved.spacepoker_unit_size, myContribution / 10n) || undefined
+      : undefined,
   };
 }
 
 function parseOptionalTermsSnapshot(
-  saved: { my_contribution: string; their_contribution: string; game_type?: string } | null | undefined,
+  saved: SavedHandTerms | null | undefined,
   fallback: HandTermsModel,
 ): HandTermsModel | null {
   return saved ? parseTermsSnapshot(saved, fallback) : null;
 }
 
 function parseProposalSnapshot(
-  saved: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null | undefined,
+  saved: SavedProposal | null | undefined,
   fallbackTerms: HandTermsModel,
 ): BetweenHandProposalModel | null {
   if (!saved) return null;
@@ -581,6 +615,13 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
 }
 
 export function snapshotFromSessionModel(model: SessionModel): Partial<SessionState> {
+  const termsSnapshot = (terms: HandTermsModel) => ({
+    my_contribution: terms.myContribution.toString(),
+    their_contribution: terms.theirContribution.toString(),
+    game_type: terms.gameType,
+    spacepoker_unit_size: terms.spacepokerUnitSize?.toString(),
+  });
+
   return {
     humanHistory: model.history.humanHistory.length > 0 ? model.history.humanHistory : undefined,
     wasmNotificationHistory: model.history.wasmNotificationHistory.length > 0 ? model.history.wasmNotificationHistory : undefined,
@@ -604,32 +645,20 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     betweenHandMode: model.betweenHand.mode,
     betweenHandComposePerHand: model.betweenHand.composePerHandAmount.toString(),
     betweenHandComposeGameType: model.betweenHand.composeGameType,
-    betweenHandLastTerms: {
-      my_contribution: model.betweenHand.lastTerms.myContribution.toString(),
-      their_contribution: model.betweenHand.lastTerms.theirContribution.toString(),
-      game_type: model.betweenHand.lastTerms.gameType,
-    },
+    betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms),
     betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
-      ? {
-          my_contribution: model.betweenHand.rejectedOnceTerms.myContribution.toString(),
-          their_contribution: model.betweenHand.rejectedOnceTerms.theirContribution.toString(),
-          game_type: model.betweenHand.rejectedOnceTerms.gameType,
-        }
+      ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
       : undefined,
     betweenHandCachedPeerProposal: model.betweenHand.cachedPeerProposal
       ? {
           id: model.betweenHand.cachedPeerProposal.id,
-          my_contribution: model.betweenHand.cachedPeerProposal.terms.myContribution.toString(),
-          their_contribution: model.betweenHand.cachedPeerProposal.terms.theirContribution.toString(),
-          game_type: model.betweenHand.cachedPeerProposal.terms.gameType,
+          ...termsSnapshot(model.betweenHand.cachedPeerProposal.terms),
         }
       : undefined,
     betweenHandReviewPeerProposal: model.betweenHand.reviewPeerProposal
       ? {
           id: model.betweenHand.reviewPeerProposal.id,
-          my_contribution: model.betweenHand.reviewPeerProposal.terms.myContribution.toString(),
-          their_contribution: model.betweenHand.reviewPeerProposal.terms.theirContribution.toString(),
-          game_type: model.betweenHand.reviewPeerProposal.terms.gameType,
+          ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
       : undefined,
   };
