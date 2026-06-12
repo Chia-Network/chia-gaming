@@ -91,8 +91,18 @@ fn main() {
     println!("cargo:rerun-if-changed=chialisp.toml");
 
     if std::env::var("CHIALISP_NOCOMPILE").is_err() {
-        if let Err(e) = compile_chialisp() {
-            panic!("error compiling chialisp: {e:?}");
+        // The chialisp compiler recurses deeply; the default 1 MiB main-thread
+        // stack on Windows overflows (STATUS_STACK_OVERFLOW), so compile on a
+        // thread with an explicitly large stack. CompileError is not Send
+        // (it contains Rc), so stringify it before crossing the thread.
+        let result = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| compile_chialisp().map_err(|e| format!("{e:?}")))
+            .expect("failed to spawn chialisp compile thread")
+            .join()
+            .expect("chialisp compile thread panicked");
+        if let Err(e) = result {
+            panic!("error compiling chialisp: {e}");
         }
     }
 }
