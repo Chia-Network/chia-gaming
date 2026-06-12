@@ -65,6 +65,33 @@ GAME_ZIP="chia-gaming-${TAG}.zip"
 LOBBY_TARBALL="chia-gaming-lobby-${TAG}.tgz"
 LOBBY_ZIP="chia-gaming-lobby-${TAG}.zip"
 
+# Convert a path for handoff to Windows-native tools (node.exe) when running
+# under Git Bash / MSYS. No-op elsewhere.
+native_path() {
+    if command -v cygpath &>/dev/null; then
+        cygpath -w "$1"
+    else
+        echo "$1"
+    fi
+}
+
+# Create a zip of the current contents of a directory. Uses `zip` when
+# available; falls back to 7-Zip on Windows (Git Bash has no `zip`, and
+# 7z produces forward-slash entry names, unlike PowerShell Compress-Archive).
+make_zip() {
+    local src_dir="$1"
+    local out_zip="$2"
+    rm -f "$out_zip"
+    if command -v zip &>/dev/null; then
+        (cd "$src_dir" && zip -rq "$out_zip" .)
+    elif command -v 7z &>/dev/null; then
+        (cd "$src_dir" && 7z a -tzip -bso0 -bsp0 "$(native_path "$out_zip")" .)
+    else
+        echo "Error: neither 'zip' nor '7z' found on PATH" >&2
+        exit 1
+    fi
+}
+
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
@@ -72,6 +99,19 @@ if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
 elif [ -x /usr/local/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/clang
     export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
+elif ! command -v clang &>/dev/null && [ -x "/c/Program Files/LLVM/bin/clang.exe" ]; then
+    # Windows (Git Bash): MSVC cl.exe cannot target wasm32, so C deps (blst)
+    # need clang. Pick up an LLVM install that is not on PATH (winget's
+    # default). GitHub Windows runners already have clang on PATH.
+    export CC_wasm32_unknown_unknown="C:/Program Files/LLVM/bin/clang.exe"
+    export AR_wasm32_unknown_unknown="C:/Program Files/LLVM/bin/llvm-ar.exe"
+fi
+
+# Windows (Git Bash): package.json scripts use POSIX syntax (rm -rf,
+# VAR=val cmd), but npm/pnpm default to cmd.exe as the script shell.
+# Point them at this bash instead.
+if [ -n "$MSYSTEM" ] && command -v cygpath &>/dev/null; then
+    export npm_config_script_shell="$(cygpath -w "$(command -v bash)")"
 fi
 
 # ── 1. Chialisp ──────────────────────────────────────────────────────
@@ -123,13 +163,12 @@ cp "$FE_DIR/public/index.html" "$GAME_STAGE/index.html"
 cp "$ROOT_DIR/static-server.js" "$GAME_STAGE/static-server.js"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_STAGE/build-meta.json"
 
-node "$ROOT_DIR/tools/verify-stage.mjs" "$GAME_STAGE"
+node "$ROOT_DIR/tools/verify-stage.mjs" "$(native_path "$GAME_STAGE")"
 
 echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_player_app"
 tar -czf "$ROOT_DIR/deploy_player_app/$GAME_TARBALL" -C "$GAME_STAGE" .
-rm -f "$ROOT_DIR/deploy_player_app/$GAME_ZIP"
-(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
+make_zip "$GAME_STAGE" "$ROOT_DIR/deploy_player_app/$GAME_ZIP"
 rm -rf "$GAME_STAGE"
 
 # ── Assemble lobby staging tree ──────────────────────────────────────
@@ -148,13 +187,12 @@ cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_STAGE/index.html"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_STAGE/build-meta.json"
 cp "$LOBBY_SERVICE_DIR/dist/index-rollup.cjs"  "$LOBBY_STAGE/service.js"
 
-node "$ROOT_DIR/tools/verify-stage.mjs" "$LOBBY_STAGE"
+node "$ROOT_DIR/tools/verify-stage.mjs" "$(native_path "$LOBBY_STAGE")"
 
 echo "=== Creating $LOBBY_TARBALL and $LOBBY_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_tracker"
 tar -czf "$ROOT_DIR/deploy_tracker/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
-rm -f "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP"
-(cd "$LOBBY_STAGE" && zip -rq "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP" .)
+make_zip "$LOBBY_STAGE" "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP"
 rm -rf "$LOBBY_STAGE"
 
 # ── Done ─────────────────────────────────────────────────────────────

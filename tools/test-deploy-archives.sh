@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verify deploy archives produced by tools/build-deploy.sh.
 #
-# Usage: ./tools/test-deploy-archives.sh [--platform=linux|macos]
+# Usage: ./tools/test-deploy-archives.sh [--platform=linux|macos|windows]
 #
 # Run after build-deploy.sh. Extracts tgz/zip pairs, validates structure,
 # compares formats, and smoke-tests HTTP serving.
