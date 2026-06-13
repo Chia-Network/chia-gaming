@@ -126,6 +126,7 @@ export interface BetweenHandModel {
   composeProposalSent: boolean;
   newHandRequested: boolean;
   outgoingProposalIds: string[];
+  outgoingProposalTerms: Record<string, HandTermsModel>;
   pendingRetryTerms: HandTermsModel | null;
 }
 
@@ -276,6 +277,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       composeProposalSent: false,
       newHandRequested: false,
       outgoingProposalIds: [],
+      outgoingProposalTerms: {},
       pendingRetryTerms: null,
       ...betweenHand,
     },
@@ -568,8 +570,8 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       connection: save.channelReady
         ? { stateIdentifier: 'running', stateDetail: [] }
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
-      goOnChainPressed: false,
-      cleanShutdownStarted: false,
+      goOnChainPressed: save.goOnChainPressed ?? false,
+      cleanShutdownStarted: save.cleanShutdownStarted ?? false,
       dismissedChannelState: (save.dismissedChannelState as ChannelState | undefined) ?? null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
     },
@@ -602,6 +604,13 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       lastTerms,
       composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
       composeGameType: save.betweenHandComposeGameType ?? lastTerms.gameType,
+      outgoingProposalTerms: save.outgoingProposalTerms
+        ? Object.fromEntries(
+            Object.entries(save.outgoingProposalTerms).map(
+              ([id, saved]) => [id, parseTermsSnapshot(saved, lastTerms)]
+            )
+          )
+        : {},
     },
     history: {
       humanHistory: save.humanHistory ?? save.history ?? [],
@@ -642,6 +651,8 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
       ? model.game.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
       : undefined,
     dismissedChannelState: model.channel.dismissedChannelState ?? undefined,
+    goOnChainPressed: model.channel.goOnChainPressed || undefined,
+    cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
     betweenHandMode: model.betweenHand.mode,
     betweenHandComposePerHand: model.betweenHand.composePerHandAmount.toString(),
     betweenHandComposeGameType: model.betweenHand.composeGameType,
@@ -660,6 +671,13 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
           id: model.betweenHand.reviewPeerProposal.id,
           ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
+      : undefined,
+    outgoingProposalTerms: Object.keys(model.betweenHand.outgoingProposalTerms).length > 0
+      ? Object.fromEntries(
+          Object.entries(model.betweenHand.outgoingProposalTerms).map(
+            ([id, terms]) => [id, termsSnapshot(terms)]
+          )
+        )
       : undefined,
   };
 }

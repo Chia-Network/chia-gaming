@@ -491,7 +491,9 @@ export function useGameSession(
   const [myRunningBalance, setMyRunningBalance] = useState(() =>
     restoredModel?.myRunningBalance ?? 0n
   );
-  const [goOnChainPressed, setGoOnChainPressed] = useState(false);
+  const [goOnChainPressed, setGoOnChainPressed] = useState(
+    () => restoredModel?.channel.goOnChainPressed ?? false
+  );
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
     return restoredModel?.channel.status ?? INITIAL_CHANNEL_STATUS;
   });
@@ -603,7 +605,7 @@ export function useGameSession(
   const [composeProposalSent, setComposeProposalSent] = useState(false);
   const [newHandRequested, setNewHandRequested] = useState(false);
   const [cleanShutdownStarted, setCleanShutdownStarted] = useState(
-    () => gameObject.cleanShutdownCalled
+    () => restoredModel?.channel.cleanShutdownStarted ?? gameObject.cleanShutdownCalled
   );
 
   const lastOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
@@ -616,8 +618,19 @@ export function useGameSession(
   const reviewPeerProposalRef = useRef<BetweenHandProposal | null>(reviewPeerProposal);
   const rejectedOnceTermsRef = useRef<HandTerms | null>(rejectedOnceTerms);
   const lastHandTermsRef = useRef<HandTerms>(lastHandTerms);
-  const proposalTermsByIdRef = useRef<Record<string, HandTerms>>({});
-  const outgoingProposalIdsRef = useRef<Set<string>>(new Set());
+  const proposalTermsByIdRef = useRef<Record<string, HandTerms>>((() => {
+    const terms: Record<string, HandTerms> = {
+      ...(restoredModel?.betweenHand.outgoingProposalTerms ?? {}),
+    };
+    const cached = restoredModel?.betweenHand.cachedPeerProposal;
+    if (cached) terms[cached.id] = cached.terms;
+    const review = restoredModel?.betweenHand.reviewPeerProposal;
+    if (review) terms[review.id] = review.terms;
+    return terms;
+  })());
+  const outgoingProposalIdsRef = useRef<Set<string>>(
+    new Set(restoredModel?.betweenHand.outgoingProposalIds)
+  );
   const pendingRetryTermsRef = useRef<HandTerms | null>(null);
   const expectingCounterProposalRef = useRef<boolean>(false);
   const rejectionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -695,6 +708,7 @@ export function useGameSession(
         composeProposalSent,
         newHandRequested,
         outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
+        outgoingProposalTerms: { ...proposalTermsByIdRef.current },
         pendingRetryTerms: pendingRetryTermsRef.current,
       },
       history: {
@@ -1362,6 +1376,7 @@ export function useGameSession(
       composeProposalSent,
       newHandRequested,
       outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
+      outgoingProposalTerms: { ...proposalTermsByIdRef.current },
       pendingRetryTerms: pendingRetryTermsRef.current,
     },
     history: {

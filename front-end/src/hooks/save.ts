@@ -192,6 +192,8 @@ export interface SessionState {
   channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   dismissedChannelState?: string;
+  goOnChainPressed?: boolean;
+  cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
   betweenHandComposeGameType?: string;
@@ -199,6 +201,7 @@ export interface SessionState {
   betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string }>;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
