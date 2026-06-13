@@ -852,7 +852,8 @@ impl SynchronousGameCradle {
         let res = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
             self.peer.flush_pending_actions(&mut env)
-        }; match res {
+        };
+        match res {
             Ok(effects) => self.process_effects(effects, allocator)?,
             Err(e) => {
                 self.state.events.push_back(CradleEvent::Notification(

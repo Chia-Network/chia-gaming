@@ -415,7 +415,7 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     return;
   }
 
-  if (!amount || !/^[1-9][0-9]*$/.test(amount)) {
+  if (!amount || !/^[1-9][0-9]{0,18}$/.test(amount)) {
     sendWs(ws, 'error', { error: 'Invalid amount: must be a positive integer.' });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;

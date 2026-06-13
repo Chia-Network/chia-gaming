@@ -123,9 +123,13 @@ async function request<T, D extends object = object>(
   if (!walletConnectState.getSession())
     throw new Error('Session is not connected');
 
-  const fingerprint = walletConnectState.getAddress();
-  if (!fingerprint) {
+  const address = walletConnectState.getAddress();
+  if (!address) {
     throw new Error('no fingerprint set in walletconnect');
+  }
+  const fingerprint = Number.parseInt(address, 10);
+  if (!Number.isFinite(fingerprint)) {
+    throw new Error('walletconnect fingerprint is not a valid integer');
   }
 
   const params: Record<string, unknown> = {
