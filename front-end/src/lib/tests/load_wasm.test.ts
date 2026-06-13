@@ -93,12 +93,18 @@ function testLog(message: string): void {
   process.stderr.write(`[load_wasm] ${message}\n`);
 }
 
+let lateRejection: string | null = null;
+
 function onUnhandledRejection(reason: unknown): void {
-  testLog(`unhandledRejection ${describeThrown(reason)}`);
+  const desc = describeThrown(reason);
+  testLog(`unhandledRejection ${desc}`);
+  lateRejection = desc;
 }
 
 function onUncaughtException(error: unknown): void {
-  testLog(`uncaughtException ${describeThrown(error)}`);
+  const desc = describeThrown(error);
+  testLog(`uncaughtException ${desc}`);
+  lateRejection = desc;
 }
 
 beforeAll(() => {
@@ -146,8 +152,17 @@ afterEach(async () => {
     testLog('cleanup after resources');
     resetSaveState();
     testLog('cleanup done');
+    // Drain microtask queue to catch late async errors
+    await new Promise<void>((r) => setTimeout(r, 50));
+    if (lateRejection) {
+      const msg = lateRejection;
+      lateRejection = null;
+      throw new Error(`[load_wasm late async error]\n${msg}`);
+    }
   } catch (e) {
-    throw new Error(`[load_wasm cleanup failed]\n${describeThrown(e)}`);
+    const desc = describeThrown(e);
+    testLog(`CLEANUP FAILURE: ${desc}`);
+    throw new Error(`[load_wasm cleanup failed]\n${desc}`);
   }
 });
 
@@ -342,6 +357,7 @@ async function isSimulatorAvailable(): Promise<boolean> {
 it(
   'loads',
   async () => {
+    lateRejection = null;
     const offConnectionLog = fakeBlockchainInfo.onConnectionChange((connected) => {
       testLog(`sim connection=${connected}`);
     });
@@ -406,7 +422,9 @@ it(
       await action_with_messages(poller, cradle1, cradle2);
       testLog('after action_with_messages');
     } catch (e) {
-      throw new Error(`[load_wasm loads failed]\n${describeThrown(e)}`);
+      const desc = describeThrown(e);
+      testLog(`TEST FAILURE: ${desc}`);
+      throw new Error(`[load_wasm loads failed]\n${desc}`);
     } finally {
       offConnectionLog();
     }

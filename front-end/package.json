@@ -10,7 +10,7 @@
     "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outfile=dist/js/index-rollup.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
     "build:deploy": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outdir=dist/app && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
     "bundle": "rm -rf dist/app && pnpm run build:deploy && node scripts/assemble-bundle.mjs",
-    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --useStderr --ci"
+    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.15",
