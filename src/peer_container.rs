@@ -971,7 +971,8 @@ impl SynchronousGameCradle {
         apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
 
-        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain {
+        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain
+        {
             let go_effects = {
                 let mut env = ChannelHandlerEnv::new(allocator)?;
                 self.peer.go_on_chain(&mut env, true)?
