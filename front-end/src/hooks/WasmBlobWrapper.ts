@@ -572,20 +572,28 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   private deliverSingleMessage(msgno: number, msg: Uint8Array) {
-    this.remoteNumber = msgno;
     try {
       const result = this.cradle!.deliver_message(msg);
+      this.remoteNumber = msgno;
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] deliver_message failed:', e);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      const errMsg = extractErrorMessage(e);
+      console.error('[wasm] deliver_message failed:', errMsg);
+      this.rxjsEmitter?.next({ type: 'error', error: errMsg });
+      const state = this.lastChannelStatus?.state;
+      const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
+        || state === 'ResolvedStale' || state === 'Failed';
+      if (!this.onChain && !resolved) {
+        this.goOnChain();
+      }
+      return;
     }
     this.pendingAcks.push(msgno);
     this.markNeedsImmediateDurability();
   }
 
   private flushReorderQueue() {
-    while (this.reorderQueue.has(this.remoteNumber + 1)) {
+    while (!this.onChain && this.reorderQueue.has(this.remoteNumber + 1)) {
       const nextMsgno = this.remoteNumber + 1;
       const msg = this.reorderQueue.get(nextMsgno)!;
       this.reorderQueue.delete(nextMsgno);
