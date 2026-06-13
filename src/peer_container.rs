@@ -842,11 +842,19 @@ impl SynchronousGameCradle {
             }
         }
 
-        let effects = {
+        match {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            self.peer.flush_pending_actions(&mut env)?
-        };
-        self.process_effects(effects, allocator)?;
+            self.peer.flush_pending_actions(&mut env)
+        } {
+            Ok(effects) => self.process_effects(effects, allocator)?,
+            Err(e) => {
+                self.state.events.push_back(CradleEvent::Notification(
+                    GameNotification::ActionFailed {
+                        reason: format!("{e:?}"),
+                    },
+                ));
+            }
+        }
 
         Ok(DrainResult {
             events: std::mem::take(&mut self.state.events),

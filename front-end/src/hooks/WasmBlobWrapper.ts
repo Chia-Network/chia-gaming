@@ -756,42 +756,79 @@ export class WasmBlobWrapper implements PollingCradle {
 
   proposeGame(params: ProposeGameParams): string[] {
     if (!this.cradle) throw new Error('no cradle');
-    const paramBytes = clvmToBytes(params.parameters);
-    const { parameters: _drop, ...wasmParams } = params;
-    const result = this.cradle.propose_game(wasmParams, paramBytes);
-    this.processResult(result);
-    return result?.ids || [];
+    try {
+      const paramBytes = clvmToBytes(params.parameters);
+      const { parameters: _drop, ...wasmParams } = params;
+      const result = this.cradle.propose_game(wasmParams, paramBytes);
+      this.processResult(result);
+      return result?.ids || [];
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] proposeGame failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      return [];
+    }
   }
 
   acceptProposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.accept_proposal(gameId);
-    this.processResult(result);
+    try {
+      const result = this.cradle.accept_proposal(gameId);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] acceptProposal failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   cancel_proposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.cancel_proposal(gameId);
-    this.processResult(result);
+    try {
+      const result = this.cradle.cancel_proposal(gameId);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] cancel_proposal failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   makeMove(gameId: string, readable: Program | null): void {
     if (!this.cradle) throw new Error('no cradle');
-    const bytes = clvmToBytes(readable);
-    const result = this.cradle.make_move(gameId, bytes);
-    this.processResult(result);
+    try {
+      const bytes = clvmToBytes(readable);
+      const result = this.cradle.make_move(gameId, bytes);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] makeMove failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   acceptTimeout(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.accept(gameId);
-    this.processResult(result);
+    try {
+      const result = this.cradle.accept(gameId);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] acceptTimeout failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   cheat(gameId: string, moverShare: bigint): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.cheat(gameId, moverShare);
-    this.processResult(result);
+    try {
+      const result = this.cradle.cheat(gameId, moverShare);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] cheat failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   cleanShutdown(): void {
