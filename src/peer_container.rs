@@ -838,6 +838,13 @@ impl SynchronousGameCradle {
                     self.state
                         .events
                         .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                    self.state.peer_disconnected = true;
+                    let go_effects = {
+                        let mut env = ChannelHandlerEnv::new(allocator)?;
+                        self.peer.go_on_chain(&mut env, true)?
+                    };
+                    self.process_effects(go_effects, allocator)?;
+                    break;
                 }
             }
         }
@@ -964,6 +971,16 @@ impl SynchronousGameCradle {
         apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
 
+        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain {
+            let go_effects = {
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                self.peer.go_on_chain(&mut env, true)?
+            };
+            if !go_effects.is_empty() {
+                return self.process_effects(go_effects, allocator);
+            }
+        }
+
         if self.peer.channel_handler().is_ok() {
             if let Some(ph) = self.state.channel_puzzle_hash.take() {
                 if !self.create_partial_spend_for_channel_coin(allocator, ph.clone())? {
@@ -995,6 +1012,13 @@ impl SynchronousGameCradle {
                         self.state
                             .events
                             .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                        self.state.peer_disconnected = true;
+                        let go_effects = {
+                            let mut env = ChannelHandlerEnv::new(allocator)?;
+                            self.peer.go_on_chain(&mut env, true)?
+                        };
+                        self.process_effects(go_effects, allocator)?;
+                        break;
                     }
                 }
             }

@@ -96,6 +96,8 @@ pub struct HandshakeInitiatorHandler {
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
+    failed: bool,
+
     #[serde(skip)]
     replacement: Option<Box<PotatoHandler>>,
 }
@@ -124,6 +126,7 @@ impl HandshakeInitiatorHandler {
             transaction_pushed: false,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
+            failed: false,
             replacement: None,
         }
     }
@@ -697,6 +700,14 @@ impl PeerHandler for HandshakeInitiatorHandler {
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         self.replacement.take().map(|ph| ph as Box<dyn PeerHandler>)
     }
+    fn go_on_chain(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _got_error: bool,
+    ) -> Result<Vec<Effect>, Error> {
+        self.failed = true;
+        Ok(vec![])
+    }
     fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
         if self.pending_coin_spend && self.last_height > 0 {
@@ -788,6 +799,29 @@ impl PeerHandler for HandshakeInitiatorHandler {
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        if self.failed {
+            return Some(ChannelStatusSnapshot {
+                state: ChannelState::Failed,
+                advisory: None,
+                coin: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.state_channel_coin().clone()),
+                our_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.my_out_of_game_balance()),
+                their_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.their_out_of_game_balance()),
+                game_allocated: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.total_game_allocated()),
+                have_potato: None,
+            });
+        }
         // The channel-creation expiry -> Failed signal now lives in the
         // TransactionManager, which owns the deadline threaded onto the funding
         // transaction.  `channel_deadline` here is retained only to thread that

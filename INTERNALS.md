@@ -7,6 +7,8 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 
 - [Timeouts](#timeouts)
 - [Peer Disconnect Invariant](#peer-disconnect-invariant)
+- [Peer Error Escalation](#peer-error-escalation)
+- [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
 - [cached_last_actions and the Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
@@ -175,6 +177,59 @@ rather than by checking `initiated_on_chain` at runtime.
 **Key code:** `src/peer_container.rs` — `go_on_chain`,
 `emit_channel_status_if_changed`, `send_message`, `deliver_message`;
 `src/potato_handler/mod.rs` — `go_on_chain`, `take_channel_spend_replacement`
+
+### Peer Error Escalation
+
+Any error processing a peer message — during handshake or active play — is
+treated as a protocol violation. The cradle sets `peer_disconnected = true`,
+emits a `ReceiveError` event for diagnostic purposes, and calls
+`go_on_chain(true)` on the active handler. The specific behavior depends on
+the channel lifecycle stage:
+
+**Before funding transaction is submitted** (early handshake — steps A through
+C/D): No money is on-chain. The handshake handler sets an internal `failed`
+flag, `channel_status_snapshot()` returns `ChannelState::Failed`, and the
+session is terminally dead. No dispute is needed because no funds are at risk.
+
+**After funding transaction is submitted but before channel coin confirms**
+(steps E/F onward): The funding `SpendBundle` is in the mempool or pending
+inclusion. Two outcomes are possible:
+
+1. The funding transaction **times out** (its `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
+   expires without inclusion). The `TransactionManager` detects this and
+   independently emits a `Failed` channel status. Funds return to the wallets.
+
+2. The channel coin **appears on-chain** despite the peer being hostile.
+   `coin_created` fires, the handshake handler transitions to `PotatoHandler`
+   via `take_replacement()`. After the swap, `process_effects` sees
+   `peer_disconnected && handshake_finished() && !is_on_chain` and immediately
+   calls `go_on_chain(true)` on the new `PotatoHandler`, submitting the unroll
+   transaction. From this point forward, the normal dispute resolution path
+   applies.
+
+**After channel coin is confirmed** (active play in `PotatoHandler`): The
+normal `go_on_chain` path runs immediately — cancel proposals, build the
+channel-to-unroll spend bundle, submit it, and transition through
+`SpendChannelCoinHandler` into `OnChainGameHandler`.
+
+This means a hostile peer cannot cause silent data loss regardless of when the
+attack occurs. Pre-funding errors are cheap (just abort). Post-funding errors
+either resolve through timeout (funds return) or through dispute (unroll +
+on-chain resolution).
+
+### Local Action Errors
+
+Local actions (moves, proposals, shutdown) queued in `game_action_queue` are
+drained by `flush_pending_actions`. Unlike peer errors, local action failures
+indicate programming bugs — the queue was populated by our own UI/logic.
+
+Rather than implementing transactional rollback (expensive and masks the bug),
+the cradle catches `flush_pending_actions` errors and emits them as
+`ActionFailed` notifications shown to the user with the full error string.
+The JS-side game action methods (`proposeGame`, `acceptProposal`,
+`cancel_proposal`, `makeMove`, `acceptTimeout`, `cheat`) also catch WASM
+throws and surface them through the UI error dialog. This makes local bugs
+immediately visible and diagnosable without adding rollback complexity.
 
 ---
 
