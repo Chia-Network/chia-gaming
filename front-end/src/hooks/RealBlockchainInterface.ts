@@ -94,7 +94,7 @@ function collectErrorText(err: unknown): string {
   // Chia GUI IPC may encode the daemon error as [wc:<code>|<base64-json>] ....
   // Decode that payload when present so "Coin ID ... not found" is visible here.
   for (const part of [...parts]) {
-    const match = part.match(/[wc:-?\d+|([A-Za-z0-9+/=]+)]/);
+    const match = part.match(/\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/);
     if (!match || typeof atob !== 'function') continue;
     try {
       parts.push(atob(match[1]));
