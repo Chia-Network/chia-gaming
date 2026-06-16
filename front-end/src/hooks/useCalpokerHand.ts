@@ -10,7 +10,7 @@ import { GameplayEvent } from './useGameSession';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
-function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: bigint[], opponentHand: bigint[] } {
+function parseCards(readableBytes: Uint8Array | number[], iStarted: boolean): { playerHand: bigint[], opponentHand: bigint[] } {
   const program = Program.deserialize(Uint8Array.from(readableBytes));
   const card_lists = program.toList().map(l => l.toList().map(v => v.toBigInt()));
   if (iStarted) {

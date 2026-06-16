@@ -1200,6 +1200,16 @@ mod gaming_wasm {
             .into_e()
     }
 
+    fn notification_event_to_js(notification: &GameNotification) -> Result<JsValue, types::Error> {
+        let serializer = serde_wasm_bindgen::Serializer::new()
+            .serialize_missing_as_null(true)
+            .serialize_large_number_types_as_bigints(true);
+        let obj = js_sys::Object::new();
+        let value = notification.serialize(&serializer).into_e()?;
+        js_sys::Reflect::set(&obj, &"Notification".into(), &value).into_e()?;
+        Ok(obj.into())
+    }
+
     fn cradle_event_to_js(event: &CradleEvent) -> Result<JsValue, types::Error> {
         match event {
             CradleEvent::OutboundMessage(data) => {
@@ -1211,11 +1221,7 @@ mod gaming_wasm {
             CradleEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
-            CradleEvent::Notification(n) => {
-                let val = serde_json::to_value(n)
-                    .unwrap_or_else(|_| serde_json::json!(format!("{n:?}")));
-                json_event_to_js(serde_json::json!({ "Notification": val }))
-            }
+            CradleEvent::Notification(n) => notification_event_to_js(n),
             CradleEvent::Log(line) => {
                 json_event_to_js(serde_json::json!({ "Log": line }))
             }

@@ -36,30 +36,32 @@ import {
 
 export type GameplayEvent =
   | { ProposalAccepted: { id: bigint | number | string } }
-  | { OpponentMoved: { readable: number[] } }
-  | { GameMessage: { readable: number[] } }
+  | { OpponentMoved: { readable: Uint8Array | number[] } }
+  | { GameMessage: { readable: Uint8Array | number[] } }
   | { _terminal: true; notification: WasmNotification };
 
+function asBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value) && value.every((b): b is number => typeof b === 'number')) {
+    return Uint8Array.from(value);
+  }
+  return null;
+}
+
 function parseCoinAmount(coin: unknown): string | null {
-  if (!Array.isArray(coin) || coin.length < 64 || !coin.every((b): b is number => typeof b === 'number')) {
+  const bytes = asBytes(coin);
+  if (!bytes || bytes.length < 64) {
     return null;
   }
   let value = 0n;
-  for (let i = 64; i < coin.length; i++) {
-    value = (value << 8n) + BigInt(coin[i] & 0xff);
+  for (let i = 64; i < bytes.length; i++) {
+    value = (value << 8n) + BigInt(bytes[i] & 0xff);
   }
   return value.toString();
 }
 
-function asCoinBytes(coin: unknown): number[] | null {
-  if (!Array.isArray(coin) || coin.length === 0 || !coin.every((b): b is number => typeof b === 'number')) {
-    return null;
-  }
-  return coin;
-}
-
 async function coinIdHex(coin: unknown): Promise<string | null> {
-  const bytes = asCoinBytes(coin);
+  const bytes = asBytes(coin);
   return bytes ? coinIdFromBytes(bytes) : null;
 }
 
@@ -1054,9 +1056,7 @@ export function useGameSession(
       } else if (isTerminalStatus(status)) {
         const other = gs.other_params ?? null;
         const readable = other?.readable;
-        const readableArr = Array.isArray(readable) && readable.every((x): x is number => typeof x === 'number')
-          ? readable
-          : null;
+        const readableArr = asBytes(readable);
         if (readableArr) {
           const hasMoverShare = other?.mover_share != null;
           if (hasMoverShare) {
@@ -1094,9 +1094,7 @@ export function useGameSession(
 
       const other = gs.other_params ?? null;
       const readable = other?.readable;
-      const readableArr = Array.isArray(readable) && readable.every((x): x is number => typeof x === 'number')
-        ? readable
-        : null;
+      const readableArr = asBytes(readable);
       if (readableArr) {
         const hasMoverShare = other?.mover_share != null;
         if (hasMoverShare) {

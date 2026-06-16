@@ -492,7 +492,7 @@ export class CalpokerOutcome {
     myDiscards: bigint,
     alice_cards: bigint[],
     bob_cards: bigint[],
-    readableBytes: number[],
+    readableBytes: Uint8Array | number[],
   ) {
     const program = Program.deserialize(Uint8Array.from(readableBytes));
     const result_list = program.toList();

@@ -20,8 +20,9 @@ export function toHexString(byteArray: Uint8Array | number[]) {
   }).join('');
 }
 
-export async function coinIdFromBytes(coin: number[]): Promise<string> {
-  const hash = await crypto.subtle.digest('SHA-256', Uint8Array.from(coin));
+export async function coinIdFromBytes(coin: Uint8Array | number[]): Promise<string> {
+  const bytes = Uint8Array.from(coin);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
   return toHexString(new Uint8Array(hash));
 }
 

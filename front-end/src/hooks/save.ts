@@ -405,6 +405,7 @@ function assertNoNumbers(obj: unknown, path: string): void {
     }
     throw new Error(msg);
   }
+  if (ArrayBuffer.isView(obj)) return;
   if (typeof obj !== 'object') return;
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i++) {
