@@ -53,10 +53,27 @@ class MockWebSocket {
   }
 
   _fireBinary(msgno: number, payload: Uint8Array) {
-    const frame = new ArrayBuffer(4 + payload.byteLength);
+    const frame = new ArrayBuffer(1 + 4 + payload.byteLength);
+    const bytes = new Uint8Array(frame);
     const view = new DataView(frame);
-    view.setUint32(0, msgno, false);
-    new Uint8Array(frame, 4).set(payload);
+    bytes[0] = 0x01;
+    view.setUint32(1, msgno, false);
+    bytes.set(payload, 5);
+    this.onmessage?.({ data: frame });
+  }
+
+  _fireAck(ackMsgno: number) {
+    const frame = new ArrayBuffer(1 + 4);
+    const bytes = new Uint8Array(frame);
+    const view = new DataView(frame);
+    bytes[0] = 0x02;
+    view.setUint32(1, ackMsgno, false);
+    this.onmessage?.({ data: frame });
+  }
+
+  _fireKeepaliveBinary() {
+    const frame = new ArrayBuffer(1);
+    new Uint8Array(frame)[0] = 0x03;
     this.onmessage?.({ data: frame });
   }
 
@@ -112,7 +129,7 @@ function makeCallbacks(): TrackerConnectionCallbacks {
     onMatched: jest.fn(),
     onConnectionStatus: jest.fn(),
     onPeerReconnected: jest.fn(),
-    onMessage: jest.fn(),
+    onDataMessage: jest.fn(),
     onAck: jest.fn(),
     onKeepalive: jest.fn(),
     onClosed: jest.fn(),
@@ -251,28 +268,30 @@ describe('event routing', () => {
 // Message discrimination (keepalive vs ack vs data)
 // ---------------------------------------------------------------------------
 
-describe('message discrimination', () => {
-  it('routes keepalive messages to onKeepalive, not onMessage', async () => {
+describe('binary frame discrimination', () => {
+  it('routes keepalive binary frames to onKeepalive', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { keepalive: true } });
+    conn.registerMessageHandler(jest.fn(), jest.fn(), jest.fn());
+    MockWebSocket.instance!._fireKeepaliveBinary();
     expect(cb.onKeepalive).toHaveBeenCalled();
-    expect(cb.onMessage).not.toHaveBeenCalled();
+    expect(cb.onDataMessage).not.toHaveBeenCalled();
   });
 
-  it('routes ack messages to onAck', async () => {
+  it('routes ack binary frames to onAck', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { ack: 5 } });
+    conn.registerMessageHandler(jest.fn(), jest.fn(), jest.fn());
+    MockWebSocket.instance!._fireAck(5);
     expect((cb.onAck as jest.Mock)).toHaveBeenCalledWith(5);
-    expect(cb.onMessage).not.toHaveBeenCalled();
+    expect(cb.onDataMessage).not.toHaveBeenCalled();
   });
 
-  it('routes data messages to handler after registerMessageHandler', async () => {
+  it('routes data binary frames to handler after registerMessageHandler', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
@@ -283,18 +302,6 @@ describe('message discrimination', () => {
     const payload = new TextEncoder().encode('hello');
     MockWebSocket.instance!._fireBinary(1, payload);
     expect(handler).toHaveBeenCalledWith(1, payload);
-  });
-
-  it('ignores legacy string-encoded data payloads', async () => {
-    const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
-    await Promise.resolve();
-
-    const handler = jest.fn();
-    conn.registerMessageHandler(handler, jest.fn(), jest.fn());
-
-    MockWebSocket.instance!._fire({ type: 'message', data: '{"msgno":9,"msg":"legacy"}' });
-    expect(handler).not.toHaveBeenCalled();
   });
 });
 
@@ -312,7 +319,7 @@ describe('message buffering before registerMessageHandler', () => {
     const second = new TextEncoder().encode('second');
     MockWebSocket.instance!._fireBinary(1, first);
     MockWebSocket.instance!._fireBinary(2, second);
-    expect(cb.onMessage).not.toHaveBeenCalled();
+    expect(cb.onDataMessage).not.toHaveBeenCalled();
 
     const handler = jest.fn();
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
@@ -356,7 +363,7 @@ describe('close-pending suppresses messages', () => {
 // ---------------------------------------------------------------------------
 
 describe('outbound message format', () => {
-  it('sendMessage posts numbered payload as binary frame', async () => {
+  it('sendMessage posts type-tagged binary frame', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
@@ -366,29 +373,35 @@ describe('outbound message format', () => {
     conn.sendMessage(3, payload);
     expect(ws.sentBinary).toHaveLength(1);
     const frame = ws.sentBinary[0];
+    expect(frame[0]).toBe(0x01);
     const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
-    expect(view.getUint32(0, false)).toBe(3);
-    expect(new Uint8Array(frame.buffer, frame.byteOffset + 4)).toEqual(payload);
+    expect(view.getUint32(1, false)).toBe(3);
+    expect(new Uint8Array(frame.buffer, frame.byteOffset + 5)).toEqual(payload);
   });
 
-  it('sendAck posts ack payload', async () => {
+  it('sendAck posts ack as binary frame', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sentJson = [];
+    ws.sentBinary = [];
     conn.sendAck(5);
-    expect(ws.sentJson).toEqual([{ type: 'message', session_id: 's1', data: { ack: 5 } }]);
+    expect(ws.sentBinary).toHaveLength(1);
+    const frame = ws.sentBinary[0];
+    expect(frame[0]).toBe(0x02);
+    const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+    expect(view.getUint32(1, false)).toBe(5);
   });
 
-  it('sendKeepalive posts keepalive payload', async () => {
+  it('sendKeepalive posts keepalive as binary frame', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sentJson = [];
+    ws.sentBinary = [];
     conn.sendKeepalive();
-    expect(ws.sentJson).toEqual([{ type: 'message', session_id: 's1', data: { keepalive: true } }]);
+    expect(ws.sentBinary).toHaveLength(1);
+    expect(ws.sentBinary[0]).toEqual(new Uint8Array([0x03]));
   });
 });
 

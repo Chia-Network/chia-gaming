@@ -100,7 +100,7 @@ export interface GameSessionParams {
 export interface ChatMessage {
   text: string;
   fromAlias: string;
-  timestamp: number;
+  timestamp: bigint;
   isMine: boolean;
 }
 

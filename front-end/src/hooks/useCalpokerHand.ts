@@ -8,7 +8,7 @@ import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
 import { GameplayEvent } from './useGameSession';
 
-const CALPOKER_PERSISTED_STATE_VERSION = 1;
+const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
 function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: bigint[], opponentHand: bigint[] } {
   const program = Program.deserialize(Uint8Array.from(readableBytes));
@@ -30,51 +30,13 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
   return bitfield;
 }
 
-function finiteBigint(value: unknown, fallback: bigint): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
-  if (typeof value === 'string') {
-    try { return BigInt(value); } catch { return fallback; }
-  }
-  return fallback;
-}
-
-function bigintArray(value: unknown): bigint[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => finiteBigint(item, 0n));
-}
-
-function normalizeDisplaySnapshot(value: unknown): CalpokerDisplaySnapshot | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const snapshot = value as CalpokerDisplaySnapshot;
-  return {
-    gameState: typeof snapshot.gameState === 'string' ? snapshot.gameState : 'selecting',
-    winner: snapshot.winner ?? null,
-    playerBestHandCardIds: bigintArray(snapshot.playerBestHandCardIds),
-    opponentBestHandCardIds: bigintArray(snapshot.opponentBestHandCardIds),
-    playerHaloCardIds: bigintArray(snapshot.playerHaloCardIds),
-    opponentHaloCardIds: bigintArray(snapshot.opponentHaloCardIds),
-    playerDisplayText: typeof snapshot.playerDisplayText === 'string' ? snapshot.playerDisplayText : '',
-    opponentDisplayText: typeof snapshot.opponentDisplayText === 'string' ? snapshot.opponentDisplayText : '',
-  };
-}
-
 function calpokerStateFromPersisted(
   persisted: PersistedGameState | null | undefined,
 ): CalpokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'calpoker') return undefined;
   if (persisted.version !== CALPOKER_PERSISTED_STATE_VERSION) return undefined;
   if (!persisted.state || typeof persisted.state !== 'object') return undefined;
-  const state = persisted.state as CalpokerHandState;
-  return {
-    ...state,
-    playerHand: bigintArray(state.playerHand),
-    opponentHand: bigintArray(state.opponentHand),
-    moveNumber: finiteBigint(state.moveNumber, 0n),
-    isPlayerTurn: !!state.isPlayerTurn,
-    cardSelections: state.cardSelections ? bigintArray(state.cardSelections) : undefined,
-    displaySnapshot: normalizeDisplaySnapshot(state.displaySnapshot),
-  };
+  return persisted.state as CalpokerHandState;
 }
 
 function persistedCalpokerState(state: CalpokerHandState): PersistedGameState<CalpokerHandState> {

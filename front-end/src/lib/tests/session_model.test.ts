@@ -168,7 +168,7 @@ describe('session model selectors', () => {
         humanHistory: ['human line'],
         wasmNotificationHistory: ['{"ChannelStatus":{}}'],
         diagnosticLog: ['diag line'],
-        chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 1, isMine: true }],
+        chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 1n, isMine: true }],
       },
     });
 
@@ -176,7 +176,7 @@ describe('session model selectors', () => {
       humanHistory: ['human line'],
       wasmNotificationHistory: ['{"ChannelStatus":{}}'],
       diagnosticLog: ['diag line'],
-      chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 1, isMine: true }],
+      chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 1n, isMine: true }],
     });
   });
 

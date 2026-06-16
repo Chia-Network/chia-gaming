@@ -167,11 +167,11 @@ describe('in-order delivery', () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(2, enc('b'));
-    blob.deliverMessage(3, enc('c'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
+    blob.deliverMessage(3n, enc('c'));
 
-    expect(blob.remoteNumber).toBe(3);
+    expect(blob.remoteNumber).toBe(3n);
     expect(sentAcks).toEqual([]);
     await flushDeferredWork();
     expect(sentAcks).toEqual([1, 2, 3]);
@@ -187,8 +187,8 @@ describe('duplicate detection', () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(1, enc('a'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(1n, enc('a'));
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
     await flushDeferredWork();
@@ -205,12 +205,12 @@ describe('out-of-order delivery with reorder queue', () => {
     });
     activeBlob = blob;
 
-    blob.deliverMessage(3, enc('c'));
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(2, enc('b'));
+    blob.deliverMessage(3n, enc('c'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
 
     expect(delivered).toEqual([enc('a'), enc('b'), enc('c')]);
-    expect(blob.remoteNumber).toBe(3);
+    expect(blob.remoteNumber).toBe(3n);
     await flushDeferredWork();
     expect(sentAcks).toEqual([1, 2, 3]);
   });
@@ -221,14 +221,14 @@ describe('buffering before system ready, then spill', () => {
     const { blob, cradle, sentAcks } = createUnreadyBlob();
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(2, enc('b'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
     expect(cradle.deliver_message).not.toHaveBeenCalled();
 
     blob.kickSystem(2);
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
-    expect(blob.remoteNumber).toBe(2);
+    expect(blob.remoteNumber).toBe(2n);
     await flushDeferredWork();
     expect(sentAcks).toEqual([1, 2]);
   });
@@ -241,14 +241,14 @@ describe('buffering before system ready, then spill', () => {
     });
     activeBlob = blob;
 
-    blob.deliverMessage(2, enc('b'));
-    blob.deliverMessage(1, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
+    blob.deliverMessage(1n, enc('a'));
     expect(delivered).toEqual([]);
 
     blob.kickSystem(2);
 
     expect(delivered).toEqual([enc('a'), enc('b')]);
-    expect(blob.remoteNumber).toBe(2);
+    expect(blob.remoteNumber).toBe(2n);
   });
 });
 
@@ -258,13 +258,13 @@ describe('ACK pruning', () => {
     activeBlob = blob;
 
     blob.unackedMessages = [
-      { msgno: 1, msg: enc('a') },
-      { msgno: 2, msg: enc('b') },
-      { msgno: 3, msg: enc('c') },
+      { msgno: 1n, msg: enc('a') },
+      { msgno: 2n, msg: enc('b') },
+      { msgno: 3n, msg: enc('c') },
     ];
-    blob.receiveAck(2);
+    blob.receiveAck(2n);
 
-    expect(blob.unackedMessages).toEqual([{ msgno: 3, msg: enc('c') }]);
+    expect(blob.unackedMessages).toEqual([{ msgno: 3n, msg: enc('c') }]);
   });
 });
 
@@ -279,17 +279,17 @@ describe('outbound message numbering', () => {
     }));
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('trigger'));
+    blob.deliverMessage(1n, enc('trigger'));
     jest.runAllTimers();
 
     expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-    expect(blob.unackedMessages).toContainEqual({ msgno: 1, msg: helloBytes });
+    expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
 
-    blob.deliverMessage(2, enc('trigger2'));
+    blob.deliverMessage(2n, enc('trigger2'));
     jest.runAllTimers();
 
     expect(sentMessages[1]).toEqual({ msgno: 2, msg: helloBytes });
-    expect(blob.messageNumber).toBe(3);
+    expect(blob.messageNumber).toBe(3n);
   });
 });
 
@@ -299,8 +299,8 @@ describe('resendUnacked', () => {
     activeBlob = blob;
 
     blob.unackedMessages = [
-      { msgno: 1, msg: enc('a') },
-      { msgno: 2, msg: enc('b') },
+      { msgno: 1n, msg: enc('a') },
+      { msgno: 2n, msg: enc('b') },
     ];
     blob.resendUnacked();
 
@@ -331,7 +331,7 @@ describe('restore ordering', () => {
     } as unknown as WasmStateInit;
 
     blob.kickSystem(2);
-    blob.deliverMessage(1, enc('already-processed'));
+    blob.deliverMessage(1n, enc('already-processed'));
     await flushDeferredWork();
     const statuses: string[] = [];
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
@@ -356,8 +356,8 @@ describe('restore ordering', () => {
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-    expect(blob.messageNumber).toBe(5);
-    expect(blob.remoteNumber).toBe(1);
+    expect(blob.messageNumber).toBe(5n);
+    expect(blob.remoteNumber).toBe(1n);
     expect(statuses).toEqual(['idle', 'restoring', 'restored']);
     expect(blob.getRestoreStatus()).toBe('restored');
   });

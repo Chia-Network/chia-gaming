@@ -800,7 +800,7 @@ const Shell = () => {
           markPeerActive();
           blobSingleton?.resendUnacked();
         },
-        onMessage: (_data: unknown) => { markPeerActive(); },
+        onDataMessage: (_msgno: number, _msg: Uint8Array) => { markPeerActive(); },
         onAck: (_ack: number) => { markPeerActive(); },
         onKeepalive: () => { markPeerActive(); },
         onClosed: () => {
@@ -1005,7 +1005,7 @@ const Shell = () => {
     const myAlias = gameParams?.myAlias ?? 'You';
     trackerConnRef.current?.sendChat(text);
     setChatMessages(prev => {
-      const next = [...prev, { text, fromAlias: myAlias, timestamp: Date.now(), isMine: true }];
+      const next = [...prev, { text, fromAlias: myAlias, timestamp: BigInt(Date.now()), isMine: true }];
       if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
       return next;
     });

@@ -187,7 +187,7 @@ class WasmBlobWrapperAdapter {
   }
 
   deliver_message(msgno: number, msg: Uint8Array) {
-    this.blob?.deliverMessage(msgno, msg);
+    this.blob?.deliverMessage(BigInt(msgno), msg);
   }
 
   handshaked(): boolean {

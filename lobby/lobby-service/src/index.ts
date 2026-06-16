@@ -23,10 +23,6 @@ function parseArgs() {
 const args = parseArgs();
 const verbose = Boolean(args.verbose);
 
-type RelayPayload =
-  | { ack: number }
-  | { keepalive: true };
-
 type LobbyInboundMessage =
   | { type: 'join'; id: string; alias?: string; session_id?: string }
   | { type: 'leave'; id: string }
@@ -41,7 +37,6 @@ type LobbyInboundMessage =
 
 type GameInboundMessage =
   | { type: 'identify'; session_id: string; available?: boolean }
-  | { type: 'message'; session_id: string; data: RelayPayload }
   | { type: 'chat'; session_id: string; text: string }
   | { type: 'close'; session_id: string }
   | { type: 'set_status'; session_id: string; available: boolean }
@@ -110,11 +105,6 @@ function logTrackerVerbose(event: string, fields?: Record<string, unknown>): voi
   logTracker(event, fields);
 }
 
-function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' {
-  if ('keepalive' in data) return 'keepalive';
-  return 'ack';
-}
-
 app.use(
   cors({
     origin: '*',
@@ -135,13 +125,6 @@ app.use((req, res, next) => {
 app.use(express.json());
 if (args.dir) {
   app.use(express.static(args.dir));
-}
-
-function isRelayPayload(data: unknown): data is RelayPayload {
-  if (!data || typeof data !== 'object') return false;
-  if ('keepalive' in data) return (data as { keepalive?: unknown }).keepalive === true;
-  if ('ack' in data) return typeof (data as { ack?: unknown }).ack === 'number';
-  return false;
 }
 
 function sendWs(ws: WebSocket, type: string, payload: unknown): void {
@@ -604,30 +587,6 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   completeGameRegistration(playerId);
 }
 
-function onGameMessage(msg: Extract<GameInboundMessage, { type: 'message' }>): void {
-  const playerId = sessionToPlayer.get(msg.session_id);
-  if (!playerId) {
-    logTracker('game_message_drop_unknown_session', { session_id: msg.session_id });
-    return;
-  }
-  if (!isRelayPayload(msg.data)) {
-    logTracker('game_message_drop_bad_payload', { player_id: playerId, session_id: msg.session_id });
-    return;
-  }
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (!peerId) {
-    logTracker('game_message_drop_unpaired', { player_id: playerId, session_id: msg.session_id });
-    return;
-  }
-  logTrackerVerbose('game_message_relay', {
-    from_player_id: playerId,
-    to_player_id: peerId,
-    session_id: msg.session_id,
-    payload_kind: relayPayloadKind(msg.data),
-  });
-  sendGameEvent(peerId, 'message', { data: msg.data });
-}
-
 function onGameChat(msg: Extract<GameInboundMessage, { type: 'chat' }>): void {
   const playerId = sessionToPlayer.get(msg.session_id);
   if (!playerId) {
@@ -861,9 +820,6 @@ gameWsServer.on('connection', (ws) => {
     switch (parsed.type) {
       case 'identify':
         onIdentify(ws, parsed);
-        break;
-      case 'message':
-        onGameMessage(parsed);
         break;
       case 'chat':
         onGameChat(parsed);

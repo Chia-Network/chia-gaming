@@ -14,12 +14,11 @@ import { log } from '../services/log';
 export var blobSingleton: WasmBlobWrapper | null = null;
 export var initStarted = false;
 
-function parseProtocolCounter(value: unknown, fallback: number): number {
-    if (typeof value === 'bigint') return Number(value);
-    if (typeof value === 'number' && Number.isInteger(value)) return value;
+function parseBigIntCounter(value: unknown, fallback: bigint): bigint {
+    if (typeof value === 'bigint') return value;
+    if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
     if (typeof value === 'string') {
-        const parsed = Number(value);
-        if (Number.isInteger(parsed)) return parsed;
+        try { return BigInt(value); } catch { /* fall through */ }
     }
     return fallback;
 }
@@ -86,13 +85,13 @@ export async function restoreSession(
   // Restore JS-side delivery state before installing the cradle. setGameCradle()
   // can immediately spill buffered peer messages and replay unacked outbound
   // messages, so it must observe the saved counters and queues.
-  gameObject.messageNumber = parseProtocolCounter(save.messageNumber, 1);
-  gameObject.remoteNumber = parseProtocolCounter(save.remoteNumber, 0);
+  gameObject.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
+  gameObject.remoteNumber = parseBigIntCounter(save.remoteNumber, 0n);
   gameObject.channelReady = save.channelReady ?? false;
   gameObject.iStarted = save.iStarted ?? false;
   gameObject.pairingToken = save.pairingToken ?? '';
   gameObject.unackedMessages = (save.unackedMessages ?? []).map(m => ({
-    msgno: parseProtocolCounter(m.msgno, 0),
+    msgno: parseBigIntCounter(m.msgno, 0n),
     msg: base64ToUint8(m.msg),
   }));
   gameObject.history = [...(save.history ?? [])];
@@ -145,10 +144,10 @@ export function getBlobSingleton(
 
   registerMessageHandler(
     (msgno: number, msg: Uint8Array) => {
-      blobSingleton?.deliverMessage(msgno, msg);
+      blobSingleton?.deliverMessage(BigInt(msgno), msg);
     },
     (ack: number) => {
-      blobSingleton?.receiveAck(ack);
+      blobSingleton?.receiveAck(BigInt(ack));
     },
     () => {
       blobSingleton?.receiveKeepalive();

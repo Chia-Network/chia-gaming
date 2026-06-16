@@ -56,13 +56,13 @@ function clearTestGlobal(key: string) {
 const sampleSession: Partial<SessionState> = {
   serializedCradle: '{"some":"data"}',
   pairingToken: 'tok-123',
-  messageNumber: 5,
-  remoteNumber: 3,
+  messageNumber: 5n,
+  remoteNumber: 3n,
   channelReady: true,
   iStarted: true,
   amount: '100',
   perGameAmount: '10',
-  unackedMessages: [{ msgno: 4, msg: 'hello' }],
+  unackedMessages: [{ msgno: 4n, msg: 'hello' }],
   history: ['log1'],
   log: ['dbg1'],
 };
@@ -183,17 +183,17 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(3);
+    expect(state.version).toBe(3n);
   });
 
   it('old version data is treated as fresh start', () => {
     _writeRawState({ version: 2, playerId: 'old-player' });
     const state = loadAppState();
     expect(state.playerId).not.toBe('old-player');
-    expect(state.version).toBe(3);
+    expect(state.version).toBe(3n);
   });
 
-  it('normalizes shared fields and preserves bigint game-specific payloads', () => {
+  it('preserves bigint types through lossless JSON round-trip', () => {
     _writeRawState({
       version: 3,
       playerId: 'p1',
@@ -227,16 +227,14 @@ describe('flat state', () => {
     const state = loadAppState();
     const handState = state.handState?.state as any;
 
-    expect(typeof state.messageNumber).toBe('number');
-    expect(typeof state.remoteNumber).toBe('number');
-    expect(typeof state.unackedMessages?.[0].msgno).toBe('number');
-    expect(typeof state.chatMessages?.[0].timestamp).toBe('number');
+    expect(typeof state.messageNumber).toBe('bigint');
+    expect(typeof state.remoteNumber).toBe('bigint');
+    expect(typeof state.unackedMessages?.[0].msgno).toBe('bigint');
+    expect(typeof state.chatMessages?.[0].timestamp).toBe('bigint');
     expect(state.handState?.gameType).toBe('calpoker');
-    expect(typeof state.handState?.version).toBe('number');
+    expect(typeof state.handState?.version).toBe('bigint');
     expect(typeof handState.moveNumber).toBe('bigint');
     expect(typeof handState.playerHand[0]).toBe('bigint');
-    expect(handState.displaySnapshot.playerCardIds).toBeUndefined();
-    expect(handState.displaySnapshot.cardSelections).toBeUndefined();
     expect(typeof handState.displaySnapshot.playerBestHandCardIds[0]).toBe('bigint');
   });
 
@@ -246,9 +244,9 @@ describe('flat state', () => {
       defaultFee: huge,
       handState: {
         gameType: 'spacepoker',
-        version: 1,
+        version: 1n,
         state: {
-          gameState: { handler: 2, myTurn: true, N: huge },
+          gameState: { handler: 2n, myTurn: true, N: huge },
           playerHoleCards: [huge, huge + 1n],
           halfPot: huge + 2n,
         },
@@ -266,26 +264,7 @@ describe('flat state', () => {
     expect(handState.halfPot).toBe(huge + 2n);
   });
 
-  it('wraps legacy Calpoker hand state in a persisted game envelope', () => {
-    _writeRawState({
-      version: 3,
-      playerId: 'p1',
-      handState: {
-        playerHand: [1, 2],
-        opponentHand: [3, 4],
-        moveNumber: 2,
-        isPlayerTurn: true,
-      },
-    });
-
-    const state = loadAppState();
-
-    expect(state.handState?.gameType).toBe('calpoker');
-    expect(state.handState?.version).toBe(1);
-    expect((state.handState?.state as any).moveNumber).toBe(2n);
-  });
-
-  it('uses Calpoker hand arrays as canonical order and drops duplicate snapshot order', () => {
+  it('preserves Calpoker hand arrays as bigint through round-trip', () => {
     _writeRawState({
       version: 3,
       playerId: 'p1',
@@ -300,9 +279,6 @@ describe('flat state', () => {
           cardSelections: [8, 7],
           displaySnapshot: {
             gameState: 'selecting',
-            playerCardIds: [1, 2, 3, 4],
-            opponentCardIds: [5, 6, 7, 8],
-            cardSelections: [1, 2],
             winner: null,
             playerBestHandCardIds: [],
             opponentBestHandCardIds: [],
@@ -320,9 +296,6 @@ describe('flat state', () => {
     expect(handState.playerHand).toEqual([8n, 7n, 6n, 5n]);
     expect(handState.opponentHand).toEqual([4n, 3n, 2n, 1n]);
     expect(handState.cardSelections).toEqual([8n, 7n]);
-    expect(handState.displaySnapshot.playerCardIds).toBeUndefined();
-    expect(handState.displaySnapshot.opponentCardIds).toBeUndefined();
-    expect(handState.displaySnapshot.cardSelections).toBeUndefined();
   });
 });
 

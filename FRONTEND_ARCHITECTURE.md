@@ -895,20 +895,32 @@ utilities in `front-end/src/util/jsonSafe.ts`:
 
 #### UX BigInt policy
 
-Domain values in the player app should stay as `bigint` for as long as they are
-protocol, money, card, move, or persisted session values. This includes WASM
-bridge data, game hooks, session-model facts, `PersistedGameState`, balance
-math, and move construction. Do not convert these values to `number` for
-convenience; JavaScript numbers are floating-point and can silently lose
-precision for Chia amounts or CLVM integers.
+All integer values in the player app are `bigint`. This applies universally to
+protocol counters, money amounts, card values, move data, timestamps, version
+numbers, message sequence numbers — everything. JavaScript's `number` type is
+IEEE 754 double-precision floating-point and silently loses precision for values
+beyond 2^53. Rather than auditing each field individually, the rule is simple:
+**if it's an integer, it's a `bigint`.**
 
-The conversion boundary is the view layer. React components that only render or
-edit a value should receive view-safe props: usually decimal strings for money
-and CLVM integers, or small `number`s only for genuinely UI-local quantities
-such as input step counts, array indices, CSS/layout values, and enum-like
-controls. Game-specific wrappers such as `GameSession` should build these view
-models explicitly, and convert back to `bigint` only when calling hook actions
-that construct protocol moves.
+The only exceptions are values consumed directly by APIs that require `number`:
+array indices, `DataView` get/set methods (which take 32-bit `number` arguments),
+CSS pixel values, `setTimeout` delays, and similar DOM/browser APIs. These
+conversions happen at the call site with an explicit `Number()` cast — the
+`bigint` remains the source of truth.
+
+**Persistence.** `SessionState` fields including `version`, `messageNumber`,
+`remoteNumber`, `timestamp`, and all game-specific state use `bigint`. The
+`jsonParseLossless` / `jsonStringifyLossless` helpers encode `bigint` as tagged
+objects in localStorage so values survive serialization round-trips without
+precision loss. On load, `parseBigInt()` normalizes anything that might have
+been stored as a plain number (from older versions) back to `bigint`.
+
+**View layer boundary.** React components that render or edit a value receive
+view-safe props: decimal strings for money and CLVM integers, or small `number`s
+only for genuinely UI-local quantities such as input step counts, array indices,
+CSS/layout values, and enum-like controls. Game-specific wrappers such as
+`GameSession` build these view models explicitly, and convert back to `bigint`
+only when calling hook actions that construct protocol moves.
 
 This boundary is also defensive. Native `JSON.stringify` throws on BigInts, and
 React development diagnostics may enumerate props or error payloads in ways that
@@ -916,6 +928,13 @@ hit JSON serialization. Avoid passing BigInt-rich domain objects directly into
 deep component trees. Prefer explicit string/number view props; if a domain
 object must cross a React boundary, keep BigInt-heavy implementation details out
 of ordinary enumerable props.
+
+**Wire protocol.** Peer-to-peer message sequence numbers (`msgno`) are `bigint`
+internally but are serialized as 32-bit unsigned integers in binary WebSocket
+frames (via `DataView.setUint32`). The `Number()` conversion happens at the
+`TrackerConnection` send boundary; incoming values are converted to `BigInt()`
+immediately upon receipt. The tracker itself never interprets these values — it
+relays binary frames opaquely.
 
 ### Lobby Iframe (Tracker)
 

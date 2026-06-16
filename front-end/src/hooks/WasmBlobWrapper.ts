@@ -26,13 +26,13 @@ import type { ChannelStatusPayload } from '../types/ChiaGaming';
 export interface WasmFields {
   serializedCradle: Uint8Array;
   pairingToken: string;
-  messageNumber: number;
-  remoteNumber: number;
+  messageNumber: bigint;
+  remoteNumber: bigint;
   channelReady: boolean;
   iStarted: boolean;
   amount: string;
   perGameAmount: string;
-  unackedMessages: Array<{ msgno: number; msg: Uint8Array }>;
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   history: string[];
   log: string[];
   activeGameId: string | null;
@@ -41,7 +41,7 @@ export interface WasmFields {
   myAlias: string | undefined;
   opponentAlias: string | undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
-  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }>;
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -75,20 +75,20 @@ export class WasmBlobWrapper implements PollingCradle {
   amount: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
-  sendMessage: (msgno: number, msg: Uint8Array) => void;
-  sendAck: (ackMsgno: number) => void;
+  sendMessage: (msgno: bigint, msg: Uint8Array) => void;
+  sendAck: (ackMsgno: bigint) => void;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  messageNumber: number;
-  remoteNumber: number;
+  messageNumber: bigint;
+  remoteNumber: bigint;
   cradle: ChiaGame | undefined;
   uniqueId: string;
   pairingToken: string;
   channelReady: boolean;
   iStarted: boolean;
-  storedMessages: Array<{ msgno: number; msg: Uint8Array }>;
+  storedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
   onChain: boolean;
   reloading: boolean;
@@ -103,10 +103,10 @@ export class WasmBlobWrapper implements PollingCradle {
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
 
-  unackedMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }> = [];
   history: string[] = [];
   logHistory: string[] = [];
-  private reorderQueue: Map<number, Uint8Array> = new Map();
+  private reorderQueue: Map<bigint, Uint8Array> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
   private restoreStatus: RestoreStatus = 'idle';
@@ -116,15 +116,15 @@ export class WasmBlobWrapper implements PollingCradle {
   private beforeUnloadHandler: (() => void) | null = null;
   private durabilityFlushScheduled = false;
   private needsImmediateDurability = false;
-  private pendingOutboundSends: Array<{ msgno: number; msg: Uint8Array }> = [];
-  private pendingAcks: number[] = [];
+  private pendingOutboundSends: Array<{ msgno: bigint; msg: Uint8Array }> = [];
+  private pendingAcks: bigint[] = [];
   activeGameId: string | null = null;
   private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
-  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }> = [];
   onSaveNeeded: (() => void) | null = null;
   getFee: () => bigint = () => 0n;
 
@@ -151,10 +151,10 @@ export class WasmBlobWrapper implements PollingCradle {
     const { sendMessage, sendAck } = peer_conn;
     this.uniqueId = uniqueId;
     this.pairingToken = '';
-    this.messageNumber = 1;
-    this.remoteNumber = 0;
-    this.sendMessage = sendMessage;
-    this.sendAck = sendAck;
+    this.messageNumber = 1n;
+    this.remoteNumber = 0n;
+    this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
+    this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
     this.amount = amount;
     this.perGameAmount = 0n;
     this.iStarted = false;
@@ -543,7 +543,7 @@ export class WasmBlobWrapper implements PollingCradle {
 
   // --- Inbound events ---
 
-  deliverMessage(msgno: number, msg: Uint8Array) {
+  deliverMessage(msgno: bigint, msg: Uint8Array) {
     this.notePeerActivity();
     if (this.onChain) {
       this.sendAck(msgno);
@@ -562,7 +562,7 @@ export class WasmBlobWrapper implements PollingCradle {
       }
       return;
     }
-    if (msgno > this.remoteNumber + 1) {
+    if (msgno > this.remoteNumber + 1n) {
       this.reorderQueue.set(msgno, msg);
       return;
     }
@@ -571,7 +571,7 @@ export class WasmBlobWrapper implements PollingCradle {
     this.flushReorderQueue();
   }
 
-  private deliverSingleMessage(msgno: number, msg: Uint8Array) {
+  private deliverSingleMessage(msgno: bigint, msg: Uint8Array) {
     try {
       const result = this.cradle!.deliver_message(msg);
       this.remoteNumber = msgno;
@@ -593,15 +593,15 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   private flushReorderQueue() {
-    while (!this.onChain && this.reorderQueue.has(this.remoteNumber + 1)) {
-      const nextMsgno = this.remoteNumber + 1;
+    while (!this.onChain && this.reorderQueue.has(this.remoteNumber + 1n)) {
+      const nextMsgno = this.remoteNumber + 1n;
       const msg = this.reorderQueue.get(nextMsgno)!;
       this.reorderQueue.delete(nextMsgno);
       this.deliverSingleMessage(nextMsgno, msg);
     }
   }
 
-  receiveAck(ackMsgno: number) {
+  receiveAck(ackMsgno: bigint) {
     this.notePeerActivity();
     const before = this.unackedMessages.length;
     this.unackedMessages = this.unackedMessages.filter(m => m.msgno > ackMsgno);

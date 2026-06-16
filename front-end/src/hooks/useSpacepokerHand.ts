@@ -6,7 +6,7 @@ import { GameplayEvent } from './useGameSession';
 import { log } from '../services/log';
 import { PersistedGameState } from './save';
 
-const SPACEPOKER_PERSISTED_STATE_VERSION = 1;
+const SPACEPOKER_PERSISTED_STATE_VERSION = 1n;
 const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;
 
 export type SpacepokerDisplayMode = 'xch' | 'mojos' | 'units';
@@ -15,15 +15,16 @@ export type SpacepokerDisplayMode = 'xch' | 'mojos' | 'units';
 // handler is currently active; every OpponentMoved advances it to the
 // next state in the sequence. myTurn is implicit: an OpponentMoved
 // means it's now my turn; a makeMove means it's now theirs.
-export enum SpHandler {
-  CommitA,    // my-turn: auto-play nil
-  CommitB,    // my-turn: auto-play nil
-  BeginRound, // my-turn: user opens (or auto-pong at N=4)
-  MidRound,   // my-turn: user raises or calls
-  End,        // my-turn: auto-play reveal or game-level accept
-  Showdown,   // terminal
-  Folded,     // terminal
-}
+export const SpHandler = {
+  CommitA: 0n,
+  CommitB: 1n,
+  BeginRound: 2n,
+  MidRound: 3n,
+  End: 4n,
+  Showdown: 5n,
+  Folded: 6n,
+} as const;
+export type SpHandler = typeof SpHandler[keyof typeof SpHandler];
 
 export interface SpGameState {
   handler: SpHandler;
@@ -114,111 +115,8 @@ function clvmTag(items: Program[]): string | null {
   return new TextDecoder().decode(atom);
 }
 
-function finiteNumber(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'bigint') return Number(value);
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return fallback;
-}
-
-function finiteBigint(value: unknown, fallback: bigint): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
-  if (typeof value === 'string') {
-    try { return BigInt(value); } catch { return fallback; }
-  }
-  return fallback;
-}
-
-function bigintArray(value: unknown): bigint[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => finiteBigint(item, 0n));
-}
-
-function nullableBigintArray(value: unknown): (bigint | null)[] {
-  if (!Array.isArray(value)) return [null, null, null, null, null];
-  const normalized = value.map((item) => (item == null ? null : finiteBigint(item, 0n)));
-  while (normalized.length < 5) normalized.push(null);
-  return normalized.slice(0, 5);
-}
-
-function holeCards(value: unknown): [bigint, bigint] | null {
-  const cards = bigintArray(value);
-  return cards.length >= 2 ? [cards[0], cards[1]] : null;
-}
-
-function normalizeGameState(value: unknown, iStarted: boolean): SpGameState {
-  if (!value || typeof value !== 'object') {
-    return { handler: SpHandler.CommitA, myTurn: !iStarted, N: 4n };
-  }
-  const state = value as SpGameState;
-  return {
-    handler: finiteNumber(state.handler, SpHandler.CommitA) as SpHandler,
-    myTurn: !!state.myTurn,
-    N: finiteBigint(state.N, 4n),
-  };
-}
-
-function normalizeHistory(value: unknown): SpHandEntry[] {
-  if (!Array.isArray(value)) return [];
-  const entries: SpHandEntry[] = [];
-  for (const entry of value) {
-    const h = entry as SpHandEntry;
-    if (h.action !== 'check' && h.action !== 'raise' && h.action !== 'call' && h.action !== 'fold') {
-      continue;
-    }
-    entries.push({
-      player: h.player === 'opponent' ? 'opponent' : 'you',
-      action: h.action,
-      units: h.units == null ? undefined : finiteBigint(h.units, 0n),
-      endsStreet: !!h.endsStreet,
-    });
-  }
-  return entries;
-}
-
-function normalizeOutcome(value: unknown): SpOutcome | null {
-  if (!value || typeof value !== 'object') return null;
-  const outcome = value as SpOutcome;
-  if (outcome.result == null) return null;
-  return {
-    result: finiteBigint(outcome.result, 0n),
-    playerHandCards: bigintArray(outcome.playerHandCards),
-    playerHandEval: bigintArray(outcome.playerHandEval),
-    opponentHandCards: outcome.opponentHandCards ? bigintArray(outcome.opponentHandCards) : null,
-    opponentHandEval: outcome.opponentHandEval ? bigintArray(outcome.opponentHandEval) : null,
-  };
-}
-
 function defaultDisplayModeForUnit(unitSizeMojos: bigint): SpacepokerDisplayMode {
   return unitSizeMojos > SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS ? 'xch' : 'mojos';
-}
-
-function normalizeDisplayMode(value: unknown, fallback: SpacepokerDisplayMode): SpacepokerDisplayMode {
-  if (value === 'units' || value === 'mojos') return value;
-  if (value === 'xch') return value;
-  return fallback;
-}
-
-function normalizeTerminalState(value: unknown, state: SpGameState, history: SpHandEntry[]): SpTerminalState {
-  if (
-    value === 'revealed' ||
-    value === 'conceded-by-you' ||
-    value === 'conceded-by-opponent' ||
-    value === 'folded-by-you' ||
-    value === 'folded-by-opponent'
-  ) {
-    return value;
-  }
-  if (state.handler === SpHandler.Folded) {
-    const last = history[history.length - 1];
-    return last?.player === 'you' && last.action === 'fold' ? 'folded-by-you' : 'folded-by-opponent';
-  }
-  if (state.handler === SpHandler.Showdown) return 'revealed';
-  return 'none';
 }
 
 function formatXch(mojos: bigint): string {
@@ -236,34 +134,13 @@ function errorMessage(error: unknown): string {
 
 function spacepokerStateFromPersisted(
   persisted: PersistedGameState | null | undefined,
-  iStarted: boolean,
-  fallbackUnitSize: bigint,
+  _iStarted: boolean,
+  _fallbackUnitSize: bigint,
 ): SpacepokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'spacepoker') return undefined;
   if (persisted.version !== SPACEPOKER_PERSISTED_STATE_VERSION) return undefined;
   if (!persisted.state || typeof persisted.state !== 'object') return undefined;
-  const state = persisted.state as SpacepokerHandState;
-  const gameState = normalizeGameState(state.gameState, iStarted);
-  const handHistory = normalizeHistory(state.handHistory);
-  const unitSizeMojos = finiteBigint(state.unitSizeMojos, fallbackUnitSize);
-  const displayMode = normalizeDisplayMode(state.displayMode, defaultDisplayModeForUnit(unitSizeMojos));
-  return {
-    gameState,
-    playerHoleCards: holeCards(state.playerHoleCards),
-    playerBoost: !!state.playerBoost,
-    opponentHoleCards: holeCards(state.opponentHoleCards),
-    opponentBoost: state.opponentBoost == null ? null : !!state.opponentBoost,
-    communityCards: nullableBigintArray(state.communityCards),
-    halfPot: finiteBigint(state.halfPot, 1n),
-    lastRaise: finiteBigint(state.lastRaise, 0n),
-    iRaisedLast: !!state.iRaisedLast,
-    handHistory,
-    outcome: normalizeOutcome(state.outcome),
-    terminalState: normalizeTerminalState(state.terminalState, gameState, handHistory),
-    coinTossIOpen: state.coinTossIOpen == null ? null : !!state.coinTossIOpen,
-    unitSizeMojos,
-    displayMode,
-  };
+  return persisted.state as SpacepokerHandState;
 }
 
 function persistedSpacepokerState(state: SpacepokerHandState): PersistedGameState<SpacepokerHandState> {
