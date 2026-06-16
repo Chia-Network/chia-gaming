@@ -535,6 +535,13 @@ export function getSessionId(): string {
   return state.sessionId;
 }
 
+export function regenerateSessionId(): string {
+  const state = loadState();
+  state.sessionId = randomHex();
+  schedulePersist();
+  return state.sessionId;
+}
+
 export function getBlockchainType(): BlockchainType | undefined {
   return loadState().blockchainType;
 }

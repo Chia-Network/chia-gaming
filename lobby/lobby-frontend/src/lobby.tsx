@@ -30,6 +30,7 @@ const LobbyScreen = () => {
     declineChallenge,
     cancelChallenge,
     setLobbyAlias,
+    publicId,
   } = useLobbySocket(
     window.location.origin,
     uniqueId,
@@ -75,7 +76,7 @@ const LobbyScreen = () => {
     const value = e.target.value;
     setEditingAlias(false);
     setMyAlias(value);
-    setLobbyAlias(uniqueId, value);
+    setLobbyAlias(publicId ?? '', value);
   }
 
   const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(null);
@@ -131,7 +132,7 @@ const LobbyScreen = () => {
     );
   }
 
-  const myStatus = players.find((p) => p.id === uniqueId)?.status;
+  const myStatus = players.find((p) => p.id === publicId)?.status;
   const iAmUnavailable = myStatus === 'playing' || myStatus === 'busy';
 
   return (
@@ -268,7 +269,7 @@ const LobbyScreen = () => {
       ) : (
         <div className="space-y-2">
           {players.map((player) => {
-            const isMe = player.id === uniqueId;
+            const isMe = player.id === publicId;
             const isUnavailable = player.status === 'playing' || player.status === 'busy';
 
             return (

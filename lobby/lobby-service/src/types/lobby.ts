@@ -3,7 +3,6 @@ export type PlayerStatus = 'waiting' | 'playing' | 'busy';
 export interface Player {
   id: string;
   alias: string;
-  session_id: string;
   walletAddress?: string;
   status: PlayerStatus;
   opponent_alias?: string;

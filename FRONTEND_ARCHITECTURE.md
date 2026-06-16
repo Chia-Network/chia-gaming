@@ -69,14 +69,18 @@ configuration.
 
 The tracker has two communication channels per player:
 
-1. **Lobby channel** — used by the lobby iframe for presence and matchmaking.
-2. **Game channel** — used by the player app's `TrackerConnection` for game
-   message relay.
+1. **Lobby/control channel** — a bespoke tracker protocol used by the lobby
+   iframe for alias, presence, challenge, and matchmaking messages.
+2. **Game relay channel** — the player app's `TrackerConnection` WebSocket. Its
+   JSON control frames establish/monitor the tracker session and its binary
+   frames carry game-specific peer messages unchanged.
 
 Each channel uses a dedicated WebSocket endpoint: the lobby channel connects to
-`/ws/lobby` and the game channel connects to `/ws/game`. The tracker links them
-by `session_id` (`join` from lobby iframe, `identify` from game channel) and
-maps session → player internally.
+`/ws/lobby` and the game channel connects to `/ws/game`. The player app provides
+a secret tracker session nonce as `session_id` when joining/identifying. The
+tracker treats that nonce as the bearer credential for reconnect/replacement and
+assigns a separate public lobby id for discovery and challenges. Public lobby
+updates never include the secret nonce.
 
 #### Lobby channel events
 
@@ -84,22 +88,23 @@ maps session → player internally.
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `get_alias` | `{ id }` | Look up a previously saved alias (sent on connect, before joining) |
-| `set_alias` | `{ id, alias }` | Save a new alias on the tracker |
-| `join` | `{ id, alias, session_id }` | Register in the lobby with a player ID and display alias |
-| `leave` | `{ id }` | Leave the lobby |
-| `challenge` | `{ from_id, target_id, amount }` | Challenge another player with a channel buy-in amount |
-| `challenge_accept` | `{ challenge_id, accepter_id }` | Accept a pending challenge |
+| `get_alias` | `{ session_id }` | Look up a previously saved alias for this tracker session (sent on connect, before joining) |
+| `set_alias` | `{ session_id, alias }` | Save a new alias for this tracker session |
+| `join` | `{ session_id, alias }` | Authenticate the lobby socket by secret nonce and register/update the public lobby player |
+| `leave` | `{}` | Leave the lobby for the current session-bound socket |
+| `challenge` | `{ target_id, amount }` | Challenge another player by public lobby id with a channel buy-in amount |
+| `challenge_accept` | `{ challenge_id }` | Accept a pending challenge addressed to the current session-bound socket |
 | `challenge_decline` | `{ challenge_id }` | Decline a pending challenge |
-| `challenge_cancel` | `{ from_id }` | Cancel an outgoing challenge |
-| `change_alias` | `{ id, newAlias }` | Update lobby display alias mid-session |
+| `challenge_cancel` | `{}` | Cancel outgoing challenges for the current session-bound socket |
+| `change_alias` | `{ newAlias }` | Update lobby display alias mid-session |
 
 **Tracker → Lobby iframe:**
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
 | `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
-| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes). Each `Player` includes `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when playing, `opponent_alias`. |
+| `joined` | `{ id, alias }` | The public lobby id and alias assigned to this session |
+| `lobby_update` | `Player[]` | Current list of public players in the lobby (broadcast on changes). Each `Player` includes `id`, `alias`, `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when playing, `opponent_alias`; it never includes `session_id`. |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, amount }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 

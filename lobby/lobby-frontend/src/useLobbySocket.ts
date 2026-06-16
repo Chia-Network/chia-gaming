@@ -3,7 +3,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 export interface Player {
   id: string;
   alias: string;
-  session_id: string;
   walletAddress?: string;
   status: 'waiting' | 'playing' | 'busy';
   opponent_alias?: string;
@@ -19,6 +18,7 @@ export interface ChallengeReceived {
 
 type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
+  | { type: 'joined'; id: string; alias: string }
   | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; amount: string }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
   | { type: 'alias_result'; alias: string | null }
@@ -66,6 +66,7 @@ export function useLobbySocket(
   const [reconnectBlocked, setReconnectBlocked] = useState(false);
   const [savedAlias, setSavedAlias] = useState<string | null>(null);
   const [aliasLoaded, setAliasLoaded] = useState(false);
+  const [publicId, setPublicId] = useState<string | null>(null);
   const uniqueIdRef = useRef(uniqueId);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingWsRef = useRef<WebSocket | null>(null);
@@ -152,7 +153,7 @@ export function useLobbySocket(
         });
         setIsConnected(true);
         setHasConnected(true);
-        ws.send(JSON.stringify({ type: 'get_alias', id: uniqueIdRef.current }));
+        ws.send(JSON.stringify({ type: 'get_alias', session_id: sessionId }));
         lobbyHsLog('get_alias_send', {
           conn_id: connIdRef.current,
           session_id: sessionId,
@@ -161,7 +162,6 @@ export function useLobbySocket(
         if (joinedAliasRef.current) {
           const payload = {
             type: 'join',
-            id: uniqueIdRef.current,
             session_id: sessionId,
             alias: joinedAliasRef.current,
           };
@@ -201,6 +201,10 @@ export function useLobbySocket(
         }
         if (!msg || typeof msg !== 'object' || !('type' in msg)) return;
         switch (msg.type) {
+          case 'joined':
+            setPublicId(msg.id);
+            setSavedAlias(msg.alias);
+            break;
           case 'lobby_update':
             lobbyHsLog('lobby_update_recv', {
               conn_id: connIdRef.current,
@@ -334,7 +338,6 @@ export function useLobbySocket(
       });
       send({
         type: 'join',
-        id: uniqueIdRef.current,
         session_id: sessionId,
         alias: trimmed,
       }, false);
@@ -344,16 +347,15 @@ export function useLobbySocket(
 
   const setAlias = useCallback(
     (alias: string) => {
-      send({ type: 'set_alias', id: uniqueIdRef.current, alias });
+      send({ type: 'set_alias', session_id: sessionId, alias });
     },
-    [send],
+    [send, sessionId],
   );
 
   const sendChallenge = useCallback(
     (targetId: string, amount: string) => {
       send({
         type: 'challenge',
-        from_id: uniqueIdRef.current,
         target_id: targetId,
         amount,
       });
@@ -367,7 +369,6 @@ export function useLobbySocket(
       send({
         type: 'challenge_accept',
         challenge_id: challengeId,
-        accepter_id: uniqueIdRef.current,
       });
       setPendingChallenge(null);
     },
@@ -386,25 +387,26 @@ export function useLobbySocket(
   );
 
   const cancelChallenge = useCallback(() => {
-    send({ type: 'challenge_cancel', from_id: uniqueIdRef.current });
+    send({ type: 'challenge_cancel' });
     setChallengeSent(false);
   }, [send]);
 
   const setLobbyAlias = useCallback(
     async (id: string, newAlias: string) => {
       const trimmed = newAlias.trim();
-      if (id === uniqueIdRef.current && trimmed) {
+      if (id === publicId && trimmed) {
         joinedAliasRef.current = trimmed;
       }
-      send({ type: 'change_alias', id, newAlias: trimmed });
+      send({ type: 'change_alias', newAlias: trimmed });
     },
-    [send],
+    [send, publicId],
   );
 
   const isReconnecting = hasConnected && !isConnected;
 
   return {
     players,
+    publicId,
     lobbyUpdateReceived,
     pendingChallenge,
     challengeSent,

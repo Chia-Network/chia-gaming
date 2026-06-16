@@ -6,7 +6,7 @@
     "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/index.js --platform=node --bundle --outfile=dist/index-rollup.cjs",
     "start": "node dist/index-rollup.cjs",
     "dev": "ts-node-dev --respawn src/index.ts",
-    "test": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test src/*.test.mjs",
     "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'"
   },

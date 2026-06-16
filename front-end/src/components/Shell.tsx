@@ -10,6 +10,7 @@ import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
   getSessionId,
+  regenerateSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
@@ -269,7 +270,7 @@ const Shell = () => {
   }
 
   const uniqueId = getPlayerId();
-  const sessionId = getSessionId();
+  const [, setSessionId] = useState(() => getSessionId());
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
@@ -640,10 +641,14 @@ const Shell = () => {
     const origin = normalizeTrackerOrigin(rawOrigin);
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
+    const initialSave = peekSession();
+    const hasActiveTrackerSession = !!(initialSave?.serializedCradle || initialSave?.pairingToken);
+    const trackerSessionId = hasActiveTrackerSession ? getSessionId() : regenerateSessionId();
+    setSessionId(trackerSessionId);
 
     setTrackerOrigin(origin);
     saveTrackerUrl(origin);
-    const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
+    const lobbyUrl = `${origin}/?lobby=true&session=${trackerSessionId}&uniqueId=${uniqueId}`;
     setIframeUrl(lobbyUrl);
 
     const startSession = (
@@ -704,7 +709,7 @@ const Shell = () => {
 
     let conn: TrackerConnection;
     try {
-      conn = new TrackerConnection(origin, sessionId, {
+      conn = new TrackerConnection(origin, trackerSessionId, {
         onMatched: (matched: MatchedParams) => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
@@ -855,20 +860,7 @@ const Shell = () => {
       );
     }
 
-    const initialSave = peekSession();
-    if (initialSave && initialSave.pairingToken) {
-      const { amount, perGameAmount: perGame } = sessionAmountsFromSave(initialSave, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
-      startSession(
-        conn,
-        initialSave.iStarted ?? false,
-        amount,
-        perGame,
-        initialSave.pairingToken,
-        initialSave,
-      );
-      markPeerInactive();
-    }
-  }, [uniqueId, sessionId, markPeerActive, markPeerInactive]);
+  }, [uniqueId, markPeerActive, markPeerInactive]);
 
   const requestTrackerConnect = useCallback((origin: string) => {
     if (peerConnected && sessionPhase === 'off-chain') {
