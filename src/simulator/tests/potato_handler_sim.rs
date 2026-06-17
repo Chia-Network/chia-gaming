@@ -1205,6 +1205,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::InjectRawMessage(_, _)
                     | GameAction::SelfAcceptProposal(_, _)
                     | GameAction::WrongParityProposal(_)
+                    | GameAction::InvalidProposalParameters(_)
                     | GameAction::BadSignatureMove(_, _, _)
             )
     };
@@ -1805,6 +1806,43 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         })?;
                     }
+                    GameAction::InvalidProposalParameters(who) => {
+                        cradles[*who].propose_game(
+                            allocator,
+                            &GameStart {
+                                amount: Amount::new(200),
+                                my_contribution: Amount::new(100),
+                                game_type: GameType(game_type.to_vec()),
+                                timeout: Timeout::new(15),
+                                my_turn: true,
+                                parameters: extras.clone(),
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
+                            },
+                        )?;
+                        cradles[*who].flush_pending(allocator)?;
+                        cradles[*who].replace_last_message(|msg_envelope| {
+                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
+                                let mut new_actions = actions.clone();
+                                for action in new_actions.iter_mut() {
+                                    if let BatchAction::ProposeGame(ref mut wire) = action {
+                                        wire.start.parameters = Program::from_hex("80")?;
+                                    }
+                                }
+                                Ok(PeerMessage::Batch {
+                                    actions: new_actions,
+                                    signatures: signatures.clone(),
+                                    clean_shutdown: clean_shutdown.clone(),
+                                })
+                            } else {
+                                Err(Error::StrErr(format!(
+                                    "InvalidProposalParameters expected PeerMessage::Batch, got {msg_envelope:?}"
+                                )))
+                            }
+                        })?;
+                    }
                 }
             }
         }
@@ -2175,13 +2213,15 @@ pub fn run_spacepoker_container_with_action_list_with_success_predicate(
 
     let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
+    let bet_unit = 10i64.to_clvm(allocator).into_gen()?;
+    let spacepoker_parameters = Program::from_nodeptr(allocator, bet_unit)?;
     run_game_container_with_action_list_with_success_predicate(
         allocator,
         &mut rng,
         private_keys,
         &identities,
         b"spacepoker",
-        &Program::from_hex("80")?,
+        &spacepoker_parameters,
         moves,
         predicate,
         per_player_balance,
@@ -6742,6 +6782,29 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             outcome.cradles[1].is_on_chain() || outcome.cradles[1].is_failed(),
             "player 1 should go on-chain or fail after receiving wrong-parity proposal"
+        );
+    }));
+
+    res.push(("test_spacepoker_invalid_proposal_params_disconnects_peer", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::WaitBlocks(5, 0),
+            GameAction::InvalidProposalParameters(0),
+            GameAction::WaitBlocks(20, 0),
+        ];
+
+        let outcome = run_spacepoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+            None,
+        )
+        .expect("should finish");
+
+        assert!(
+            outcome.cradles[1].is_peer_disconnected(),
+            "player 1 should disconnect after receiving invalid Space Poker proposal parameters"
         );
     }));
 

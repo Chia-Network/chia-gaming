@@ -99,20 +99,22 @@
 
 ; ─── proposal factory / parser ───────────────────────────────────────
 
-; proposal factory: (bet_size [bet_unit]) -> (wire_data local_data)
+; proposal factory: (per_player_stake bet_unit) -> (wire_data local_data)
 ; wire_data = (my_contribution their_contribution [(amount we_go_first
 ;              initial_validator_hash initial_move initial_max_move_size
 ;              initial_state initial_mover_share)])
 ; local_data = [(initial_handler initial_validator)]
-(defun spacepoker_make_proposal (@ _args (bet_size . maybe_bet_unit))
-    (assign
-        bet_unit (if maybe_bet_unit (f maybe_bet_unit) (/ bet_size 10))
+(defun spacepoker_make_proposal (@ _args (per_player_stake bet_unit))
+    (assert
+        (> per_player_stake 0)
+        (> bet_unit 0)
+        (= (% per_player_stake bet_unit) 0)
         (li
             (li
-                bet_size
-                bet_size
+                per_player_stake
+                per_player_stake
                 (li
-                    (li (* 2 bet_size) 1 commitA_hash 0 32 bet_unit 0)
+                    (li (* 2 per_player_stake) 1 commitA_hash 0 32 bet_unit 0)
                 )
             )
             (li
@@ -123,9 +125,9 @@
 )
 
 ; parser: (wire_data) -> (readable [(initial_validator initial_handler)])
-(defun spacepoker_parser (@ args (bet_size _their_bet_size ((_amount _we_go_first _hash _move _max_move_size bet_unit _mover_share))))
-    (assert (deep= args (f (spacepoker_make_proposal bet_size bet_unit)))
-        (li (list bet_size bet_unit) (li (li val_commitA spacepoker_bob_handler_commitA)))
+(defun spacepoker_parser (@ args (per_player_stake _their_stake ((_amount _we_go_first _hash _move _max_move_size bet_unit _mover_share))))
+    (assert (deep= args (f (spacepoker_make_proposal per_player_stake bet_unit)))
+        (li (list per_player_stake bet_unit) (li (li val_commitA spacepoker_bob_handler_commitA)))
     )
 )
 

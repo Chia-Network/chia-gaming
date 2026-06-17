@@ -275,7 +275,7 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
     let parser_clvm = parser.to_clvm(allocator).unwrap();
 
-    let bet_args = (BET_SIZE, ()).to_clvm(allocator).unwrap();
+    let bet_args = (BET_SIZE, (BET_UNIT, ())).to_clvm(allocator).unwrap();
     let proposal_result = run_clvm(allocator, make_proposal_clvm, bet_args);
 
     let proposal_list = proper_list(allocator.allocator(), proposal_result, true).unwrap();
@@ -687,6 +687,100 @@ fn test_spacepoker_setup_game() {
     assert_eq!(setup.initial_mover_share, 0);
     let state_val = int_from_node(&mut allocator, setup.initial_state);
     assert_eq!(state_val, BET_UNIT, "initial state should be bet_unit");
+}
+
+fn make_proposal_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
+    let make_proposal = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex",
+    )
+    .expect("load make_proposal");
+    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        make_proposal_clvm,
+        args,
+        0,
+    )
+    .is_ok()
+}
+
+fn parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
+    let parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex",
+    )
+    .expect("load parser");
+    let parser_clvm = parser.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        parser_clvm,
+        wire_data,
+        0,
+    )
+    .is_ok()
+}
+
+fn test_spacepoker_make_proposal_requires_explicit_valid_bet_unit() {
+    let mut allocator = AllocEncoder::new();
+
+    let valid_args = (BET_SIZE, (BET_UNIT, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        make_proposal_succeeds(&mut allocator, valid_args),
+        "explicit valid bet_unit should be accepted"
+    );
+
+    let missing_bet_unit = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !make_proposal_succeeds(&mut allocator, missing_bet_unit),
+        "bet_unit is required; no per_player_stake / 10 fallback should exist"
+    );
+
+    let zero_bet_unit = (BET_SIZE, (0i64, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !make_proposal_succeeds(&mut allocator, zero_bet_unit),
+        "bet_unit must be positive"
+    );
+
+    let non_dividing_bet_unit = (BET_SIZE, (6i64, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !make_proposal_succeeds(&mut allocator, non_dividing_bet_unit),
+        "per_player_stake must divide evenly into bet_unit-sized stack units"
+    );
+}
+
+fn test_spacepoker_parser_rejects_invalid_peer_bet_unit() {
+    let mut allocator = AllocEncoder::new();
+
+    let bad_bet_unit = 0i64;
+    let peer_wire_data = (
+        BET_SIZE,
+        (
+            BET_SIZE,
+            (
+                vec![(
+                    AMOUNT,
+                    (
+                        1i64,
+                        (
+                            0i64,
+                            (0i64, (32i64, (bad_bet_unit, (0i64, ())))),
+                        ),
+                    ),
+                )],
+                (),
+            ),
+        ),
+    )
+        .to_clvm(&mut allocator)
+        .unwrap();
+
+    assert!(
+        !parser_succeeds(&mut allocator, peer_wire_data),
+        "peer wire proposals with invalid Space Poker terms should make the parser throw"
+    );
 }
 
 fn test_spacepoker_happy_path_all_calls() {
@@ -1835,6 +1929,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_happy_path_all_calls",
             &test_spacepoker_happy_path_all_calls,
+        ),
+        (
+            "test_spacepoker_make_proposal_requires_explicit_valid_bet_unit",
+            &test_spacepoker_make_proposal_requires_explicit_valid_bet_unit,
+        ),
+        (
+            "test_spacepoker_parser_rejects_invalid_peer_bet_unit",
+            &test_spacepoker_parser_rejects_invalid_peer_bet_unit,
         ),
         (
             "test_spacepoker_happy_path_alice_opens",

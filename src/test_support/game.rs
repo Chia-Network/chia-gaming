@@ -236,6 +236,9 @@ mod sim_tests {
         /// Propose a game but tamper the outbound message to use a game_id
         /// with the wrong parity. Tests receiver-side parity rejection.
         WrongParityProposal(usize),
+        /// Propose a game but tamper the outbound proposal parameters to nil.
+        /// Tests game-specific parser rejection of invalid peer terms.
+        InvalidProposalParameters(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -291,6 +294,9 @@ mod sim_tests {
                 }
                 GameAction::WrongParityProposal(p) => {
                     write!(formatter, "WrongParityProposal({p})")
+                }
+                GameAction::InvalidProposalParameters(p) => {
+                    write!(formatter, "InvalidProposalParameters({p})")
                 }
             }
         }

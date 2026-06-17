@@ -899,6 +899,81 @@ fn bob_terminal_context_after_step_d(
     }
 }
 
+fn calpoker_make_proposal_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
+    let make_proposal = read_hex_puzzle(
+        allocator,
+        "clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex",
+    )
+    .expect("load make_proposal");
+    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        make_proposal_clvm,
+        args,
+        0,
+    )
+    .is_ok()
+}
+
+fn calpoker_parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
+    let parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/calpoker/calpoker_include_calpoker_parser.hex",
+    )
+    .expect("load parser");
+    let parser_clvm = parser.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        parser_clvm,
+        wire_data,
+        0,
+    )
+    .is_ok()
+}
+
+fn test_calpoker_proposal_rejects_zero_stake() {
+    let mut allocator = AllocEncoder::new();
+
+    let valid_args = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    assert!(
+        calpoker_make_proposal_succeeds(&mut allocator, valid_args),
+        "positive per-player stake should be accepted"
+    );
+
+    let zero_args = (0i64, ()).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !calpoker_make_proposal_succeeds(&mut allocator, zero_args),
+        "Calpoker should reject zero-stake proposals in game code"
+    );
+}
+
+fn test_calpoker_parser_rejects_zero_stake_peer_wire_data() {
+    let mut allocator = AllocEncoder::new();
+
+    let peer_wire_data = (
+        0i64,
+        (
+            0i64,
+            (
+                vec![(
+                    0i64,
+                    (1i64, (0i64, (0i64, (32i64, (0i64, (0i64, ())))))),
+                )],
+                (),
+            ),
+        ),
+    )
+        .to_clvm(&mut allocator)
+        .unwrap();
+
+    assert!(
+        !calpoker_parser_succeeds(&mut allocator, peer_wire_data),
+        "peer wire proposals with zero Calpoker stake should make the parser throw"
+    );
+}
+
 fn test_calpoker_handlers_happy_path() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -946,6 +1021,14 @@ fn test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move() {
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
+        (
+            "test_calpoker_proposal_rejects_zero_stake",
+            &test_calpoker_proposal_rejects_zero_stake,
+        ),
+        (
+            "test_calpoker_parser_rejects_zero_stake_peer_wire_data",
+            &test_calpoker_parser_rejects_zero_stake_peer_wire_data,
+        ),
         (
             "test_calpoker_handlers_happy_path",
             &test_calpoker_handlers_happy_path,
