@@ -123,6 +123,7 @@ pub enum GameNotification {
         id: GameID,
         my_contribution: Amount,
         their_contribution: Amount,
+        timeout: Timeout,
         initial_validation_program_hash: Hash,
         initial_state: ProgramRef,
         game_type: GameType,

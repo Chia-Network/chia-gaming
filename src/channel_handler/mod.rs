@@ -985,9 +985,9 @@ impl ChannelHandler {
             )));
         }
 
-        if start_info.timeout.to_u64() != 15 {
+        if start_info.timeout.to_u64() == 0 {
             return Err(Error::StrErr(format!(
-                "proposal game_timeout must be 15, got {}",
+                "proposal game_timeout must be positive, got {}",
                 start_info.timeout.to_u64(),
             )));
         }

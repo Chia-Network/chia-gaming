@@ -957,10 +957,7 @@ fn test_calpoker_parser_rejects_zero_stake_peer_wire_data() {
         (
             0i64,
             (
-                vec![(
-                    0i64,
-                    (1i64, (0i64, (0i64, (32i64, (0i64, (0i64, ())))))),
-                )],
+                vec![(0i64, (1i64, (0i64, (0i64, (32i64, (0i64, (0i64, ())))))))],
                 (),
             ),
         ),

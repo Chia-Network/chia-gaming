@@ -71,6 +71,7 @@ export interface HandTermsModel {
   gameType: string;
   myContribution: bigint;
   theirContribution: bigint;
+  gameTimeout: bigint;
   spacepokerUnitSize?: bigint;
 }
 
@@ -122,6 +123,7 @@ export interface BetweenHandModel {
   rejectedOnceTerms: HandTermsModel | null;
   lastTerms: HandTermsModel;
   composePerHandAmount: bigint;
+  composeGameTimeout: bigint;
   composeGameType: string;
   composeProposalSent: boolean;
   newHandRequested: boolean;
@@ -205,10 +207,13 @@ export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
   rewardCoinHex: null,
 };
 
+export const DEFAULT_GAME_TIMEOUT_BLOCKS = 15n;
+
 export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
   gameType: 'calpoker',
   myContribution: 0n,
   theirContribution: 0n,
+  gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
 };
 
 const RESOLVED_STATES = new Set<ChannelState>([
@@ -273,6 +278,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       rejectedOnceTerms: null,
       lastTerms: DEFAULT_HAND_TERMS_MODEL,
       composePerHandAmount: 0n,
+      composeGameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
       composeGameType: 'calpoker',
       composeProposalSent: false,
       newHandRequested: false,
@@ -457,6 +463,11 @@ function parseBigintString(value: string | undefined, fallback: bigint): bigint 
   }
 }
 
+function parsePositiveBigintString(value: string | undefined, fallback: bigint): bigint {
+  const parsed = parseBigintString(value, fallback);
+  return parsed > 0n ? parsed : fallback;
+}
+
 export function sessionAmountsFromSave(
   save: Pick<SessionState, 'amount' | 'perGameAmount'>,
   fallbackAmount: bigint,
@@ -471,6 +482,7 @@ export function sessionAmountsFromSave(
 type SavedHandTerms = {
   my_contribution: string;
   their_contribution: string;
+  game_timeout?: string;
   game_type?: string;
   spacepoker_unit_size?: string;
 };
@@ -488,6 +500,7 @@ function parseTermsSnapshot(
     gameType,
     myContribution,
     theirContribution: parseBigintString(saved.their_contribution, fallback.theirContribution),
+    gameTimeout: parsePositiveBigintString(saved.game_timeout, fallback.gameTimeout),
     spacepokerUnitSize: gameType === 'spacepoker'
       ? parseBigintString(saved.spacepoker_unit_size, myContribution / 10n) || undefined
       : undefined,
@@ -541,6 +554,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
     gameType: 'calpoker',
     myContribution: perGameAmount,
     theirContribution: perGameAmount,
+    gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
   const activeIds = save.activeGameId ? [save.activeGameId] : [];
@@ -603,6 +617,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       rejectedOnceTerms: parseOptionalTermsSnapshot(save.betweenHandRejectedOnceTerms, lastTerms),
       lastTerms,
       composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
+      composeGameTimeout: parsePositiveBigintString(save.betweenHandComposeGameTimeout, lastTerms.gameTimeout),
       composeGameType: save.betweenHandComposeGameType ?? lastTerms.gameType,
       outgoingProposalTerms: save.outgoingProposalTerms
         ? Object.fromEntries(
@@ -627,6 +642,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
   const termsSnapshot = (terms: HandTermsModel) => ({
     my_contribution: terms.myContribution.toString(),
     their_contribution: terms.theirContribution.toString(),
+    game_timeout: terms.gameTimeout.toString(),
     game_type: terms.gameType,
     spacepoker_unit_size: terms.spacepokerUnitSize?.toString(),
   });
@@ -655,6 +671,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
     betweenHandMode: model.betweenHand.mode,
     betweenHandComposePerHand: model.betweenHand.composePerHandAmount.toString(),
+    betweenHandComposeGameTimeout: model.betweenHand.composeGameTimeout.toString(),
     betweenHandComposeGameType: model.betweenHand.composeGameType,
     betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms),
     betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms

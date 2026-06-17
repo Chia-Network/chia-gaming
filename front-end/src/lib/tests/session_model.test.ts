@@ -69,12 +69,14 @@ describe('session model selectors', () => {
       betweenHandLastTerms: {
         my_contribution: '10',
         their_contribution: '10',
+        game_timeout: '23',
         game_type: 'spacepoker',
       },
       betweenHandReviewPeerProposal: {
         id: '42',
         my_contribution: '20',
         their_contribution: '20',
+        game_timeout: '31',
         game_type: 'spacepoker',
       },
     };
@@ -104,11 +106,12 @@ describe('session model selectors', () => {
         cachedPeerProposal: null,
         reviewPeerProposal: {
           id: '42',
-          terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n, spacepokerUnitSize: 2n },
+          terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n, gameTimeout: 31n, spacepokerUnitSize: 2n },
         },
         rejectedOnceTerms: null,
-        lastTerms: { gameType: 'spacepoker', myContribution: 10n, theirContribution: 10n, spacepokerUnitSize: 1n },
+        lastTerms: { gameType: 'spacepoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 23n, spacepokerUnitSize: 1n },
         composePerHandAmount: 10n,
+        composeGameTimeout: 23n,
         composeGameType: 'spacepoker',
         composeProposalSent: false,
         newHandRequested: false,

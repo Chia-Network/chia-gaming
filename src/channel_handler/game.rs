@@ -126,7 +126,9 @@ impl Game {
         parameters: &Program,
     ) -> Result<(NodePtr, GameHandler, NodePtr, ProposalGameSpec), Error> {
         let args = if parameters.bytes() == [0x80] {
-            (my_contribution.clone(), ()).to_clvm(allocator).into_gen()?
+            (my_contribution.clone(), ())
+                .to_clvm(allocator)
+                .into_gen()?
         } else {
             (my_contribution.clone(), (parameters.clone(), ()))
                 .to_clvm(allocator)

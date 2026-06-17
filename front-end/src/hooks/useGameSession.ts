@@ -25,6 +25,7 @@ import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBas
 import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
 import {
+  DEFAULT_GAME_TIMEOUT_BLOCKS,
   createSessionModel,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
@@ -206,6 +207,19 @@ function parseAmount(v: unknown): string | null {
   return String(v);
 }
 
+function parseTimeoutBlocks(v: unknown): bigint | null {
+  if (v == null) return DEFAULT_GAME_TIMEOUT_BLOCKS;
+  const raw = typeof v === 'object' && v !== null && 'Timeout' in (v as Record<string, unknown>)
+    ? (v as Record<string, unknown>).Timeout
+    : v;
+  try {
+    const timeout = BigInt(String(raw));
+    return timeout > 0n ? timeout : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
     const clean = !!gs.other_params?.game_finished;
@@ -297,6 +311,7 @@ export interface HandTerms {
   gameType: string;
   myContribution: bigint;
   theirContribution: bigint;
+  gameTimeout: bigint;
   spacepokerUnitSize?: bigint;
 }
 
@@ -316,6 +331,7 @@ function termsEqual(a: HandTerms | null, b: HandTerms | null): boolean {
     && a.gameType === b.gameType
     && a.myContribution === b.myContribution
     && a.theirContribution === b.theirContribution
+    && a.gameTimeout === b.gameTimeout
     && (a.spacepokerUnitSize ?? null) === (b.spacepokerUnitSize ?? null);
 }
 
@@ -364,10 +380,13 @@ function parseTermsFromNotificationValue(value: unknown, gameType?: string): Han
   if (!mine || !theirs) return null;
   const resolvedGameType = gameType ?? parseGameTypeFromNotification(obj);
   try {
+    const timeout = parseTimeoutBlocks(obj.timeout);
+    if (timeout == null) return null;
     return {
       gameType: resolvedGameType,
       myContribution: BigInt(mine),
       theirContribution: BigInt(theirs),
+      gameTimeout: timeout,
       spacepokerUnitSize: resolvedGameType === 'spacepoker'
         ? parseProgramBigInt(obj.initial_state)
         : undefined,
@@ -425,15 +444,17 @@ export interface UseGameSessionResult {
   reviewPeerProposal: BetweenHandProposal | null;
   lastHandTerms: HandTerms;
   composePerHandAmount: bigint;
+  composeGameTimeout: bigint;
   chooseNewHandSameTerms: () => void;
   chooseDoNotUseCurrentProposal: () => void;
   openComposeProposal: () => void;
   setComposePerHandAmount: (value: bigint) => void;
+  setComposeGameTimeout: (value: bigint) => void;
   composeGameType: string;
   setComposeGameType: (value: string) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
-  submitComposedProposal: (perHandAmount: bigint, gameType: string, spacepokerUnitSize?: bigint) => void;
+  submitComposedProposal: (perHandAmount: bigint, gameType: string, gameTimeout: bigint, spacepokerUnitSize?: bigint) => void;
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
@@ -596,11 +617,15 @@ export function useGameSession(
       gameType: 'calpoker',
       myContribution: perGameAmount,
       theirContribution: perGameAmount,
+      gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
     };
   });
   const [composePerHandAmount, setComposePerHandAmount] = useState<bigint>(() => {
     return restoredModel?.betweenHand.composePerHandAmount ?? perGameAmount;
   });
+  const [composeGameTimeout, setComposeGameTimeout] = useState<bigint>(() =>
+    restoredModel?.betweenHand.composeGameTimeout ?? lastHandTerms.gameTimeout
+  );
   const [composeGameType, setComposeGameType] = useState<string>(() =>
     restoredModel?.betweenHand.composeGameType ?? lastHandTerms.gameType
   );
@@ -706,6 +731,7 @@ export function useGameSession(
         rejectedOnceTerms,
         lastTerms: lastHandTerms,
         composePerHandAmount,
+        composeGameTimeout,
         composeGameType,
         composeProposalSent,
         newHandRequested,
@@ -752,7 +778,7 @@ export function useGameSession(
     gameConnectionState, channelStatus, goOnChainPressed, cleanShutdownStarted,
     gameCoin, gameTerminal, handKey, gameIds, lastDisplayedGameId,
     myRunningBalance, betweenHandMode,
-    composePerHandAmount, composeGameType, lastHandTerms, rejectedOnceTerms,
+    composePerHandAmount, composeGameTimeout, composeGameType, lastHandTerms, rejectedOnceTerms,
     activeGameType, composeProposalSent, newHandRequested,
     cachedPeerProposal, reviewPeerProposal,
     channelQueue, dismissedChannelState, gameQueue,
@@ -778,11 +804,11 @@ export function useGameSession(
       log('[notify] proposeNewGame blocked — game active');
       return;
     }
-    log(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution}`);
+    log(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution} timeout=${terms.gameTimeout}`);
     try {
       const ids = go.proposeGame({
         game_type: terms.gameType,
-        timeout: 15n,
+        timeout: terms.gameTimeout,
         amount: terms.myContribution + terms.theirContribution,
         my_contribution: terms.myContribution,
         my_turn: selectDefaultCalpokerProposalMyTurn(iStarted),
@@ -1009,6 +1035,7 @@ export function useGameSession(
       if (acceptedTerms) {
         setLastHandTerms(acceptedTerms);
         setComposePerHandAmount(acceptedTerms.myContribution);
+        setComposeGameTimeout(acceptedTerms.gameTimeout);
         setActiveGameType(acceptedTerms.gameType);
       }
       go?.setHandState(null);
@@ -1159,6 +1186,7 @@ export function useGameSession(
             if (!expectingCounterProposalRef.current) return;
             expectingCounterProposalRef.current = false;
             setComposePerHandAmount(lastHandTermsRef.current.myContribution);
+            setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
             setBetweenHandMode('compose-proposal');
           }, 300);
         } else {
@@ -1255,6 +1283,7 @@ export function useGameSession(
       setNewHandRequested(false);
       setComposeProposalSent(false);
       setComposePerHandAmount(lastTerms.myContribution);
+      setComposeGameTimeout(lastTerms.gameTimeout);
       setComposeGameType(lastTerms.gameType);
       setBetweenHandMode('compose-proposal');
       return;
@@ -1283,22 +1312,25 @@ export function useGameSession(
     setRejectedOnceTerms(lastHandTermsRef.current);
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
+    setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
     setBetweenHandMode('compose-proposal');
   }, []);
 
   const openComposeProposal = useCallback(() => {
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
+    setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
     setComposeGameType(lastHandTermsRef.current.gameType);
     setBetweenHandMode('compose-proposal');
   }, []);
 
-  const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string, spacepokerUnitSize?: bigint) => {
-    if (perHandAmount <= 0n) return;
+  const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string, gameTimeout: bigint, spacepokerUnitSize?: bigint) => {
+    if (perHandAmount <= 0n || gameTimeout <= 0n) return;
     proposeNewGame({
       gameType,
       myContribution: perHandAmount,
       theirContribution: perHandAmount,
+      gameTimeout,
       spacepokerUnitSize: gameType === 'spacepoker' ? spacepokerUnitSize : undefined,
     });
     setComposeProposalSent(true);
@@ -1370,6 +1402,7 @@ export function useGameSession(
       rejectedOnceTerms,
       lastTerms: lastHandTerms,
       composePerHandAmount,
+      composeGameTimeout,
       composeGameType,
       composeProposalSent,
       newHandRequested,
@@ -1414,6 +1447,7 @@ export function useGameSession(
     reviewPeerProposal,
     lastHandTerms,
     composePerHandAmount,
+    composeGameTimeout,
     composeGameType,
     setComposeGameType,
     composeProposalSent,
@@ -1422,6 +1456,7 @@ export function useGameSession(
     chooseDoNotUseCurrentProposal,
     openComposeProposal,
     setComposePerHandAmount,
+    setComposeGameTimeout,
     submitComposedProposal,
     acceptReviewedProposal,
     rejectReviewedProposal,

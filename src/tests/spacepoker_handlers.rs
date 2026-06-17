@@ -762,13 +762,7 @@ fn test_spacepoker_parser_rejects_invalid_peer_bet_unit() {
             (
                 vec![(
                     AMOUNT,
-                    (
-                        1i64,
-                        (
-                            0i64,
-                            (0i64, (32i64, (bad_bet_unit, (0i64, ())))),
-                        ),
-                    ),
+                    (1i64, (0i64, (0i64, (32i64, (bad_bet_unit, (0i64, ())))))),
                 )],
                 (),
             ),

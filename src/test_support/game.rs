@@ -198,6 +198,8 @@ mod sim_tests {
         /// Propose a new game from the specified player.
         /// The trigger specifies what event to wait for before proposing.
         ProposeNewGame(usize, ProposeTrigger),
+        /// Propose a new game from the specified player with a custom game timeout.
+        ProposeNewGameWithTimeout(usize, ProposeTrigger, u64),
         /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
         ProposeNewGameTheirTurn(usize, ProposeTrigger),
         /// Go on chain
@@ -239,6 +241,8 @@ mod sim_tests {
         /// Propose a game but tamper the outbound proposal parameters to nil.
         /// Tests game-specific parser rejection of invalid peer terms.
         InvalidProposalParameters(usize),
+        /// Propose a game but tamper the outbound proposal timeout to zero.
+        InvalidProposalTimeout(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -262,6 +266,9 @@ mod sim_tests {
                 GameAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
                 GameAction::ProposeNewGame(p, t) => {
                     write!(formatter, "ProposeNewGame({p},{t:?})")
+                }
+                GameAction::ProposeNewGameWithTimeout(p, t, timeout) => {
+                    write!(formatter, "ProposeNewGameWithTimeout({p},{t:?},{timeout})")
                 }
                 GameAction::ProposeNewGameTheirTurn(p, t) => {
                     write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
@@ -297,6 +304,9 @@ mod sim_tests {
                 }
                 GameAction::InvalidProposalParameters(p) => {
                     write!(formatter, "InvalidProposalParameters({p})")
+                }
+                GameAction::InvalidProposalTimeout(p) => {
+                    write!(formatter, "InvalidProposalTimeout({p})")
                 }
             }
         }

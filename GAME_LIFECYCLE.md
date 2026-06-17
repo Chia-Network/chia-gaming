@@ -45,9 +45,8 @@ absurdly high nonce.
 - **Amount consistency:** The proposal's `amount` must equal
 `my_contribution + their_contribution`. Prevents the peer from creating games
 where money appears or disappears.
-- **Canonical timeout:** The proposal's `timeout` must be exactly 15 blocks.
-  Timeout negotiation has subtle protocol edge cases, so the current protocol
-  uses one hard-coded game timeout until negotiation is designed.
+- **Game timeout:** The proposal's `timeout` must be positive. The UX defaults
+  to 15 blocks, but peers can propose different positive game timeouts.
 - **Proposal count limit:** The total number of outstanding proposals must not
 exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
 exhaust memory or starve resources.

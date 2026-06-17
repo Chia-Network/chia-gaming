@@ -621,6 +621,7 @@ impl PotatoHandler {
                         id: game_id,
                         my_contribution,
                         their_contribution,
+                        timeout: gsi.timeout.clone(),
                         initial_validation_program_hash: ivp_hash,
                         initial_state,
                         game_type: resolved_game_type,

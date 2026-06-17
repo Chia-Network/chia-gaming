@@ -1063,6 +1063,7 @@ fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiv
     }
     match &moves[mn] {
         GameAction::ProposeNewGame(who, trigger)
+        | GameAction::ProposeNewGameWithTimeout(who, trigger, _)
         | GameAction::ProposeNewGameTheirTurn(who, trigger) => match trigger {
             ProposeTrigger::Channel => local_uis[*who].channel_created,
             ProposeTrigger::AfterGame(gid) => {
@@ -1206,6 +1207,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::SelfAcceptProposal(_, _)
                     | GameAction::WrongParityProposal(_)
                     | GameAction::InvalidProposalParameters(_)
+                    | GameAction::InvalidProposalTimeout(_)
                     | GameAction::BadSignatureMove(_, _, _)
             )
     };
@@ -1556,15 +1558,24 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].opponent_moved_in_game.remove(gid);
                     }
                     GameAction::ProposeNewGame(who, _trigger)
-                    | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
-                        let my_turn = matches!(ga, GameAction::ProposeNewGame(_, _));
+                    | GameAction::ProposeNewGameTheirTurn(who, _trigger)
+                    | GameAction::ProposeNewGameWithTimeout(who, _trigger, _) => {
+                        let my_turn = matches!(
+                            ga,
+                            GameAction::ProposeNewGame(_, _)
+                                | GameAction::ProposeNewGameWithTimeout(_, _, _)
+                        );
+                        let timeout = match ga {
+                            GameAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
+                            _ => 15,
+                        };
                         let new_ids = cradles[*who].propose_game(
                             allocator,
                             &GameStart {
                                 amount: Amount::new(200),
                                 my_contribution: Amount::new(100),
                                 game_type: GameType(game_type.to_vec()),
-                                timeout: Timeout::new(15),
+                                timeout: Timeout::new(timeout),
                                 my_turn,
                                 parameters: extras.clone(),
                                 initial_validation_program_hash: None,
@@ -1839,6 +1850,43 @@ fn run_game_container_with_action_list_with_success_predicate(
                             } else {
                                 Err(Error::StrErr(format!(
                                     "InvalidProposalParameters expected PeerMessage::Batch, got {msg_envelope:?}"
+                                )))
+                            }
+                        })?;
+                    }
+                    GameAction::InvalidProposalTimeout(who) => {
+                        cradles[*who].propose_game(
+                            allocator,
+                            &GameStart {
+                                amount: Amount::new(200),
+                                my_contribution: Amount::new(100),
+                                game_type: GameType(game_type.to_vec()),
+                                timeout: Timeout::new(15),
+                                my_turn: true,
+                                parameters: extras.clone(),
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
+                            },
+                        )?;
+                        cradles[*who].flush_pending(allocator)?;
+                        cradles[*who].replace_last_message(|msg_envelope| {
+                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
+                                let mut new_actions = actions.clone();
+                                for action in new_actions.iter_mut() {
+                                    if let BatchAction::ProposeGame(ref mut wire) = action {
+                                        wire.start.timeout = Timeout::new(0);
+                                    }
+                                }
+                                Ok(PeerMessage::Batch {
+                                    actions: new_actions,
+                                    signatures: signatures.clone(),
+                                    clean_shutdown: clean_shutdown.clone(),
+                                })
+                            } else {
+                                Err(Error::StrErr(format!(
+                                    "InvalidProposalTimeout expected PeerMessage::Batch, got {msg_envelope:?}"
                                 )))
                             }
                         })?;
@@ -5612,6 +5660,45 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_proposal_accepts_custom_game_timeout", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::ProposeNewGameWithTimeout(0, ProposeTrigger::Channel, 27),
+            GameAction::AcceptProposal(1, GameID(1)),
+            GameAction::WaitBlocks(3, 0),
+        ];
+        let move_count = moves.len();
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|move_number, _| move_number >= move_count),
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ProposalMade { timeout, .. }
+                        if timeout.to_u64() == 27
+                )
+            }),
+            "Bob should see ProposalMade with timeout=27, got: {p1_notifs:?}"
+        );
+        assert!(
+            outcome.local_uis[0]
+                .notifications
+                .iter()
+                .any(|n| matches!(n, GameNotification::ProposalAccepted { .. })),
+            "Alice should see accepted custom-timeout proposal, got: {:?}",
+            outcome.local_uis[0].notifications
+        );
+    }));
+
     res.push(("test_proposal_cancel_by_receiver", &|| {
         let mut allocator = AllocEncoder::new();
 
@@ -6785,16 +6872,42 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
-    res.push(("test_spacepoker_invalid_proposal_params_disconnects_peer", &|| {
+    res.push((
+        "test_spacepoker_invalid_proposal_params_disconnects_peer",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = vec![
+                GameAction::WaitBlocks(5, 0),
+                GameAction::InvalidProposalParameters(0),
+                GameAction::WaitBlocks(20, 0),
+            ];
+
+            let outcome = run_spacepoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+                None,
+            )
+            .expect("should finish");
+
+            assert!(
+            outcome.cradles[1].is_peer_disconnected(),
+            "player 1 should disconnect after receiving invalid Space Poker proposal parameters"
+        );
+        },
+    ));
+
+    res.push(("test_invalid_proposal_timeout_disconnects_peer", &|| {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
             GameAction::WaitBlocks(5, 0),
-            GameAction::InvalidProposalParameters(0),
+            GameAction::InvalidProposalTimeout(0),
             GameAction::WaitBlocks(20, 0),
         ];
 
-        let outcome = run_spacepoker_container_with_action_list_with_success_predicate(
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
             Some(&|_, cradles| cradles[1].is_peer_disconnected()),
@@ -6804,7 +6917,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert!(
             outcome.cradles[1].is_peer_disconnected(),
-            "player 1 should disconnect after receiving invalid Space Poker proposal parameters"
+            "player 1 should disconnect after receiving zero proposal timeout"
         );
     }));
 

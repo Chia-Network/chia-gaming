@@ -196,12 +196,13 @@ export interface SessionState {
   cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
+  betweenHandComposeGameTimeout?: string;
   betweenHandComposeGameType?: string;
-  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_type?: string; spacepoker_unit_size?: string }>;
+  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */

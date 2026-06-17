@@ -27,7 +27,7 @@ There are three distinct timeouts in the system:
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
 | `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock.                                                                                                    | 100 blocks         |
 | `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Fixed at 15 blocks in the current protocol.            | 15 blocks          |
-| `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. The current proposal protocol requires exactly 15 blocks; timeout negotiation is future work. | 15 blocks          |
+| `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals may choose any positive value; the UX defaults to 15 blocks. | 15 blocks          |
 
 
 **Important:** Game coins are registered with the watcher using their specific

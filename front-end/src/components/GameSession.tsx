@@ -14,7 +14,7 @@ import {
 } from '../types/californiaPoker/CaliforniapokerProps';
 import SpacePoker from './SpacePoker';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
-import { selectHideGameInterfaceForBetweenHandDialog } from '../lib/session/model';
+import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog } from '../lib/session/model';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -547,6 +547,14 @@ function ComposeProposalDialog({
     return String(defaultSpacePokerStackSize);
   });
   const spStackSize = parseInt(spStackSizeStr) || 0;
+  const [timeoutStr, setTimeoutStr] = useState(() =>
+    String(session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS)
+  );
+  useEffect(() => {
+    setTimeoutStr(String(session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS));
+  }, [session.composeGameTimeout]);
+  const gameTimeout = BigInt(timeoutStr || '0');
+  const timeoutValid = gameTimeout > 0n;
 
   const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
   const spTotalGame = spBetSize * 2n;
@@ -559,10 +567,11 @@ function ComposeProposalDialog({
   const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
 
   const submit = () => {
-    if (perHandAmount <= 0n || session.composeProposalSent) return;
+    if (perHandAmount <= 0n || !timeoutValid || session.composeProposalSent) return;
     session.submitComposedProposal(
       perHandAmount,
       session.composeGameType,
+      gameTimeout,
       isSpacepoker ? spUnitSize : undefined,
     );
   };
@@ -598,7 +607,7 @@ function ComposeProposalDialog({
               disabled={session.composeProposalSent}
               label='Unit size'
               exceedsLabel='Exceeds available reserve.'
-              onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && spValid && timeoutValid) submit(); }}
             />
             <div className='flex w-full flex-col items-center gap-1'>
               <label className='text-xs font-medium text-canvas-text'>Stack size (units per player)</label>
@@ -609,7 +618,7 @@ function ComposeProposalDialog({
                 value={spStackSizeStr}
                 disabled={session.composeProposalSent}
                 onChange={(e) => setSpStackSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
-                onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && spValid && timeoutValid) submit(); }}
               />
             </div>
             <div className='text-xs text-canvas-text'>
@@ -626,17 +635,38 @@ function ComposeProposalDialog({
             label='Per-player stake'
             exceedsLabel='Exceeds available reserve.'
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n) submit();
+              if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n && timeoutValid) submit();
             }}
           />
         )}
+
+        <div className='flex w-full flex-col items-center gap-1'>
+          <label className='text-xs font-medium text-canvas-text'>Timeout (blocks)</label>
+          <input
+            type='number'
+            min={1}
+            className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+            value={timeoutStr}
+            disabled={session.composeProposalSent}
+            onChange={(e) => {
+              const next = e.target.value.replace(/[^0-9]/g, '');
+              setTimeoutStr(next);
+              if (next) {
+                session.setComposeGameTimeout(BigInt(next));
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit();
+            }}
+          />
+        </div>
 
         <Button
           variant='solid'
           color='primary'
           size='sm'
           className='self-center'
-          disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
+          disabled={session.composeProposalSent || perHandAmount <= 0n || !timeoutValid || (isSpacepoker && !spValid)}
           onClick={submit}
         >
           {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
@@ -949,6 +979,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                   </p>
                   <p className='text-xs text-canvas-text'>
                     Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
+                  </p>
+                  <p className='text-xs text-canvas-text'>
+                    Timeout: {String(session.reviewPeerProposal.terms.gameTimeout)} blocks
                   </p>
                   {session.reviewPeerProposal.terms.gameType === 'spacepoker' && (() => {
                     const betSize = session.reviewPeerProposal!.terms.myContribution;
