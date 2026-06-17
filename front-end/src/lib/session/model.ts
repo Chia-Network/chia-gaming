@@ -346,6 +346,13 @@ export function isWindingDownChannelState(state: ChannelState): boolean {
 }
 
 export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
+  if (
+    (model.channel.status.state === 'ResolvedUnrolled'
+      || model.channel.status.state === 'ResolvedStale')
+    && model.game.activeIds.length > 0
+  ) {
+    return 'on-chain';
+  }
   if (RESOLVED_STATES.has(model.channel.status.state)) return 'resolved';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
   if (model.channel.goOnChainPressed || isWindingDownChannelState(model.channel.status.state)) {

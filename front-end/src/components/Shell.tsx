@@ -500,6 +500,7 @@ const Shell = () => {
   const sessionSaveRef = useRef<SessionState | null>(null);
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
+  const sessionPhaseRef = useRef<SessionPhase>('none');
   const activePairingTokenRef = useRef<string | null>(null);
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -663,6 +664,7 @@ const Shell = () => {
     ) => {
       console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
       sessionFinishedCleanupRef.current = false;
+      sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
       peerConnTargetRef.current = conn.getPeerConnection();
       if (!save) {
@@ -1012,6 +1014,8 @@ const Shell = () => {
   }, [deferStateUpdate]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
+    const previousPhase = sessionPhaseRef.current;
+    sessionPhaseRef.current = phase;
     setSessionPhase(phase);
     setSessionError(!!hasError);
 
@@ -1022,7 +1026,9 @@ const Shell = () => {
     trackerConnRef.current?.setAvailable(true);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
-    setActiveTab('tracker');
+    if (previousPhase !== 'on-chain') {
+      setActiveTab('tracker');
+    }
   }, [setActiveTab]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {

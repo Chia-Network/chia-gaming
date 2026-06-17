@@ -31,6 +31,7 @@ import {
   selectDefaultCalpokerProposalMyTurn,
   selectGameSessionView,
   selectGameSpecificView,
+  selectSessionPhase,
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../lib/session/model';
@@ -192,7 +193,11 @@ const RESOLVED_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
 export function deriveSessionPhase(
   channelState: ChannelState,
   goOnChainPressed: boolean,
+  activeGameId?: string | null,
 ): Exclude<SessionPhase, 'none'> {
+  if ((channelState === 'ResolvedUnrolled' || channelState === 'ResolvedStale') && activeGameId) {
+    return 'on-chain';
+  }
   if (RESOLVED_STATES.has(channelState)) return 'resolved';
   if (channelState === 'ShutdownTransactionPending') return 'off-chain';
   if (goOnChainPressed || isWindingDown(channelState)) return 'on-chain';
@@ -466,6 +471,7 @@ export interface UseGameSessionResult {
   goOnChainPressed: boolean;
   restoreStatus: RestoreStatus;
   restoreError: string | null;
+  sessionPhase: Exclude<SessionPhase, 'none'>;
   channelQueue: QueuedNotification[];
   gameQueue: QueuedNotification[];
   dismissChannel: () => void;
@@ -1421,6 +1427,7 @@ export function useGameSession(
   });
   const gameSessionView = selectGameSessionView(sessionModel);
   const gameSpecificView = selectGameSpecificView(sessionModel);
+  const sessionPhase = selectSessionPhase(sessionModel);
 
   return {
     gameConnectionState,
@@ -1469,6 +1476,7 @@ export function useGameSession(
     goOnChainPressed,
     restoreStatus,
     restoreError,
+    sessionPhase,
     channelQueue: gameSessionView.channelQueue,
     gameQueue: gameSessionView.gameQueue,
     dismissChannel,

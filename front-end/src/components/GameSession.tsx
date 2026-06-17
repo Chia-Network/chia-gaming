@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, deriveSessionPhase, QueuedNotification } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -708,7 +708,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
 
   useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;
-    const phase = deriveSessionPhase(session.channelStatus.state, session.goOnChainPressed);
+    const phase = session.sessionPhase;
     const hasError =
       session.channelStatus.state === 'Failed' ||
       session.channelStatus.state === 'ResolvedStale' ||
@@ -716,7 +716,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
       session.gameTerminal.type === 'game-error' ||
       (session.gameTerminal.type === 'we-timed-out' && !session.gameTerminal.cleanEnd);
     onSessionPhaseChange(phase, hasError);
-  }, [session.channelStatus.state, session.goOnChainPressed, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange, suppressPhaseReporting]);
+  }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange, suppressPhaseReporting]);
 
   useEffect(() => {
     if (!onGameActivity) return;

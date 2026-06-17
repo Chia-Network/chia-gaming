@@ -144,6 +144,35 @@ describe('session model selectors', () => {
     expect(restored.game.queue[0].id).toBe(8n);
   });
 
+  it('keeps an unrolled session on-chain while an active game is unresolved', () => {
+    const unrolledWithGame = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+        connection: { stateIdentifier: 'running', stateDetail: [] },
+        goOnChainPressed: true,
+        cleanShutdownStarted: false,
+        dismissedChannelState: null,
+        queue: [],
+      },
+      game: {
+        coin: { coinHex: 'abcd', turnState: 'their-turn' },
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+        handKey: 1,
+        activeIds: ['7'],
+        lastDisplayedId: '7',
+        activeGameType: 'calpoker',
+        handState: null,
+        queue: [],
+      },
+    });
+
+    expect(selectSessionPhase(unrolledWithGame)).toBe('on-chain');
+    expect(selectSessionPhase(createSessionModel({
+      channel: unrolledWithGame.channel,
+      game: { ...unrolledWithGame.game, activeIds: [] },
+    }))).toBe('resolved');
+  });
+
   it('hides completed hand UI while compose or review dialogs are open between hands', () => {
     expect(selectHideGameInterfaceForBetweenHandDialog(true, 'decision')).toBe(false);
     expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal')).toBe(true);
