@@ -34,6 +34,10 @@ export interface TrackerConnectionCallbacks {
   onLobbyAttention: () => void;
 }
 
+export interface TrackerConnectionOptions {
+  initialBusy?: boolean;
+}
+
 // Binary frame type tags for peer-to-peer relay (opaque to the tracker).
 const FRAME_DATA = 0x01;
 const FRAME_ACK = 0x02;
@@ -64,12 +68,13 @@ export class TrackerConnection {
   private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
-  private available = true;
+  private busy = false;
 
-  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
+  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, options: TrackerConnectionOptions = {}) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
+    this.busy = options.initialBusy ?? false;
     this.connectWs();
   }
 
@@ -112,7 +117,7 @@ export class TrackerConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      this.sendWs({ type: 'identify', session_id: this.sessionId, available: this.available });
+      this.sendWs({ type: 'identify', session_id: this.sessionId, busy: this.busy });
       if (this.wasDisconnected) {
         log('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
@@ -365,9 +370,9 @@ export class TrackerConnection {
     }
   }
 
-  setAvailable(available: boolean) {
-    this.available = available;
-    this.sendWs({ type: 'set_status', session_id: this.sessionId, available });
+  setBusy(busy: boolean) {
+    this.busy = busy;
+    this.sendWs({ type: 'set_busy', session_id: this.sessionId, busy });
   }
 
   disconnect() {

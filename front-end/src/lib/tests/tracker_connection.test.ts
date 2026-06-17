@@ -156,14 +156,23 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('connection setup', () => {
-  it('sends identify over ws on open', async () => {
+  it('sends identify with busy=false over ws on open', async () => {
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve(); // flush microtasks
 
     const ws = MockWebSocket.instance!;
     expect(ws.url).toBe('ws://t/ws/game');
-    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', available: true }]);
+    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', busy: false }]);
+  });
+
+  it('sends identify with initial busy=true over ws on open', async () => {
+    const cb = makeCallbacks();
+    new TrackerConnection('http://t', 's1', cb, { initialBusy: true });
+    await Promise.resolve(); // flush microtasks
+
+    const ws = MockWebSocket.instance!;
+    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', busy: true }]);
   });
 });
 
@@ -421,37 +430,37 @@ describe('forceDisconnect lifecycle', () => {
 });
 
 // ---------------------------------------------------------------------------
-// setAvailable
+// setBusy
 // ---------------------------------------------------------------------------
 
-describe('setAvailable', () => {
-  it('sends set_status with available=true', async () => {
+describe('setBusy', () => {
+  it('sends set_busy with busy=false', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentJson = [];
-    conn.setAvailable(true);
-    expect(ws.sentJson).toEqual([{ type: 'set_status', session_id: 's1', available: true }]);
+    conn.setBusy(false);
+    expect(ws.sentJson).toEqual([{ type: 'set_busy', session_id: 's1', busy: false }]);
   });
 
-  it('sends set_status with available=false', async () => {
+  it('sends set_busy with busy=true', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentJson = [];
-    conn.setAvailable(false);
-    expect(ws.sentJson).toEqual([{ type: 'set_status', session_id: 's1', available: false }]);
+    conn.setBusy(true);
+    expect(ws.sentJson).toEqual([{ type: 'set_busy', session_id: 's1', busy: true }]);
   });
 
-  it('includes available=false in identify on reconnect', async () => {
+  it('includes busy=true in identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedTrackerDisconnects = 1;
-    conn.setAvailable(false);
+    conn.setBusy(true);
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
@@ -462,7 +471,7 @@ describe('setAvailable', () => {
     expect(ws2).not.toBe(ws1);
     const identifyMsg = ws2.sentJson.find((m: any) => m.type === 'identify') as any;
     expect(identifyMsg).toBeDefined();
-    expect(identifyMsg.available).toBe(false);
+    expect(identifyMsg.busy).toBe(true);
     jest.useRealTimers();
   });
 });

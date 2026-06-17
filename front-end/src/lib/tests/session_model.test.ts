@@ -8,6 +8,7 @@ import {
   selectGameSpecificView,
   selectHideGameInterfaceForBetweenHandDialog,
   selectRestoreBlocked,
+  selectShouldAdvertiseAvailable,
   selectSessionPhase,
   selectShellView,
   sessionAmountsFromSave,
@@ -167,10 +168,29 @@ describe('session model selectors', () => {
     });
 
     expect(selectSessionPhase(unrolledWithGame)).toBe('on-chain');
-    expect(selectSessionPhase(createSessionModel({
+    expect(selectShouldAdvertiseAvailable(unrolledWithGame, 'on-chain')).toBe(false);
+    const resolvedNoGame = createSessionModel({
       channel: unrolledWithGame.channel,
       game: { ...unrolledWithGame.game, activeIds: [] },
-    }))).toBe('resolved');
+    });
+    expect(selectSessionPhase(resolvedNoGame)).toBe('resolved');
+    expect(selectShouldAdvertiseAvailable(resolvedNoGame, 'resolved')).toBe(true);
+  });
+
+  it('treats failed channel state as terminal resolved phase with separate error advisory', () => {
+    const failed = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Failed' },
+        connection: { stateIdentifier: 'end', stateDetail: [] },
+        goOnChainPressed: true,
+        cleanShutdownStarted: false,
+        dismissedChannelState: null,
+        queue: [],
+      },
+    });
+
+    expect(selectSessionPhase(failed)).toBe('resolved');
+    expect(selectShouldAdvertiseAvailable(failed, 'resolved')).toBe(true);
   });
 
   it('hides completed hand UI while compose or review dialogs are open between hands', () => {

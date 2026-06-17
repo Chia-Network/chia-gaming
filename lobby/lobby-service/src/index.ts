@@ -37,10 +37,10 @@ type LobbyInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; available?: boolean }
+  | { type: 'identify'; session_id: string; busy?: boolean }
   | { type: 'chat'; session_id: string; text: string }
   | { type: 'close'; session_id: string }
-  | { type: 'set_status'; session_id: string; available: boolean }
+  | { type: 'set_busy'; session_id: string; busy: boolean }
   | { type: 'keepalive' };
 
 interface LobbyConnMeta {
@@ -51,7 +51,7 @@ interface LobbyConnMeta {
 interface GameConnMeta {
   sessionId: string;
   playerId: string;
-  available?: boolean;
+  busy?: boolean;
 }
 
 const LOBBY_DISCONNECT_GRACE_MS = 3000;
@@ -264,12 +264,26 @@ function cancelPlayerChallenges(playerId: string): void {
   }
 }
 
+function applyPlayerBusy(playerId: string, busy: boolean): void {
+  const pairing = lobby.getPairingForPlayer(playerId);
+  const opponentAlias = pairing && busy
+    ? aliasForPlayer(pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id)
+    : undefined;
+  const status = busy
+    ? (pairing ? 'playing' : 'busy')
+    : 'waiting';
+  lobby.setPlayerStatus(playerId, status, opponentAlias);
+  if (busy) {
+    cancelPlayerChallenges(playerId);
+  }
+}
+
 function completeGameRegistration(playerId: string): void {
   const sessionId = playerToSession.get(playerId);
   const gameWs = sessionId ? gameConnections.get(sessionId) : undefined;
   const gameMeta = gameWs ? wsGameMeta.get(gameWs) : undefined;
-  if (gameMeta?.available === false) {
-    lobby.setPlayerStatus(playerId, 'busy');
+  if (gameMeta?.busy !== undefined) {
+    applyPlayerBusy(playerId, gameMeta.busy);
     broadcastLobbyUpdate();
   }
   const pairing = lobby.getPairingForPlayer(playerId);
@@ -583,7 +597,7 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
     logTracker('game_connection_replaced', { ws_id: wsId(previousGameConn), session_id: msg.session_id });
     try { previousGameConn.close(4001, 'replaced_by_new_connection'); } catch {}
   }
-  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, available: msg.available });
+  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
   gameConnections.set(msg.session_id, ws);
   logTracker('identify_complete_registration', { ws_id: wsId(ws), session_id: msg.session_id, player_id: playerId });
   completeGameRegistration(playerId);
@@ -631,20 +645,16 @@ function onGameClose(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'cl
   }
 }
 
-function onSetStatus(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_status' }>): void {
+function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_busy' }>): void {
   const meta = wsGameMeta.get(ws);
   if (!meta) {
-    logTracker('set_status_drop_unknown_session', { session_id: msg.session_id });
+    logTracker('set_busy_drop_unknown_session', { session_id: msg.session_id });
     return;
   }
   const playerId = meta.playerId;
-  const pairing = lobby.getPairingForPlayer(playerId);
-  const newStatus = pairing ? 'playing' : (msg.available ? 'waiting' : 'busy');
-  const opponentAlias = pairing
-    ? aliasForPlayer(pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id)
-    : undefined;
-  logTracker('set_status', { player_id: playerId, available: msg.available, status: newStatus });
-  lobby.setPlayerStatus(playerId, newStatus, opponentAlias);
+  meta.busy = msg.busy;
+  logTracker('set_busy', { player_id: playerId, busy: msg.busy });
+  applyPlayerBusy(playerId, msg.busy);
   broadcastLobbyUpdate();
 }
 
@@ -834,8 +844,8 @@ gameWsServer.on('connection', (ws) => {
       case 'close':
         onGameClose(ws, parsed);
         break;
-      case 'set_status':
-        onSetStatus(ws, parsed);
+      case 'set_busy':
+        onSetBusy(ws, parsed);
         break;
       case 'keepalive':
         break;

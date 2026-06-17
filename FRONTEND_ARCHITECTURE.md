@@ -104,7 +104,7 @@ updates never include the secret nonce.
 |-------|---------|---------|
 | `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
 | `joined` | `{ id, alias }` | The public lobby id and alias assigned to this session |
-| `lobby_update` | `Player[]` | Current list of public players in the lobby (broadcast on changes). Each `Player` includes `id`, `alias`, `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when playing, `opponent_alias`; it never includes `session_id`. |
+| `lobby_update` | `Player[]` | Current list of public players in the lobby (broadcast on changes). Each `Player` includes `id`, `alias`, `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when actively playing a paired session, `opponent_alias`; it never includes `session_id`. |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, amount }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
@@ -112,10 +112,10 @@ When a challenge is accepted, the tracker creates a **pairing** (two player IDs
 linked by a random token) and emits `matched` to both players' game channels.
 Both players' status is set to `'playing'` with the opponent's alias, and any
 pending challenges involving either player are cancelled. Separately, the player
-app can mark itself `'busy'` when it has an unresolved session obligation and
-should not receive challenges. When the app later reports that it is available,
-the tracker sets the player back to `'waiting'`; an old pairing/chat may still
-exist until a new session replaces it.
+app self-declares whether it is `busy`. Busy means the app has an unresolved
+session obligation and should not receive challenges. When the app later reports
+that it is not busy, the tracker sets the player back to `'waiting'`; an old
+pairing/chat may still exist until a new session replaces it.
 
 #### Game channel events
 
@@ -123,12 +123,12 @@ exist until a new session replaces it.
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `identify` | `{ session_id, available }` | Sent immediately after the game channel opens. Links this channel to the player's lobby session and reports whether the player can accept new matches. |
+| `identify` | `{ session_id, busy }` | Sent immediately after the game channel opens. Links this channel to the player's lobby session and reports whether the player app currently has an unresolved session obligation. |
 | binary frame | `uint32be msgno || bytes` | Send an authoritative game-protocol byte blob to the paired peer. The tracker relays the binary frame verbatim. |
 | `message` | `{ session_id, data }` | Send JSON relay-control payloads such as `{ ack }` and `{ keepalive: true }` to the paired peer. |
 | `chat` | `{ session_id, text }` | Send chat text to the paired peer. |
 | `close` | `{ session_id }` | Request to end the relay session. |
-| `set_status` | `{ session_id, available }` | Update lobby availability as the local session phase changes. `available: false` maps to lobby `busy`; `true` maps to `waiting`. |
+| `set_busy` | `{ session_id, busy }` | Update lobby availability as the local broader session phase changes. `busy: true` maps to lobby `busy` or `playing` and cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
 
 **Tracker → Player App:**
 

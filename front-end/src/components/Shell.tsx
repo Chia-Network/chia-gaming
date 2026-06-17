@@ -50,7 +50,7 @@ import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockc
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldAdvertiseAvailable, shouldAutoGoOnChain } from '../lib/restoreLifecycle';
-import { sessionAmountsFromSave } from '../lib/session/model';
+import { selectSessionPhase, sessionAmountsFromSave, sessionModelFromSave } from '../lib/session/model';
 import { log } from '../services/log';
 import { Button } from './button';
 
@@ -133,6 +133,12 @@ function sessionSaveForReactProps(save: SessionState | null): SessionState | und
     });
   }
   return propSafeSave;
+}
+
+function sessionSaveStartsBusy(save: SessionState | null): boolean {
+  if (!save?.serializedCradle && !save?.pairingToken) return false;
+  const { perGameAmount } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
+  return selectSessionPhase(sessionModelFromSave(save, perGameAmount)) !== 'resolved';
 }
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
@@ -666,6 +672,7 @@ const Shell = () => {
       sessionFinishedCleanupRef.current = false;
       sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
+      conn.setBusy(save ? sessionSaveStartsBusy(save) : true);
       peerConnTargetRef.current = conn.getPeerConnection();
       if (!save) {
         setRestoreStatus('idle');
@@ -843,7 +850,7 @@ const Shell = () => {
             setTrackerAlert(true);
           }
         },
-      });
+      }, { initialBusy: sessionSaveStartsBusy(initialSave) });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
       saveTrackerUrl(undefined);
@@ -1021,9 +1028,9 @@ const Shell = () => {
 
     if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
 
-    console.log('[Shell] session resolved; marking available');
+    console.log('[Shell] session resolved; marking not busy');
     sessionFinishedCleanupRef.current = true;
-    trackerConnRef.current?.setAvailable(true);
+    trackerConnRef.current?.setBusy(false);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
     if (previousPhase !== 'on-chain') {
@@ -1042,7 +1049,7 @@ const Shell = () => {
   const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
 
   useEffect(() => {
-    trackerConnRef.current?.setAvailable(shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
+    trackerConnRef.current?.setBusy(!shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
   }, [sessionPhase, restoreBlocked]);
 
   // Cascade rule: off-chain session without a peer must immediately go on-chain.
