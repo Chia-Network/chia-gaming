@@ -649,7 +649,11 @@ impl OnChainGameHandler {
                     // against a stale, optimistically-advanced referee state.
                     let game_id = old_def.game_id;
                     let finished_params = Some(GameStatusOtherParams {
-                        game_finished: if old_def.game_finished { Some(true) } else { None },
+                        game_finished: if old_def.game_finished {
+                            Some(true)
+                        } else {
+                            None
+                        },
                         ..Default::default()
                     });
                     if let Some(eff) = self.try_emit_terminal(

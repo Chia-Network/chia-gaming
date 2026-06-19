@@ -6629,8 +6629,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(GameAction::WaitBlocks(120, 1));
         moves.push(GameAction::WaitBlocks(5, 0));
 
-        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-            .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
