@@ -5,7 +5,7 @@ import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
-import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
+import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
 import { WasmBlobWrapper, RestoreStatus } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 import {
@@ -14,7 +14,7 @@ import {
 } from '../types/californiaPoker/CaliforniapokerProps';
 import SpacePoker from './SpacePoker';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
-import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog } from '../lib/session/model';
+import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog, type SessionModel } from '../lib/session/model';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -191,43 +191,6 @@ function CoinId({ hex }: { hex: string }) {
       </button>
     </span>
   );
-}
-
-const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
-  Handshaking: 'Handshaking',
-  WaitingForHeightToOffer: 'Waiting For Height To Offer',
-  WaitingForHeightToAccept: 'Waiting For Height To Accept',
-  WaitingForOffer: 'Waiting For Offer',
-  OfferSent: 'Offer Sent',
-  TransactionPending: 'Tx Pending',
-  Active: 'Active',
-  ShuttingDown: 'Shutting Down',
-  ShutdownTransactionPending: 'Shutdown Tx Pending',
-  GoingOnChain: 'Going On Chain',
-  Unrolling: 'Unrolling',
-  ResolvedClean: 'Resolved Clean',
-  ResolvedUnrolled: 'Resolved Unrolled',
-  ResolvedStale: 'Resolved Stale',
-  Failed: 'Failed',
-};
-
-const GAME_TURN_LABELS: Record<GameTurnState, string> = {
-  'my-turn': 'Your turn',
-  'their-turn': 'Their turn',
-  'playing-on-chain': 'Playing our move on-chain',
-  'replaying': 'Replaying our move on-chain',
-  'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
-  'ended': 'Ended',
-};
-
-function channelCoinLabelForState(state: ChannelState): string {
-  if (state === 'ResolvedClean' || state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
-    return 'Channel reward coin ID';
-  }
-  if (state === 'Unrolling') {
-    return 'Unroll coin ID';
-  }
-  return 'Channel coin ID';
 }
 
 function formatOptionalMojos(raw: string | null): string {
@@ -679,25 +642,17 @@ function ComposeProposalDialog({
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
-  trackerLiveness?: import('../types/ChiaGaming').TrackerLiveness | null;
-  peerConnected?: boolean | null;
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionState;
   onGameActivity?: () => void;
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
+  onSessionModelChange?: (model: SessionModel) => void;
   suppressPhaseReporting?: boolean;
 }
 
-const TRACKER_LIVENESS_LABELS: Record<string, string> = {
-  connected: 'Connected',
-  reconnecting: 'Reconnecting',
-  inactive: 'Inactive',
-  disconnected: 'Disconnected',
-};
-
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, suppressPhaseReporting }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, suppressPhaseReporting }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
@@ -707,11 +662,16 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   }, [session.restoreStatus, session.restoreError, onRestoreStatusChange]);
 
   useEffect(() => {
+    onSessionModelChange?.(session.sessionModel);
+  }, [session.sessionModel, onSessionModelChange]);
+
+  useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;
     const phase = session.sessionPhase;
     const hasError =
       session.channelStatus.state === 'Failed' ||
       session.channelStatus.state === 'ResolvedStale' ||
+      session.gameTerminal.type === 'forfeit' ||
       session.gameTerminal.type === 'opponent-successfully-cheated' ||
       session.gameTerminal.type === 'game-error' ||
       (session.gameTerminal.type === 'we-timed-out' && !session.gameTerminal.cleanEnd);
@@ -762,13 +722,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   );
   const gameSpecificView = session.gameSpecificView;
   const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
-  const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
-    ? 'Active \u{1F954}'
-    : CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
-  const channelCoinLabel = channelCoinLabelForState(session.channelStatus.state);
-  const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
-  const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';
-  const gameCoinOrRewardHex = session.gameTerminal.rewardCoinHex ?? session.gameCoin.coinHex;
 
   if (suppressPhaseReporting) {
     return (
@@ -789,80 +742,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
           zClass='z-40'
         />
       )}
-      {/* Session header (shrink-0) */}
-      <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
-        {/* Report + end session */}
-        <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
-          <div className='flex flex-col gap-1 text-sm text-canvas-text'>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>Channel size:</span>
-              <span className='font-medium'>{formatMojos(session.amount * 2n)}</span>
-              <span className='text-canvas-solid'>·</span>
-              <span className='text-canvas-text'>My Stack:</span>
-              <span className='font-medium'>{formatOptionalMojos(session.channelStatus.ourBalance)}</span>
-            </div>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>Game terms:</span>
-              <span className='font-medium'>{gameDisplayName(gameSpecificView.gameType)}</span>
-              <span className='text-canvas-solid'>·</span>
-              <span className='text-canvas-text'>Game size:</span>
-              <span className='font-medium'>{formatMojos(session.currentHandAmount * 2n)}</span>
-            </div>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>Channel status:</span>
-              <span className='font-medium'>{channelStateLabel}</span>
-            </div>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>{channelCoinLabel}:</span>
-              {session.channelStatus.coinHex ? (
-                <CoinId hex={session.channelStatus.coinHex} />
-              ) : (
-                <span className='font-medium'>None</span>
-              )}
-            </div>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>Tracker:</span>
-              <span className='font-medium'>
-                {trackerLiveness ? TRACKER_LIVENESS_LABELS[trackerLiveness] : 'Unknown'}
-              </span>
-              <span className='text-canvas-solid'>·</span>
-              <span className='text-canvas-text'>Peer:</span>
-              <span className='font-medium'>
-                {peerConnected === null ? 'Unknown' : peerConnected ? 'Active' : 'Inactive'}
-              </span>
-            </div>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>Game state:</span>
-              <span className='font-medium'>{gameStateLabel}</span>
-            </div>
-            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>{gameCoinLabel}:</span>
-              {gameCoinOrRewardHex ? (
-                <CoinId hex={gameCoinOrRewardHex} />
-              ) : (
-                <span className='font-medium'>None</span>
-              )}
-              <span className='text-canvas-solid'>·</span>
-              <span className='text-canvas-text'>My reward:</span>
-              <span className='font-medium'>{formatOptionalMojos(session.gameTerminal.myReward)}</span>
-            </div>
-          </div>
-          <div className='flex flex-col items-stretch gap-2 mt-2 sm:mt-0'>
-            <Button
-              data-testid='go-on-chain'
-              variant='solid'
-              onClick={session.goOnChain}
-              size='sm'
-              disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state) || session.channelStatus.state === 'ShuttingDown'}
-            >
-              Go On-Chain
-            </Button>
-          </div>
-        </div>
-
-        <Separator className='mt-2' />
-      </div>
-
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
@@ -952,22 +831,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             )}
 
             {session.betweenHandMode === 'compose-proposal' && (
-              <>
-                <div className='flex justify-end w-full max-w-xl mx-auto'>
-                  <Button
-                    variant='solid'
-                    color='primary'
-                    size='sm'
-                    onClick={session.startCleanShutdown}
-                  >
-                    End Session
-                  </Button>
-                </div>
-                <ComposeProposalDialog
-                  session={session}
-                  maxPerHandMojos={maxPerHandMojos}
-                />
-              </>
+              <ComposeProposalDialog
+                session={session}
+                maxPerHandMojos={maxPerHandMojos}
+              />
             )}
 
             {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (

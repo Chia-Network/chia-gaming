@@ -50,8 +50,18 @@ import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockc
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldAdvertiseAvailable, shouldAutoGoOnChain } from '../lib/restoreLifecycle';
-import { selectSessionPhase, sessionAmountsFromSave, sessionModelFromSave } from '../lib/session/model';
+import {
+  selectGameDashboardView,
+  selectSessionPhase,
+  sessionAmountsFromSave,
+  sessionModelFromSave,
+  type GameDashboardActionKind,
+  type GameDashboardViewModel,
+  type SessionModel,
+} from '../lib/session/model';
+import { gameDisplayName } from '../lib/gameRegistry';
 import { log } from '../services/log';
+import { formatMojos } from '../util';
 import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
@@ -152,6 +162,115 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
+
+const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+  inactive: 'Inactive',
+  disconnected: 'Disconnected',
+};
+
+function channelCoinLabelForDashboard(model: SessionModel | null): string {
+  const state = model?.channel.status.state;
+  if (state === 'ResolvedClean' || state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
+    return 'Channel reward coin ID';
+  }
+  if (state === 'Unrolling') {
+    return 'Unroll coin ID';
+  }
+  return 'Channel coin ID';
+}
+
+function gameCoinLabelForDashboard(model: SessionModel | null): string {
+  return model?.game.terminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';
+}
+
+function formatOptionalDashboardMojos(raw: string | null): string | null {
+  if (raw == null) return null;
+  try {
+    return formatMojos(BigInt(raw));
+  } catch {
+    return raw;
+  }
+}
+
+function GameDashboard({
+  view,
+  onAction,
+}: {
+  view: GameDashboardViewModel;
+  onAction: (kind: GameDashboardActionKind) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className='flex-shrink-0 border-b border-canvas-border bg-canvas-bg-subtle px-4 py-2 text-canvas-text sm:px-6 md:px-8'>
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+        <div className='flex min-w-0 items-center gap-2 text-sm'>
+          <button
+            type='button'
+            onClick={() => setExpanded(prev => !prev)}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Hide dashboard details' : 'Show dashboard details'}
+            className='flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-solid'
+          >
+            <span
+              aria-hidden='true'
+              className={`text-sm leading-none transition-transform ${expanded ? 'rotate-90' : ''}`}
+            >
+              ▶
+            </span>
+          </button>
+          <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+            <span className='flex min-w-0 flex-wrap gap-x-1'>
+              <span className='text-canvas-solid'>Channel:</span>
+              <span className='font-medium text-canvas-text-contrast'>{view.channelStatusLabel}</span>
+              {view.channelDetail && (
+                <span className='text-canvas-text'>{view.channelDetail}</span>
+              )}
+            </span>
+            <span className='flex min-w-0 flex-wrap gap-x-1'>
+              <span className='text-canvas-solid'>Hand:</span>
+              <span className='font-medium text-canvas-text-contrast'>{view.handStatusLabel}</span>
+              {view.handDetail && (
+                <span className='text-canvas-text'>{view.handDetail}</span>
+              )}
+            </span>
+          </div>
+        </div>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Button
+            variant='solid'
+            color='primary'
+            size='sm'
+            className='min-w-40'
+            disabled={!view.actionEnabled}
+            onClick={() => onAction(view.actionKind)}
+          >
+            {view.actionLabel}
+          </Button>
+        </div>
+      </div>
+      {expanded && (
+        <div className='mt-2 grid gap-x-4 gap-y-1 text-xs text-canvas-text sm:grid-cols-2'>
+          {view.details.length > 0 ? view.details.map(row => {
+            const displayValue = row.value == null || row.value === '' ? 'None' : row.value;
+            return (
+            <div key={`${row.label}:${row.value}`} className='flex min-w-0 flex-wrap gap-x-1'>
+              <span className='text-canvas-solid'>{row.label}:</span>
+              <span className={row.copyValue ? 'font-mono break-all text-canvas-text-contrast' : 'font-medium text-canvas-text-contrast'}>
+                {row.copyValue ? `0x${displayValue}` : displayValue}
+              </span>
+            </div>
+            );
+          }) : (
+            <div className='text-canvas-solid'>No active channel.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HistoryPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -290,6 +409,9 @@ const Shell = () => {
   }, []);
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
+  const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
+  const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const peerConnTargetRef = useRef<PeerConnectionResult>({
     sendMessage: () => {},
@@ -314,7 +436,7 @@ const Shell = () => {
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreTrackerReconciled, setRestoreTrackerReconciled] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
   const trackerWsUpRef = useRef(false);
   const lastTrackerActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
@@ -390,6 +512,15 @@ const Shell = () => {
     };
     window.addEventListener('beforeunload', cleanup);
     return () => { window.removeEventListener('beforeunload', cleanup); };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cleanShutdownGraceTimerRef.current !== null) {
+        clearTimeout(cleanShutdownGraceTimerRef.current);
+        cleanShutdownGraceTimerRef.current = null;
+      }
+    };
   }, []);
 
   const [history, setHistory] = useState<string[]>([]);
@@ -678,6 +809,9 @@ const Shell = () => {
         setRestoreStatus('idle');
         setRestoreError(null);
         setRestoreTrackerReconciled(true);
+        setDashboardSessionModel(null);
+      } else {
+        setDashboardSessionModel(sessionModelFromSave(save, perGame));
       }
 
       const alreadyHydrated = !!sessionSaveRef.current;
@@ -1041,9 +1175,17 @@ const Shell = () => {
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
     setRestoreError(error);
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, restore: { ...prev.restore, status, error } }
+      : prev
+    );
     if (status === 'failed') {
       setSessionError(true);
     }
+  }, []);
+
+  const handleSessionModelChange = useCallback((model: SessionModel) => {
+    setDashboardSessionModel(model);
   }, []);
 
   const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
@@ -1240,7 +1382,96 @@ const Shell = () => {
 
   const handleEndPeerConnection = useCallback(() => {
     trackerConnRef.current?.close();
+    markPeerInactive();
+  }, [markPeerInactive]);
+
+  const startCleanShutdownGrace = useCallback(() => {
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+    }
+    setCleanShutdownGraceActive(true);
+    cleanShutdownGraceTimerRef.current = setTimeout(() => {
+      cleanShutdownGraceTimerRef.current = null;
+      setCleanShutdownGraceActive(false);
+    }, 10_000);
   }, []);
+
+  const cancelDashboardSession = useCallback(() => {
+    trackerConnRef.current?.close();
+    markPeerInactive();
+    destroyBlobSingleton();
+    clearSession();
+    sessionSaveRef.current = null;
+    activePairingTokenRef.current = null;
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+    setSessionPhase('none');
+    setSessionError(false);
+    setGameParams(null);
+    setPeerConn(null);
+    setDashboardSessionModel(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setHistory([]);
+    setChatMessages([]);
+    setActiveTab('tracker');
+    trackerConnRef.current?.setBusy(false);
+  }, [markPeerInactive, setActiveTab]);
+
+  const requestDashboardCleanShutdown = useCallback(() => {
+    startCleanShutdownGrace();
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, channel: { ...prev.channel, cleanShutdownStarted: true } }
+      : prev
+    );
+    blobSingleton?.cleanShutdown();
+  }, [startCleanShutdownGrace]);
+
+  const performDashboardGoOnChain = useCallback(() => {
+    blobSingleton?.goOnChain();
+    sessionPhaseRef.current = 'on-chain';
+    setSessionPhase('on-chain');
+    trackerConnRef.current?.close();
+    markPeerInactive();
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
+      : prev
+    );
+  }, [markPeerInactive]);
+
+  const requestDashboardGoOnChain = useCallback(() => {
+    const channelState = dashboardSessionModel?.channel.status.state;
+    const isShutdownEscalation = channelState === 'ShuttingDown';
+    setConfirmDialog({
+      title: isShutdownEscalation ? 'Go on-chain?' : 'Resolve on-chain?',
+      body: isShutdownEscalation
+        ? 'Clean shutdown is waiting for your opponent. Going on-chain abandons the cooperative close and resolves the session on-chain.'
+        : 'You are in the middle of a hand. Going on-chain will force moves to happen but they may be much slower. Do you wish to proceed?',
+      confirmLabel: 'Go On Chain',
+      onConfirm: () => {
+        setConfirmDialog(null);
+        performDashboardGoOnChain();
+      },
+    });
+  }, [dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
+
+  const handleDashboardAction = useCallback((kind: GameDashboardActionKind) => {
+    switch (kind) {
+      case 'cancel':
+        cancelDashboardSession();
+        break;
+      case 'clean-shutdown':
+        requestDashboardCleanShutdown();
+        break;
+      case 'go-on-chain':
+        requestDashboardGoOnChain();
+        break;
+      case 'none':
+        break;
+    }
+  }, [cancelDashboardSession, requestDashboardCleanShutdown, requestDashboardGoOnChain]);
 
   const handleReconnect = useCallback(() => {
     if (!blockchainType) return;
@@ -1372,6 +1603,33 @@ const Shell = () => {
   const keepSession = sessionCanMount && hasActiveBlockchain && sessionStartedRef.current;
   console.log('[Shell] render: gameParams=%s peerConn=%s activeBlockchain=%s walletConnected=%s restoring=%s → keepSession=%s',
     !!gameParams, !!peerConn, hasActiveBlockchain, walletConnected, !!gameParams?.restoring, keepSession);
+
+  const trackerStatusLabel = trackerOrigin
+    ? (trackerLiveness ? TRACKER_LIVENESS_LABELS[trackerLiveness] : 'Connecting')
+    : 'Not connected';
+  const peerStatusLabel = peerConnected === null ? 'Unknown' : peerConnected ? 'Active' : 'Inactive';
+  const rawDashboardView = selectGameDashboardView(dashboardSessionModel, {
+    hasSession: dashboardSessionModel !== null,
+    cleanShutdownGraceActive,
+    channelSize: gameParams ? formatMojos(gameParams.amount * 2n) : null,
+    currentHandSize: dashboardSessionModel
+      ? formatMojos(dashboardSessionModel.betweenHand.lastTerms.myContribution * 2n)
+      : null,
+    gameTypeLabel: dashboardSessionModel ? gameDisplayName(dashboardSessionModel.game.activeGameType) : null,
+    channelCoinLabel: channelCoinLabelForDashboard(dashboardSessionModel),
+    gameCoinLabel: gameCoinLabelForDashboard(dashboardSessionModel),
+    trackerStatus: trackerStatusLabel,
+    peerStatus: peerStatusLabel,
+  });
+  const dashboardView: GameDashboardViewModel = {
+    ...rawDashboardView,
+    details: rawDashboardView.details.map(row => {
+      if (row.label === 'My stack' || row.label === 'Their stack' || row.label === 'My reward') {
+        return { ...row, value: formatOptionalDashboardMojos(row.value) };
+      }
+      return row;
+    }),
+  };
 
   // --- Main tabbed app ---
   return (
@@ -1710,6 +1968,7 @@ const Shell = () => {
 
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
+          <GameDashboard view={dashboardView} onAction={handleDashboardAction} />
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
             {keepSession && restoreStatus === 'failed' ? (
               <div className='w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8'>
@@ -1730,14 +1989,13 @@ const Shell = () => {
                   key={gameParams.pairingToken}
                   params={gameParams}
                   peerConn={peerConn}
-                  trackerLiveness={trackerLiveness}
-                  peerConnected={peerConnected}
                   registerMessageHandler={registerMessageHandler}
                   appendGameLog={appendHistory}
                   sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
                   onGameActivity={onGameActivity}
                   onSessionPhaseChange={handleSessionPhaseChange}
                   onRestoreStatusChange={handleRestoreStatusChange}
+                  onSessionModelChange={handleSessionModelChange}
                   suppressPhaseReporting={restoreBlocked}
                 />
               </GameSessionErrorBoundary>
@@ -1795,7 +2053,7 @@ const Shell = () => {
               onClick={confirmDialog.onConfirm}
               className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
             >
-              Proceed
+              {confirmDialog.confirmLabel ?? 'Proceed'}
             </button>
             <button
               onClick={() => setConfirmDialog(null)}

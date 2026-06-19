@@ -1042,7 +1042,10 @@ impl PotatoHandler {
                     pending_shutdown = Some((state_channel_coin.clone(), spend.solution.clone()));
                 }
                 GameAction::SendPotato => {
-                    unreachable!("SendPotato should not be queued");
+                    // Legacy/restored state may still contain this marker action.
+                    // Draining a queue should never trap the WASM runtime; the
+                    // current potato state already determines whether we can send.
+                    continue;
                 }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {

@@ -183,6 +183,7 @@ export interface SessionState {
   chatMessages?: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }>;
   gameCoinHex?: string | null;
   gameTurnState?: string;
+  gameHandStatus?: string;
   gameTerminalType?: string;
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;

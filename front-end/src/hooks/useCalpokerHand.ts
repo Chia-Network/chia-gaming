@@ -62,6 +62,21 @@ export interface UseCalpokerHandResult {
   initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
 
+export function shouldAutoFireCalpokerMove(
+  handFinished: boolean,
+  isPlayerTurn: boolean,
+  moveNumber: bigint,
+): boolean {
+  return !handFinished && isPlayerTurn && (moveNumber === 0n || moveNumber === 2n);
+}
+
+export function shouldProcessCalpokerOpponentMoved(
+  handFinished: boolean,
+  hasOutcome: boolean,
+): boolean {
+  return !handFinished || !hasOutcome;
+}
+
 export function useCalpokerHand(
   gameObject: WasmBlobWrapper,
   gameId: string,
@@ -89,6 +104,7 @@ export function useCalpokerHand(
   const gameObjectRef = useRef(gameObject);
   const gameIdRef = useRef(gameId);
   const handFinishedRef = useRef(false);
+  const outcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const pendingPlayRef = useRef(false);
   const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);
   const restoredRef = useRef(!!initialHandState);
@@ -104,9 +120,8 @@ export function useCalpokerHand(
   useEffect(() => {
     const subscription = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
-        if (handFinishedRef.current) return;
-
         if ('OpponentMoved' in evt) {
+          if (!shouldProcessCalpokerOpponentMoved(handFinishedRef.current, !!outcomeRef.current)) return;
           const currentMove = moveNumberRef.current;
           setMyTurn(true);
           onTurnChanged(true);
@@ -135,6 +150,7 @@ export function useCalpokerHand(
               evt.OpponentMoved.readable,
             );
             setOutcome(newOutcome);
+            outcomeRef.current = newOutcome;
 
             if (!iStarted && currentMove === 2n) {
               try {
@@ -147,6 +163,7 @@ export function useCalpokerHand(
             onOutcome(newOutcome);
           }
         } else if ('GameMessage' in evt) {
+          if (handFinishedRef.current) return;
           try {
             const cards = parseCards(evt.GameMessage.readable, iStarted);
             setPlayerHand(cards.playerHand);
@@ -183,6 +200,7 @@ export function useCalpokerHand(
   }, [onTurnChanged]);
 
   const handleMakeMove = useCallback(() => {
+    if (handFinishedRef.current) return;
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
     const gid = gameIdRef.current;
@@ -215,9 +233,10 @@ export function useCalpokerHand(
   // Autofire moves 0 and 2; auto-submit queued move 1
   useEffect(() => {
     if (restoredRef.current) { restoredRef.current = false; return; }
+    if (handFinishedRef.current) return;
     if (!isPlayerTurn) return;
     const m = moveNumberRef.current;
-    if (m === 0n || m === 2n) {
+    if (shouldAutoFireCalpokerMove(handFinishedRef.current, isPlayerTurn, m)) {
       handleMakeMove();
     } else if (m === 1n && pendingPlayRef.current) {
       submitMove1();

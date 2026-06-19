@@ -15,8 +15,17 @@ export type GameTurnState =
   | 'opponent-illegal-move'
   | 'ended';
 
+export type HandStatus =
+  | 'none'
+  | 'active'
+  | 'their-turn'
+  | 'our-turn'
+  | 'playing-move'
+  | 'ended';
+
 export type GameTerminalType =
   | 'none'
+  | 'forfeit'
   | 'we-timed-out'
   | 'opponent-timed-out'
   | 'we-slashed-opponent'
@@ -107,6 +116,7 @@ export interface ChannelModel {
 
 export interface GameModel {
   coin: GameCoinModel;
+  handStatus: HandStatus;
   terminal: GameTerminalModel;
   handKey: number;
   activeIds: string[];
@@ -178,6 +188,7 @@ export type SessionEvent =
   | { type: 'peer-connected'; connected: boolean | null }
   | { type: 'channel-status'; status: ChannelStatusModel }
   | { type: 'game-coin'; coin: GameCoinModel }
+  | { type: 'hand-status'; status: HandStatus }
   | { type: 'game-terminal'; terminal: GameTerminalModel }
   | { type: 'between-hand'; state: Partial<BetweenHandModel> }
   | { type: 'history'; state: Partial<SessionHistoryModel> };
@@ -188,6 +199,37 @@ export type SessionIntent =
   | { type: 'propose-game'; terms: HandTermsModel }
   | { type: 'accept-proposal'; id: string }
   | { type: 'reject-proposal'; id: string };
+
+export type GameDashboardActionKind =
+  | 'none'
+  | 'cancel'
+  | 'clean-shutdown'
+  | 'go-on-chain';
+
+export type GameDashboardActionLabel =
+  | 'No Session'
+  | 'Cancel'
+  | 'Waiting'
+  | 'Clean Shutdown'
+  | 'Go On-Chain'
+  | 'Done';
+
+export interface GameDashboardDetailRow {
+  label: string;
+  value: string | null;
+  copyValue?: string;
+}
+
+export interface GameDashboardViewModel {
+  channelStatusLabel: string;
+  channelDetail: string | null;
+  handStatusLabel: string;
+  handDetail: string | null;
+  actionLabel: GameDashboardActionLabel;
+  actionEnabled: boolean;
+  actionKind: GameDashboardActionKind;
+  details: GameDashboardDetailRow[];
+}
 
 export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   state: 'Handshaking',
@@ -233,6 +275,50 @@ const WINDING_DOWN_STATES = new Set<ChannelState>([
   'Failed',
 ]);
 
+const ON_CHAIN_HAND_STATES = new Set<ChannelState>([
+  'GoingOnChain',
+  'Unrolling',
+  'ResolvedClean',
+  'ResolvedUnrolled',
+  'ResolvedStale',
+]);
+
+const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
+  Handshaking: 'Handshaking',
+  WaitingForHeightToOffer: 'Waiting For Height To Offer',
+  WaitingForHeightToAccept: 'Waiting For Height To Accept',
+  WaitingForOffer: 'Waiting For Offer',
+  OfferSent: 'Offer Sent',
+  TransactionPending: 'Tx Pending',
+  Active: 'Active',
+  ShuttingDown: 'Shutting Down',
+  ShutdownTransactionPending: 'Shutdown Tx Pending',
+  GoingOnChain: 'Going On Chain',
+  Unrolling: 'Unrolling',
+  ResolvedClean: 'Resolved Clean',
+  ResolvedUnrolled: 'Resolved Unrolled',
+  ResolvedStale: 'Resolved Stale',
+  Failed: 'Failed',
+};
+
+const GAME_TURN_LABELS: Record<GameTurnState, string> = {
+  'my-turn': 'Your turn',
+  'their-turn': 'Their turn',
+  'playing-on-chain': 'Playing our move on-chain',
+  'replaying': 'Replaying our move on-chain',
+  'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
+  'ended': 'Ended',
+};
+
+const HAND_STATUS_LABELS: Record<HandStatus, string> = {
+  none: 'No hand',
+  active: 'Active',
+  'their-turn': 'Their turn',
+  'our-turn': 'Your turn',
+  'playing-move': 'Playing move',
+  ended: 'Ended',
+};
+
 export function createSessionModel(partial: SessionModelInput = {}): SessionModel {
   const channel = partial.channel ?? {};
   const game = partial.game ?? {};
@@ -262,6 +348,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     },
     game: {
       coin: { coinHex: null, turnState: 'my-turn' },
+      handStatus: 'none',
       terminal: INITIAL_GAME_TERMINAL_MODEL,
       handKey: 0,
       activeIds: [],
@@ -322,6 +409,11 @@ export function updateSessionModel(model: SessionModel, event: SessionEvent): Se
       return {
         ...model,
         game: { ...model.game, coin: event.coin },
+      };
+    case 'hand-status':
+      return {
+        ...model,
+        game: { ...model.game, handStatus: event.status },
       };
     case 'game-terminal':
       return {
@@ -412,6 +504,181 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
     canAdvertiseAvailable: selectShouldAdvertiseAvailable(model, phase),
     shouldAutoGoOnChain: selectShouldAutoGoOnChain(model, phase),
     sessionError: model.restore.status === 'failed',
+  };
+}
+
+export interface GameDashboardSelectorOptions {
+  hasSession?: boolean;
+  cleanShutdownGraceActive?: boolean;
+  channelSize?: string | null;
+  currentHandSize?: string | null;
+  gameTypeLabel?: string | null;
+  channelCoinLabel?: string | null;
+  gameCoinLabel?: string | null;
+  trackerStatus?: string | null;
+  peerStatus?: string | null;
+}
+
+function channelStatusDetail(model: SessionModel): string | null {
+  const channel = model.channel.status;
+  switch (channel.state) {
+    case 'Failed':
+      return channel.advisory ?? model.restore.error ?? 'Channel failed';
+    default:
+      return channel.advisory;
+  }
+}
+
+function selectHandStatus(model: SessionModel): HandStatus {
+  if (model.game.terminal.type !== 'none' || model.game.coin.turnState === 'ended') {
+    return 'ended';
+  }
+  if (model.game.activeIds.length === 0) {
+    return 'none';
+  }
+  if (!model.game.coin.coinHex) {
+    return 'active';
+  }
+  if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
+    switch (model.game.coin.turnState) {
+      case 'my-turn':
+      case 'opponent-illegal-move':
+        return 'our-turn';
+      case 'their-turn':
+        return 'their-turn';
+      case 'playing-on-chain':
+      case 'replaying':
+        return 'playing-move';
+    }
+  }
+  return 'active';
+}
+
+function collapsedHandStatusLabel(model: SessionModel): string {
+  return HAND_STATUS_LABELS[selectHandStatus(model)];
+}
+
+function detailedHandStatusLabel(model: SessionModel): string {
+  return HAND_STATUS_LABELS[selectHandStatus(model)];
+}
+
+function rawTurnStateDetail(model: SessionModel): string | null {
+  if (model.game.activeIds.length === 0) {
+    return null;
+  }
+  return GAME_TURN_LABELS[model.game.coin.turnState];
+}
+
+function collapsedHandDetail(model: SessionModel): string | null {
+  const terminal = model.game.terminal;
+  if (terminal.type === 'none') {
+    return null;
+  }
+  if (terminal.cleanEnd && terminal.label !== 'Forfeited') {
+    return null;
+  }
+  if (terminal.type === 'opponent-timed-out' && terminal.label === 'Opponent timed out') {
+    return null;
+  }
+  if (terminal.type === 'we-timed-out' && terminal.label === 'Timed out') {
+    return null;
+  }
+  return terminal.label;
+}
+
+function dashboardActionFor(
+  model: SessionModel,
+  cleanShutdownGraceActive: boolean,
+): Pick<GameDashboardViewModel, 'actionLabel' | 'actionEnabled' | 'actionKind'> {
+  switch (model.channel.status.state) {
+    case 'Handshaking':
+    case 'WaitingForHeightToOffer':
+    case 'WaitingForHeightToAccept':
+    case 'WaitingForOffer':
+      return { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' };
+    case 'OfferSent':
+    case 'TransactionPending':
+      return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+    case 'Active':
+      if (model.game.activeIds.length > 0) {
+        return { actionLabel: 'Go On-Chain', actionEnabled: true, actionKind: 'go-on-chain' };
+      }
+      if (cleanShutdownGraceActive) {
+        return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+      }
+      return { actionLabel: 'Clean Shutdown', actionEnabled: true, actionKind: 'clean-shutdown' };
+    case 'ShuttingDown':
+      if (cleanShutdownGraceActive) {
+        return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+      }
+      return { actionLabel: 'Go On-Chain', actionEnabled: true, actionKind: 'go-on-chain' };
+    case 'ShutdownTransactionPending':
+    case 'GoingOnChain':
+    case 'Unrolling':
+      return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+    case 'ResolvedClean':
+    case 'ResolvedUnrolled':
+    case 'ResolvedStale':
+    case 'Failed':
+      return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
+  }
+}
+
+export function selectGameDashboardView(
+  model: SessionModel | null,
+  options: GameDashboardSelectorOptions = {},
+): GameDashboardViewModel {
+  if (!model || options.hasSession === false) {
+    return {
+      channelStatusLabel: 'No Session',
+      channelDetail: null,
+      handStatusLabel: 'No hand',
+      handDetail: null,
+      actionLabel: 'No Session',
+      actionEnabled: false,
+      actionKind: 'none',
+      details: [
+        { label: 'Session', value: 'No active channel' },
+        { label: 'Tracker', value: options.trackerStatus ?? 'Unknown' },
+        { label: 'Peer', value: options.peerStatus ?? 'Unknown' },
+      ],
+    };
+  }
+
+  const channel = model.channel.status;
+  const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false);
+  const gameCoin = model.game.terminal.rewardCoinHex ?? model.game.coin.coinHex;
+
+  return {
+    channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],
+    channelDetail: channelStatusDetail(model),
+    handStatusLabel: collapsedHandStatusLabel(model),
+    handDetail: collapsedHandDetail(model),
+    ...action,
+    details: [
+      { label: 'Channel size', value: options.channelSize ?? null },
+      { label: 'My stack', value: channel.ourBalance },
+      { label: 'Their stack', value: channel.theirBalance },
+      { label: 'Game', value: options.gameTypeLabel ?? model.game.activeGameType },
+      { label: 'Hand size', value: options.currentHandSize ?? null },
+      {
+        label: options.channelCoinLabel ?? 'Channel coin ID',
+        value: channel.coinHex,
+        copyValue: channel.coinHex ? `0x${channel.coinHex}` : undefined,
+      },
+      { label: 'Tracker', value: options.trackerStatus ?? 'Unknown' },
+      { label: 'Peer', value: options.peerStatus ?? 'Unknown' },
+      { label: 'Hand status', value: detailedHandStatusLabel(model) },
+      { label: 'Raw turn state', value: rawTurnStateDetail(model) },
+      { label: 'Terminal kind', value: model.game.terminal.type !== 'none' ? model.game.terminal.type : null },
+      { label: 'Hand result', value: model.game.terminal.label },
+      {
+        label: options.gameCoinLabel ?? 'Game coin ID',
+        value: gameCoin,
+        copyValue: gameCoin ? `0x${gameCoin}` : undefined,
+      },
+      { label: 'My reward', value: model.game.terminal.myReward },
+    ],
   };
 }
 
@@ -601,6 +868,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
         coinHex: save.gameCoinHex ?? null,
         turnState: (save.gameTurnState as GameTurnState | undefined) ?? 'my-turn',
       },
+      handStatus: (save.gameHandStatus as HandStatus | undefined) ?? 'none',
       terminal: save.gameTerminalType && save.gameTerminalType !== 'none'
         ? {
             type: save.gameTerminalType as GameTerminalType,
@@ -661,6 +929,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     chatMessages: model.history.chatMessages.length > 0 ? model.history.chatMessages : undefined,
     gameCoinHex: model.game.coin.coinHex,
     gameTurnState: model.game.coin.turnState,
+    gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,
     gameTerminalType: model.game.terminal.type !== 'none' ? model.game.terminal.type : undefined,
     gameTerminalLabel: model.game.terminal.label,
     gameTerminalReward: model.game.terminal.myReward,

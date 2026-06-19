@@ -118,6 +118,9 @@ export class TrackerConnection {
       this.ws = ws;
       this.reconnectAttempt = 0;
       this.sendWs({ type: 'identify', session_id: this.sessionId, busy: this.busy });
+      if (this.closePending) {
+        this.sendCloseRequest();
+      }
       if (this.wasDisconnected) {
         log('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
@@ -290,8 +293,16 @@ export class TrackerConnection {
 
   close() {
     if (this.closed) return;
+    if (this.closePending) {
+      this.sendCloseRequest();
+      return;
+    }
     this.closePending = true;
     log('[tracker] requesting close');
+    this.sendCloseRequest();
+  }
+
+  private sendCloseRequest() {
     this.sendWs({ type: 'close', session_id: this.sessionId });
   }
 

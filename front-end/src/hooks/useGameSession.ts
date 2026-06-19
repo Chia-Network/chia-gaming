@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Subject, Observable } from 'rxjs';
 import { Program } from 'clvm-lib';
 import {
@@ -33,6 +33,8 @@ import {
   selectGameSpecificView,
   selectSessionPhase,
   sessionModelFromSave,
+  type HandStatus,
+  type SessionModel,
   snapshotFromSessionModel,
 } from '../lib/session/model';
 
@@ -48,6 +50,32 @@ function asBytes(value: unknown): Uint8Array | null {
     return Uint8Array.from(value);
   }
   return null;
+}
+
+export function gameplayEventsForGameStatus(
+  notification: WasmNotification,
+  activeIds: string[],
+  includeTerminal: boolean,
+): GameplayEvent[] {
+  const gs = notification.GameStatus as GameStatusPayload | undefined;
+  if (!gs) return [];
+  const gid = String(gs.id);
+  const other = gs.other_params ?? null;
+  const readable = other?.readable;
+  const readableArr = asBytes(readable);
+  const events: GameplayEvent[] = [];
+  if (readableArr) {
+    const hasMoverShare = other?.mover_share != null;
+    if (hasMoverShare) {
+      events.push({ OpponentMoved: { readable: readableArr } });
+    } else if (activeIds.includes(gid)) {
+      events.push({ GameMessage: { readable: readableArr } });
+    }
+  }
+  if (includeTerminal) {
+    events.push({ _terminal: true, notification });
+  }
+  return events;
 }
 
 function parseCoinAmount(coin: unknown): string | null {
@@ -76,6 +104,7 @@ export interface GameCoinInfo {
 
 export type GameTerminalType =
   | 'none'
+  | 'forfeit'
   | 'we-timed-out'
   | 'opponent-timed-out'
   | 'we-slashed-opponent'
@@ -164,7 +193,7 @@ const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
 };
 
 const ATTENTION_STATES: ChannelState[] = [
-  'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
+  'GoingOnChain', 'ResolvedClean', 'ResolvedStale', 'Failed',
 ];
 
 const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
@@ -175,6 +204,20 @@ const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
 const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
   'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
 ]);
+
+export function nextGameTurnAfterLocalTurn(
+  current: GameTurnState,
+  isMyTurn: boolean,
+  channelState: ChannelState,
+): GameTurnState {
+  if (current === 'ended') {
+    return 'ended';
+  }
+  if (isMyTurn) {
+    return 'my-turn';
+  }
+  return ON_CHAIN_FLOW_STATES.has(channelState) ? 'playing-on-chain' : 'their-turn';
+}
 
 const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
   'SupersededByIncoming',
@@ -228,42 +271,59 @@ function parseTimeoutBlocks(v: unknown): bigint | null {
 function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
     const clean = !!gs.other_params?.game_finished;
+    const reason = String(gs.reason ?? '').toLowerCase();
     const forfeited = !!gs.other_params?.forfeited;
-    let label: string;
     if (forfeited) {
-      label = 'Forfeited, nothing to collect';
+      return {
+        type: 'forfeit',
+        label: 'Forfeited',
+        myReward: parseAmount(gs.my_reward),
+        rewardCoinHex,
+      };
+    }
+    let label: string;
+    if (reason.includes('move too late')) {
+      label = 'Move too late';
     } else if (clean) {
-      label = 'Game ended cleanly';
+      label = 'Ended cleanly';
     } else if (turnState === 'replaying' || turnState === 'their-turn') {
-      label = 'We timed out while trying to post a move';
+      label = 'Move too late';
     } else {
-      label = 'We timed out while waiting for user to move';
+      label = 'Timed out';
     }
     return {
       type: 'we-timed-out',
       label,
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
-      cleanEnd: clean || forfeited,
+      cleanEnd: clean,
     };
   }
 
   if (gs.status === 'ended-opponent-timed-out') {
     const clean = !!gs.other_params?.game_finished;
     const forfeited = !!gs.other_params?.forfeited;
+    if (forfeited) {
+      return {
+        type: 'forfeit',
+        label: 'Forfeited',
+        myReward: parseAmount(gs.my_reward),
+        rewardCoinHex,
+      };
+    }
     return {
       type: 'opponent-timed-out',
-      label: forfeited ? 'Forfeited, nothing to collect' : clean ? 'Game ended cleanly' : 'Opponent timed out',
+      label: clean ? 'Ended cleanly' : 'Opponent timed out',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
-      cleanEnd: clean || forfeited,
+      cleanEnd: clean,
     };
   }
 
   if (gs.status === 'ended-we-slashed-opponent') {
     return {
       type: 'we-slashed-opponent',
-      label: 'Ended: we slashed opponent',
+      label: 'Slashed opponent',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
     };
@@ -272,7 +332,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
   if (gs.status === 'ended-opponent-slashed-us') {
     return {
       type: 'opponent-slashed-us',
-      label: 'Ended: opponent slashed us',
+      label: 'Opponent slashed us',
       myReward: null,
       rewardCoinHex: null,
     };
@@ -281,7 +341,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
   if (gs.status === 'ended-opponent-successfully-cheated') {
     return {
       type: 'opponent-successfully-cheated',
-      label: 'Ended: opponent successfully cheated',
+      label: 'Opponent cheated',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
     };
@@ -290,7 +350,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
   if (gs.status === 'ended-cancelled') {
     return {
       type: 'ended-cancelled',
-      label: 'Ended: cancelled',
+      label: 'Cancelled',
       myReward: null,
       rewardCoinHex: null,
     };
@@ -299,7 +359,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
   if (gs.status === 'ended-error') {
     return {
       type: 'game-error',
-      label: gs.reason ? `Ended: ${gs.reason}` : 'Ended: error',
+      label: gs.reason ?? 'Error',
       myReward: null,
       rewardCoinHex: null,
     };
@@ -425,6 +485,7 @@ function maxQueuedNotificationId(...queues: QueuedNotification[][]): bigint {
 }
 
 export interface UseGameSessionResult {
+  sessionModel: SessionModel;
   gameConnectionState: GameConnectionState;
   amount: bigint;
   perGameAmount: bigint;
@@ -582,9 +643,16 @@ export function useGameSession(
     coinHex: restoredModel?.game.coin.coinHex ?? null,
     turnState: restoredModel?.game.coin.turnState ?? 'my-turn',
   }));
+  const [handStatus, setHandStatus] = useState<HandStatus>(() =>
+    restoredModel?.game.handStatus ?? 'none'
+  );
   const turnStateRef = useRef<GameTurnState>(
     restoredModel?.game.coin.turnState ?? 'my-turn'
   );
+  const gameCoinRef = useRef<GameCoinInfo>({
+    coinHex: restoredModel?.game.coin.coinHex ?? null,
+    turnState: restoredModel?.game.coin.turnState ?? 'my-turn',
+  });
   const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(() => {
     return restoredModel?.game.terminal ?? INITIAL_GAME_TERMINAL;
   });
@@ -679,6 +747,7 @@ export function useGameSession(
 
   gameIdsRef.current = gameIds;
   handKeyRef.current = handKey;
+  gameCoinRef.current = gameCoin;
   betweenHandModeRef.current = betweenHandMode;
   cachedPeerProposalRef.current = cachedPeerProposal;
   reviewPeerProposalRef.current = reviewPeerProposal;
@@ -722,6 +791,7 @@ export function useGameSession(
       },
       game: {
         coin: gameCoin,
+        handStatus,
         terminal: gameTerminal,
         handKey,
         activeIds: gameIds,
@@ -782,7 +852,7 @@ export function useGameSession(
     saveSession(save);
   }, [
     gameConnectionState, channelStatus, goOnChainPressed, cleanShutdownStarted,
-    gameCoin, gameTerminal, handKey, gameIds, lastDisplayedGameId,
+    gameCoin, handStatus, gameTerminal, handKey, gameIds, lastDisplayedGameId,
     myRunningBalance, betweenHandMode,
     composePerHandAmount, composeGameTimeout, composeGameType, lastHandTerms, rejectedOnceTerms,
     activeGameType, composeProposalSent, newHandRequested,
@@ -834,34 +904,32 @@ export function useGameSession(
   const onHandOutcome = useCallback((outcome: CalpokerOutcome) => {
     setLastOutcome(outcome);
     lastOutcomeRef.current = outcome;
-    setGameIds(prev => prev.slice(1));
-    gameIdsRef.current = gameIdsRef.current.slice(1);
-    setGameCoin({ coinHex: null, turnState: 'my-turn' });
-    turnStateRef.current = 'my-turn';
-    const delta = outcome.my_win_outcome === 'win' ? perGameAmount
-                : outcome.my_win_outcome === 'lose' ? -perGameAmount
-                : 0n;
-    setMyRunningBalance(prev => prev + delta);
     const go = gameObjectRef.current;
     if (go) {
       go.lastOutcomeWin = outcome.my_win_outcome;
     }
-    cancelStalePeerProposals();
-    pendingRetryTermsRef.current = null;
-    setBetweenHandMode('decision');
-    setCachedPeerProposal(null);
-    setReviewPeerProposal(null);
-    setNewHandRequested(false);
-  }, [perGameAmount, cancelStalePeerProposals]);
+  }, []);
 
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
-    const ts: GameTurnState = isMyTurn
-      ? 'my-turn'
-      : ON_CHAIN_FLOW_STATES.has(channelStateRef.current)
-        ? 'playing-on-chain'
-        : 'their-turn';
+    const ts = nextGameTurnAfterLocalTurn(
+      turnStateRef.current,
+      isMyTurn,
+      channelStateRef.current,
+    );
+    if (ts === turnStateRef.current) {
+      return;
+    }
     turnStateRef.current = ts;
     setGameCoin(prev => ({ coinHex: prev.coinHex, turnState: ts }));
+    if (!gameCoinRef.current.coinHex) {
+      setHandStatus(prev => prev === 'ended' ? prev : 'active');
+    } else if (isMyTurn) {
+      setHandStatus('our-turn');
+    } else if (ON_CHAIN_FLOW_STATES.has(channelStateRef.current)) {
+      setHandStatus('playing-move');
+    } else {
+      setHandStatus('active');
+    }
   }, []);
 
   const triggerGoOnChain = useCallback(() => {
@@ -909,6 +977,12 @@ export function useGameSession(
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+      }
+      if (cs.state === 'ShuttingDown' || cs.state === 'ShutdownTransactionPending') {
+        setCleanShutdownStarted(true);
+      }
+      if (cs.state === 'GoingOnChain' || cs.state === 'Unrolling') {
+        setGoOnChainPressed(true);
       }
       if (cs.state === 'Active' && !firstGameAcceptedRef.current) {
         firstGameAcceptedRef.current = true;
@@ -1050,6 +1124,7 @@ export function useGameSession(
       const startTurn: GameTurnState = selectDefaultCalpokerInitialTurn(iStarted);
       turnStateRef.current = startTurn;
       setGameCoin({ coinHex: null, turnState: startTurn });
+      setHandStatus('active');
       setGameTerminal(INITIAL_GAME_TERMINAL);
       setCachedPeerProposal(null);
       setReviewPeerProposal(null);
@@ -1060,50 +1135,25 @@ export function useGameSession(
     } else if ('GameStatus' in n) {
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;
-      const gid = String(gs.id);
       const status = gs.status;
-      const coinHex = await coinIdHex(gs.coin_id);
       const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStateRef.current);
       const isOnChainTurnStatus =
         status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
       const isLocalTurnStatus = status === 'my-turn' || status === 'their-turn';
       const ignoreLocalTurnDuringOnChain = inOnChainFlow && isLocalTurnStatus;
-      if (ignoreLocalTurnDuringOnChain) {
-        // During on-chain flow, on-chain turn statuses are authoritative.
-        // Keep any known coin id if local status messages continue to arrive.
-        if (coinHex) {
-          setGameCoin(prev => ({ ...prev, coinHex }));
-        }
-      } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
-        turnStateRef.current = 'my-turn';
-        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
-      } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
-        turnStateRef.current = 'their-turn';
-        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
-      } else if (status === 'replaying') {
-        turnStateRef.current = 'replaying';
-        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
-      } else if (status === 'illegal-move-detected') {
-        turnStateRef.current = 'opponent-illegal-move';
-        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
-      } else if (isTerminalStatus(status)) {
-        const other = gs.other_params ?? null;
-        const readable = other?.readable;
-        const readableArr = asBytes(readable);
-        if (readableArr) {
-          const hasMoverShare = other?.mover_share != null;
-          if (hasMoverShare) {
-            gameplayEventSubject.next({ OpponentMoved: { readable: readableArr } });
-          } else if (gameIdsRef.current.includes(gid)) {
-            gameplayEventSubject.next({ GameMessage: { readable: readableArr } });
-          }
+
+      if (isTerminalStatus(status)) {
+        const terminalTurnState = turnStateRef.current;
+        for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, false)) {
+          gameplayEventSubject.next(event);
         }
 
         const rewardCoinHex = await coinIdHex(gs.coin_id);
-        const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex, turnStateRef.current);
+        const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex, terminalTurnState);
         setGameTerminal(terminalInfo);
         turnStateRef.current = 'ended';
         setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
+        setHandStatus('ended');
         const hadActiveGame = gameIdsRef.current.length > 0;
         if (hadActiveGame) {
           setGameIds(prev => prev.slice(1));
@@ -1112,7 +1162,7 @@ export function useGameSession(
           setBetweenHandMode('decision');
           setCachedPeerProposal(null);
           setReviewPeerProposal(null);
-          if (inOnChainFlow) {
+          if (inOnChainFlow && terminalInfo.type !== 'forfeit') {
             const attentionInfo: GameTerminalAttentionInfo = {
               label: terminalInfo.label ?? `Ended: ${status}`,
               myReward: terminalInfo.myReward,
@@ -1125,16 +1175,37 @@ export function useGameSession(
         return;
       }
 
-      const other = gs.other_params ?? null;
-      const readable = other?.readable;
-      const readableArr = asBytes(readable);
-      if (readableArr) {
-        const hasMoverShare = other?.mover_share != null;
-        if (hasMoverShare) {
-          gameplayEventSubject.next({ OpponentMoved: { readable: readableArr } });
-        } else if (gameIdsRef.current.includes(gid)) {
-          gameplayEventSubject.next({ GameMessage: { readable: readableArr } });
+      const coinHex = await coinIdHex(gs.coin_id);
+      if (turnStateRef.current === 'ended') {
+        return;
+      }
+
+      if (ignoreLocalTurnDuringOnChain) {
+        // During on-chain flow, on-chain turn statuses are authoritative.
+        // Keep any known coin id if local status messages continue to arrive.
+        if (coinHex) {
+          setGameCoin(prev => ({ ...prev, coinHex }));
         }
+      } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
+        turnStateRef.current = 'my-turn';
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
+        setHandStatus(status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active');
+      } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
+        turnStateRef.current = 'their-turn';
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
+        setHandStatus(status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active');
+      } else if (status === 'replaying') {
+        turnStateRef.current = 'replaying';
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
+        setHandStatus(coinHex ? 'playing-move' : 'active');
+      } else if (status === 'illegal-move-detected') {
+        turnStateRef.current = 'opponent-illegal-move';
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
+        setHandStatus(coinHex ? 'our-turn' : 'active');
+      }
+
+      for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, false)) {
+        gameplayEventSubject.next(event);
       }
     } else if ('InsufficientBalance' in n) {
       const ib = n.InsufficientBalance as Record<string, unknown> | undefined;
@@ -1144,6 +1215,7 @@ export function useGameSession(
         setGameIds(prev => prev.filter(id => id !== ibId));
         gameIdsRef.current = gameIdsRef.current.filter(id => id !== ibId);
       }
+      setHandStatus('ended');
       cancelStalePeerProposals();
       setCachedPeerProposal(null);
       setReviewPeerProposal(null);
@@ -1376,7 +1448,7 @@ export function useGameSession(
     triggerGoOnChain();
   }, [triggerGoOnChain]);
 
-  const sessionModel = createSessionModel({
+  const sessionModel = useMemo(() => createSessionModel({
     restore: {
       restoring: params.restoring ?? false,
       status: restoreStatus,
@@ -1393,6 +1465,7 @@ export function useGameSession(
     },
     game: {
       coin: gameCoin,
+      handStatus,
       terminal: gameTerminal,
       handKey,
       activeIds: gameIds,
@@ -1424,12 +1497,23 @@ export function useGameSession(
     },
     myRunningBalance,
     lastOutcomeWin: gameObject.lastOutcomeWin,
-  });
+  }), [
+    params.restoring, restoreStatus, restoreError,
+    channelStatus, gameConnectionState, goOnChainPressed, cleanShutdownStarted,
+    dismissedChannelState, channelQueue, gameCoin, handStatus, gameTerminal, handKey,
+    gameIds, lastDisplayedGameId, activeGameType, gameObject.handState,
+    gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
+    rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,
+    composeGameType, composeProposalSent, newHandRequested, myRunningBalance,
+    gameObject.history, gameObject.logHistory, gameObject.chatMessages,
+    gameObject.lastOutcomeWin,
+  ]);
   const gameSessionView = selectGameSessionView(sessionModel);
   const gameSpecificView = selectGameSpecificView(sessionModel);
   const sessionPhase = selectSessionPhase(sessionModel);
 
   return {
+    sessionModel,
     gameConnectionState,
     amount,
     perGameAmount,

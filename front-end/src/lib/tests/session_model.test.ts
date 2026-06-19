@@ -4,6 +4,7 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
+  selectGameDashboardView,
   selectGameSessionView,
   selectGameSpecificView,
   selectHideGameInterfaceForBetweenHandDialog,
@@ -17,8 +18,254 @@ import {
   updateSessionModel,
 } from '../session/model';
 import type { SessionState } from '../../hooks/save';
+import {
+  gameplayEventsForGameStatus,
+  nextGameTurnAfterLocalTurn,
+} from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
+  it('derives dashboard actions for no-session, waiting, active, and terminal states', () => {
+    expect(selectGameDashboardView(null)).toMatchObject({
+      channelStatusLabel: 'No Session',
+      handStatusLabel: 'No hand',
+      actionLabel: 'No Session',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'WaitingForOffer' } },
+    }))).toMatchObject({
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    });
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OfferSent' } },
+    }))).toMatchObject({
+      actionLabel: 'Waiting',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game: { activeIds: [] },
+    }))).toMatchObject({
+      channelStatusLabel: 'Active',
+      handStatusLabel: 'No hand',
+      actionLabel: 'Clean Shutdown',
+      actionEnabled: true,
+      actionKind: 'clean-shutdown',
+    });
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true } },
+      game: { activeIds: [] },
+    })).channelStatusLabel).toBe('Active');
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game: { activeIds: [] },
+    }), { cleanShutdownGraceActive: true })).toMatchObject({
+      actionLabel: 'Waiting',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game: { activeIds: ['7'] },
+    }))).toMatchObject({
+      handStatusLabel: 'Active',
+      actionLabel: 'Go On-Chain',
+      actionEnabled: true,
+      actionKind: 'go-on-chain',
+    });
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean' } },
+    }))).toMatchObject({
+      actionLabel: 'Done',
+      actionEnabled: false,
+      channelDetail: null,
+    });
+  });
+
+  it('uses a clean-shutdown grace window before offering go-on-chain escalation', () => {
+    const shuttingDown = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ShuttingDown' },
+        cleanShutdownStarted: true,
+      },
+    });
+
+    expect(selectGameDashboardView(shuttingDown, { cleanShutdownGraceActive: true })).toMatchObject({
+      actionLabel: 'Waiting',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+    expect(selectGameDashboardView(shuttingDown, { cleanShutdownGraceActive: false })).toMatchObject({
+      actionLabel: 'Go On-Chain',
+      actionEnabled: true,
+      actionKind: 'go-on-chain',
+    });
+  });
+
+  it('separates channel advisories from hand terminal details', () => {
+    const terminal = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+      },
+      game: {
+        coin: { coinHex: null, turnState: 'ended' },
+        terminal: {
+          type: 'forfeit',
+          label: 'Forfeited',
+          myReward: '20',
+          rewardCoinHex: null,
+        },
+      },
+    });
+    expect(selectGameDashboardView(terminal)).toMatchObject({
+      channelDetail: null,
+      handStatusLabel: 'Ended',
+      handDetail: 'Forfeited',
+    });
+
+    const failed = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Failed', advisory: 'funding expired' },
+      },
+      restore: { error: 'restore failed' },
+    });
+    expect(selectGameDashboardView(failed)).toMatchObject({
+      channelDetail: 'funding expired',
+      handDetail: null,
+    });
+  });
+
+  it('uses hand terminology for per-hand dashboard details', () => {
+    const view = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
+        terminal: { type: 'none', label: null, myReward: null, rewardCoinHex: null },
+      },
+    }), { currentHandSize: '10 mojos' });
+
+    expect(view.handStatusLabel).toBe('Active');
+    expect(view.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Hand size', value: '10 mojos' }),
+      expect.objectContaining({ label: 'Hand status', value: 'Active' }),
+      expect.objectContaining({ label: 'Raw turn state', value: 'Playing our move on-chain' }),
+      expect.objectContaining({ label: 'Hand result', value: null }),
+    ]));
+    expect(view.details.some(row => row.label === 'Game state' || row.label === 'Game size')).toBe(false);
+  });
+
+  it('uses turn-specific hand status in the bar only once a game coin is on-chain', () => {
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'their-turn' },
+      },
+    })).handStatusLabel).toBe('Active');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: null, turnState: 'their-turn' },
+      },
+    })).handStatusLabel).toBe('Active');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'their-turn' },
+      },
+    })).handStatusLabel).toBe('Their turn');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'replaying' },
+      },
+    })).handStatusLabel).toBe('Playing move');
+  });
+
+  it('summarizes terminal hands in the bar while keeping result details expanded', () => {
+    const view = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        coin: { coinHex: null, turnState: 'ended' },
+        terminal: {
+          type: 'opponent-timed-out',
+          label: 'Opponent timed out',
+          myReward: '20',
+          rewardCoinHex: null,
+        },
+      },
+    }));
+
+    expect(view.handStatusLabel).toBe('Ended');
+    expect(view.handDetail).toBeNull();
+    expect(view.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Hand status', value: 'Ended' }),
+      expect.objectContaining({ label: 'Terminal kind', value: 'opponent-timed-out' }),
+      expect.objectContaining({ label: 'Hand result', value: 'Opponent timed out' }),
+    ]));
+  });
+
+  it('shows move-too-late as an ended detail distinct from forfeit', () => {
+    const view = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        coin: { coinHex: null, turnState: 'ended' },
+        terminal: {
+          type: 'we-timed-out',
+          label: 'Move too late',
+          myReward: '0',
+          rewardCoinHex: null,
+        },
+      },
+    }));
+
+    expect(view.handStatusLabel).toBe('Ended');
+    expect(view.handDetail).toBe('Move too late');
+    expect(view.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Terminal kind', value: 'we-timed-out' }),
+      expect.objectContaining({ label: 'Hand result', value: 'Move too late' }),
+    ]));
+  });
+
+  it('prefers terminal hand state over stale on-chain turn state', () => {
+    const view = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
+        terminal: {
+          type: 'forfeit',
+          label: 'Forfeited',
+          myReward: '20',
+          rewardCoinHex: null,
+        },
+      },
+    }));
+
+    expect(view.handStatusLabel).toBe('Ended');
+    expect(view.handDetail).toBe('Forfeited');
+    expect(view.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Hand status', value: 'Ended' }),
+      expect.objectContaining({ label: 'Hand result', value: 'Forfeited' }),
+    ]));
+  });
+
   it('derives restore blocking and shell decisions from the canonical model', () => {
     const restoring = createSessionModel({
       restore: {
@@ -145,6 +392,28 @@ describe('session model selectors', () => {
     expect(restored.game.queue[0].id).toBe(8n);
   });
 
+  it('round-trips hand status through session snapshots', () => {
+    const model = createSessionModel({
+      game: {
+        handStatus: 'playing-move',
+        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
+      },
+    });
+
+    const snapshot = snapshotFromSessionModel(model);
+    expect(snapshot.gameHandStatus).toBe('playing-move');
+
+    const restored = sessionModelFromSave({
+      version: 3n,
+      playerId: 'p1',
+      gameHandStatus: snapshot.gameHandStatus,
+      gameCoinHex: snapshot.gameCoinHex,
+      gameTurnState: snapshot.gameTurnState,
+    });
+    expect(restored.game.handStatus).toBe('playing-move');
+    expect(restored.game.coin.turnState).toBe('playing-on-chain');
+  });
+
   it('keeps an unrolled session on-chain while an active game is unresolved', () => {
     const unrolledWithGame = createSessionModel({
       channel: {
@@ -259,5 +528,31 @@ describe('session model selectors', () => {
 
     expect(selectDefaultCalpokerProposalMyTurn(false)).toBe(true);
     expect(selectDefaultCalpokerInitialTurn(false)).toBe('my-turn');
+  });
+
+  it('does not regress an ended hand when a local turn callback arrives late', () => {
+    expect(nextGameTurnAfterLocalTurn('ended', false, 'Unrolling')).toBe('ended');
+    expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Unrolling')).toBe('playing-on-chain');
+    expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Active')).toBe('their-turn');
+  });
+
+  it('orders terminal readable gameplay events before the terminal marker', () => {
+    const notification = {
+      GameStatus: {
+        id: '7',
+        status: 'ended-opponent-timed-out',
+        coin_id: null,
+        other_params: {
+          readable: [1, 2, 3],
+          mover_share: '0',
+          forfeited: true,
+        },
+      },
+    };
+
+    expect(gameplayEventsForGameStatus(notification, ['7'], true)).toEqual([
+      { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]) } },
+      { _terminal: true, notification },
+    ]);
   });
 });

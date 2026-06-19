@@ -1,10 +1,11 @@
-import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
+import { isBenignTransactionSubmitError, WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
 import {
   ChiaGame,
   WasmConnection,
   WasmResult,
   InternalBlockchainInterface,
   PeerConnectionResult,
+  SpendBundle,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { restoreSession } from '../../hooks/blobSingleton';
@@ -42,6 +43,19 @@ function makeStorage(): Storage {
 
 function enc(s: string): Uint8Array {
   return new TextEncoder().encode(s);
+}
+
+function testSpendBundle(coinHex: string): SpendBundle {
+  return {
+    spends: [{
+      coin: coinHex,
+      bundle: {
+        puzzle: '80',
+        solution: '80',
+        signature: '',
+      },
+    }],
+  };
 }
 
 function makeMockCradle(
@@ -390,6 +404,35 @@ describe('restore ordering', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('restore broke');
   });
+
+  it('does not expose stack frames in user-facing error events', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(
+      mockBlockchain,
+      'test',
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    activeBlob = blob;
+
+    const errors: string[] = [];
+    const sub = blob.getObservable().subscribe({
+      next: (evt) => {
+        if (evt.type === 'error') errors.push(evt.error);
+      },
+    });
+    const err = new Error('wallet rejected spend');
+    err.stack = 'spend@http://localhost:3002/app/17818440673N/index.js:50242:15';
+
+    await expect(blob.beginRestore(Promise.reject(err)))
+      .rejects
+      .toThrow('wallet rejected spend');
+    sub.unsubscribe();
+
+    expect(errors).toEqual(['wallet rejected spend']);
+    expect(blob.getRestoreError()).toBe('wallet rejected spend');
+  });
 });
 
 describe('cleanShutdown calls shut_down on cradle', () => {
@@ -412,5 +455,76 @@ describe('cleanShutdown calls shut_down on cradle', () => {
     blob.cleanShutdown();
 
     expect((cradle as any).shut_down).toHaveBeenCalled();
+  });
+});
+
+describe('transaction submission', () => {
+  it('submits drained transactions sequentially', async () => {
+    let resolveFirst: (() => void) | null = null;
+    const spend = jest.fn()
+      .mockImplementationOnce(() => new Promise<string>((resolve) => {
+        resolveFirst = () => resolve('');
+      }))
+      .mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => [testSpendBundle('01'), testSpendBundle('02')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.processResult({ events: [] });
+
+    await flushDeferredWork(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    resolveFirst?.();
+    await flushDeferredWork();
+    expect(spend).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not emit user-facing errors for benign stale spend rejections', async () => {
+    expect(isBenignTransactionSubmitError(
+      'spend rejected: status=[3,9] Conflicting transaction: overlapping spends [CoinID(Hash(a))]',
+    )).toBe(true);
+    expect(isBenignTransactionSubmitError(
+      'spend rejected: status=[3,5] Coin not found: CoinID(Hash(b))',
+    )).toBe(true);
+    expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(false);
+
+    const spend = jest.fn()
+      .mockRejectedValueOnce(new Error('spend rejected: status=[3,9] Conflicting transaction: overlapping spends []'))
+      .mockRejectedValueOnce(new Error('spend rejected: status=[3,5] Coin not found: CoinID(Hash(c))'));
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const errors: string[] = [];
+    blob.getObservable().subscribe((evt) => {
+      if (evt.type === 'error') errors.push(evt.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => [testSpendBundle('03'), testSpendBundle('04')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.processResult({ events: [] });
+
+    await flushDeferredWork();
+    expect(spend).toHaveBeenCalledTimes(2);
+    expect(errors).toEqual([]);
   });
 });

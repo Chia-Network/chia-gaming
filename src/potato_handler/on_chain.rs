@@ -644,19 +644,14 @@ impl OnChainGameHandler {
                 if create_ph == self.their_reward_puzzle_hash {
                     // Our pending move never landed and the opponent claimed the
                     // timeout against this coin (the spend pays their reward
-                    // puzzle hash).  We forfeited the move, so drive the terminal
-                    // notification from this observed spend rather than letting
-                    // the generic path misread it as our own timeout win against
-                    // a stale, optimistically-advanced referee state.
+                    // puzzle hash).  Report this as a late move rather than
+                    // letting the generic path misread it as our own timeout win
+                    // against a stale, optimistically-advanced referee state.
                     let game_id = old_def.game_id;
-                    let finished_params = if old_def.game_finished {
-                        Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            ..Default::default()
-                        })
-                    } else {
-                        None
-                    };
+                    let finished_params = Some(GameStatusOtherParams {
+                        game_finished: if old_def.game_finished { Some(true) } else { None },
+                        ..Default::default()
+                    });
                     if let Some(eff) = self.try_emit_terminal(
                         &game_id,
                         GameNotification::GameStatus {
@@ -664,7 +659,7 @@ impl OnChainGameHandler {
                             status: GameStatusKind::EndedWeTimedOut,
                             my_reward: Some(Amount::default()),
                             coin_id: None,
-                            reason: None,
+                            reason: Some("move too late".to_string()),
                             other_params: finished_params,
                         },
                     ) {
@@ -1170,23 +1165,21 @@ impl OnChainGameHandler {
                     }),
                 }));
 
-                if !finished {
-                    effects.push(Effect::Notify(GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::MyTurn,
-                        my_reward: None,
-                        coin_id: None,
-                        reason: None,
-                        other_params: Some(GameStatusOtherParams {
-                            readable: Some(readable),
-                            mover_share: Some(mover_share),
-                            illegal_move_detected: None,
-                            moved_by_us: None,
-                            game_finished: finished_flag,
-                            forfeited: None,
-                        }),
-                    }));
-                }
+                effects.push(Effect::Notify(GameNotification::GameStatus {
+                    id: game_id,
+                    status: GameStatusKind::MyTurn,
+                    my_reward: None,
+                    coin_id: None,
+                    reason: None,
+                    other_params: Some(GameStatusOtherParams {
+                        readable: Some(readable),
+                        mover_share: Some(mover_share),
+                        illegal_move_detected: None,
+                        moved_by_us: None,
+                        game_finished: finished_flag,
+                        forfeited: None,
+                    }),
+                }));
                 let claim = self.build_timeout_claim(env, &game_id, &new_coin_string)?;
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_string.clone(),
@@ -1398,10 +1391,9 @@ impl OnChainGameHandler {
                 status: GameStatusKind::EndedWeTimedOut,
                 my_reward: Some(Amount::default()),
                 coin_id: None,
-                reason: Some("abandoned: opponent gets everything after our move".to_string()),
+                reason: Some("move too late".to_string()),
                 other_params: Some(GameStatusOtherParams {
                     game_finished: Some(true),
-                    forfeited: Some(true),
                     ..Default::default()
                 }),
             })));

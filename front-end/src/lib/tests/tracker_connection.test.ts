@@ -251,6 +251,29 @@ describe('event routing', () => {
     expect(cb.onClosed).toHaveBeenCalled();
   });
 
+  it('sends close immediately when the websocket is open', async () => {
+    const cb = makeCallbacks();
+    const conn = new TrackerConnection('http://t', 's1', cb);
+    await Promise.resolve();
+
+    conn.close();
+
+    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'close', session_id: 's1' });
+  });
+
+  it('sends a pending close after the websocket opens', async () => {
+    const cb = makeCallbacks();
+    const conn = new TrackerConnection('http://t', 's1', cb);
+
+    conn.close();
+    expect(MockWebSocket.instance!.sentJson).toEqual([]);
+
+    await Promise.resolve();
+
+    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'identify', session_id: 's1', busy: false });
+    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'close', session_id: 's1' });
+  });
+
   it('fires onTrackerDisconnected on ws error', async () => {
     expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();

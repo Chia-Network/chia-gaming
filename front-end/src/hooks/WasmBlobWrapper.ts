@@ -59,7 +59,7 @@ function extractErrorMessage(e: unknown): string {
       if (parsed?.data?.error) return parsed.data.error;
       if (parsed?.data?.structuredError?.message) return parsed.data.structuredError.message;
     } catch { /* not JSON */ }
-    return e.stack || e.message;
+    return e.message || e.name || 'Unknown error';
   }
   if (e && typeof e === 'object') {
     if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
@@ -67,6 +67,11 @@ function extractErrorMessage(e: unknown): string {
     try { return JSON.stringify(e); } catch { /* fall through */ }
   }
   return String(e);
+}
+
+export function isBenignTransactionSubmitError(message: string): boolean {
+  return /spend rejected: status=\[3,9\].*Conflicting transaction/i.test(message)
+    || /spend rejected: status=\[3,5\].*Coin not found/i.test(message);
 }
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
@@ -113,6 +118,7 @@ export class WasmBlobWrapper implements PollingCradle {
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
+  private transactionSubmitQueue: Promise<void> = Promise.resolve();
   private beforeUnloadHandler: (() => void) | null = null;
   private durabilityFlushScheduled = false;
   private needsImmediateDurability = false;
@@ -417,17 +423,28 @@ export class WasmBlobWrapper implements PollingCradle {
     this.kickSystem(1);
   }
 
-  private submitTransaction(tx: SpendBundle) {
-    if (this.transactionPublishNerfed) return;
+  private async submitTransactionNow(tx: SpendBundle) {
     const blob = spend_bundle_to_clvm(tx);
     const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
     const fee = this.getFee();
     log(`[wasm] submitTransaction blobLen=${blob.length}`);
-    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).catch(e => {
+    try {
+      await this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined);
+    } catch (e) {
+      const message = extractErrorMessage(e);
+      if (isBenignTransactionSubmitError(message)) {
+        log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
+        return;
+      }
       console.error('[wasm] submitTransaction failed:', e);
       log(`[wasm] submitTransaction failed: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
-    });
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+    }
+  }
+
+  private submitTransaction(tx: SpendBundle) {
+    if (this.transactionPublishNerfed) return;
+    this.transactionSubmitQueue = this.transactionSubmitQueue.then(() => this.submitTransactionNow(tx));
   }
 
   /**
