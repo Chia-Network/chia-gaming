@@ -1012,7 +1012,8 @@ callback into one of four destinations:
 Infrastructure-level events pushed to the channel-scoped FIFO queue
 (`pushChannel`). These appear as dismissable, non-modal overlays at `z-50`
 over the full session area. See
-[UI Notification Queues](UX_NOTIFICATIONS.md#ui-notification-queues) for
+[Dashboard Status Labels](UX_NOTIFICATIONS.md#dashboard-status-labels) and
+[Additional Design Rules](UX_NOTIFICATIONS.md#additional-design-rules) for
 details.
 
 | Kind | Source |
@@ -1029,7 +1030,7 @@ In-game and between-hand events pushed to the game-scoped FIFO queue
 
 | Kind | Source |
 |---|---|
-| `game-terminal` | `GameStatus` ended during on-chain flow |
+| `game-terminal` | Adverse `GameStatus` terminal during on-chain flow, except bar-only outcomes such as forfeits |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
 | `insufficient-bal` | `InsufficientBalance` notification |
 

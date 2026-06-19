@@ -36,6 +36,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 - [WASM Event FIFO and Async Drain](#wasm-event-fifo-and-async-drain)
 - [Channel Lifecycle Notifications](#channel-lifecycle-notifications)
+- [Dashboard Status Labels](#dashboard-status-labels)
 - [Gameplay Notifications](#gameplay-notifications)
 - [Proposal Notifications](#proposal-notifications)
 - [Game Outcome Notifications (Terminal)](#game-outcome-notifications-terminal)
@@ -164,6 +165,49 @@ Monotonicity applies across all three lenses:
 - **On-chain lifecycle lens:** coin progression is forward-only
   (`created -> unrolling -> resolved` for channels, and
   `off-chain -> on-chain loop -> terminal` for games).
+
+---
+
+## Dashboard Status Labels
+
+The Game tab dashboard is the persistent user-facing summary. Its collapsed bar
+is intentionally calmer than the raw notification stream:
+
+`Channel: <channel status> <channel advisory> Hand: <hand status> <hand detail>`
+
+The channel half summarizes the channel lifecycle. `Unrolling` and
+`ResolvedUnrolled` are not separate pop-up-worthy events; the bar is the source
+of truth for those states. `Failed` and `ResolvedStale` can still produce
+error-style attention because they indicate adverse channel-level outcomes.
+
+The hand half summarizes one accepted hand. It deliberately hides off-chain turn
+noise and only becomes turn-specific once a game coin is actually on-chain:
+
+| Hand label | Meaning |
+| --- | --- |
+| `No hand` | No accepted hand is currently active or being displayed. |
+| `Active` | A hand is live off-chain, or the channel is going on-chain/unrolling before a concrete game coin is being tracked. Off-chain `my turn` vs `their turn` is not important enough for the collapsed bar. |
+| `Your turn` | A game coin is on-chain and the protocol says our side is the mover. |
+| `Their turn` | A game coin is on-chain and the protocol says the opponent is the mover. |
+| `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
+| `Ended` | A terminal `GameStatusKind` has been observed. The collapsed bar may add a short hand detail after `Ended`. |
+
+Terminal hand details are high-level user labels derived from terminal
+`GameStatus` metadata. Full raw details remain available in the expanded
+dashboard rows.
+
+| Detail | Meaning |
+| --- | --- |
+| `Forfeited` | The protocol explicitly marked the terminal as `forfeited`. This is a distinct adverse hand outcome, shown in the bar as `Hand: Ended Forfeited`, but it should not also create a pop-up. |
+| `Move too late` | Our move or replay did not land before the opponent claimed the timeout. This is not a forfeit; it means the move missed the on-chain timing window. |
+| `Timed out` | We timed out in a non-forfeit, non-late-move path. |
+| `Opponent timed out` | The opponent timed out in a normal terminal path. This is considered a normal game end and is usually omitted from the collapsed bar detail. |
+| `Ended cleanly` | The game result was accepted through normal protocol completion. This is also usually omitted from the collapsed bar detail. |
+| Slash / cheat / error labels | Adverse terminal outcomes such as `Slashed opponent`, `Opponent slashed us`, `Opponent cheated`, or `Error`. |
+
+Forfeits, move-too-late, slash, cheat, and game-error details belong to the hand
+half of the dashboard, not the channel advisory. Channel advisories are reserved
+for channel-level failures or context.
 
 ---
 
@@ -335,7 +379,7 @@ events.
 
 | `kind` | Source | Behavior |
 |---|---|---|
-| `game-terminal` | `GameStatus` ended during on-chain flow | Shows reward amount and coin info. |
+| `game-terminal` | Adverse `GameStatus` terminal during on-chain flow, except bar-only outcomes such as forfeits | Shows reward amount and coin info. |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Peer-side cancellation notice; cleared when a `ProposalAccepted` arrives. |
 | `insufficient-bal` | `InsufficientBalance` notification | Game could not start due to balance. |
 
