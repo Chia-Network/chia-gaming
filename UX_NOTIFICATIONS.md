@@ -277,6 +277,37 @@ The frontend should treat any of these as the "game ended" signal.
 | OpponentSuccessfullyCheated | `GameStatus { status: EndedOpponentSuccessfullyCheated, my_reward, coin_id }` | Illegal move timed out before slash | Opponent kept timeout path before we slashed |
 | GameError | `GameStatus { status: EndedError, reason }` | Unrecoverable game-level issue | One game reached an error terminal condition |
 
+### Terminal Taxonomy (On-Chain)
+
+On-chain game endings fall into five distinct cases. Each has a different
+trigger condition in the Rust backend and a different frontend label:
+
+| Case | Trigger condition | Backend behavior | `GameStatusOtherParams` | Frontend label |
+|---|---|---|---|---|
+| **Forfeit** | Our turn; our computed move would give `mover_share == game_amount` to the opponent (our post-move share is 0%) | Move not submitted; `EndedWeTimedOut` emitted immediately with `my_reward: 0` | `game_finished: true, forfeited: true` | `Forfeited` (no pop-up) |
+| **Claim** | Our turn; `our_share == game_amount` before any move (we already get 100%) | Auto-accept fires; `AcceptTimeout` queued; timeout claim built and submitted | `game_finished: true` | `Ended cleanly` |
+| **Terminal** | Our turn; `is_game_over()` and `our_share > 0` | Auto-accept fires; `AcceptTimeout` queued; timeout claim built and submitted | `game_finished: true` | `Ended cleanly` |
+| **Fold** | Our turn; frontend explicitly calls `accept_timeout`; our share > 0 | `AcceptTimeout` handler builds timeout claim and registers it for submission at maturity | `game_finished: true` | `Ended cleanly` |
+| **Move too late** | We submitted a move on-chain but the opponent's timeout claim landed first | Detected when the pending-move coin's spend pays the opponent's reward puzzle hash | `game_finished: None` | `Move too late` |
+
+When both **Claim** and **Terminal** conditions are true simultaneously
+(game is over AND `our_share == game_amount`), the case is treated as
+**Terminal** — both auto-accept identically.
+
+**`game_finished: true`** in `GameStatusOtherParams` is the unified "clean
+end" signal. The frontend maps it to `cleanEnd: true`, which renders as
+"Ended cleanly" in the dashboard. Claim, Terminal, and Fold all produce this
+signal.
+
+**`forfeited: true`** is the "adverse but intentional" signal. The frontend
+maps it to `type: 'forfeit'`, which renders as "Forfeited" in the dashboard
+without a pop-up notification (forfeits are routine, not surprising).
+
+**Move too late** is the only case that uses the `reason` string — and only
+when the game was not already in a finished state. If a pending move is
+overtaken on a game that was already `game_finished`, the notification omits
+the reason string and the frontend treats it as a clean end.
+
 `EndedError` covers situations that "should never happen" under normal
 operation but *can* happen if, for example, a trusted full node sends
 fabricated data (bogus puzzle solutions, impossible mover shares, missing

@@ -426,7 +426,7 @@ intentional for several reasons:
 
 ---
 
-## Zero-Reward Early-Out
+## Zero-Reward Early-Out and Auto-Accept
 
 When our share of a game is zero, there is no reason to wait for on-chain
 timeouts, submit transactions, or perform redo moves — those operations cost
@@ -434,19 +434,54 @@ time and transaction fees for no reward.  In these cases the system immediately
 emits `WeTimedOut { our_reward: 0, reward_coin: None }` and removes the game
 from tracking.
 
+Conversely, when our share is the full game amount or the game is terminal with
+a positive share, there is no reason to make another move — the best possible
+outcome is already available via timeout.  In these cases the system
+auto-accepts: it queues an `AcceptTimeout` action and marks the game as
+`game_finished = true`, triggering a clean end.
+
 ### Rationale
 
-1. **No rational incentive.**  When our share is zero the opponent has nothing
-  to gain by playing (they already have everything) and we have nothing to
-   claim.  Waiting for a timeout is pure overhead.
-2. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
+1. **No rational incentive (zero reward).**  When our share is zero the
+  opponent has nothing to gain by playing (they already have everything) and
+   we have nothing to claim.  Waiting for a timeout is pure overhead.
+2. **Optimal outcome already reached (auto-accept).**  When we get 100% on
+  timeout or the game is over and we get a positive share, making a move can
+   only decrease our share or cost fees for no benefit.
+3. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
   claim that yields zero reward wastes block space and fees.
-3. **Clean terminal signal.**  The UX immediately learns the game is over,
+4. **Clean terminal signal.**  The UX immediately learns the game is over,
   rather than waiting many blocks for a timeout that produces nothing.
 
-### Trigger Points
+### Auto-Accept Detection
 
-The early-out fires at five distinct points.
+`should_auto_accept(game_id, is_my_turn)` returns true when:
+
+- `is_my_turn` is true, AND
+- `our_share == game_amount` (claim — we get 100%), OR
+- `is_game_over() && our_share > 0` (terminal clean end — game is finished
+  and we get a positive share).
+
+When both conditions are true (game is over AND our share is the full
+amount), the result is the same: auto-accept fires.
+
+Auto-accept detection runs at two sites in `handle_game_coin_spent`:
+
+1. **`Expected` path** — opponent moved or a timeout confirmed, creating a
+  new game coin.  If the new coin is our turn and auto-accept triggers, the
+   game is marked `game_finished = true` and `AcceptTimeout` is queued.
+2. **`Moved` path** — opponent made a move that advances the game.  Same
+  auto-accept check as the Expected path.
+
+`build_timeout_claim` is self-gating: it returns `None` when the timeout
+transaction would not pay us (our reward puzzle hash is absent from the
+spend's output conditions).  This means timeout claims are only registered
+for coins where the timeout actually benefits us — no explicit skip logic is
+needed for our-turn coins where the timeout favors the opponent.
+
+### Zero-Reward Trigger Points
+
+The zero-reward early-out fires at five distinct points.
 
 **At unroll completion** (scanned in `finish_on_chain_transition` right after
 `set_state_for_coins` populates the `game_map`):
@@ -465,23 +500,37 @@ The early-out fires at five distinct points.
    `mover_share == coin_amount`, meaning the opponent gets everything on
    timeout and has no incentive to move.  `WeTimedOut(0)` fires.  This
    only applies when it's the opponent's turn — when it's our turn and
-   `mover_share == coin_amount`, *we* get everything and the UX should
-   trigger claiming it.
+   `mover_share == coin_amount`, *we* get everything and auto-accept fires
+   instead (see above).
 
 **During on-chain play** (action requested by UX):
 
-1. **On-chain move would produce mover_share == coin_amount.**  In
+4. **On-chain move would produce mover_share == coin_amount.**  In
   `do_on_chain_move`, after computing the move result, if the new
    `mover_share == game_amount` (we as the new waiter get zero), the move is
-   not submitted and `WeTimedOut(0)` fires. This applies to terminal moves too:
-   if playing the terminal move gives the opponent everything, we have no
-   reward to claim and no incentive to spend fees or reveal more state. Games
-   that need to prevent a player from withholding a losing terminal move must
-   encode that incentive in the prior state's `mover_share`.
-2. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
+   not submitted and `WeTimedOut(0)` fires with `forfeited: true`. This
+   applies to terminal moves too: if playing the terminal move gives the
+   opponent everything, we have no reward to claim and no incentive to spend
+   fees or reveal more state. Games that need to prevent a player from
+   withholding a losing terminal move must encode that incentive in the prior
+   state's `mover_share`.
+5. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
   `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
-   is removed and `WeTimedOut(0)` fires instead of setting `accepted = true`
-   and waiting for the timeout.
+   is removed and `WeTimedOut(0)` fires with `forfeited: true` instead of
+   building a timeout claim.
+
+### AcceptTimeout Handler
+
+The `AcceptTimeout` handler covers three cases:
+
+1. **Zero share (forfeit):** `our_share == 0` — game is removed, `WeTimedOut`
+  emitted with `forfeited: true`.  No timeout claim is built.
+2. **Nonzero share (fold or auto-accept):** The handler builds a timeout
+  claim via `build_timeout_claim` and registers it with the wallet (via
+   `RegisterCoin`) for submission at maturity.  `game_finished` is set to
+   `true` on the game_map entry, signaling a clean end.
+3. **Not our turn:** The handler marks `accepted = true` (the timeout claim
+  was already registered eagerly at coin registration time).
 
 ### Already handled (no new code)
 
@@ -491,9 +540,11 @@ Off-chain `AcceptTimeout` with zero reward is already handled by
 
 **Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
 `finish_on_chain_transition` (unroll scan),
-`src/potato_handler/on_chain.rs` — `do_on_chain_move` (scenario 4),
-`do_on_chain_action` (scenario 5), `src/channel_handler/mod.rs` —
-`is_redo_zero_reward`, `get_game_our_current_share`, `get_game_amount`
+`src/potato_handler/on_chain.rs` — `should_auto_accept`, `do_on_chain_move`
+(scenario 4), `do_on_chain_action` (scenario 5),
+`build_timeout_claim`, `register_initial_game_coins`,
+`src/channel_handler/mod.rs` — `is_redo_zero_reward`,
+`get_game_our_current_share`, `get_game_amount`
 
 ---
 

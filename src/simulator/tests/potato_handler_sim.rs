@@ -6640,17 +6640,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     status: GameStatusKind::EndedWeTimedOut,
                     my_reward: Some(our_reward),
                     coin_id: None,
-                    reason: Some(reason),
                     other_params,
                     ..
                 } if *our_reward == Amount::default()
-                    && reason == "move too late"
-                    && !other_params
+                    && other_params
                         .as_ref()
                         .and_then(|params| params.forfeited)
                         .unwrap_or(false)
             )),
-            "Alice should get WeTimedOut with zero reward as move too late, got: {p0_notifs:?}"
+            "Alice should get WeTimedOut with zero reward as forfeit, got: {p0_notifs:?}"
         );
     }));
 

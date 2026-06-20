@@ -271,7 +271,6 @@ function parseTimeoutBlocks(v: unknown): bigint | null {
 function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
     const clean = !!gs.other_params?.game_finished;
-    const reason = String(gs.reason ?? '').toLowerCase();
     const forfeited = !!gs.other_params?.forfeited;
     if (forfeited) {
       return {
@@ -282,9 +281,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
       };
     }
     let label: string;
-    if (reason.includes('move too late')) {
-      label = 'Move too late';
-    } else if (clean) {
+    if (clean) {
       label = 'Ended cleanly';
     } else if (turnState === 'replaying' || turnState === 'their-turn') {
       label = 'Move too late';
