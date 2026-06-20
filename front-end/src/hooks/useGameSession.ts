@@ -26,6 +26,8 @@ import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
+  DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
+  DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   createSessionModel,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
@@ -575,6 +577,8 @@ export function useGameSession(
     params.pairingToken,
     perGameAmount,
     getDefaultFee,
+    Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
+    Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
   );
 
   if (params.myAlias) gameObject.myAlias = params.myAlias;

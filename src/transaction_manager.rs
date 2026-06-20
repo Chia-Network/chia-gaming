@@ -497,8 +497,6 @@ impl<C: ManagedCradle> TransactionManager<C> {
             if let Some(watched) = self.watched_coins.get_mut(&rec.coin) {
                 if let Some(created_height) = rec.created_height {
                     if watched.birthday != Some(created_height) {
-                        // Birthday changed (first sighting or reorg re-mine):
-                        // re-arm the relative timeout against the new birthday.
                         watched.birthday = Some(created_height);
                         watched.claim_submitted = false;
                     }
@@ -609,8 +607,6 @@ impl<C: ManagedCradle> TransactionManager<C> {
             if !ripe {
                 continue;
             }
-            // Submit the eager claim once per birthday, only while the coin
-            // remains unspent.
             if !watched.claim_submitted && watched.spent_confirmed_at.is_none() {
                 if let Some(spend) = &watched.timeout_spend {
                     to_submit.push(spend.clone());

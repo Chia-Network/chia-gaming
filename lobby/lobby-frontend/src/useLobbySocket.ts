@@ -14,12 +14,14 @@ export interface ChallengeReceived {
   from_id: string;
   from_alias: string;
   amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
   | { type: 'joined'; id: string; alias: string }
-  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; amount: string }
+  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
   | { type: 'alias_result'; alias: string | null }
   | { type: 'keepalive' }
@@ -353,12 +355,15 @@ export function useLobbySocket(
   );
 
   const sendChallenge = useCallback(
-    (targetId: string, amount: string) => {
-      send({
+    (targetId: string, amount: string, channelTimeout?: string, unrollTimeout?: string) => {
+      const payload: Record<string, unknown> = {
         type: 'challenge',
         target_id: targetId,
         amount,
-      });
+      };
+      if (channelTimeout) payload.channel_timeout = channelTimeout;
+      if (unrollTimeout) payload.unroll_timeout = unrollTimeout;
+      send(payload);
       setChallengeSent(true);
     },
     [send],

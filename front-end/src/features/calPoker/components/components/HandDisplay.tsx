@@ -104,6 +104,7 @@ function HandDisplay(props: HandDisplayProps) {
     swapHiddenCardIds = [],
     onReorder,
     formatHandDescription,
+    timeoutBadge,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
@@ -673,7 +674,7 @@ function HandDisplay(props: HandDisplayProps) {
       data-area={area}
     >
       <div className='relative'>
-        {gameState === GAME_STATES.FINAL && isWinner && (
+        {gameState === GAME_STATES.FINAL && isWinner && !timeoutBadge && (
           <div
             className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
@@ -682,6 +683,28 @@ function HandDisplay(props: HandDisplayProps) {
             }}
           >
             Winner!
+          </div>
+        )}
+        {timeoutBadge === 'winner' && (
+          <div
+            className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            style={{
+              left: '50%',
+              transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
+            }}
+          >
+            Winner!
+          </div>
+        )}
+        {timeoutBadge === 'timeout' && (
+          <div
+            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-solid px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            style={{
+              left: '50%',
+              transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
+            }}
+          >
+            Timed Out
           </div>
         )}
 

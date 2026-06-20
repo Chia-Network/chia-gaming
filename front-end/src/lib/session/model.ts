@@ -250,6 +250,8 @@ export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
 };
 
 export const DEFAULT_GAME_TIMEOUT_BLOCKS = 15n;
+export const DEFAULT_CHANNEL_TIMEOUT_BLOCKS = 15n;
+export const DEFAULT_UNROLL_TIMEOUT_BLOCKS = 15n;
 
 export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
   gameType: 'calpoker',

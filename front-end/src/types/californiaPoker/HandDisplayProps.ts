@@ -18,6 +18,7 @@ interface HandDisplayProps {
   swapHiddenCardIds?: string[];
   onReorder?: (reorderedCards: CardValueSuit[]) => void;
   formatHandDescription: (f: FormatHandProps) => string;
+  timeoutBadge?: 'winner' | 'timeout' | null;
 };
 
 export type { HandDisplayProps };

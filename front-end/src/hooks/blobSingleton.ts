@@ -51,6 +51,8 @@ export async function configGameObject(
   blockchain: BlockchainPoller,
   uniqueId: string,
   amount: bigint,
+  channelTimeout?: number,
+  unrollTimeout?: number,
 ): Promise<WasmBlobWrapper> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
@@ -60,7 +62,7 @@ export async function configGameObject(
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.rpc.getAddress();
   gameObject.setBlockchainAddress(address);
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash, channelTimeout, unrollTimeout);
   gameObject.setGameCradle(cradle);
   log('[wasm] activateSpend');
   gameObject.activateSpend();
@@ -123,6 +125,8 @@ export function getBlobSingleton(
   pairingToken?: string,
   perGameAmount?: bigint,
   getFee?: () => bigint,
+  channelTimeout?: number,
+  unrollTimeout?: number,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };
@@ -189,6 +193,8 @@ export function getBlobSingleton(
           blockchain,
           uniqueId,
           amount,
+          channelTimeout,
+          unrollTimeout,
         );
       } catch (e) {
         const msg = e instanceof Error ? (e.stack || e.message)

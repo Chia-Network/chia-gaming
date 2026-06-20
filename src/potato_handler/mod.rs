@@ -1517,7 +1517,8 @@ impl FromLocalUI for PotatoHandler {
         }
 
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
-        Ok((game_id_list, effect.into_iter().collect()))
+        let effects: Vec<Effect> = effect.into_iter().collect();
+        Ok((game_id_list, effects))
     }
 
     fn accept_proposal(

@@ -55,6 +55,8 @@ import {
   selectSessionPhase,
   sessionAmountsFromSave,
   sessionModelFromSave,
+  DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
+  DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type GameDashboardActionKind,
   type GameDashboardViewModel,
   type SessionModel,
@@ -798,8 +800,10 @@ const Shell = () => {
       save: SessionState | null,
       myAlias?: string,
       opponentAlias?: string,
+      channelTimeout?: bigint,
+      unrollTimeout?: bigint,
     ) => {
-      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
+      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s channelTimeout=%s unrollTimeout=%s', iStarted, amount, token, !!save, channelTimeout, unrollTimeout);
       sessionFinishedCleanupRef.current = false;
       sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
@@ -827,6 +831,8 @@ const Shell = () => {
           pairingToken: token,
           myAlias: resolvedMyAlias,
           opponentAlias: resolvedOpponentAlias,
+          channelTimeout,
+          unrollTimeout,
         });
         setPeerConn(stablePeerConn);
         if (save) {
@@ -857,12 +863,15 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          // Treat successful tracker match as immediate peer activity for UX.
           markPeerActive();
           let amount: bigint;
           try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
           const perGame = amount / 10n || 1n;
-          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
+          let channelTimeout: bigint | undefined;
+          let unrollTimeout: bigint | undefined;
+          try { if (matched.channel_timeout) channelTimeout = BigInt(matched.channel_timeout); } catch {}
+          try { if (matched.unroll_timeout) unrollTimeout = BigInt(matched.unroll_timeout); } catch {}
+          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias, channelTimeout, unrollTimeout);
         },
         onConnectionStatus: (status: ConnectionStatus) => {
           console.log('[Shell] onConnectionStatus: has_pairing=%s token=%s peer_connected=%s activeToken=%s',
@@ -895,7 +904,11 @@ const Shell = () => {
           if (status.has_pairing && status.token) {
             if (save && save.pairingToken === status.token) {
               const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
-              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
+              let chTimeout: bigint | undefined;
+              let unTimeout: bigint | undefined;
+              try { if (status.channel_timeout) chTimeout = BigInt(status.channel_timeout); } catch {}
+              try { if (status.unroll_timeout) unTimeout = BigInt(status.unroll_timeout); } catch {}
+              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias, chTimeout, unTimeout);
             } else if (!save) {
               console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
               conn.close();

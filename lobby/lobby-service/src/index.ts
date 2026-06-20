@@ -27,7 +27,7 @@ const verbose = Boolean(args.verbose);
 type LobbyInboundMessage =
   | { type: 'join'; id?: string; alias?: string; session_id?: string }
   | { type: 'leave'; id?: string }
-  | { type: 'challenge'; from_id?: string; target_id: string; amount: string }
+  | { type: 'challenge'; from_id?: string; target_id: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'challenge_accept'; challenge_id: string; accepter_id?: string }
   | { type: 'challenge_decline'; challenge_id: string }
   | { type: 'challenge_cancel'; from_id?: string }
@@ -187,6 +187,8 @@ function replayPendingChallengesToPlayer(playerId: string): void {
       from_id: challenge.from_id,
       from_alias: fromAlias,
       amount: challenge.amount,
+      channel_timeout: challenge.channel_timeout,
+      unroll_timeout: challenge.unroll_timeout,
     });
   }
 }
@@ -301,7 +303,7 @@ function completeGameRegistration(playerId: string): void {
       peer_connected: peerConnected,
       token: pairing.token,
     });
-    sendGameEvent(playerId, 'connection_status', {
+    const statusPayload: Record<string, unknown> = {
       has_pairing: true,
       token: pairing.token,
       amount: pairing.amount,
@@ -309,7 +311,10 @@ function completeGameRegistration(playerId: string): void {
       peer_connected: peerConnected,
       my_alias: myAlias,
       peer_alias: peerAlias,
-    });
+    };
+    if (pairing.channel_timeout) statusPayload.channel_timeout = pairing.channel_timeout;
+    if (pairing.unroll_timeout) statusPayload.unroll_timeout = pairing.unroll_timeout;
+    sendGameEvent(playerId, 'connection_status', statusPayload);
     if (peerConn) {
       logTracker('game_registration_notify_peer_reconnected', { player_id: playerId, peer_id: peerId });
       sendGameEvent(peerId, 'peer_reconnected', {});
@@ -433,6 +438,8 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     fromPlayer.id,
     target_id,
     amount,
+    msg.channel_timeout,
+    msg.unroll_timeout,
   );
 
   sendLobbyEvent(target_id, 'challenge_received', {
@@ -440,6 +447,8 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     from_id: fromPlayer.id,
     from_alias: fromPlayer.alias,
     amount: challenge.amount,
+    channel_timeout: challenge.channel_timeout,
+    unroll_timeout: challenge.unroll_timeout,
   });
   sendGameEvent(target_id, 'lobby_attention', {});
 }
@@ -492,6 +501,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     challenge.from_id,
     challenge.target_id,
     challenge.amount,
+    challenge.channel_timeout,
+    challenge.unroll_timeout,
   );
   logTracker('pairing_created', {
     challenge_id,
@@ -499,6 +510,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     challenger_id: challenge.from_id,
     accepter_id: challenge.target_id,
     amount: challenge.amount,
+    channel_timeout: challenge.channel_timeout,
+    unroll_timeout: challenge.unroll_timeout,
   });
 
   const challengerAlias = lobby.players[challenge.from_id]?.alias ?? challenge.from_id;
@@ -514,10 +527,12 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     challenge_id,
     accepted: true,
   });
-  const matchedBase = {
+  const matchedBase: Record<string, unknown> = {
     token: pairing.token,
     amount: challenge.amount,
   };
+  if (pairing.channel_timeout) matchedBase.channel_timeout = pairing.channel_timeout;
+  if (pairing.unroll_timeout) matchedBase.unroll_timeout = pairing.unroll_timeout;
 
   sendGameEvent(challenge.from_id, 'matched', {
     ...matchedBase,

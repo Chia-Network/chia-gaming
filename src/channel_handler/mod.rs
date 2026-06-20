@@ -499,11 +499,10 @@ impl ChannelHandler {
             ));
         }
 
-        if unroll_advance_timeout.to_u64() != 15 {
-            return Err(Error::Channel(format!(
-                "unroll_advance_timeout must be 15, got {}",
-                unroll_advance_timeout.to_u64(),
-            )));
+        if unroll_advance_timeout.to_u64() == 0 {
+            return Err(Error::Channel(
+                "unroll_advance_timeout must be positive".to_string(),
+            ));
         }
 
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();

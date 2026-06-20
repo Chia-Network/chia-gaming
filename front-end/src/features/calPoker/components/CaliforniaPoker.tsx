@@ -634,6 +634,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 formatHandDescription={formatHandDescription}
                 selectedCards={[]}
+                timeoutBadge={timeoutByUs === true ? 'winner' : timeoutByUs === false ? 'timeout' : null}
               />
             </div>
           </div>
@@ -669,6 +670,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                 formatHandDescription={formatHandDescription}
+                timeoutBadge={timeoutByUs === true ? 'timeout' : timeoutByUs === false ? 'winner' : null}
               />
             </div>
           </div>

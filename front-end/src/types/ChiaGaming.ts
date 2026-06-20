@@ -95,6 +95,8 @@ export interface GameSessionParams {
   pairingToken?: string;
   myAlias?: string;
   opponentAlias?: string;
+  channelTimeout?: bigint; // blocks, for channel coin
+  unrollTimeout?: bigint;  // blocks, for unroll coin
 }
 
 export interface ChatMessage {

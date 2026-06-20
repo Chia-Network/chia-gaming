@@ -14,6 +14,8 @@ export interface Challenge {
   from_id: string;
   target_id: string;
   amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 export interface Pairing {
@@ -21,4 +23,6 @@ export interface Pairing {
   playerB_id: string;
   token: string;
   amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }

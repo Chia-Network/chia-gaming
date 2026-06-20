@@ -7,6 +7,8 @@ export interface MatchedParams {
   i_am_initiator: boolean;
   my_alias?: string;
   peer_alias?: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 export interface ConnectionStatus {
@@ -17,6 +19,8 @@ export interface ConnectionStatus {
   peer_connected?: boolean;
   my_alias?: string;
   peer_alias?: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 export interface TrackerConnectionCallbacks {
@@ -44,8 +48,8 @@ const FRAME_ACK = 0x02;
 const FRAME_KEEPALIVE = 0x03;
 
 type TrackerEnvelope =
-  | { type: 'connection_status'; has_pairing: boolean; token?: string; amount?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string }
-  | { type: 'matched'; token: string; amount: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string }
+  | { type: 'connection_status'; has_pairing: boolean; token?: string; amount?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'matched'; token: string; amount: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'chat'; text: string; from_alias: string; timestamp: number }
   | { type: 'peer_reconnected' }
   | { type: 'keepalive' }
@@ -171,6 +175,8 @@ export class TrackerConnection {
             peer_connected: msg.peer_connected,
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
+            channel_timeout: msg.channel_timeout,
+            unroll_timeout: msg.unroll_timeout,
           };
           log(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
           this.callbacks.onConnectionStatus(status);
@@ -183,6 +189,8 @@ export class TrackerConnection {
             i_am_initiator: msg.i_am_initiator,
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
+            channel_timeout: msg.channel_timeout,
+            unroll_timeout: msg.unroll_timeout,
           };
           log(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
           this.callbacks.onMatched(params);
