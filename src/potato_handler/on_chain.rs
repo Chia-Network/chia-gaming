@@ -1059,12 +1059,6 @@ impl OnChainGameHandler {
                             ..Default::default()
                         }),
                     }));
-
-                    resync_info = Some(ResyncInfo {
-                        state_number,
-                        is_my_turn,
-                    });
-                    unblock_queue = true;
                 } else {
                     let finished_flag = if auto_accept { Some(true) } else { None };
 
