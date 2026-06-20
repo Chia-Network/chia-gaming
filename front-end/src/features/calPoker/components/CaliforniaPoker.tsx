@@ -51,6 +51,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
+  timeoutByUs,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -609,7 +610,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               <span className='truncate max-w-full'>
                 {showFinalHeader && opponentDisplayText
                   ? `${opponentLabel} ${opponentResultVerb} (${opponentDisplayText})`
-                  : `${opponentLabel}'s Hand`}
+                  : timeoutByUs === true
+                    ? `${opponentLabel} wins`
+                    : timeoutByUs === false
+                      ? `${opponentLabel} timed out`
+                      : `${opponentLabel}'s Hand`}
               </span>
             </div>
             <div className='flex items-center justify-center p-2'>
@@ -638,7 +643,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               <span className='truncate max-w-full'>
                 {showFinalHeader && playerDisplayText
                   ? `${myLabel} ${playerResultVerb} (${playerDisplayText})`
-                  : `${myLabel}'s Hand`}
+                  : timeoutByUs === true
+                    ? `${myLabel} timed out`
+                    : timeoutByUs === false
+                      ? `${myLabel} wins`
+                      : `${myLabel}'s Hand`}
               </span>
             </div>
             <div className='flex items-center justify-center p-2'>
@@ -675,7 +684,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 doHandleMakeMove={doHandleMakeMove}
               />
             )}
-            {gameState === GAME_STATES.AWAITING_SWAP && (
+            {gameState === GAME_STATES.AWAITING_SWAP && timeoutByUs == null && (
               <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
                 Waiting for opponent
               </div>

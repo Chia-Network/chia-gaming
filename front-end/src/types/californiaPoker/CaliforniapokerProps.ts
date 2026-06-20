@@ -37,4 +37,5 @@ export interface CaliforniapokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
+  timeoutByUs?: boolean | null;
 }

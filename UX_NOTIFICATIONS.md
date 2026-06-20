@@ -465,3 +465,38 @@ matched to live games and generating spurious terminal notifications.
 
 **Key code:** `src/potato_handler/effects.rs`,
 `src/potato_handler/handler_base.rs` (`emit_failure_cleanup`)
+
+---
+
+## GameplayEvent Mapping
+
+The `useGameSession` hook translates raw `WasmNotification` terminal events
+into game-agnostic `GameplayEvent` variants before forwarding them to
+game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`). Game hooks
+never see raw notifications; they receive one of:
+
+| Variant | Shape | When |
+|---------|-------|------|
+| `Timeout` | `{ byUs: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout |
+| `GameError` | `{ reason: string }` | Slashes, cheats, cancellations, errors, insufficient balance |
+
+The mapping from `GameTerminalType` (produced by `parseGameStatusTerminalInfo`)
+to `GameplayEvent`:
+
+| Terminal type | GameplayEvent |
+|---------------|---------------|
+| `forfeit` | `Timeout { byUs }` -- direction from the original `GameStatusKind` |
+| `we-timed-out` | `Timeout { byUs: true }` |
+| `opponent-timed-out` | `Timeout { byUs: false }` |
+| `we-slashed-opponent` | `GameError` |
+| `opponent-slashed-us` | `GameError` |
+| `opponent-successfully-cheated` | `GameError` |
+| `ended-cancelled` | `GameError` |
+| `game-error` | `GameError` |
+| `insufficient-balance` | `GameError` |
+
+Non-terminal events (`OpponentMoved`, `GameMessage`, `ProposalAccepted`) are
+unchanged and forwarded directly.
+
+**Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalEventForInfo`,
+`gameplayEventsForGameStatus`)

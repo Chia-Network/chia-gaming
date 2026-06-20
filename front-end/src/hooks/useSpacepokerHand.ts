@@ -219,6 +219,15 @@ export function useSpacepokerHand(
   const communityCardsRef = useRef(communityCards);
   const lastRaiseRef = useRef(lastRaise);
   const outcomeRef = useRef(outcome);
+  const halfPotRef = useRef(halfPot);
+  const iRaisedLastRef = useRef(iRaisedLast);
+  const handHistoryRef = useRef(handHistory);
+  const lastActionSnapshotRef = useRef<{
+    halfPot: bigint;
+    lastRaise: bigint;
+    iRaisedLast: boolean;
+    historyLength: number;
+  } | null>(null);
 
   gsRef.current = gs;
   gameObjectRef.current = _gameObject;
@@ -226,6 +235,9 @@ export function useSpacepokerHand(
   coinTossIOpenRef.current = coinTossIOpen;
   communityCardsRef.current = communityCards;
   lastRaiseRef.current = lastRaise;
+  halfPotRef.current = halfPot;
+  iRaisedLastRef.current = iRaisedLast;
+  handHistoryRef.current = handHistory;
 
   useEffect(() => {
     if (unitSizeMojos && unitSizeMojos > 0n && !initialHandState) {
@@ -501,11 +513,25 @@ export function useSpacepokerHand(
             }
           }
 
-        } else if ('_terminal' in evt) {
+        } else if ('Timeout' in evt) {
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
-            if (gsRef.current.handler !== SpHandler.Showdown) {
-              if (gsRef.current.handler === SpHandler.End) {
+            const cur = gsRef.current;
+            if (evt.Timeout.byUs && !cur.myTurn) {
+              const snap = lastActionSnapshotRef.current;
+              if (snap) {
+                setHalfPot(snap.halfPot);
+                setLastRaise(snap.lastRaise);
+                setIRaisedLast(snap.iRaisedLast);
+                setHandHistory(prev => prev.slice(0, snap.historyLength));
+              }
+              setTerminalState('folded-by-you');
+              transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
+            } else if (evt.Timeout.byUs) {
+              setTerminalState('folded-by-you');
+              transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
+            } else {
+              if (cur.handler === SpHandler.End) {
                 recordOutcome(null);
                 setOpponentHoleCards(null);
                 setOpponentBoost(null);
@@ -514,10 +540,12 @@ export function useSpacepokerHand(
               } else {
                 setHandHistory(prev => [...prev, { player: 'opponent', action: 'fold' }]);
                 setTerminalState('folded-by-opponent');
-                transition({ handler: SpHandler.Folded, myTurn: false, N: gsRef.current.N });
+                transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
               }
             }
           }
+        } else if ('GameError' in evt) {
+          handFinishedRef.current = true;
         }
       },
     });
@@ -607,6 +635,12 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
+    lastActionSnapshotRef.current = {
+      halfPot: halfPotRef.current,
+      lastRaise: lastRaiseRef.current,
+      iRaisedLast: iRaisedLastRef.current,
+      historyLength: handHistoryRef.current.length,
+    };
     go.makeMove(gid, Program.fromBigInt(0n));
     setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
     transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
@@ -617,6 +651,12 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
+    lastActionSnapshotRef.current = {
+      halfPot: halfPotRef.current,
+      lastRaise: lastRaiseRef.current,
+      iRaisedLast: iRaisedLastRef.current,
+      historyLength: handHistoryRef.current.length,
+    };
     const mojoAmount = units * betUnit;
     go.makeMove(gid, Program.fromBigInt(mojoAmount));
     setHalfPot(prev => prev + lastRaiseRef.current);
@@ -631,6 +671,12 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
+    lastActionSnapshotRef.current = {
+      halfPot: halfPotRef.current,
+      lastRaise: lastRaiseRef.current,
+      iRaisedLast: iRaisedLastRef.current,
+      historyLength: handHistoryRef.current.length,
+    };
     go.makeMove(gid, null);
     setHalfPot(prev => prev + lastRaiseRef.current);
     setLastRaise(0n);

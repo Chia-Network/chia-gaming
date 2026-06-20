@@ -550,9 +550,10 @@ describe('session model selectors', () => {
       },
     };
 
-    expect(gameplayEventsForGameStatus(notification, ['7'], true)).toEqual([
+    const terminalEvent = { Timeout: { byUs: false } };
+    expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
       { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]) } },
-      { _terminal: true, notification },
+      { Timeout: { byUs: false } },
     ]);
   });
 });

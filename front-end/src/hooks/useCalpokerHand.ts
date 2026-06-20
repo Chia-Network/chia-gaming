@@ -55,6 +55,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
+  timeoutByUs: boolean | null;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
@@ -96,6 +97,7 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
+  const [timeoutByUs, setTimeoutByUs] = useState<boolean | null>(null);
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -173,7 +175,12 @@ export function useCalpokerHand(
           } catch (e) {
             console.error('parseCards failed:', e, 'readable:', evt.GameMessage.readable);
           }
-        } else if ('_terminal' in evt) {
+        } else if ('Timeout' in evt) {
+          if (!handFinishedRef.current) {
+            handFinishedRef.current = true;
+            setTimeoutByUs(evt.Timeout.byUs);
+          }
+        } else if ('GameError' in evt) {
           handFinishedRef.current = true;
         }
       },
@@ -315,6 +322,7 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber,
     outcome,
+    timeoutByUs,
     handleMakeMove,
     handleCheat,
     handleNerf,

@@ -42,7 +42,8 @@ export type GameplayEvent =
   | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: Uint8Array | number[] } }
   | { GameMessage: { readable: Uint8Array | number[] } }
-  | { _terminal: true; notification: WasmNotification };
+  | { Timeout: { byUs: boolean } }
+  | { GameError: { reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value;
@@ -52,10 +53,23 @@ function asBytes(value: unknown): Uint8Array | null {
   return null;
 }
 
+function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): GameplayEvent {
+  switch (info.type) {
+    case 'forfeit':
+      return { Timeout: { byUs: status === 'ended-we-timed-out' } };
+    case 'we-timed-out':
+      return { Timeout: { byUs: true } };
+    case 'opponent-timed-out':
+      return { Timeout: { byUs: false } };
+    default:
+      return { GameError: { reason: info.label ?? info.type } };
+  }
+}
+
 export function gameplayEventsForGameStatus(
   notification: WasmNotification,
   activeIds: string[],
-  includeTerminal: boolean,
+  terminalEvent: GameplayEvent | null,
 ): GameplayEvent[] {
   const gs = notification.GameStatus as GameStatusPayload | undefined;
   if (!gs) return [];
@@ -72,8 +86,8 @@ export function gameplayEventsForGameStatus(
       events.push({ GameMessage: { readable: readableArr } });
     }
   }
-  if (includeTerminal) {
-    events.push({ _terminal: true, notification });
+  if (terminalEvent) {
+    events.push(terminalEvent);
   }
   return events;
 }
@@ -1141,7 +1155,7 @@ export function useGameSession(
 
       if (isTerminalStatus(status)) {
         const terminalTurnState = turnStateRef.current;
-        for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, false)) {
+        for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {
           gameplayEventSubject.next(event);
         }
 
@@ -1168,7 +1182,7 @@ export function useGameSession(
             pushGame({ kind: 'game-terminal', title: attentionInfo.label, message: '', payload: attentionInfo });
           }
         }
-        gameplayEventSubject.next({ _terminal: true, notification: n });
+        gameplayEventSubject.next(terminalEventForInfo(terminalInfo, status));
         return;
       }
 
@@ -1201,7 +1215,7 @@ export function useGameSession(
         setHandStatus(coinHex ? 'our-turn' : 'active');
       }
 
-      for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, false)) {
+      for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {
         gameplayEventSubject.next(event);
       }
     } else if ('InsufficientBalance' in n) {

@@ -423,6 +423,7 @@ function CalpokerHand({
     setHandOrder,
     moveNumber,
     outcome,
+    timeoutByUs,
     handleMakeMove,
     handleCheat,
     handleNerf,
@@ -478,6 +479,7 @@ function CalpokerHand({
       initialSnapshot={stringifyCalpokerSnapshot(initialDisplaySnapshot)}
       myName={myName}
       opponentName={opponentName}
+      timeoutByUs={timeoutByUs}
     />
   );
 }
