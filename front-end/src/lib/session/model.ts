@@ -22,6 +22,7 @@ export type HandStatus =
   | 'their-turn'
   | 'our-turn'
   | 'playing-move'
+  | 'replaying-move'
   | 'finishing'
   | 'ended';
 
@@ -321,6 +322,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'their-turn': 'Their turn',
   'our-turn': 'Your turn',
   'playing-move': 'Playing move',
+  'replaying-move': 'Replaying move',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -553,8 +555,9 @@ function selectHandStatus(model: SessionModel): HandStatus {
       case 'their-turn':
         return 'their-turn';
       case 'playing-on-chain':
-      case 'replaying':
         return 'playing-move';
+      case 'replaying':
+        return 'replaying-move';
       case 'finishing':
         return 'finishing';
     }

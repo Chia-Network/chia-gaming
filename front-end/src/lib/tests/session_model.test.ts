@@ -194,9 +194,19 @@ describe('session model selectors', () => {
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       game: {
         activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'replaying' },
+        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
       },
     })).handStatusLabel).toBe('Playing move');
+
+    // 'replaying' is a distinct WASM state (a redo replayed after unroll) and is
+    // communicated as 'Replaying move', not collapsed into 'Playing move'.
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'replaying' },
+      },
+    })).handStatusLabel).toBe('Replaying move');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },

@@ -1242,7 +1242,7 @@ export function useGameSession(
       } else if (status === 'replaying') {
         turnStateRef.current = 'replaying';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
-        setHandStatus(coinHex ? 'playing-move' : 'active');
+        setHandStatus(coinHex ? 'replaying-move' : 'active');
       } else if (status === 'illegal-move-detected') {
         turnStateRef.current = 'opponent-illegal-move';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
