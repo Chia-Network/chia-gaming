@@ -6803,6 +6803,99 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_calpoker_winning_all_endgame_on_chain", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Same deterministic deal as test_calpoker_winning_step_e_on_chain:
+        // Alice selects the high cards and wins; Bob (the responder) loses
+        // and ends with a zero share.  The difference is that the players go
+        // on-chain EARLIER: only steps a and b are played off-chain; steps c,
+        // d, and e are ALL played on-chain.  This mirrors the live browser
+        // repro where the loser (Bob) observes Alice's terminal winning move
+        // on chain and must receive both the final readable and a forfeit
+        // terminal instead of being left waiting on a phantom turn.
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        let mut game_moves = calpoker_test_moves_with_selected_cards(
+            &mut allocator,
+            GameID(1),
+            &[32, 36, 41, 49],
+            &[2, 6, 9, 13],
+        )
+        .into_iter();
+        let move_a = game_moves.next().expect("move a");
+        let move_b = game_moves.next().expect("move b");
+        let move_c = game_moves.next().expect("move c");
+        let move_d = game_moves.next().expect("move d");
+        let move_e = game_moves.next().expect("move e");
+
+        // a, b off-chain.
+        moves.push(move_a);
+        moves.push(move_b);
+        // Go on-chain before c.  The move triggers are event-driven, so c, d
+        // and e are each submitted on-chain once the previous on-chain move
+        // has been observed by the next mover.
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(move_c);
+        moves.push(move_d);
+        moves.push(move_e);
+        // Let Alice's terminal e confirm, Bob observe it, and Alice's
+        // timeout claim land for the full pot.
+        moves.push(GameAction::WaitBlocks(120, 1));
+        moves.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let (p0_balance, p1_balance) = get_balances_from_outcome(&outcome).expect("should work");
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+
+        // Bob (loser) must receive Alice's terminal move readable + mover_share
+        // so the UI can display the final hand result.
+        assert!(
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::MyTurn,
+                    other_params: Some(params),
+                    ..
+                } if params.readable.is_some()
+                    && params.mover_share == Some(Amount::default())
+            )),
+            "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
+        );
+
+        // Bob must receive a forfeit terminal, not be stuck on a phantom turn.
+        assert!(
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    other_params,
+                    ..
+                } if *our_reward == Amount::default()
+                    && other_params
+                        .as_ref()
+                        .and_then(|params| params.game_finished)
+                        .unwrap_or(false)
+                    && other_params
+                        .as_ref()
+                        .and_then(|params| params.forfeited)
+                        .unwrap_or(false)
+            )),
+            "Bob should receive a forfeit terminal (EndedWeTimedOut, game_finished, forfeited), got: {p1_notifs:?}"
+        );
+
+        assert_eq!(
+            p0_balance,
+            p1_balance + 200,
+            "Alice should end with the full pot: p0={p0_balance}, p1={p1_balance}"
+        );
+    }));
+
     res.push(("test_zero_reward_on_chain_accept_timeout", &|| {
         let mut allocator = AllocEncoder::new();
         let seed_data: [u8; 32] = [0; 32];

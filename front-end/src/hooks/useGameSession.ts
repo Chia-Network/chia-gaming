@@ -107,7 +107,7 @@ async function coinIdHex(coin: unknown): Promise<string | null> {
   return bytes ? coinIdFromBytes(bytes) : null;
 }
 
-export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'ended';
+export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'finishing' | 'ended';
 
 export interface GameCoinInfo {
   coinHex: string | null;
@@ -231,6 +231,17 @@ export function nextGameTurnAfterLocalTurn(
   return ON_CHAIN_FLOW_STATES.has(channelState) ? 'playing-on-chain' : 'their-turn';
 }
 
+// While we are actively (re)playing our move on-chain the game hook owns the
+// turn state ('playing-on-chain' once it fires a move; 'replaying' once the
+// channel handler signals a redo). An `on-chain-my-turn` for that same coin is
+// just confirming the turn is ours — it must NOT downgrade the display to 'Your
+// turn'. The hook advances us to 'their-turn' once the move lands, and a genuine
+// new (manual) my-turn arrives from a 'their-turn' state, so this only
+// suppresses the spurious "Your turn" flicker during play/replay.
+export function isActivelyPlayingOnChain(current: GameTurnState): boolean {
+  return current === 'playing-on-chain' || current === 'replaying';
+}
+
 const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
   'SupersededByIncoming',
   'PeerProposalPending',
@@ -298,7 +309,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
     } else if (turnState === 'replaying' || turnState === 'their-turn') {
       label = 'Move too late';
     } else {
-      label = 'Timed out';
+      label = 'We took too long to move';
     }
     return {
       type: 'we-timed-out',
@@ -322,7 +333,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
     }
     return {
       type: 'opponent-timed-out',
-      label: clean ? 'Ended cleanly' : 'Opponent timed out',
+      label: clean ? 'Ended cleanly' : 'Opponent took too long to move',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
       cleanEnd: clean,
@@ -1198,13 +1209,36 @@ export function useGameSession(
           setGameCoin(prev => ({ ...prev, coinHex }));
         }
       } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
-        turnStateRef.current = 'my-turn';
-        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
-        setHandStatus(status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active');
+        if (isActivelyPlayingOnChain(turnStateRef.current)) {
+          // We're mid play/replay of our move on-chain; keep showing 'Playing
+          // move'/'Replaying' rather than reverting to 'Your turn'. Just refresh
+          // the coin id.
+          if (coinHex) {
+            setGameCoin(prev => ({ ...prev, coinHex }));
+          }
+        } else {
+          turnStateRef.current = 'my-turn';
+          setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
+          setHandStatus(status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active');
+        }
       } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
-        turnStateRef.current = 'their-turn';
-        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
-        setHandStatus(status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active');
+        // After we play a terminal move on-chain the game is over (the next
+        // coin nominally passes the turn to the opponent, but its validation
+        // program is nil). We're not waiting on the opponent — we're waiting to
+        // settle our win — so present this as 'Finishing' rather than 'Their
+        // turn'. This is driven generically by game_finished, not anything
+        // game-specific.
+        const weFinishedTheGame =
+          status === 'on-chain-their-turn' && gs.other_params?.game_finished === true;
+        if (weFinishedTheGame) {
+          turnStateRef.current = 'finishing';
+          setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'finishing' }));
+          setHandStatus('finishing');
+        } else {
+          turnStateRef.current = 'their-turn';
+          setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
+          setHandStatus(status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active');
+        }
       } else if (status === 'replaying') {
         turnStateRef.current = 'replaying';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));

@@ -5,6 +5,7 @@ import {
 import {
   shouldAutoFireCalpokerMove,
   shouldProcessCalpokerOpponentMoved,
+  calpokerResponderFinishesAtReveal,
 } from '../../hooks/useCalpokerHand';
 
 describe('Calpoker bigint domain helpers', () => {
@@ -28,5 +29,14 @@ describe('Calpoker bigint domain helpers', () => {
   it('still accepts a late final readable move after terminal if no outcome was shown', () => {
     expect(shouldProcessCalpokerOpponentMoved(true, false)).toBe(true);
     expect(shouldProcessCalpokerOpponentMoved(true, true)).toBe(false);
+  });
+
+  it('at the endgame reveal, only the responder finishes; the terminal mover (Alice) still plays step e', () => {
+    // iStarted === false is the first mover ("Alice"), who owes the terminal
+    // move e and must NOT be marked finished, or her autofire never fires.
+    expect(calpokerResponderFinishesAtReveal(false)).toBe(false);
+    // iStarted === true is the responder ("Bob"), who gives up and must not
+    // send a phantom sixth move.
+    expect(calpokerResponderFinishesAtReveal(true)).toBe(true);
   });
 });

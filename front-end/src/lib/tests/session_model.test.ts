@@ -21,6 +21,7 @@ import type { SessionState } from '../../hooks/save';
 import {
   gameplayEventsForGameStatus,
   nextGameTurnAfterLocalTurn,
+  isActivelyPlayingOnChain,
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
@@ -196,16 +197,24 @@ describe('session model selectors', () => {
         coin: { coinHex: 'abcd', turnState: 'replaying' },
       },
     })).handStatusLabel).toBe('Playing move');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'finishing' },
+      },
+    })).handStatusLabel).toBe('Finishing');
   });
 
-  it('summarizes terminal hands in the bar while keeping result details expanded', () => {
+  it('shows a premature opponent timeout as an explicit ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
           type: 'opponent-timed-out',
-          label: 'Opponent timed out',
+          label: 'Opponent took too long to move',
           myReward: '20',
           rewardCoinHex: null,
         },
@@ -213,12 +222,31 @@ describe('session model selectors', () => {
     }));
 
     expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBeNull();
+    expect(view.handDetail).toBe('Opponent took too long to move');
     expect(view.details).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: 'Hand status', value: 'Ended' }),
       expect.objectContaining({ label: 'Terminal kind', value: 'opponent-timed-out' }),
-      expect.objectContaining({ label: 'Hand result', value: 'Opponent timed out' }),
+      expect.objectContaining({ label: 'Hand result', value: 'Opponent took too long to move' }),
     ]));
+  });
+
+  it('keeps a clean opponent timeout collapsed (no premature-timeout detail)', () => {
+    const view = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        coin: { coinHex: null, turnState: 'ended' },
+        terminal: {
+          type: 'opponent-timed-out',
+          label: 'Ended cleanly',
+          myReward: '20',
+          rewardCoinHex: null,
+          cleanEnd: true,
+        },
+      },
+    }));
+
+    expect(view.handStatusLabel).toBe('Ended');
+    expect(view.handDetail).toBeNull();
   });
 
   it('shows move-too-late as an ended detail distinct from forfeit', () => {
@@ -534,6 +562,19 @@ describe('session model selectors', () => {
     expect(nextGameTurnAfterLocalTurn('ended', false, 'Unrolling')).toBe('ended');
     expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Unrolling')).toBe('playing-on-chain');
     expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Active')).toBe('their-turn');
+  });
+
+  it('keeps an in-progress on-chain play/replay from reverting to "Your turn"', () => {
+    // While the hook is (re)playing our move on-chain, an on-chain-my-turn for
+    // the same coin must not downgrade the display back to 'Your turn'.
+    expect(isActivelyPlayingOnChain('playing-on-chain')).toBe(true);
+    expect(isActivelyPlayingOnChain('replaying')).toBe(true);
+    // A genuine new (manual) turn arrives from 'their-turn', and other states
+    // are not active play, so they still take the my-turn transition.
+    expect(isActivelyPlayingOnChain('their-turn')).toBe(false);
+    expect(isActivelyPlayingOnChain('my-turn')).toBe(false);
+    expect(isActivelyPlayingOnChain('finishing')).toBe(false);
+    expect(isActivelyPlayingOnChain('ended')).toBe(false);
   });
 
   it('orders terminal readable gameplay events before the terminal marker', () => {

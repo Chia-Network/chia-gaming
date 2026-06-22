@@ -13,6 +13,7 @@ export type GameTurnState =
   | 'playing-on-chain'
   | 'replaying'
   | 'opponent-illegal-move'
+  | 'finishing'
   | 'ended';
 
 export type HandStatus =
@@ -21,6 +22,7 @@ export type HandStatus =
   | 'their-turn'
   | 'our-turn'
   | 'playing-move'
+  | 'finishing'
   | 'ended';
 
 export type GameTerminalType =
@@ -308,6 +310,7 @@ const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'their-turn': 'Their turn',
   'playing-on-chain': 'Playing our move on-chain',
   'replaying': 'Replaying our move on-chain',
+  'finishing': 'Finishing',
   'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
   'ended': 'Ended',
 };
@@ -318,6 +321,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'their-turn': 'Their turn',
   'our-turn': 'Your turn',
   'playing-move': 'Playing move',
+  finishing: 'Finishing',
   ended: 'Ended',
 };
 
@@ -551,6 +555,8 @@ function selectHandStatus(model: SessionModel): HandStatus {
       case 'playing-on-chain':
       case 'replaying':
         return 'playing-move';
+      case 'finishing':
+        return 'finishing';
     }
   }
   return 'active';
@@ -577,12 +583,6 @@ function collapsedHandDetail(model: SessionModel): string | null {
     return null;
   }
   if (terminal.cleanEnd && terminal.label !== 'Forfeited') {
-    return null;
-  }
-  if (terminal.type === 'opponent-timed-out' && terminal.label === 'Opponent timed out') {
-    return null;
-  }
-  if (terminal.type === 'we-timed-out' && terminal.label === 'Timed out') {
     return null;
   }
   return terminal.label;

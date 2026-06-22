@@ -78,6 +78,17 @@ export function shouldProcessCalpokerOpponentMoved(
   return !handFinished || !hasOutcome;
 }
 
+// At the endgame reveal (currentMove >= 2) exactly one player still owes a
+// terminal move: the first mover, whose initial turn is `!iStarted`
+// (iStarted === false) — this is "Alice" in CalpokerOutcome terms. She has just
+// received the opponent's reveal (step d) and her autofire still needs to play
+// step e, so she must NOT mark the hand finished. The responder
+// (iStarted === true, "Bob") has received Alice's terminal move; the hand is
+// over for him and he must not fire a phantom sixth move, so he finishes here.
+export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
+  return iStarted;
+}
+
 export function useCalpokerHand(
   gameObject: WasmBlobWrapper,
   gameId: string,
@@ -153,18 +164,12 @@ export function useCalpokerHand(
             setOutcome(newOutcome);
             outcomeRef.current = newOutcome;
 
-            // Endgame mirrors on-chain play: Alice makes the terminal move and
-            // Bob gives up. The responder (Bob) has just received Alice's
-            // terminal move, so the hand is over for him — the infrastructure
-            // hands him this final readable (after confirming no slash is
-            // available) and queues the AcceptTimeout that settles the game. He
-            // must NOT send a phantom sixth move back over the wire. The
-            // initiator (Alice) has learned the result from the opponent's
-            // reveal but still owes her terminal move (step e); the autofire
-            // effect plays it so the opponent and the chain can settle, and her
-            // hand finishes when the opponent gives up (Timeout /
-            // EndedOpponentTimedOut), not here.
-            if (!iStarted) {
+            // Endgame mirrors on-chain play: the terminal mover (Alice) makes
+            // the final move (step e) via the autofire effect and the responder
+            // (Bob) gives up. Only the responder marks the hand finished here;
+            // Alice's hand finishes when Bob gives up (Timeout /
+            // EndedOpponentTimedOut), not here. See calpokerResponderFinishesAtReveal.
+            if (calpokerResponderFinishesAtReveal(iStarted)) {
               handFinishedRef.current = true;
             }
 

@@ -486,6 +486,55 @@ impl OnChainGameHandler {
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
 
+    /// Emit the terminal-loser ("forfeit") notifications for a game whose
+    /// opponent just made the terminal move that leaves us with a zero share.
+    /// We can never move again and have no timeout to claim, so we surface the
+    /// final move's `readable`/`mover_share` (when available, so the UI can
+    /// display the final hand) and a forfeit terminal, then drop the game from
+    /// on-chain tracking.  Detection is generic — driven by the nil validation
+    /// program via `is_game_finished()`/`is_game_over()` — not anything
+    /// game-specific.  Shared by the `Moved` and `Expected` coin-spend arms so
+    /// the loser is handled identically however the move is classified.
+    fn emit_loser_forfeit_terminal(
+        &mut self,
+        effects: &mut Vec<Effect>,
+        game_id: &GameID,
+        readable: Option<(ReadableMove, Amount)>,
+    ) {
+        if let Some((readable, mover_share)) = readable {
+            // The front-end turns a MyTurn with a readable into an
+            // "OpponentMoved" event that computes the final outcome.
+            effects.push(Effect::Notify(GameNotification::GameStatus {
+                id: *game_id,
+                status: GameStatusKind::MyTurn,
+                my_reward: None,
+                coin_id: None,
+                reason: None,
+                other_params: Some(GameStatusOtherParams {
+                    readable: Some(readable),
+                    mover_share: Some(mover_share),
+                    ..Default::default()
+                }),
+            }));
+        }
+        // No timeout to claim and no further action on this game: drop it from
+        // tracking so a later spend of the terminal coin is ignored gracefully
+        // rather than presenting a phantom turn.
+        self.game_map.retain(|_, def| def.game_id != *game_id);
+        effects.push(Effect::Notify(GameNotification::GameStatus {
+            id: *game_id,
+            status: GameStatusKind::EndedWeTimedOut,
+            my_reward: Some(Amount::default()),
+            coin_id: None,
+            reason: Some("zero reward: opponent's terminal move gives us nothing".to_string()),
+            other_params: Some(GameStatusOtherParams {
+                game_finished: Some(true),
+                forfeited: Some(true),
+                ..Default::default()
+            }),
+        }));
+    }
+
     /// Build the eager timeout claim for `coin` in game `game_id`, without
     /// mutating handler state.  Returns `Some(bundle)` only when the timeout
     /// transaction pays us a positive reward (i.e. we are the party entitled to
@@ -1037,33 +1086,11 @@ impl OnChainGameHandler {
                         == Amount::default();
 
                 if zero_reward_terminal {
-                    // Emit the non-terminal turn notification with the readable
-                    // so the game hook can display the final move result.
-                    effects.push(Effect::Notify(GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::OnChainMyTurn,
-                        my_reward: None,
-                        coin_id: Some(new_coin_id.clone()),
-                        reason: None,
-                        other_params: Some(GameStatusOtherParams {
-                            ..Default::default()
-                        }),
-                    }));
-                    self.game_map.retain(|_, def| def.game_id != game_id);
-                    effects.push(Effect::Notify(GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::EndedWeTimedOut,
-                        my_reward: Some(Amount::default()),
-                        coin_id: None,
-                        reason: Some(
-                            "zero reward: opponent's terminal move gives us nothing".to_string(),
-                        ),
-                        other_params: Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            forfeited: Some(true),
-                            ..Default::default()
-                        }),
-                    }));
+                    // The Expected classification means our referee already
+                    // advanced through this terminal move, so its readable was
+                    // already delivered; there is no fresh readable to forward
+                    // here.  Emit the forfeit terminal and drop the game.
+                    self.emit_loser_forfeit_terminal(&mut effects, &game_id, None);
                 } else {
                     let finished_flag = if auto_accept { Some(true) } else { None };
 
@@ -1216,49 +1243,70 @@ impl OnChainGameHandler {
                         state.game_finished = true;
                     }
                 }
-                let finished_flag = if auto_accept { Some(true) } else { None };
 
-                effects.push(Effect::Notify(GameNotification::GameStatus {
-                    id: old_definition.game_id,
-                    status: GameStatusKind::OnChainMyTurn,
-                    my_reward: None,
-                    coin_id: Some(new_coin_string.clone()),
-                    reason: None,
-                    other_params: Some(GameStatusOtherParams {
-                        readable: None,
-                        mover_share: None,
-                        illegal_move_detected: None,
-                        moved_by_us: None,
-                        game_finished: finished_flag,
-                        forfeited: None,
-                    }),
-                }));
+                // Generic terminal-loser detection (nil validation program via
+                // is_game_finished): the opponent's move ended the game and our
+                // share is zero.  There is no timeout to claim and no real turn
+                // to present, so surface the final readable and a forfeit
+                // terminal instead of a phantom "your turn".
+                let zero_reward_terminal = !auto_accept
+                    && self.is_game_finished(&game_id)
+                    && self
+                        .get_game_our_current_share(&game_id)
+                        .unwrap_or_default()
+                        == Amount::default();
 
-                effects.push(Effect::Notify(GameNotification::GameStatus {
-                    id: game_id,
-                    status: GameStatusKind::MyTurn,
-                    my_reward: None,
-                    coin_id: None,
-                    reason: None,
-                    other_params: Some(GameStatusOtherParams {
-                        readable: Some(readable),
-                        mover_share: Some(mover_share),
-                        illegal_move_detected: None,
-                        moved_by_us: None,
-                        game_finished: finished_flag,
-                        forfeited: None,
-                    }),
-                }));
-                let claim = self.build_timeout_claim(env, &game_id, &new_coin_string)?;
-                effects.push(Effect::RegisterCoin {
-                    coin: new_coin_string.clone(),
-                    timeout: gt,
-                    name: Some("coin gives my turn"),
-                    spend: claim,
-                });
-                if auto_accept {
-                    self.game_action_queue
-                        .push_back(GameAction::AcceptTimeout(game_id));
+                if zero_reward_terminal {
+                    self.emit_loser_forfeit_terminal(
+                        &mut effects,
+                        &game_id,
+                        Some((readable, mover_share)),
+                    );
+                } else {
+                    let finished_flag = if auto_accept { Some(true) } else { None };
+
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
+                        id: old_definition.game_id,
+                        status: GameStatusKind::OnChainMyTurn,
+                        my_reward: None,
+                        coin_id: Some(new_coin_string.clone()),
+                        reason: None,
+                        other_params: Some(GameStatusOtherParams {
+                            readable: None,
+                            mover_share: None,
+                            illegal_move_detected: None,
+                            moved_by_us: None,
+                            game_finished: finished_flag,
+                            forfeited: None,
+                        }),
+                    }));
+
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
+                        id: game_id,
+                        status: GameStatusKind::MyTurn,
+                        my_reward: None,
+                        coin_id: None,
+                        reason: None,
+                        other_params: Some(GameStatusOtherParams {
+                            readable: Some(readable),
+                            mover_share: Some(mover_share),
+                            illegal_move_detected: None,
+                            moved_by_us: None,
+                            game_finished: finished_flag,
+                            forfeited: None,
+                        }),
+                    }));
+                    let claim = self.build_timeout_claim(env, &game_id, &new_coin_string)?;
+                    effects.push(Effect::RegisterCoin {
+                        coin: new_coin_string.clone(),
+                        timeout: gt,
+                        name: Some("coin gives my turn"),
+                        spend: claim,
+                    });
+                    if auto_accept {
+                        self.game_action_queue
+                            .push_back(GameAction::AcceptTimeout(game_id));
+                    }
                 }
 
                 unblock_queue = true;

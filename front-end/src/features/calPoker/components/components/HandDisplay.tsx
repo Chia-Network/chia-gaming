@@ -107,6 +107,7 @@ function HandDisplay(props: HandDisplayProps) {
     timeoutBadge,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
+  const [cardRightEdgeOffset, setCardRightEdgeOffset] = useState(0);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
@@ -249,6 +250,7 @@ function HandDisplay(props: HandDisplayProps) {
           const offset = cardRightEdge - containerCenter - indicatorWidth / 2;
 
           setWinnerIndicatorOffset(offset);
+          setCardRightEdgeOffset(cardRightEdge - containerCenter);
         }
       }
       measureSlotCenters();
@@ -701,7 +703,11 @@ function HandDisplay(props: HandDisplayProps) {
             className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-solid px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
               left: '50%',
-              transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
+              // Right-justify the badge to the last card's right edge. Anchoring
+              // by the right edge (-100%) keeps the wider "Timed Out" text from
+              // overflowing past the cards and getting clipped, unlike the
+              // fixed-width center used for the shorter "Winner!" badge.
+              transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
             }}
           >
             Timed Out
