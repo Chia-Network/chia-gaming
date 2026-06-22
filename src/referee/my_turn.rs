@@ -341,13 +341,19 @@ impl MyTurnReferee {
             "my_turn_make_move called when not my turn"
         );
 
-        let game_handler = if let Some(gh) = self.get_game_handler() {
-            gh
-        } else {
-            return Err(Error::StrErr(
-                "move made but we passed the final move".to_string(),
-            ));
-        };
+        // A move attempted after a terminal move is a clear error: the prior
+        // move carried a nil validation program, which consumed the game
+        // handler, so there is nothing left to advance. This happens, e.g.,
+        // when the frontend fires a phantom extra move past the terminal one.
+        // Assert-fail loudly in debug/test builds; in release this returns an
+        // error that surfaces to the frontend as a notification pop-up.
+        game_assert!(
+            self.get_game_handler().is_some(),
+            "my_turn_make_move: move attempted after a terminal move (nil validation program); the game is already over"
+        );
+        let game_handler = self.get_game_handler().ok_or_else(|| {
+            Error::StrErr("move made but we passed the final move".to_string())
+        })?;
 
         let args = self.spend_this_coin();
 

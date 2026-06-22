@@ -9,6 +9,7 @@ import {
   SessionState,
   base64ToUint8,
 } from './save';
+import { coerceToBytes } from '../util';
 import { log } from '../services/log';
 
 export var blobSingleton: WasmBlobWrapper | null = null;
@@ -100,7 +101,9 @@ export async function restoreSession(
   gameObject.logHistory = [...(save.log ?? [])];
   gameObject.activeGameId = save.activeGameId ?? null;
   gameObject.handState = save.handState ?? null;
-  gameObject.lastChannelStatus = save.channelStatus ?? null;
+  gameObject.lastChannelStatus = save.channelStatus
+    ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
+    : null;
   gameObject.myAlias = save.myAlias;
   gameObject.opponentAlias = save.opponentAlias;
   gameObject.lastOutcomeWin = save.lastOutcomeWin;

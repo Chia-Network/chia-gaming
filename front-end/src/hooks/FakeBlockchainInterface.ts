@@ -23,6 +23,19 @@ function getWebSocketClass(): any {
   throw new Error('No WebSocket implementation available');
 }
 
+function encodeU64AsClvmHex(val: bigint): string {
+  if (val === 0n) return '';
+  const bytes: number[] = [];
+  let h = val;
+  while (h > 0n) {
+    bytes.push(Number(h & 0xffn));
+    h >>= 8n;
+  }
+  bytes.reverse();
+  if (bytes[0] & 0x80) bytes.unshift(0);
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult;
   deleted: boolean;
@@ -227,9 +240,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     const params: any = { who: uniqueId, offer };
     const conditions = [...(extraConditions ?? [])];
     if (maxHeight !== undefined) {
-      const hex = maxHeight.toString(16);
-      const padded = hex.length % 2 === 1 ? '0' + hex : hex;
-      conditions.push({ opcode: 87n, args: [padded] });
+      conditions.push({ opcode: 87n, args: [encodeU64AsClvmHex(maxHeight)] });
     }
     if (conditions.length > 0) params.extraConditions = conditions;
     if (coinIds) params.coinIds = coinIds;

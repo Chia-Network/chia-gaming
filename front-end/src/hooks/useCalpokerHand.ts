@@ -139,7 +139,6 @@ export function useCalpokerHand(
               console.error('parseCards from OpponentMoved failed:', e);
             }
           } else if (currentMove >= 2n) {
-            handFinishedRef.current = true;
             const myDiscardsBitfield = selectedCardsToBitfield(
               cardSelectionsRef.current,
               playerHandRef.current,
@@ -154,12 +153,19 @@ export function useCalpokerHand(
             setOutcome(newOutcome);
             outcomeRef.current = newOutcome;
 
-            if (!iStarted && currentMove === 2n) {
-              try {
-                gameObjectRef.current?.makeMove(gameIdRef.current, null);
-              } catch (e) {
-                console.error('makeMove (final reveal) failed:', e);
-              }
+            // Endgame mirrors on-chain play: Alice makes the terminal move and
+            // Bob gives up. The responder (Bob) has just received Alice's
+            // terminal move, so the hand is over for him — the infrastructure
+            // hands him this final readable (after confirming no slash is
+            // available) and queues the AcceptTimeout that settles the game. He
+            // must NOT send a phantom sixth move back over the wire. The
+            // initiator (Alice) has learned the result from the opponent's
+            // reveal but still owes her terminal move (step e); the autofire
+            // effect plays it so the opponent and the chain can settle, and her
+            // hand finishes when the opponent gives up (Timeout /
+            // EndedOpponentTimedOut), not here.
+            if (!iStarted) {
+              handFinishedRef.current = true;
             }
 
             onOutcome(newOutcome);

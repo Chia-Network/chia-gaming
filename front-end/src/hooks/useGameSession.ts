@@ -22,7 +22,7 @@ import {
 } from './blobSingleton';
 import { WasmBlobWrapper, RestoreStatus } from './WasmBlobWrapper';
 import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBase64 } from './save';
-import { coinIdFromBytes } from '../util';
+import { coinIdFromBytes, coerceToBytes } from '../util';
 import { log } from '../services/log';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
@@ -48,11 +48,7 @@ export type GameplayEvent =
   | { GameError: { reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) return value;
-  if (Array.isArray(value) && value.every((b): b is number => typeof b === 'number')) {
-    return Uint8Array.from(value);
-  }
-  return null;
+  return coerceToBytes(value);
 }
 
 function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): GameplayEvent {

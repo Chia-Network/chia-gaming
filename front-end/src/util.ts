@@ -26,6 +26,43 @@ export async function coinIdFromBytes(coin: Uint8Array | number[]): Promise<stri
   return toHexString(new Uint8Array(hash));
 }
 
+/**
+ * Normalize an opaque byte blob (e.g. a serialized `CoinString` arriving from
+ * the WASM bridge or restored from persistence) into a `Uint8Array`.
+ *
+ * Byte blobs are the one integer-bearing value that is intentionally NOT a
+ * `bigint` (per the frontend BigInt policy, typed arrays are the exception).
+ * A `Uint8Array` is exempt from the save-time `assertNoNumbers` check and is
+ * persisted losslessly as a `$bytes` tag. The danger is a byte blob that has
+ * lost its typed-array identity and degraded into a plain array of numbers or
+ * a numeric-keyed object (`{0:93,...}`) — those trip the validator and break
+ * coin parsing. This coerces any of those shapes back into a `Uint8Array`.
+ */
+export function coerceToBytes(value: unknown): Uint8Array | null {
+  if (value == null) return null;
+  if (value instanceof Uint8Array) return value;
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value, (b) => Number(b) & 0xff);
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.length === 0) return null;
+    const indices = keys.map((k) => Number(k));
+    if (indices.some((i) => !Number.isInteger(i) || i < 0)) return null;
+    const out = new Uint8Array(Math.max(...indices) + 1);
+    for (const k of keys) {
+      out[Number(k)] = Number(record[k]) & 0xff;
+    }
+    return out;
+  }
+  return null;
+}
+
 export function normalizeHexString(hex: string) {
   return hex.trim().toLowerCase().replace(/^0x/, '');
 }

@@ -496,6 +496,11 @@ two-phase `AcceptProposal` behavior, and stall-detection notes live in
 
 ## Invariant Assertions: `game_assert!` / `game_assert_eq!`
 
+These macros are the primary tool for the codebase's
+[fail-fast philosophy](OVERVIEW.md#design-philosophy-fail-fast): when an internal
+invariant is violated, surface it immediately instead of adding a
+belt-and-suspenders backstop that tolerates the broken state.
+
 Production code must never crash on bad data from peers or the blockchain.
 At the same time, internal invariant violations are bugs that should be caught
 loudly during development and testing.

@@ -13,6 +13,7 @@ be expected.
 ## Table of Contents
 
 - [Overview](#overview)
+- [Design Philosophy: Fail Fast](#design-philosophy-fail-fast)
 - [State Channels: The Core Idea](#state-channels-the-core-idea)
 - [Coin Hierarchy](#coin-hierarchy)
 - [The Potato Protocol](#the-potato-protocol)
@@ -39,6 +40,45 @@ blockchain is only needed in two cases:
 This design means most games never touch the blockchain at all. The on-chain
 path exists purely as a **threat** that keeps both players honest: if you cheat,
 your opponent can prove it on-chain and take your money.
+
+---
+
+## Design Philosophy: Fail Fast
+
+This codebase **fails fast**: when something is wrong, it surfaces the error at
+the point of detection rather than papering over it. The goal is that bugs get
+diagnosed and fixed at their source, not masked by defensive code that lets a
+corrupted state limp along and produce a confusing failure somewhere else later.
+
+Concretely, this means **no belt-and-suspenders backstops** — no silently
+swallowing an unexpected event, no "just in case" idempotency guard around a
+call that should only happen once, no defaulting a value that should never be
+absent. Such backstops trade a loud, locatable failure for a quiet, mislocated
+one; they hide the very bug that needs fixing and tend to accumulate into a
+system nobody fully understands. When you are tempted to add a guard, first ask
+whether the condition it guards against can actually occur in correct operation.
+If it cannot, assert instead — don't tolerate it.
+
+The one essential distinction is the **trust boundary**:
+
+- **Untrusted input** — data from a peer or the blockchain — is validated and
+  rejected gracefully. A peer sending a bad batch is a protocol violation we
+  expect and handle (reject the batch, go on-chain); it is not a bug in our
+  code, so it must never crash us.
+- **Internal invariants** — conditions that can only be false if *our own* code
+  is wrong — fail loudly. These use `game_assert!` / `game_assert_eq!`, which
+  panic in debug/test builds (so the bug is impossible to miss) and return an
+  `Err` in release builds (so a deployed process degrades into an error
+  notification rather than corrupting state). The simulator applies the same
+  principle on the chain side via strict mode. See
+  [Invariant Assertions](INTERNALS.md#invariant-assertions-game_assert--game_assert_eq)
+  and [Simulator Strictness](INTERNALS.md#simulator-strictness).
+
+For example, an attempt to make a game move after a terminal move (one whose
+validation program is nil) can only happen if a caller is buggy — so the move
+handler asserts rather than silently discarding the move. Discarding it would
+hide the bug and leave the broken caller in place to cause subtler problems
+later.
 
 ---
 

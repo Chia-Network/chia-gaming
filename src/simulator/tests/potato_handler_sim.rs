@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::NodePtr;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
@@ -2312,6 +2312,67 @@ fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Err
         .sum();
 
     Ok((p1_balance, p2_balance))
+}
+
+fn calpoker_test_moves_with_selected_cards(
+    allocator: &mut AllocEncoder,
+    game_id: GameID,
+    alice_selected: &[usize],
+    bob_selected: &[usize],
+) -> Vec<GameAction> {
+    let alice_word = b"0alice6789abcdef";
+    let bob_seed = b"0bob456789abcdef";
+    let alice_word_hash = crate::common::types::Sha256Input::Bytes(alice_word)
+        .hash()
+        .to_clvm(allocator)
+        .expect("should work");
+    let bob_word = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(bob_seed))
+        .expect("should work");
+    let nil_move = Program::from_hex("80").expect("should build nil move");
+    let alice_picks = alice_selected.to_vec().to_clvm(allocator).expect("should work");
+    let bob_picks = bob_selected.to_vec().to_clvm(allocator).expect("should work");
+
+    vec![
+        GameAction::Move(
+            0,
+            game_id.clone(),
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, alice_word_hash).expect("good"),
+            )),
+            true,
+        ),
+        GameAction::Move(
+            1,
+            game_id.clone(),
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, bob_word).expect("good"),
+            )),
+            true,
+        ),
+        GameAction::Move(
+            0,
+            game_id.clone(),
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, alice_picks).expect("good"),
+            )),
+            true,
+        ),
+        GameAction::Move(
+            1,
+            game_id.clone(),
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, bob_picks).expect("good"),
+            )),
+            true,
+        ),
+        GameAction::Move(
+            0,
+            game_id,
+            ReadableMove::from_program(Rc::new(nil_move)),
+            true,
+        ),
+    ]
 }
 
 pub fn parse_card_lists_from_readable(
@@ -6649,6 +6710,96 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                         .unwrap_or(false)
             )),
             "Alice should get WeTimedOut with zero reward as forfeit, got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_calpoker_winning_step_e_on_chain", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Alice selects the high cards from the deterministic deal, while Bob
+        // selects the low cards.  The parsed off-chain result has
+        // bob_win_dir == -1, meaning Alice wins.
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        moves.extend(calpoker_test_moves_with_selected_cards(
+            &mut allocator,
+            GameID(1),
+            &[32, 36, 41, 49],
+            &[2, 6, 9, 13],
+        ));
+
+        // Pop step e and issue it after GoOnChain, as a normal move.
+        let step_e = moves.pop().unwrap();
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(step_e);
+        moves.push(GameAction::WaitBlocks(120, 1));
+        moves.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let (p0_balance, p1_balance) = get_balances_from_outcome(&outcome).expect("should work");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::OnChainTheirTurn,
+                    other_params: Some(params),
+                    ..
+                } if params.moved_by_us == Some(true)
+                    && params.game_finished == Some(true)
+                    && params.forfeited != Some(true)
+            )),
+            "Alice's winning step e should be submitted on-chain, got: {p0_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::MyTurn,
+                    other_params: Some(params),
+                    ..
+                } if params.readable.is_some()
+                    && params.mover_share == Some(Amount::default())
+            )),
+            "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedOpponentTimedOut,
+                    my_reward: Some(our_reward),
+                    other_params,
+                    ..
+                } if *our_reward == Amount::new(200)
+                    && other_params
+                        .as_ref()
+                        .and_then(|params| params.game_finished)
+                        .unwrap_or(false)
+            )),
+            "Alice should receive full-pot timeout reward, got: {p0_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    ..
+                } if *our_reward == Amount::default()
+            )),
+            "Bob should receive a terminal timeout loss, got: {p1_notifs:?}"
+        );
+        assert_eq!(
+            p0_balance,
+            p1_balance + 200,
+            "Alice should end with the full pot: p0={p0_balance}, p1={p1_balance}"
         );
     }));
 

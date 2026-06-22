@@ -464,7 +464,12 @@ impl OnChainGameHandler {
             }
         }
 
-        if self.live_games[live_game_idx].is_game_over() {
+        if self.live_games[live_game_idx].is_game_over()
+            && !matches!(
+                parsed_solution,
+                ParsedRefereeSolution::Timeout | ParsedRefereeSolution::Slash
+            )
+        {
             self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
             return Ok(CoinSpentInformation::TheirSpend(
                 TheirTurnCoinSpentResult::Expected(state_number, ph, amt, None),

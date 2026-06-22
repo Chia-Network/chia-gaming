@@ -16,6 +16,7 @@ import {
 import { BlockchainPoller, PollingCradle } from './BlockchainPoller';
 import {
   spend_bundle_to_clvm,
+  coerceToBytes,
 } from '../util';
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
@@ -510,7 +511,11 @@ export class WasmBlobWrapper implements PollingCradle {
       if (tag === 'ChannelStatus') {
         const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
         if (cs) {
-          this.lastChannelStatus = cs as unknown as ChannelStatusPayload;
+          // The `coin` field is a serialized CoinString (a byte blob). Normalize
+          // it to a Uint8Array so the persisted SessionState carries a typed
+          // array (exempt from the save-time number check, stored losslessly as
+          // $bytes) rather than a degraded plain array/object of numbers.
+          this.lastChannelStatus = { ...cs, coin: coerceToBytes(cs.coin) } as unknown as ChannelStatusPayload;
           if (!this.channelReady && cs.state === 'Active') {
             log('[wasm] channel confirmed on-chain');
             this.channelReady = true;
