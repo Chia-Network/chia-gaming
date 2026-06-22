@@ -2330,8 +2330,14 @@ fn calpoker_test_moves_with_selected_cards(
         .encode_atom(clvm_traits::Atom::Borrowed(bob_seed))
         .expect("should work");
     let nil_move = Program::from_hex("80").expect("should build nil move");
-    let alice_picks = alice_selected.to_vec().to_clvm(allocator).expect("should work");
-    let bob_picks = bob_selected.to_vec().to_clvm(allocator).expect("should work");
+    let alice_picks = alice_selected
+        .to_vec()
+        .to_clvm(allocator)
+        .expect("should work");
+    let bob_picks = bob_selected
+        .to_vec()
+        .to_clvm(allocator)
+        .expect("should work");
 
     vec![
         GameAction::Move(
