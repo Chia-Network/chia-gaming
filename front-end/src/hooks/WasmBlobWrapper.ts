@@ -18,7 +18,7 @@ import {
   spend_bundle_to_clvm,
   coerceToBytes,
 } from '../util';
-import { log } from '../services/log';
+import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionState } from './save';
 import type { PersistedGameState } from './save';
@@ -357,7 +357,7 @@ export class WasmBlobWrapper implements PollingCradle {
       this.processResult(result);
     } catch (e) {
       this.launcherProvided = false;
-      console.error('[wasm] handleNeedLauncherCoin error:', e);
+      diagStack('handleNeedLauncherCoin error', e);
       log(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
@@ -395,7 +395,7 @@ export class WasmBlobWrapper implements PollingCradle {
       }
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] handleNeedCoinSpend error:', e);
+      diagStack('handleNeedCoinSpend error', e);
       log(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
       let msg = extractErrorMessage(e);
       if (/insufficient funds/i.test(msg)) {
@@ -425,11 +425,14 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   private async submitTransactionNow(tx: SpendBundle) {
-    const blob = spend_bundle_to_clvm(tx);
-    const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-    const fee = this.getFee();
-    log(`[wasm] submitTransaction blobLen=${blob.length}`);
     try {
+      // The blob/conversion/fee work used to run before the try, so a throw
+      // here (e.g. from the wasm connection) rejected the submit queue
+      // unhandled.  Keep it inside the try so every failure path is captured.
+      const blob = spend_bundle_to_clvm(tx);
+      const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
+      const fee = this.getFee();
+      log(`[wasm] submitTransaction blobLen=${blob.length}`);
       await this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined);
     } catch (e) {
       const message = extractErrorMessage(e);
@@ -437,7 +440,7 @@ export class WasmBlobWrapper implements PollingCradle {
         log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
         return;
       }
-      console.error('[wasm] submitTransaction failed:', e);
+      diagStack('submitTransaction failed', e);
       log(`[wasm] submitTransaction failed: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: message });
     }
@@ -445,7 +448,12 @@ export class WasmBlobWrapper implements PollingCradle {
 
   private submitTransaction(tx: SpendBundle) {
     if (this.transactionPublishNerfed) return;
-    this.transactionSubmitQueue = this.transactionSubmitQueue.then(() => this.submitTransactionNow(tx));
+    // Guard the chain with a diagnostic catch: an unhandled rejection escaping
+    // this promise is invisible in CI except as a bare empty-message test
+    // failure, which is exactly the symptom we are chasing.
+    this.transactionSubmitQueue = this.transactionSubmitQueue
+      .then(() => this.submitTransactionNow(tx))
+      .catch((e) => { diagStack('transactionSubmitQueue rejected', e); });
   }
 
   /**
@@ -459,7 +467,7 @@ export class WasmBlobWrapper implements PollingCradle {
     try {
       bundles = this.cradle.drain_submissions();
     } catch (e) {
-      console.error('[wasm] drain_submissions failed:', e);
+      diagStack('drain_submissions failed', e);
       log(`[wasm] drain_submissions failed: ${String(e)}`);
       return;
     }
@@ -489,7 +497,7 @@ export class WasmBlobWrapper implements PollingCradle {
         try {
           this.dispatchEvent(event);
         } catch (e) {
-          console.error('[wasm] dispatchEvent error:', e);
+          diagStack('dispatchEvent error', e);
           this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
         }
         this.scheduleSave();
@@ -557,7 +565,7 @@ export class WasmBlobWrapper implements PollingCradle {
         this.processResult(result);
       }
     } catch (e) {
-      console.error('[wasm] puzzle/solution fetch failed:', e);
+      diagStack('puzzle/solution fetch failed', e);
       log(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
@@ -600,7 +608,7 @@ export class WasmBlobWrapper implements PollingCradle {
       this.processResult(result);
     } catch (e) {
       const errMsg = extractErrorMessage(e);
-      console.error('[wasm] deliver_message failed:', errMsg);
+      diagStack('deliver_message failed', e);
       this.rxjsEmitter?.next({ type: 'error', error: errMsg });
       const state = this.lastChannelStatus?.state;
       const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
@@ -646,7 +654,7 @@ export class WasmBlobWrapper implements PollingCradle {
     try {
       return this.cradle.get_coins_to_poll();
     } catch (e) {
-      console.error('[wasm] get_coins_to_poll failed:', e);
+      diagStack('get_coins_to_poll failed', e);
       return [];
     }
   }
@@ -665,7 +673,7 @@ export class WasmBlobWrapper implements PollingCradle {
       const result = this.cradle?.report_coin_states(peak, records);
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] report_coin_states failed:', e);
+      diagStack('report_coin_states failed', e);
       log(`[wasm] report_coin_states failed: ${String(e)}`);
     }
   }

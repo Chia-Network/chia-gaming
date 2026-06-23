@@ -1,7 +1,7 @@
 import { InternalBlockchainInterface, CoinStateRecord } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { coinRecordToName } from '../util/coinWatch';
-import { log } from '../services/log';
+import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 
 /**
@@ -59,7 +59,7 @@ export class BlockchainPoller {
     this.firstTick = true;
     this.startedAt = performance.now();
     log(`[blockchain-poller] started, pollMs=${this.pollIntervalMs}`);
-    void this.tick();
+    this.tick().catch((e) => diagStack('blockchain-poller tick loop rejected', e));
   }
 
   stop() {
@@ -80,6 +80,7 @@ export class BlockchainPoller {
       for (const n of newNames) this.registeredNames.add(n);
     } catch (e) {
       // Leave unregistered so the next tick retries.
+      diagStack('blockchain-poller registerCoins failed (will retry)', e);
       log(`[blockchain-poller] registerCoins failed, will retry: ${String(e)}`);
     }
   }
@@ -168,7 +169,7 @@ export class BlockchainPoller {
         this.consecutiveFailures = 0;
       } catch (e) {
         this.consecutiveFailures++;
-        console.error('[blockchain-poller] poll failed', e);
+        diagStack('blockchain-poller poll failed', e);
         log(`[blockchain-poller] poll failed: ${String(e)}`);
       }
       const backoff = this.consecutiveFailures > 0

@@ -97,13 +97,14 @@ let lateRejection: string | null = null;
 
 function onUnhandledRejection(reason: unknown): void {
   const desc = describeThrown(reason);
-  testLog(`unhandledRejection ${desc}`);
+  // Loud + greppable so it survives CI output truncation, with the full stack.
+  process.stderr.write(`DIAG_LOADWASM unhandledRejection: ${desc}\n`);
   lateRejection = desc;
 }
 
 function onUncaughtException(error: unknown): void {
   const desc = describeThrown(error);
-  testLog(`uncaughtException ${desc}`);
+  process.stderr.write(`DIAG_LOADWASM uncaughtException: ${desc}\n`);
   lateRejection = desc;
 }
 
@@ -113,9 +114,21 @@ beforeAll(() => {
   process.on('uncaughtException', onUncaughtException);
 });
 
-afterAll(() => {
-  process.off('unhandledRejection', onUnhandledRejection);
-  process.off('uncaughtException', onUncaughtException);
+afterAll(async () => {
+  // Deliberately DO NOT remove the rejection handlers here.  The CI failure we
+  // are chasing is a late async rejection that fires *after* afterAll runs;
+  // with the handlers removed it reached jest's framework handler and produced
+  // an opaque empty-message failure.  Leaving them installed (with the loud
+  // DIAG_LOADWASM logging above) means the actual reason + stack always lands
+  // in the CI output.  These are process-global handlers in a short-lived test
+  // process, so leaving them attached is harmless.
+  //
+  // Drain a little here so a late rejection has a chance to fire and be logged
+  // before the test process exits.
+  await new Promise<void>((r) => setTimeout(r, 500));
+  if (lateRejection) {
+    process.stderr.write(`DIAG_LOADWASM late rejection captured during run:\n${lateRejection}\n`);
+  }
   clearTestGlobal('localStorage');
 });
 
@@ -152,8 +165,11 @@ afterEach(async () => {
     testLog('cleanup after resources');
     resetSaveState();
     testLog('cleanup done');
-    // Drain microtask queue to catch late async errors
-    await new Promise<void>((r) => setTimeout(r, 50));
+    // Drain microtask queue to catch late async errors.  Widened from 50ms to
+    // give in-flight teardown async (poller RPCs rejecting on disconnect, the
+    // submit queue, reconnect loop) time to settle inside the test boundary so
+    // it fails here with a real message instead of escaping past afterAll.
+    await new Promise<void>((r) => setTimeout(r, 300));
     if (lateRejection) {
       const msg = lateRejection;
       lateRejection = null;

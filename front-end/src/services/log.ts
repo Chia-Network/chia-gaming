@@ -22,3 +22,31 @@ export function subscribeLog(fn: Listener): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
 }
+
+/**
+ * Diagnostic: write a full stack trace straight to stderr with a greppable
+ * prefix.  The in-memory log() buffer above has no listener in the jest/CI
+ * environment, so `log(String(e))` lines never reach the CI test output;
+ * console.error does, and prints the stack for real Error objects.  Non-Error
+ * throws (strings, wasm RuntimeErrors, rejected events) are wrapped so we still
+ * capture a stack at the catch site rather than just an opaque message.
+ */
+export function diagStack(context: string, e: unknown): void {
+  let name = 'Error';
+  let message: string;
+  let stack: string;
+  if (e instanceof Error) {
+    name = e.name;
+    message = e.message || '(empty message)';
+    stack = e.stack ?? '(no stack)';
+  } else {
+    try {
+      message = typeof e === 'string' ? e : JSON.stringify(e);
+    } catch {
+      message = String(e);
+    }
+    stack = new Error('(non-Error thrown; stack captured at diagStack call site)').stack ?? '(no stack)';
+  }
+  // eslint-disable-next-line no-console
+  console.error(`DIAG_LOADWASM ${context}: ${name}: ${message}\n${stack}`);
+}

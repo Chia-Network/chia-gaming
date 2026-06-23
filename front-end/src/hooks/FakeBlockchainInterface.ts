@@ -9,7 +9,7 @@ import {
   ConnectionSetup,
 } from '../types/ChiaGaming';
 
-import { log } from '../services/log';
+import { log, diagStack } from '../services/log';
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,17 +98,24 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         if (this.ws !== ws) return;
         this.ws = null;
         this.fireConnectionChange(false);
+        if (this.pending.size > 0) {
+          // eslint-disable-next-line no-console
+          console.error(`DIAG_LOADWASM FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`);
+        }
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
         }
         this.pending.clear();
-        this.startConnectLoop();
+        // Fire-and-forget reconnect: runConnectLoop throws 'connection aborted'
+        // when deleted/aborted, so a missing catch here surfaces as an opaque
+        // late unhandled rejection.  Capture it with a stack.
+        this.startConnectLoop().catch((e) => diagStack('FakeBlockchain reconnect loop rejected', e));
       };
       ws.onmessage = (evt: any) => {
         if (this.ws !== ws) return;
         const raw = typeof evt === 'string' ? evt : evt.data;
         let data: any;
-        try { data = jsonParse(raw); } catch { return; }
+        try { data = jsonParse(raw); } catch (e) { diagStack('FakeBlockchain onmessage JSON parse failed', e); return; }
 
         if (data.event === 'block') {
           return;
@@ -163,6 +170,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           ];
           const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
           this.reconnectAttempt++;
+          diagStack('FakeBlockchain runConnectLoop attempt failed', err);
           log(`[sim-blockchain] connect failed: ${err}, backoff ${jitter}ms (attempt ${this.reconnectAttempt})`);
           await sleepMs(jitter);
         }
@@ -277,6 +285,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.ws = null;
     }
     this.fireConnectionChange(false);
+    if (this.pending.size > 0) {
+      // eslint-disable-next-line no-console
+      console.error(`DIAG_LOADWASM FakeBlockchain close(): rejecting ${this.pending.size} pending request(s) with "closed" (ids=${[...this.pending.keys()].join(',')})`);
+    }
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));
     }
