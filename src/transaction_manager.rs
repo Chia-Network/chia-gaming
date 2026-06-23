@@ -915,11 +915,7 @@ mod tests {
     /// Like `test_bundle_spending_creating` but the puzzle also asserts a
     /// relative height timelock, so the manager must treat it as ineligible for
     /// blind rebroadcast.
-    fn test_bundle_timelocked(
-        name: &str,
-        input: &CoinString,
-        output: &CoinString,
-    ) -> SpendBundle {
+    fn test_bundle_timelocked(name: &str, input: &CoinString, output: &CoinString) -> SpendBundle {
         use crate::common::constants::ASSERT_HEIGHT_RELATIVE;
         let mut allocator = AllocEncoder::new();
         let (_, output_ph, output_amount) = output.to_parts().expect("valid output coin");
@@ -1700,7 +1696,10 @@ mod tests {
             "a watched coin first observed already-spent must be forwarded as a spend, got: {:?}",
             report.1
         );
-        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(12));
+        assert_eq!(
+            mgr.watched_coin(&coin).unwrap().spent_confirmed_at,
+            Some(12)
+        );
     }
 
     #[test]
