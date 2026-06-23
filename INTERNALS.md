@@ -134,6 +134,44 @@ remain replayable after their expected output appears
 vanished flags before later genuine spends are forwarded
 (`reorg_remine_in_same_report_clears_vanished_and_allows_later_spend`).
 
+**Per-block rebroadcast for dropped broadcasts.** Reorg-driven replay (above)
+only re-submits a transaction when one of its outputs is observed and then
+vanishes. That does not cover a broadcast that simply never reached the network
+in the first place — e.g. an unroll *preempt*, which has no relative timelock and
+no other resubmission path, and would otherwise strand the protocol waiting for a
+coin spend that never comes. So on every block `resubmit_pending` rebroadcasts
+each retained submission that is
+
+- flagged `auto_resubmit` — it creates an observable output coin (so we can tell
+  when it lands) **and** carries no relative timelock (so rebroadcasting it at a
+  later height stays valid even after a reorg; `bundle_has_relative_timelock`
+  decides this, treating an unanalyzable bundle as timelocked);
+- not yet observed to land; and
+- still has at least one input coin present (unspent).
+
+The **input-present gate** is what keeps this safe against abandoned intents:
+once a transaction's input is spent — whether because our own spend landed or a
+conflicting spend won — it is never rebroadcast again. Rebroadcasting an
+*identical* bundle is harmless (the mempool de-duplicates by fingerprint), and a
+cross-party conflict (the opponent spending the same coin with a *different*
+bundle) is expected on a real chain and resolves naturally, since only one spend
+of a coin can confirm. Eager timeout claims are deliberately excluded from this
+path (they carry a relative timelock) because the ripeness logic above already
+resubmits them in a reorg-aware way. Coverage:
+`auto_resubmits_dropped_output_bearing_spend_until_it_lands`,
+`auto_resubmit_stops_when_input_spent_by_conflict`,
+`auto_resubmit_skips_timelocked_spend`,
+`auto_resubmit_skips_when_input_not_present`.
+
+**Spends first observed as already-spent are still forwarded.** A watched coin
+whose very first observation already carries a spend height (an opponent's coin
+that was published and spent before our first poll of it) never enters the live
+set, so the present→absent diff cannot surface it. The manager captures these
+`first_seen_spent` coins and merges them into the spend report anyway; without
+this a handler waiting on such a coin — e.g. an opponent-published unroll coin —
+never receives `coin_spent` and stalls forever
+(`coin_first_seen_already_spent_is_forwarded_as_spend`).
+
 **Notifications ride the observed spend.** Terminal notifications are emitted
 from `handle_game_coin_spent` (via the `coin_spent` → `coin_puzzle_and_solution`
 pipeline) by interpreting what the observed spend created — our reward coin
@@ -463,6 +501,21 @@ there is a bug.
 | **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
 | **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
 
+
+**Conflicting mempool spends are the one exception to "this can only be a bug."**
+Two *different* transactions spending the same coin is perfectly normal on a real
+chain: it happens whenever both parties go on chain at once, a peer misbehaves, or
+the two sides are temporarily disconnected, and the chain resolves it for free
+(only one spend of a coin can confirm). Strict mode still fails fast on it because
+an *unexpected* conflict is usually a symptom worth investigating, and failing at
+the point of conflict is far easier to debug than a divergent outcome many blocks
+later. (Resubmitting an *identical* bundle is not a conflict — the mempool
+de-duplicates by fingerprint.) The genuine bug this guards against is a single
+party putting two different competing transactions on chain itself (e.g. holding a
+good clean-shutdown and *also* unrolling). When a test legitimately drives both
+sides to spend the same coin, it must designate a winner by nerfing the loser; see
+[Strict Mode](SIMULATOR_TESTING.md#strict-mode-why-double-submission-fails-tests)
+in the simulator testing reference.
 
 **Key code:** `src/simulator/mod.rs` — `push_transactions`
 

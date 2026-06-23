@@ -72,7 +72,8 @@ The full `sim-tests` enum lives in `src/test_support/game.rs`.
 | `SaveUnrollSnapshot(player)` | Snapshot current unroll spend info for later stale-unroll testing. |
 | `ForceStaleUnroll(player)` | Submit an unroll using a previously saved snapshot. |
 | `NerfTransactions(player)` | Silently drop all outbound transactions for a player. |
-| `UnNerfTransactions(replay)` | Stop dropping outbound transactions; replay or discard the backlog. |
+| `UnNerfTransactions(replay)` | Stop dropping outbound transactions for everyone; replay or discard the backlog. |
+| `UnNerfTransactionsFor(player)` | Stop dropping outbound transactions for a single player, leaving any other nerfed players and the shared backlog untouched. Lets one side win an on-chain race while the other stays nerfed. |
 | `BlockCoinReports(player)` | Stop delivering watched-coin state changes to a player. |
 | `UnblockCoinReports(replay)` | Resume watched-coin reports; replay or discard the backlog. |
 | `NerfMessages(player)` | Silently drop all outbound peer messages for a player. |
@@ -95,6 +96,65 @@ Because flushing happens in fixed order, a message sent by player 1 takes one
 extra iteration to reach player 0 compared to the reverse direction. This is
 expected; event-driven triggers wait for the notifications that make an action
 ready instead of relying on fixed iteration counts.
+
+## Strict Mode: Why Double-Submission Fails Tests
+
+The simulator runs in a **strict mode** that `panic!`s instead of returning a
+soft error when a transaction can't be included. The triggers are in
+`Simulator::push_transactions` (`src/simulator/mod.rs`): a rejected spend
+bundle, spending a coin that is already spent or not found, a violated
+`ASSERT_HEIGHT_RELATIVE` / `ASSERT_BEFORE_HEIGHT_ABSOLUTE` timelock, an
+undeclared fee, and -- the one test authors hit most often -- **two different
+transactions in the mempool that spend the same coin** ("conflicting
+transactions in mempool").
+
+### This is a deliberate fail-fast, not real-chain behavior
+
+On a real blockchain, two parties broadcasting transactions that spend the same
+coin is normal and harmless. It happens routinely when a peer misbehaves, when
+the two sides are temporarily disconnected, or simply when both independently
+decide to go on chain at once. The chain resolves it for free: only one spend of
+a given coin can ever be confirmed, and the other is rejected. The protocol is
+designed to tolerate this.
+
+Strict mode intentionally turns that harmless situation into an immediate test
+failure. The goal is to surface as many problems as possible: an unexpected
+conflict almost always means a bug worth investigating (e.g. a transaction being
+resubmitted from a stale intent, or a coin being spent down two paths at once).
+Failing loudly at the exact point of conflict is far easier to debug than
+chasing a divergent outcome many blocks later. In non-strict mode the same code
+path returns a graceful `code: 3 / e: 9` rejection, mirroring the real chain --
+but tests run strict.
+
+### What is and isn't a conflict
+
+- **Identical resubmission is fine.** A bundle with the same fingerprint as one
+  already in the mempool is de-duplicated (`code: 1`), so a party rebroadcasting
+  its *own* transaction every block (see the `TransactionManager` resubmission
+  loop in `INTERNALS.md`) never trips strict mode.
+- **The real invariant** strict mode helps protect is that a single party must
+  never put two *different* competing transactions on chain itself -- for
+  example, holding a good clean-shutdown transaction and *also* trying to
+  unroll. That is a genuine bug; cross-party competition is not.
+
+### The opt-out: nerf the loser
+
+Because cross-party conflicts are legitimate, a test that drives both sides
+toward spending the same coin must decide which side is "supposed to win" and
+nerf the other with `NerfTransactions`. Some common patterns:
+
+- When a test forces a specific spend on chain with `ForceUnroll` /
+  `ForceStaleUnroll`, keep *both* managers' transactions nerfed across the race
+  so the forced spend is the sole spend of that coin, then `UnNerfTransactions`
+  / `UnNerfTransactionsFor` once it has landed (its input coin is now spent, so
+  the manager's rebroadcast of any competing spend is gated off).
+- Use `UnNerfTransactionsFor(player)` when only one side should resume
+  submitting -- e.g. the winner still needs to submit a follow-up timeout claim
+  while the loser only observes. `UnNerfTransactions` clears the nerf for
+  everyone at once and would re-open the conflict.
+- Remember that nerfing a player's transactions does not stop its coin reports:
+  a nerfed player still *observes* the on-chain spend and reacts to it, which is
+  exactly what exercises opponent-spend detection.
 
 ## Event-Driven Triggers
 
