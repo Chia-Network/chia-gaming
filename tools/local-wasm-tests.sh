@@ -29,10 +29,16 @@ LOBBY_FRONTEND_DIR="$REPO_ROOT/lobby/lobby-frontend"
 
 SKIP_BUILD=0
 SKIP_NATIVE=0
+# CI builds the wasm with --release; default here is --dev for fast local
+# iteration.  Pass --release to reproduce CI's build profile (panic/optimization
+# behavior differs, which matters for chasing CI-only failures).
+WASM_PROFILE=--dev
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
         --skip-native) SKIP_NATIVE=1 ;;
+        --release) WASM_PROFILE=--release ;;
+        --dev) WASM_PROFILE=--dev ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
@@ -59,8 +65,8 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
         "$SCRIPT_DIR/build-chialisp.sh"
     fi
 
-    echo "=== Building WASM (nodejs target for tests) ==="
-    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --dev --target=nodejs)
+    echo "=== Building WASM (nodejs target for tests, profile $WASM_PROFILE) ==="
+    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" "$WASM_PROFILE" --target=nodejs)
 
     echo "=== Installing lobby workspace deps ==="
     (cd "$REPO_ROOT/lobby" && pnpm install --frozen-lockfile)
@@ -105,4 +111,7 @@ cd "$FE_DIR"
 if [[ "$(node --help)" == *"--no-experimental-webstorage"* ]]; then
     export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage"
 fi
+# We just guaranteed the sim is up; a "no sim" skip here would hide a broken
+# harness, so make it a hard failure to match CI.
+export LOAD_WASM_REQUIRE_SIM=1
 pnpm run test

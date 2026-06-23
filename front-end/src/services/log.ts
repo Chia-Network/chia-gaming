@@ -24,6 +24,20 @@ export function subscribeLog(fn: Listener): () => void {
 }
 
 /**
+ * Optional extra diagnostic sink.  The CI failure we chase fires while the jest
+ * worker is dying, when stderr/console output is lost.  A test (which has `fs`)
+ * registers a sink here that appends synchronously to a file on disk -- that
+ * survives the worker death, and a later shell step `cat`s the file into the
+ * live GitHub Actions log.  Kept out of this (browser-shared) module so we
+ * never import `fs` here.
+ */
+let extraDiagSink: ((line: string) => void) | null = null;
+
+export function setDiagSink(fn: ((line: string) => void) | null): void {
+  extraDiagSink = fn;
+}
+
+/**
  * Teardown-proof diagnostic sink.
  *
  * The errors we care about most fire *after* the jest test environment is torn
@@ -31,10 +45,16 @@ export function subscribeLog(fn: Listener): () => void {
  * `global.console`, so a console.* call at that point hits "Cannot log after
  * tests are done" and the line is dropped -- precisely the error we are chasing
  * never gets logged.  `process.stderr.write` is a raw stream jest does NOT
- * patch and it targets the real process, so it survives teardown.  Fall back to
- * console.error only in the browser, where `process` is unavailable.
+ * patch and it targets the real process, so it survives teardown.  The
+ * registered sink (a synchronous file append in tests) survives even a dying
+ * worker.  Fall back to console.error only in the browser.
  */
 function diagWrite(line: string): void {
+  // Durable sink first: it must capture the line even if everything below is
+  // about to die.
+  if (extraDiagSink) {
+    try { extraDiagSink(line); } catch { /* never let logging throw */ }
+  }
   try {
     const proc = (typeof process !== 'undefined' ? process : undefined) as
       | { stderr?: { write?: (s: string) => void } }

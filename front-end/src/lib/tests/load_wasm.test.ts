@@ -29,6 +29,7 @@ import {
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
 import { _resetForTests as resetSaveState } from '../../hooks/save';
+import { setDiagSink } from '../../services/log';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configGameObject } from '../../hooks/blobSingleton';
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
@@ -82,36 +83,75 @@ function describeThrown(e: unknown): string {
   if (e instanceof Error) {
     return `${e.name}: ${e.message}\n${e.stack ?? ''}`;
   }
+  // Empty/undefined/non-Error rejections are exactly the opaque case that
+  // produced blank CI failures, so record the shape explicitly.
+  const shape = `typeof=${typeof e} ctor=${
+    e && typeof e === 'object' ? ((e as { constructor?: { name?: string } }).constructor?.name ?? '?') : 'n/a'
+  }`;
   try {
-    return `non-Error thrown: ${JSON.stringify(e)}`;
+    return `non-Error thrown (${shape}): ${JSON.stringify(e)}`;
   } catch {
-    return `non-Error thrown: ${String(e)}`;
+    return `non-Error thrown (${shape}): ${String(e)}`;
   }
 }
 
+// Durable diagnostic file.  Everything in CI dies the moment the test process
+// is torn down, and a dying jest worker loses its buffered stderr -- so the one
+// error we care about never reaches the GitHub log.  A *synchronous* file
+// append lands on disk immediately and survives the worker dying; a later shell
+// step `cat`s this file into the live Actions log.  The path is overridable so
+// the workflow and the test agree on it.
+const DIAG_FILE = process.env.LOAD_WASM_DIAG_FILE
+  || resolve(__dirname, '../../..', 'load_wasm_diag.log');
+
+function diagFileWrite(line: string): void {
+  try {
+    fs.appendFileSync(DIAG_FILE, line.endsWith('\n') ? line : line + '\n');
+  } catch { /* never let logging throw */ }
+}
+
+// Write to the durable file first (must survive teardown), then to stderr for
+// live visibility during the test.
+function diagAll(line: string): void {
+  diagFileWrite(line);
+  try { process.stderr.write(line + '\n'); } catch { /* ignore */ }
+}
+
 function testLog(message: string): void {
-  process.stderr.write(`[load_wasm] ${message}\n`);
+  diagAll(`[load_wasm] ${message}`);
 }
 
 let lateRejection: string | null = null;
 
 function onUnhandledRejection(reason: unknown): void {
   const desc = describeThrown(reason);
-  // Loud + greppable so it survives CI output truncation, with the full stack.
-  process.stderr.write(`DIAG_LOADWASM unhandledRejection: ${desc}\n`);
+  diagAll(`DIAG_LOADWASM unhandledRejection: ${desc}`);
   lateRejection = desc;
 }
 
 function onUncaughtException(error: unknown): void {
   const desc = describeThrown(error);
-  process.stderr.write(`DIAG_LOADWASM uncaughtException: ${desc}\n`);
+  diagAll(`DIAG_LOADWASM uncaughtException: ${desc}`);
   lateRejection = desc;
 }
 
+// Records the final exit code so a hard worker crash (e.g. a wasm abort that
+// throws no catchable JS error) is distinguishable from a clean exit -- the
+// last lines in the diag file then show exactly how far execution got.
+function onProcessExit(code: number): void {
+  diagFileWrite(`DIAG_LOADWASM process exit code=${code}`);
+}
+
 beforeAll(() => {
+  // Truncate any stale file from a previous run so the cat shows only this run.
+  try { fs.writeFileSync(DIAG_FILE, `DIAG_LOADWASM diag file start ${new Date().toISOString()}\n`); } catch { /* ignore */ }
+  // Route the cradle/poller/blockchain diagnostics (which go through the shared
+  // log module's diagStack/diagNote) into the same durable file.
+  setDiagSink(diagFileWrite);
   setTestGlobal('localStorage', makeStorage());
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
+  process.on('exit', onProcessExit);
 });
 
 afterAll(async () => {
@@ -127,8 +167,9 @@ afterAll(async () => {
   // before the test process exits.
   await new Promise<void>((r) => setTimeout(r, 500));
   if (lateRejection) {
-    process.stderr.write(`DIAG_LOADWASM late rejection captured during run:\n${lateRejection}\n`);
+    diagAll(`DIAG_LOADWASM late rejection captured during run:\n${lateRejection}`);
   }
+  diagAll('DIAG_LOADWASM afterAll complete');
   clearTestGlobal('localStorage');
 });
 
@@ -379,7 +420,15 @@ it(
     });
     try {
       if (!(await isSimulatorAvailable())) {
-        console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
+        // In CI the sim is supposed to be up; treating "no sim" as a silent skip
+        // means a broken harness reports green.  When LOAD_WASM_REQUIRE_SIM is
+        // set (the workflow sets it), make it a hard failure instead.
+        const msg = `Simulator not running at ${BLOCKCHAIN_SERVICE_URL}`;
+        if (process.env.LOAD_WASM_REQUIRE_SIM) {
+          testLog(`FATAL: ${msg} but LOAD_WASM_REQUIRE_SIM is set`);
+          throw new Error(`[load_wasm] ${msg} (LOAD_WASM_REQUIRE_SIM set)`);
+        }
+        console.warn(msg, '- skipping load_wasm test. Run ./ct.sh for full suite.');
         return;
       }
       testLog('simulator available');

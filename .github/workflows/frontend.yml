@@ -93,8 +93,31 @@ jobs:
 
       - name: Run WASM/Jest tests
         run: |
+          set -u
+          GW="${{ github.workspace }}"
+          SIM_LOG="${GW}/sim.log"
+          # Must match the load_wasm test's default diag path; we set it
+          # explicitly so the test and this step never disagree.
+          export LOAD_WASM_DIAG_FILE="${GW}/front-end/load_wasm_diag.log"
+          # A missing simulator must be a hard failure here, never a silent skip.
+          export LOAD_WASM_REQUIRE_SIM=1
+          rm -f "${SIM_LOG}" "${LOAD_WASM_DIAG_FILE}"
+
+          # These diagnostics are written synchronously to disk during the test
+          # (so they survive a dying jest worker that loses buffered stderr).
+          # Always dump them into this live log -- pass or fail -- so the actual
+          # failure reason is visible in the GitHub Actions output instead of a
+          # blank "1 failed" line.
+          dump_logs() {
+              echo "==================== sim.log ===================="
+              cat "${SIM_LOG}" 2>/dev/null || echo "(no sim.log produced)"
+              echo "=============== load_wasm diag file ============="
+              cat "${LOAD_WASM_DIAG_FILE}" 2>/dev/null || echo "(no diag file produced)"
+              echo "================================================="
+          }
+
           SIM_BIN="./target/debug/chia-gaming-sim"
-          RUST_LOG=error "$SIM_BIN" &
+          RUST_LOG=error "$SIM_BIN" > "${SIM_LOG}" 2>&1 &
           SIM_PID=$!
 
           for i in $(seq 1 30); do
@@ -103,7 +126,8 @@ jobs:
                   break
               fi
               if ! kill -0 "$SIM_PID" 2>/dev/null; then
-                  echo "Simulator process died"
+                  echo "Simulator process died during startup"
+                  dump_logs
                   exit 1
               fi
               sleep 1
@@ -111,12 +135,19 @@ jobs:
 
           if ! curl -s http://localhost:5800/get_peak >/dev/null 2>&1; then
               echo "Simulator failed to start within 30 seconds"
+              dump_logs
               exit 1
           fi
 
+          # Do not let a non-zero test exit abort the step before we dump logs.
           (cd front-end && pnpm run test)
+          rc=$?
 
           kill "$SIM_PID" 2>/dev/null || true
+
+          dump_logs
+
+          exit "$rc"
 
       # ── Headless browser test ───────────────────────────────────────
 

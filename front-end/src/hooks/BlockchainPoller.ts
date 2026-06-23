@@ -1,7 +1,7 @@
 import { InternalBlockchainInterface, CoinStateRecord } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { coinRecordToName } from '../util/coinWatch';
-import { log, diagStack } from '../services/log';
+import { log, diagStack, diagNote } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 
 /**
@@ -79,8 +79,10 @@ export class BlockchainPoller {
       await this.rpc.registerCoins(newNames);
       for (const n of newNames) this.registeredNames.add(n);
     } catch (e) {
-      // Leave unregistered so the next tick retries.
-      diagStack('blockchain-poller registerCoins failed (will retry)', e);
+      // Leave unregistered so the next tick retries.  This is an EXPECTED
+      // transient (and a unit test deliberately triggers it), so log a concise
+      // note -- no stack dump, which would bury real signal.
+      diagNote(`blockchain-poller registerCoins failed (will retry): ${String(e)}`);
       log(`[blockchain-poller] registerCoins failed, will retry: ${String(e)}`);
     }
   }
