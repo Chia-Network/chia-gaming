@@ -105,10 +105,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           p.reject(new Error('WebSocket closed'));
         }
         this.pending.clear();
-        // Fire-and-forget reconnect: runConnectLoop throws 'connection aborted'
-        // when deleted/aborted, so a missing catch here surfaces as an opaque
-        // late unhandled rejection.  Capture it with a stack.
-        this.startConnectLoop().catch((e) => diagStack('FakeBlockchain reconnect loop rejected', e));
+        // Fire-and-forget reconnect.  A deliberate shutdown makes runConnectLoop
+        // return cleanly (it no longer throws on abort), so this can reject only
+        // on a genuine unexpected bug -- which we intentionally let surface as an
+        // unhandled rejection rather than swallow.
+        void this.startConnectLoop();
       };
       ws.onmessage = (evt: any) => {
         if (this.ws !== ws) return;
@@ -169,12 +170,18 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           ];
           const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
           this.reconnectAttempt++;
-          diagStack('FakeBlockchain runConnectLoop attempt failed', err);
+          // Expected transient while reconnecting (e.g. sim not up yet); a plain
+          // log is enough -- no stack dump, which would bury real signal.
           log(`[sim-blockchain] connect failed: ${err}, backoff ${jitter}ms (attempt ${this.reconnectAttempt})`);
           await sleepMs(jitter);
         }
       }
-      throw new Error('connection aborted');
+      // The loop exited because we were told to shut down (`deleted` set during
+      // teardown/disconnect).  That is a normal, expected termination -- not an
+      // error.  Returning cleanly (instead of throwing 'connection aborted')
+      // means a fire-and-forget reconnect during teardown no longer rejects,
+      // which is what was producing the opaque late unhandled rejection in CI.
+      log('[sim-blockchain] reconnect loop stopped (shutting down)');
     } finally {
       this.connectLoopPromise = null;
     }
