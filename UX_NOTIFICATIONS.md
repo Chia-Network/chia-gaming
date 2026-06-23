@@ -477,7 +477,7 @@ never see raw notifications; they receive one of:
 
 | Variant | Shape | When |
 |---------|-------|------|
-| `Timeout` | `{ byUs: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout |
+| `Timeout` | `{ byUs: boolean, forfeited: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout. `forfeited: true` marks the case where the losing side intentionally skipped its final move (no point paying for an on-chain move that wins nothing), so games can label it "Forfeit" instead of the misleading "Timed Out". `byUs` gives the direction. |
 | `GameError` | `{ reason: string }` | Slashes, cheats, cancellations, errors, insufficient balance |
 
 The mapping from `GameTerminalType` (produced by `parseGameStatusTerminalInfo`)
@@ -485,9 +485,9 @@ to `GameplayEvent`:
 
 | Terminal type | GameplayEvent |
 |---------------|---------------|
-| `forfeit` | `Timeout { byUs }` -- direction from the original `GameStatusKind` |
-| `we-timed-out` | `Timeout { byUs: true }` |
-| `opponent-timed-out` | `Timeout { byUs: false }` |
+| `forfeit` | `Timeout { byUs, forfeited: true }` -- direction from the original `GameStatusKind` |
+| `we-timed-out` | `Timeout { byUs: true, forfeited: false }` |
+| `opponent-timed-out` | `Timeout { byUs: false, forfeited: false }` |
 | `we-slashed-opponent` | `GameError` |
 | `opponent-slashed-us` | `GameError` |
 | `opponent-successfully-cheated` | `GameError` |

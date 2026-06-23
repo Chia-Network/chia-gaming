@@ -34,7 +34,11 @@ export interface SpGameState {
 
 export interface SpHandEntry {
   player: 'you' | 'opponent';
-  action: 'check' | 'raise' | 'call' | 'fold';
+  // 'reveal' is the final showdown reveal — the phantom end-of-hand move where
+  // the second player to act opens their cards (done when they win or chop).
+  // 'fold' covers both a betting-round fold and a showdown concede (the second
+  // player declines to reveal because they would lose); both render as a red X.
+  action: 'check' | 'raise' | 'call' | 'fold' | 'reveal';
   units?: bigint;
   endsStreet?: boolean;
 }
@@ -481,6 +485,7 @@ export function useSpacepokerHand(
               opponentHandCards: oppSelected,
               opponentHandEval: oppEval,
             });
+            setHandHistory(prev => [...prev, { player: 'opponent', action: 'reveal' }]);
             setTerminalState('revealed');
             transition({ handler: SpHandler.Showdown, myTurn: false, N: 0n });
             return;
@@ -535,6 +540,7 @@ export function useSpacepokerHand(
                 recordOutcome(null);
                 setOpponentHoleCards(null);
                 setOpponentBoost(null);
+                setHandHistory(prev => [...prev, { player: 'opponent', action: 'fold' }]);
                 setTerminalState('conceded-by-opponent');
                 transition({ handler: SpHandler.Showdown, myTurn: false, N: 0n });
               } else {
@@ -615,9 +621,11 @@ export function useSpacepokerHand(
       try {
         if (action === 'reveal') {
           go.makeMove(gid, null);
+          setHandHistory(prev => [...prev, { player: 'you', action: 'reveal' }]);
           setTerminalState('revealed');
         } else {
           go.acceptTimeout(gid);
+          setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
           setTerminalState('conceded-by-you');
         }
       } catch (error) {

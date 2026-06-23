@@ -44,7 +44,7 @@ export type GameplayEvent =
   | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: Uint8Array | number[] } }
   | { GameMessage: { readable: Uint8Array | number[] } }
-  | { Timeout: { byUs: boolean } }
+  | { Timeout: { byUs: boolean; forfeited: boolean } }
   | { GameError: { reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
@@ -54,11 +54,17 @@ function asBytes(value: unknown): Uint8Array | null {
 function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): GameplayEvent {
   switch (info.type) {
     case 'forfeit':
-      return { Timeout: { byUs: status === 'ended-we-timed-out' } };
+      // A forfeit is a timeout-based terminal where the loser intentionally
+      // skipped its final move (no point paying for an on-chain move that wins
+      // nothing). Carry the distinction so games can label it "Forfeit" rather
+      // than the misleading "Timed Out". Direction follows the status: our own
+      // forfeit arrives as ended-we-timed-out, the opponent's as
+      // ended-opponent-timed-out.
+      return { Timeout: { byUs: status === 'ended-we-timed-out', forfeited: true } };
     case 'we-timed-out':
-      return { Timeout: { byUs: true } };
+      return { Timeout: { byUs: true, forfeited: false } };
     case 'opponent-timed-out':
-      return { Timeout: { byUs: false } };
+      return { Timeout: { byUs: false, forfeited: false } };
     default:
       return { GameError: { reason: info.label ?? info.type } };
   }

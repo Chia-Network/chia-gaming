@@ -424,6 +424,7 @@ function CalpokerHand({
     moveNumber,
     outcome,
     timeoutByUs,
+    timeoutForfeited,
     handleMakeMove,
     handleCheat,
     handleNerf,
@@ -480,6 +481,7 @@ function CalpokerHand({
       myName={myName}
       opponentName={opponentName}
       timeoutByUs={timeoutByUs}
+      timeoutForfeited={timeoutForfeited}
     />
   );
 }

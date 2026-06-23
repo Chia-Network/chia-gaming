@@ -698,19 +698,19 @@ function HandDisplay(props: HandDisplayProps) {
             Winner!
           </div>
         )}
-        {timeoutBadge === 'timeout' && (
+        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && (
           <div
             className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-solid px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
               left: '50%',
               // Right-justify the badge to the last card's right edge. Anchoring
-              // by the right edge (-100%) keeps the wider "Timed Out" text from
-              // overflowing past the cards and getting clipped, unlike the
-              // fixed-width center used for the shorter "Winner!" badge.
+              // by the right edge (-100%) keeps the wider "Timed Out" / "Forfeit"
+              // text from overflowing past the cards and getting clipped, unlike
+              // the fixed-width center used for the shorter "Winner!" badge.
               transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
             }}
           >
-            Timed Out
+            {timeoutBadge === 'forfeit' ? 'Forfeit' : 'Timed Out'}
           </div>
         )}
 

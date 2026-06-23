@@ -52,6 +52,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myName,
   opponentName,
   timeoutByUs,
+  timeoutForfeited,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -613,7 +614,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   : timeoutByUs === true
                     ? `${opponentLabel} wins`
                     : timeoutByUs === false
-                      ? `${opponentLabel} timed out`
+                      ? `${opponentLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
                       : `${opponentLabel}'s Hand`}
               </span>
             </div>
@@ -634,7 +635,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 formatHandDescription={formatHandDescription}
                 selectedCards={[]}
-                timeoutBadge={timeoutByUs === true ? 'winner' : timeoutByUs === false ? 'timeout' : null}
+                timeoutBadge={timeoutByUs === true ? 'winner' : timeoutByUs === false ? (timeoutForfeited ? 'forfeit' : 'timeout') : null}
               />
             </div>
           </div>
@@ -645,7 +646,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 {showFinalHeader && playerDisplayText
                   ? `${myLabel} ${playerResultVerb} (${playerDisplayText})`
                   : timeoutByUs === true
-                    ? `${myLabel} timed out`
+                    ? `${myLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
                     : timeoutByUs === false
                       ? `${myLabel} wins`
                       : `${myLabel}'s Hand`}
@@ -670,7 +671,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                 formatHandDescription={formatHandDescription}
-                timeoutBadge={timeoutByUs === true ? 'timeout' : timeoutByUs === false ? 'winner' : null}
+                timeoutBadge={timeoutByUs === true ? (timeoutForfeited ? 'forfeit' : 'timeout') : timeoutByUs === false ? 'winner' : null}
               />
             </div>
           </div>

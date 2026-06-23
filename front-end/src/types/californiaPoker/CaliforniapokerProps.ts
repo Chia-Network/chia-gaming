@@ -38,4 +38,5 @@ export interface CaliforniapokerProps {
   myName?: string;
   opponentName?: string;
   timeoutByUs?: boolean | null;
+  timeoutForfeited?: boolean;
 }

@@ -8,6 +8,7 @@ import {
   SpacepokerDisplayMode,
 } from '../hooks/useSpacepokerHand';
 import { GameplayEvent } from '../hooks/useGameSession';
+import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',
@@ -152,6 +153,7 @@ function entrySymbol(entry: SpHandEntry, formatBet: (units: bigint) => string): 
   if (entry.action === 'check') return entry.endsStreet ? '\u270B' : '\u2705';
   if (entry.action === 'call') return '\u270B';
   if (entry.action === 'fold') return '\u274C';
+  if (entry.action === 'reveal') return '\u{1F440}';
   return formatBet(entry.units ?? 0n);
 }
 
@@ -311,6 +313,16 @@ export default function SpacePoker({
     gameObject.handState ?? undefined,
   );
   const { handler, myTurn, N } = sp.gameState;
+
+  const handleCheat = useCallback(() => {
+    if (!gameObject || !gameId) return;
+    gameObject.cheat(gameId, 0n);
+  }, [gameObject, gameId]);
+  const handleNerf = useCallback(() => {
+    if (!gameObject) return;
+    gameObject.nerf();
+  }, [gameObject]);
+  useCheatNerfKeys(handleCheat, handleNerf);
 
   const communitySlots = 5;
   const communityReversed = [...sp.communityCards];

@@ -601,10 +601,10 @@ describe('session model selectors', () => {
       },
     };
 
-    const terminalEvent = { Timeout: { byUs: false } };
+    const terminalEvent = { Timeout: { byUs: false, forfeited: true } };
     expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
       { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]) } },
-      { Timeout: { byUs: false } },
+      { Timeout: { byUs: false, forfeited: true } },
     ]);
   });
 });
