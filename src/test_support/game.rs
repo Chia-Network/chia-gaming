@@ -217,6 +217,11 @@ mod sim_tests {
         /// handshake state checks.  Simulates a malicious peer who submits
         /// an old-state unroll even after agreeing to clean shutdown.
         ForceUnroll(usize),
+        /// Stop nerfing transactions for a single player, leaving any other
+        /// nerfed players (and the shared backlog) untouched.  Used to let one
+        /// side win an on-chain race while the other stays nerfed, since
+        /// `UnNerfTransactions` clears the nerf for everyone at once.
+        UnNerfTransactionsFor(usize),
         /// Nerf (silently drop) all outbound messages for a player.
         NerfMessages(usize),
         /// Stop nerfing messages.
@@ -262,6 +267,9 @@ mod sim_tests {
                 }
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
+                GameAction::UnNerfTransactionsFor(p) => {
+                    write!(formatter, "UnNerfTransactionsFor({p})")
+                }
                 GameAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
                 GameAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
                 GameAction::ProposeNewGame(p, t) => {

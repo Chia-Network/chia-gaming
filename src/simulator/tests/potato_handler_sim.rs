@@ -1194,6 +1194,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::ForceDestroyCoin(_, _)
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions(_)
+                    | GameAction::UnNerfTransactionsFor(_)
                     | GameAction::BlockCoinReports(_)
                     | GameAction::UnblockCoinReports(_)
                     | GameAction::CancelProposal(_, _)
@@ -1691,6 +1692,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::NerfTransactions(who) => {
                         nerf_transactions_for |= 1 << *who;
+                    }
+                    GameAction::UnNerfTransactionsFor(who) => {
+                        nerf_transactions_for &= !(1 << *who);
                     }
                     GameAction::UnNerfTransactions(replay) => {
                         nerf_transactions_for = 0;
@@ -3931,18 +3935,33 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        // Nerf both so the clean shutdown tx is dropped for both sides.
+        // Nerf both so the clean shutdown tx is dropped for both sides.  Once
+        // the clean shutdown is abandoned, both managers fall back to unrolling
+        // the shared channel coin, and the manager rebroadcasts that unroll
+        // every block until it lands.  On a real chain those two competing
+        // unrolls are harmless (only one spend of the channel coin can land,
+        // the other is rejected), but the simulator's strict mode fails fast on
+        // a mempool conflict.  So keep both managers nerfed across the whole
+        // channel-coin unroll race: the only spend of the channel coin that
+        // reaches the chain is player 0's forced (stale) unroll below.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::CleanShutdown(1));
-        // Let messages and nerfed txs fully drain before un-nerfing.
-        moves.push(GameAction::WaitBlocks(3, 0));
-        // Un-nerf both so the force-unroll tx and subsequent spends land.
-        moves.push(GameAction::UnNerfTransactions(false));
-        // Alice force-submits the unroll (simulating a malicious peer).
+        // Let messages and nerfed txs fully drain.
+        moves.push(GameAction::WaitBlocks(4, 0));
+        // Alice force-submits the unroll (simulating a malicious peer).  This
+        // direct push bypasses the nerf, so it is the sole channel-coin spend.
         moves.push(GameAction::ForceUnroll(0));
+        // Let the forced unroll mine so the channel coin is spent.
+        moves.push(GameAction::WaitBlocks(3, 0));
+        // Un-nerf only player 0 to drive the resolution: the channel coin is now
+        // spent, so player 0's channel-unroll rebroadcast is gated off (its input
+        // is gone), but player 0 can still submit the unroll-timeout claim that
+        // creates both players' reward coins.  Player 1 stays nerfed and only
+        // observes the on-chain unroll, exercising opponent-unroll detection.
+        moves.push(GameAction::UnNerfTransactionsFor(0));
         // Wait for the unroll timeout to elapse and reward coins to be created.
-        moves.push(GameAction::WaitBlocks(20, 0));
+        moves.push(GameAction::WaitBlocks(17, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -3990,15 +4009,29 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // attempt but hasn't gotten the response" state.
         moves.push(GameAction::NerfMessages(0));
         moves.push(GameAction::CleanShutdown(1));
-        // Drain nerfed txs/msgs.
-        moves.push(GameAction::WaitBlocks(3, 0));
-        // Un-nerf everything so the force-unroll tx and subsequent spends land.
-        moves.push(GameAction::UnNerfTransactions(false));
+        // Drain nerfed txs/msgs.  Bumped 3->4 to preserve the force-unroll
+        // phase timing now that we no longer un-nerf transactions before the
+        // force (removing that pre-force action shifts block counts by one).
+        moves.push(GameAction::WaitBlocks(4, 0));
+        // Un-nerf only messages so the clean-shutdown response can flow; keep
+        // BOTH managers' transactions nerfed across the channel-coin unroll
+        // race.  Otherwise the per-block rebroadcast resurrects player 0's own
+        // "Create unroll" (it has no relative timelock and creates an output),
+        // which lands first, spends the channel coin, and advances player 0 out
+        // of the force-unrollable phase before ForceUnroll runs.
         moves.push(GameAction::UnNerfMessages);
-        // Alice force-submits the unroll.
+        // Alice force-submits the unroll.  Both still nerfed, so this is the
+        // sole channel-coin spend.
         moves.push(GameAction::ForceUnroll(0));
+        // Let the forced unroll mine so the channel coin is spent.
+        moves.push(GameAction::WaitBlocks(3, 0));
+        // Un-nerf only player 0 to drive resolution: the channel coin is now
+        // spent, so player 0's channel-unroll rebroadcast is gated off (input
+        // gone), but it can still submit the unroll-timeout claim that creates
+        // both players' reward coins.  Player 1 stays nerfed and observes.
+        moves.push(GameAction::UnNerfTransactionsFor(0));
         // Wait for the unroll timeout to elapse.
-        moves.push(GameAction::WaitBlocks(20, 0));
+        moves.push(GameAction::WaitBlocks(17, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -6169,7 +6202,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
-        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
+        // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
+        // the stale resolution.  Keep player 0 nerfed: the channel coin is now
+        // spent, but the per-block rebroadcast would otherwise resurrect player
+        // 0's "preempt unroll" of the freshly-created unroll coin, which (having
+        // no relative timelock) lands before the timeout matures and overrides
+        // the stale state with player 0's current state -- making the live
+        // second game present again and suppressing its GameError.  Player 0
+        // stays nerfed and merely observes the stale resolution.
+        sim_setup.game_actions.push(GameAction::UnNerfTransactionsFor(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
@@ -6248,7 +6289,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
-        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
+        // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
+        // the stale resolution; keep player 0 nerfed so the per-block
+        // rebroadcast can't resurrect player 0's "preempt unroll" of the new
+        // unroll coin (which has no relative timelock, would land before the
+        // timeout matures, and would override the stale state -- suppressing the
+        // expected GameError).  Player 0 only observes the stale resolution.
+        sim_setup.game_actions.push(GameAction::UnNerfTransactionsFor(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
@@ -6324,9 +6371,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
+        // the stale resolution; keep player 0 nerfed so the per-block
+        // rebroadcast can't resurrect player 0's "preempt unroll" of the new
+        // unroll coin (which has no relative timelock, would land before the
+        // timeout matures, and would override the stale state -- suppressing the
+        // expected GameError).  Player 0 only observes the stale resolution.
         sim_setup
             .game_actions
-            .push(GameAction::UnNerfTransactions(false));
+            .push(GameAction::UnNerfTransactionsFor(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
@@ -6411,7 +6464,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
-        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
+        // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
+        // the stale resolution; keep player 0 nerfed so the per-block
+        // rebroadcast can't resurrect player 0's "preempt unroll" of the new
+        // unroll coin (which has no relative timelock, would land before the
+        // timeout matures, and would override the stale state -- suppressing the
+        // expected GameError/EndedCancelled).  Player 0 only observes.
+        sim_setup.game_actions.push(GameAction::UnNerfTransactionsFor(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 

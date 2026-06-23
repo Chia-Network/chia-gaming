@@ -64,6 +64,12 @@ struct SubmittedTx {
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
+    /// Whether the manager may rebroadcast this transaction each block until it
+    /// lands.  True only when the transaction creates a coin we can watch for
+    /// landing *and* carries no relative timelock (which a later height could
+    /// violate after a reorg).  See `resubmit_pending`.
+    #[serde(default)]
+    auto_resubmit: bool,
 }
 
 fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
@@ -87,6 +93,28 @@ fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
         }));
     }
     out
+}
+
+/// Whether any spend in the bundle carries an `ASSERT_HEIGHT_RELATIVE`
+/// condition.  Such a spend is only valid once the coin it spends has aged past
+/// the timelock, so the manager must not blindly rebroadcast it: after a reorg
+/// re-mines the input at a later height the timelock is no longer satisfied and
+/// resubmitting would be rejected.  The one such spend the manager submits --
+/// the eager unroll-timeout claim -- already has its own reorg-aware
+/// resubmission via the ripeness path, so excluding it here loses no coverage.
+/// A bundle we cannot analyze is treated as timelocked (conservative).
+fn bundle_has_relative_timelock(bundle: &SpendBundle) -> bool {
+    let mut allocator = AllocEncoder::new();
+    bundle.spends.iter().any(|spend| {
+        let puzzle = spend.bundle.puzzle.to_program();
+        let solution = spend.bundle.solution.p();
+        match CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution) {
+            Ok(conditions) => conditions
+                .iter()
+                .any(|c| matches!(c, CoinCondition::AssertHeightRelative(_))),
+            Err(_) => true,
+        }
+    })
 }
 
 /// Combine two optional expiry heights, keeping the tightest (smallest)
@@ -333,12 +361,18 @@ impl<C> TransactionManager<C> {
             {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
             } else {
+                let outputs = expected_output_coins(bundle);
+                // Eligible for blind rebroadcast only when we can observe it
+                // land (it creates a coin) and rebroadcasting it at any later
+                // height stays valid (no relative timelock).
+                let auto_resubmit = !outputs.is_empty() && !bundle_has_relative_timelock(bundle);
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
                     spent_coin_ids,
-                    expected_output_coins: expected_output_coins(bundle),
+                    expected_output_coins: outputs,
                     landed: false,
                     expiry: *expiry,
+                    auto_resubmit,
                 });
             }
         }
@@ -479,6 +513,12 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // coin's birthday can *shift* under a reorg (re-mined at a new height),
         // so we update it rather than only setting it once.
         let mut present_now = std::collections::HashSet::new();
+        // Watched coins whose first observation already shows them spent (the
+        // record carries both a creation and a spend height).  Such a coin was
+        // never recorded as present, so the present->absent diff below cannot
+        // produce it -- but the handler still needs the spend forwarded.  See
+        // where these are merged into `deleted_watched`.
+        let mut first_seen_spent: Vec<CoinString> = Vec::new();
         for rec in records {
             // A coin that reappears with a creation height during a reorg is live
             // again, so clear any vanished flag here rather than relying solely on
@@ -494,6 +534,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
             if live {
                 present_now.insert(rec.coin.clone());
             }
+            let was_present = self.present_coins.contains(&rec.coin);
             if let Some(watched) = self.watched_coins.get_mut(&rec.coin) {
                 if let Some(created_height) = rec.created_height {
                     if watched.birthday != Some(created_height) {
@@ -502,6 +543,12 @@ impl<C: ManagedCradle> TransactionManager<C> {
                     }
                 }
                 if let Some(spent_height) = rec.spent_height {
+                    // First report that learns of this spend, for a coin we never
+                    // saw live: capture it so the spend is still forwarded.
+                    // `spent_confirmed_at.is_none()` keeps this one-shot.
+                    if watched.spent_confirmed_at.is_none() && !was_present {
+                        first_seen_spent.push(rec.coin.clone());
+                    }
                     watched.spent_confirmed_at = Some(spent_height);
                 }
             }
@@ -568,6 +615,16 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // the creating transaction.
         deleted_watched.retain(|coin| !self.vanished_coins.contains(coin));
 
+        // Coins first observed already-spent never entered the live set, so the
+        // present->absent diff above cannot surface them.  They carry a real
+        // spend height (not a reorg rollback), so merge them in after the
+        // vanished retain.  Without this, a handler waiting on such a coin -- an
+        // opponent-published unroll coin spent before our first poll of it --
+        // never receives coin_spent and stalls forever.
+        for coin in first_seen_spent {
+            deleted_watched.insert(coin);
+        }
+
         // A watched coin leaving the live set during forward progress is a
         // spend.  Some feeds (the full coin set) omit spent coins rather than
         // reporting a spend height, so fall back to the current height as a
@@ -617,6 +674,13 @@ impl<C: ManagedCradle> TransactionManager<C> {
         self.pending_submissions
             .extend(to_submit.into_iter().map(|spend| (spend, None)));
 
+        // Rebroadcast any still-unlanded, resubmit-eligible transaction whose
+        // input is still present.  This covers a dropped broadcast for a spend
+        // that has no relative timelock and no other resubmission path (e.g. an
+        // unroll preempt), without resurrecting a transaction whose input has
+        // already been spent (by us landing it, or by a conflicting spend).
+        self.resubmit_pending(height);
+
         let report = WatchReport {
             created_watched,
             deleted_watched,
@@ -654,6 +718,42 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 self.pending_submissions.push(submission);
             }
         }
+    }
+
+    /// Rebroadcast resubmit-eligible transactions that have not yet landed, once
+    /// per block, so a single dropped broadcast cannot strand the protocol while
+    /// waiting for a coin spend that never comes.  Only transactions that
+    ///
+    ///   * are flagged `auto_resubmit` (create an observable output and carry no
+    ///     relative timelock, so rebroadcasting at this height stays valid),
+    ///   * have not been observed to land, and
+    ///   * still have at least one input coin present (unspent)
+    ///
+    /// are resubmitted.  The input-present gate is what makes this safe against
+    /// abandoned intents: once a transaction's input is spent -- whether by our
+    /// own spend landing or by a conflicting spend winning -- it is no longer
+    /// rebroadcast.  Cross-party conflicts (the opponent spending the same coin
+    /// with a different bundle) are expected on a real chain and resolve
+    /// naturally; only one of the competing spends can land.
+    fn resubmit_pending(&mut self, height: u64) {
+        let mut to_resubmit: Vec<(SpendBundle, Option<u64>)> = Vec::new();
+        for tx in self.submitted.iter() {
+            if tx.landed || !tx.auto_resubmit {
+                continue;
+            }
+            if matches!(tx.expiry, Some(e) if height >= e) {
+                continue;
+            }
+            let input_present = self
+                .present_coins
+                .iter()
+                .any(|coin| tx.spent_coin_ids.contains(&coin.to_coin_id()));
+            if !input_present {
+                continue;
+            }
+            to_resubmit.push((tx.bundle.clone(), tx.expiry));
+        }
+        self.pending_submissions.extend(to_resubmit);
     }
 
     /// Drop coins whose confirmed spend is buried at least `confirmation_depth`
@@ -797,6 +897,39 @@ mod tests {
         let conditions = [(CREATE_COIN, (output_ph, (output_amount, ())))];
         let conditions_node = conditions.to_clvm(&mut allocator).expect("conditions");
         let puzzle = conditions_node
+            .to_quoted_program(&mut allocator)
+            .expect("quoted puzzle");
+        SpendBundle {
+            name: Some(name.to_string()),
+            spends: vec![CoinSpend {
+                coin: input.clone(),
+                bundle: Spend {
+                    puzzle: Puzzle::from(puzzle),
+                    solution: Program::from_bytes(&[0x80]).into(),
+                    signature: Default::default(),
+                },
+            }],
+        }
+    }
+
+    /// Like `test_bundle_spending_creating` but the puzzle also asserts a
+    /// relative height timelock, so the manager must treat it as ineligible for
+    /// blind rebroadcast.
+    fn test_bundle_timelocked(
+        name: &str,
+        input: &CoinString,
+        output: &CoinString,
+    ) -> SpendBundle {
+        use crate::common::constants::ASSERT_HEIGHT_RELATIVE;
+        let mut allocator = AllocEncoder::new();
+        let (_, output_ph, output_amount) = output.to_parts().expect("valid output coin");
+        let conditions = (
+            (CREATE_COIN, (output_ph, (output_amount, ()))),
+            ((ASSERT_HEIGHT_RELATIVE, (5u64, ())), ()),
+        )
+            .to_clvm(&mut allocator)
+            .expect("conditions");
+        let puzzle = conditions
             .to_quoted_program(&mut allocator)
             .expect("quoted puzzle");
         SpendBundle {
@@ -1533,6 +1666,44 @@ mod tests {
     }
 
     #[test]
+    fn coin_first_seen_already_spent_is_forwarded_as_spend() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(40);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![watch_event(&coin, 50)]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        // The coin's FIRST observation already shows it spent: the record carries
+        // both a creation and a spend height.  This happens when the coin is
+        // created and spent within a single inter-poll gap, or when we only learn
+        // to watch it (e.g. an opponent-published unroll coin) after it was
+        // already spent.  Because the coin was never recorded as present, a pure
+        // present->absent set difference would miss it -- but the manager must
+        // still forward it as a spend, or a handler waiting on the coin (e.g.
+        // SpendChannelCoinHandler in UnrollSpend) never learns it resolved.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(12),
+            }],
+        )
+        .expect("report");
+
+        let report = mgr.cradle().seen_reports.last().expect("a report");
+        assert_eq!(report.0, 12);
+        assert!(
+            report.1.deleted_watched.contains(&coin),
+            "a watched coin first observed already-spent must be forwarded as a spend, got: {:?}",
+            report.1
+        );
+        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(12));
+    }
+
+    #[test]
     fn spent_coin_evicted_after_confirmation_depth() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(7);
@@ -1694,6 +1865,162 @@ mod tests {
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
         mgr.requeue_submitted();
+        assert!(mgr.drain_submissions().is_empty());
+    }
+
+    #[test]
+    fn auto_resubmits_dropped_output_bearing_spend_until_it_lands() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(40);
+        let child = CoinString::from_parts(
+            &coin.to_coin_id(),
+            &PuzzleHash::from_bytes([41; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        // Host submits once; the manager records it.
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // The input is present and the tx has not landed, so each block the
+        // manager rebroadcasts it (e.g. recovering from a dropped broadcast).
+        for height in 10..=11 {
+            mgr.report_coin_states(
+                &mut allocator,
+                height,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(10),
+                    spent_height: None,
+                }],
+            )
+            .expect("report");
+            let resub = mgr.drain_submissions();
+            assert_eq!(resub.len(), 1, "expected rebroadcast at height {height}");
+            assert_eq!(resub[0].name.as_deref(), Some("spend-coin"));
+        }
+
+        // It lands: the input is spent and the expected child appears.  The
+        // manager stops rebroadcasting.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[
+                CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(10),
+                    spent_height: Some(12),
+                },
+                CoinStateRecord {
+                    coin: child.clone(),
+                    created_height: Some(12),
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("report");
+        assert!(mgr.drain_submissions().is_empty());
+    }
+
+    #[test]
+    fn auto_resubmit_stops_when_input_spent_by_conflict() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(42);
+        let child = CoinString::from_parts(
+            &coin.to_coin_id(),
+            &PuzzleHash::from_bytes([43; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // A conflicting transaction wins: the input is spent but our expected
+        // child never appears.  The manager must neither rebroadcast nor retain
+        // the now-dead intent.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(12),
+            }],
+        )
+        .expect("report");
+        assert!(mgr.drain_submissions().is_empty());
+    }
+
+    #[test]
+    fn auto_resubmit_skips_timelocked_spend() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(44);
+        let child = CoinString::from_parts(
+            &coin.to_coin_id(),
+            &PuzzleHash::from_bytes([45; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx = test_bundle_timelocked("timelocked-spend", &coin, &child);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // Even with the input present and the tx unlanded, a spend carrying a
+        // relative timelock is never blindly rebroadcast: a later height could
+        // violate the timelock after a reorg.
+        mgr.report_coin_states(
+            &mut allocator,
+            10,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
+        )
+        .expect("report");
+        assert!(mgr.drain_submissions().is_empty());
+    }
+
+    #[test]
+    fn auto_resubmit_skips_when_input_not_present() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(46);
+        let child = CoinString::from_parts(
+            &coin.to_coin_id(),
+            &PuzzleHash::from_bytes([47; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // The input coin has never been observed live, so there is nothing to
+        // rebroadcast against -- resubmission waits until the input is present.
+        mgr.report_coin_states(&mut allocator, 10, &[])
+            .expect("report");
         assert!(mgr.drain_submissions().is_empty());
     }
 }
