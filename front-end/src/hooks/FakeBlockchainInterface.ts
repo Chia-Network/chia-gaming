@@ -9,7 +9,7 @@ import {
   ConnectionSetup,
 } from '../types/ChiaGaming';
 
-import { log, diagStack } from '../services/log';
+import { log, diagStack, diagNote } from '../services/log';
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,8 +99,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         this.ws = null;
         this.fireConnectionChange(false);
         if (this.pending.size > 0) {
-          // eslint-disable-next-line no-console
-          console.error(`DIAG_LOADWASM FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`);
+          diagNote(`FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`);
         }
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
@@ -286,8 +285,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
     this.fireConnectionChange(false);
     if (this.pending.size > 0) {
-      // eslint-disable-next-line no-console
-      console.error(`DIAG_LOADWASM FakeBlockchain close(): rejecting ${this.pending.size} pending request(s) with "closed" (ids=${[...this.pending.keys()].join(',')})`);
+      diagNote(`FakeBlockchain close(): rejecting ${this.pending.size} pending request(s) with "closed" (ids=${[...this.pending.keys()].join(',')})`);
     }
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));

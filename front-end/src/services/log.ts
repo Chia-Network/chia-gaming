@@ -24,10 +24,37 @@ export function subscribeLog(fn: Listener): () => void {
 }
 
 /**
- * Diagnostic: write a full stack trace straight to stderr with a greppable
- * prefix.  The in-memory log() buffer above has no listener in the jest/CI
- * environment, so `log(String(e))` lines never reach the CI test output;
- * console.error does, and prints the stack for real Error objects.  Non-Error
+ * Teardown-proof diagnostic sink.
+ *
+ * The errors we care about most fire *after* the jest test environment is torn
+ * down (the late unhandled rejection in load_wasm).  jest patches
+ * `global.console`, so a console.* call at that point hits "Cannot log after
+ * tests are done" and the line is dropped -- precisely the error we are chasing
+ * never gets logged.  `process.stderr.write` is a raw stream jest does NOT
+ * patch and it targets the real process, so it survives teardown.  Fall back to
+ * console.error only in the browser, where `process` is unavailable.
+ */
+function diagWrite(line: string): void {
+  try {
+    const proc = (typeof process !== 'undefined' ? process : undefined) as
+      | { stderr?: { write?: (s: string) => void } }
+      | undefined;
+    if (proc?.stderr && typeof proc.stderr.write === 'function') {
+      proc.stderr.write(line + '\n');
+      return;
+    }
+  } catch { /* fall through to console */ }
+  // eslint-disable-next-line no-console
+  console.error(line);
+}
+
+/** Diagnostic: a single greppable note (no stack). Teardown-proof. */
+export function diagNote(message: string): void {
+  diagWrite(`DIAG_LOADWASM ${message}`);
+}
+
+/**
+ * Diagnostic: write a full stack trace with a greppable prefix.  Non-Error
  * throws (strings, wasm RuntimeErrors, rejected events) are wrapped so we still
  * capture a stack at the catch site rather than just an opaque message.
  */
@@ -47,6 +74,5 @@ export function diagStack(context: string, e: unknown): void {
     }
     stack = new Error('(non-Error thrown; stack captured at diagStack call site)').stack ?? '(no stack)';
   }
-  // eslint-disable-next-line no-console
-  console.error(`DIAG_LOADWASM ${context}: ${name}: ${message}\n${stack}`);
+  diagWrite(`DIAG_LOADWASM ${context}: ${name}: ${message}\n${stack}`);
 }
