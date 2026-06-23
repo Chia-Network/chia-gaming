@@ -453,11 +453,14 @@ function parseGameTypeFromNotification(value: Record<string, unknown>): string {
 }
 
 function parseProgramBigInt(value: unknown): bigint | undefined {
-  if (!Array.isArray(value) || !value.every((b): b is number => typeof b === 'number')) {
+  // The wasm bridge serializes a CLVM Program's bytes with serde's
+  // serialize_bytes, which serde-wasm-bindgen renders as a Uint8Array. That is
+  // the only shape that actually arrives here.
+  if (!(value instanceof Uint8Array)) {
     return undefined;
   }
   try {
-    return Program.deserialize(Uint8Array.from(value)).toBigInt();
+    return Program.deserialize(value).toBigInt();
   } catch {
     return undefined;
   }
@@ -1252,7 +1255,7 @@ export function useGameSession(
       } else if (status === 'illegal-move-detected') {
         turnStateRef.current = 'opponent-illegal-move';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
-        setHandStatus(coinHex ? 'our-turn' : 'active');
+        setHandStatus(coinHex ? 'slashing' : 'active');
       }
 
       for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {

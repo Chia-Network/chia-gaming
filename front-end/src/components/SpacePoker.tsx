@@ -317,7 +317,11 @@ export default function SpacePoker({
   const handleCheat = useCallback(() => {
     if (!gameObject || !gameId) return;
     gameObject.cheat(gameId, 0n);
-  }, [gameObject, gameId]);
+    // A cheat is just an (illegal) move; drive the same turn-change path a
+    // normal move uses so the status shows "Playing our move on-chain" while
+    // it lands, instead of staying on our turn.
+    onTurnChanged(false);
+  }, [gameObject, gameId, onTurnChanged]);
   const handleNerf = useCallback(() => {
     if (!gameObject) return;
     gameObject.nerf();

@@ -289,7 +289,12 @@ export function useCalpokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     go.cheat(gid, 0n);
-  }, []);
+    // A cheat is just an (illegal) move; drive the same turn-change path a
+    // normal move uses so the status shows "Playing our move on-chain" while
+    // it lands, instead of staying on our turn.
+    setMyTurn(false);
+    onTurnChanged(false);
+  }, [onTurnChanged]);
 
   const handleNerf = useCallback(() => {
     const go = gameObjectRef.current;

@@ -23,6 +23,7 @@ export type HandStatus =
   | 'our-turn'
   | 'playing-move'
   | 'replaying-move'
+  | 'slashing'
   | 'finishing'
   | 'ended';
 
@@ -312,7 +313,7 @@ const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'playing-on-chain': 'Playing our move on-chain',
   'replaying': 'Replaying our move on-chain',
   'finishing': 'Finishing',
-  'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
+  'opponent-illegal-move': 'Slashing cheater',
   'ended': 'Ended',
 };
 
@@ -323,6 +324,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'our-turn': 'Your turn',
   'playing-move': 'Playing move',
   'replaying-move': 'Replaying move',
+  slashing: 'Slashing cheater',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -550,8 +552,11 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
     switch (model.game.coin.turnState) {
       case 'my-turn':
-      case 'opponent-illegal-move':
         return 'our-turn';
+      // We detected the opponent's illegal on-chain move and are now resolving
+      // the slash; surface that explicitly rather than a generic "our turn".
+      case 'opponent-illegal-move':
+        return 'slashing';
       case 'their-turn':
         return 'their-turn';
       case 'playing-on-chain':

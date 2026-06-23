@@ -215,6 +215,20 @@ describe('session model selectors', () => {
         coin: { coinHex: 'abcd', turnState: 'finishing' },
       },
     })).handStatusLabel).toBe('Finishing');
+
+    // Detecting the opponent's illegal on-chain move puts us in the slash flow;
+    // the bar should say so explicitly instead of a generic "Your turn".
+    const slashing = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: 'abcd', turnState: 'opponent-illegal-move' },
+      },
+    }));
+    expect(slashing.handStatusLabel).toBe('Slashing cheater');
+    expect(slashing.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Raw turn state', value: 'Slashing cheater' }),
+    ]));
   });
 
   it('shows a premature opponent timeout as an explicit ended detail', () => {
