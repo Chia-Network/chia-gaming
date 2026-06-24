@@ -121,21 +121,24 @@ jobs:
       - name: Build deploy tarballs
         run: tools/build-deploy.sh --platform=linux
 
+      - name: Verify deploy archives
+        run: tools/test-deploy-archives.sh --platform=linux
+
       - name: Upload player app artifacts
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-linux
           path: |
-            chia-gaming-linux-*.tgz
-            chia-gaming-linux-*.zip
+            deploy_player_app/chia-gaming-linux-*.tgz
+            deploy_player_app/chia-gaming-linux-*.zip
 
       - name: Upload lobby artifacts
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-lobby-linux
           path: |
-            chia-gaming-lobby-linux-*.tgz
-            chia-gaming-lobby-linux-*.zip
+            deploy_tracker/chia-gaming-lobby-linux-*.tgz
+            deploy_tracker/chia-gaming-lobby-linux-*.zip
 
   coverage:
     needs: [fmt, clippy]
