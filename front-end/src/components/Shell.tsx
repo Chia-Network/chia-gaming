@@ -46,7 +46,7 @@ import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldAdvertiseAvailable, shouldAutoGoOnChain } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, shouldAdvertiseAvailable } from '../lib/restoreLifecycle';
 import {
   selectGameDashboardView,
   selectStatusBarBalances,
@@ -956,7 +956,7 @@ const Shell = () => {
             }
           } else {
             if (save && save.serializedCradle) {
-              console.warn('[Shell] connection_status: no pairing but have full save, going on-chain');
+              console.warn('[Shell] connection_status: no pairing but have full save, restoring session (peer gone; go on-chain manually to resolve)');
               const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
               sessionSaveRef.current = save;
               setGameParams({
@@ -1042,7 +1042,7 @@ const Shell = () => {
     if (peerConnected && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
       });
     } else if (peerConnected) {
@@ -1227,18 +1227,6 @@ const Shell = () => {
     trackerConnRef.current?.setBusy(!shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
   }, [sessionPhase, restoreBlocked]);
 
-  // Cascade rule: off-chain session without a peer must immediately go on-chain.
-  useEffect(() => {
-    if (peerConnected === false && sessionPhase === 'off-chain' && restoreBlocked) {
-      console.log('[Shell] peer inactive during restore; waiting for restore/reconciliation');
-      return;
-    }
-    if (shouldAutoGoOnChain(peerConnected, sessionPhase, restoreBlocked)) {
-      console.log('[Shell] peer lost while off-chain, auto going on-chain');
-      blobSingleton?.goOnChain();
-    }
-  }, [peerConnected, sessionPhase, restoreBlocked]);
-
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
     if (tabId === 'chat') setUnreadChat(false);
@@ -1399,7 +1387,7 @@ const Shell = () => {
     if (peerConnected && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
       });
     } else if (peerConnected) {

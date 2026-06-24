@@ -461,10 +461,6 @@ export function selectRestoreBlocked(model: SessionModel): boolean {
     && (model.restore.status !== 'restored' || !model.restore.trackerReconciled);
 }
 
-export function selectShouldAutoGoOnChain(model: SessionModel, phase: SessionPhase): boolean {
-  return model.peer.connected === false && phase === 'off-chain' && !selectRestoreBlocked(model);
-}
-
 export function selectShouldAdvertiseAvailable(model: SessionModel, phase: SessionPhase): boolean {
   return !selectRestoreBlocked(model) && (phase === 'none' || phase === 'resolved');
 }
@@ -496,7 +492,6 @@ export function selectHideGameInterfaceForBetweenHandDialog(
 export interface ShellViewModel {
   restoreBlocked: boolean;
   canAdvertiseAvailable: boolean;
-  shouldAutoGoOnChain: boolean;
   sessionError: boolean;
 }
 
@@ -505,7 +500,6 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
   return {
     restoreBlocked,
     canAdvertiseAvailable: selectShouldAdvertiseAvailable(model, phase),
-    shouldAutoGoOnChain: selectShouldAutoGoOnChain(model, phase),
     sessionError: model.restore.status === 'failed',
   };
 }
@@ -709,8 +703,17 @@ export function selectStatusBarBalances(
       theirReward = theirs;
     }
     segments.push({ label: 'Hand', value: terminal.myReward, value2: theirReward });
-  } else if (channel.gameAllocated != null && channel.gameAllocated !== '0') {
-    segments.push({ label: 'Hand', value: channel.gameAllocated });
+  } else if (model.game.activeIds.length > 0) {
+    // Active hand: show the running total in the pot as a single value.  The
+    // pot is both players' contributions for the hand (the same total the
+    // hand-end split is drawn from); derive it from the agreed terms rather
+    // than game_allocated, which reads 0 mid-hand and so showed nothing until
+    // the hand ended.
+    const terms = model.betweenHand.lastTerms;
+    const pot = terms.myContribution + terms.theirContribution;
+    if (pot > 0n) {
+      segments.push({ label: 'Hand', value: pot.toString() });
+    }
   }
 
   return segments;

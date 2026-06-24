@@ -594,7 +594,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // registered the same block it appears still be reported created at the
         // correct height: the inner cradle already watches it even though the
         // manager only intercepts its watch registration after this report.
-        let created_watched: std::collections::HashSet<CoinString> = present_now
+        let mut created_watched: std::collections::HashSet<CoinString> = present_now
             .difference(&self.present_coins)
             .cloned()
             .collect();
@@ -621,7 +621,17 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // vanished retain.  Without this, a handler waiting on such a coin -- an
         // opponent-published unroll coin spent before our first poll of it --
         // never receives coin_spent and stalls forever.
+        //
+        // We emit each such coin in BOTH created_watched and deleted_watched so
+        // subscribers see a created-then-spent pair, processed sequentially.
+        // Handlers that only do real work on creation (the handshake handlers,
+        // which transition to PotatoHandler on coin_created) would otherwise
+        // miss the channel coin entirely when it jumps straight to spent, never
+        // transition, and never handle the spend.  They are deliberately NOT
+        // added to present_coins: they are already spent and must not be tracked
+        // as live.
         for coin in first_seen_spent {
+            created_watched.insert(coin.clone());
             deleted_watched.insert(coin);
         }
 
@@ -1694,6 +1704,13 @@ mod tests {
         assert!(
             report.1.deleted_watched.contains(&coin),
             "a watched coin first observed already-spent must be forwarded as a spend, got: {:?}",
+            report.1
+        );
+        assert!(
+            report.1.created_watched.contains(&coin),
+            "a watched coin first observed already-spent must also be forwarded as a creation \
+             so creation-only subscribers (handshake handlers) transition before the spend, \
+             got: {:?}",
             report.1
         );
         assert_eq!(

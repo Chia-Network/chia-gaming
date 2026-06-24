@@ -690,18 +690,36 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
 }
 
+/// Which half of a coin report to dispatch.  A coin that is first observed
+/// already-spent appears in BOTH `created_watched` and `deleted_watched` (see
+/// `TransactionManager::report_coin_states`).  The two halves must be delivered
+/// separately so that any handler transition triggered by `coin_created` is
+/// applied before the matching `coin_spent` is delivered -- otherwise the spend
+/// would still reach the pre-transition (handshake) handler, which ignores it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoinReportPhase {
+    Created,
+    Spent,
+}
+
 pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
     env: &mut ChannelHandlerEnv<'_>,
     peer: &mut P,
     watch_report: &WatchReport,
+    phase: CoinReportPhase,
 ) -> Result<Vec<Effect>, Error> {
     let mut effects = Vec::new();
-    for d in watch_report.deleted_watched.iter() {
-        effects.extend(peer.coin_spent(env, d)?);
-    }
-
-    for c in watch_report.created_watched.iter() {
-        effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
+    match phase {
+        CoinReportPhase::Created => {
+            for c in watch_report.created_watched.iter() {
+                effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
+            }
+        }
+        CoinReportPhase::Spent => {
+            for d in watch_report.deleted_watched.iter() {
+                effects.extend(peer.coin_spent(env, d)?);
+            }
+        }
     }
 
     Ok(effects)
@@ -1471,11 +1489,31 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         self.state.current_height = height;
         let filtered_report = self.filter_coin_report(report);
-        let reported_effects = {
+        // Process creations first and apply any resulting handler transition via
+        // process_effects, THEN process spends against the (possibly now-swapped)
+        // peer.  A channel coin first seen already-spent arrives as a
+        // created-then-spent pair: coin_created transitions a handshake handler
+        // to PotatoHandler, and the spend must reach that new handler.
+        let created_effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            report_coin_changes_to_peer(&mut env, &mut self.peer, &filtered_report)?
+            report_coin_changes_to_peer(
+                &mut env,
+                &mut self.peer,
+                &filtered_report,
+                CoinReportPhase::Created,
+            )?
         };
-        self.process_effects(reported_effects, allocator)?;
+        self.process_effects(created_effects, allocator)?;
+        let spent_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            report_coin_changes_to_peer(
+                &mut env,
+                &mut self.peer,
+                &filtered_report,
+                CoinReportPhase::Spent,
+            )?
+        };
+        self.process_effects(spent_effects, allocator)?;
         let height_effects = self.peer.new_block(self.state.current_height)?;
         self.process_effects(height_effects, allocator)?;
         Ok(())
@@ -1545,5 +1583,153 @@ impl SynchronousGameCradle {
             return och.get_game_coin(game_id);
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod sequencing_tests {
+    use super::*;
+    use crate::common::types::CoinID;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    struct Recorder {
+        created: Vec<CoinString>,
+        spent: Vec<CoinString>,
+    }
+
+    /// Stand-in for the handler a handshake transitions into (e.g. PotatoHandler):
+    /// records the coin events it receives.
+    struct PostTransitionHandler {
+        rec: Rc<RefCell<Recorder>>,
+    }
+
+    impl SpendWalletReceiver for PostTransitionHandler {
+        fn coin_created(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Option<Vec<Effect>>, Error> {
+            self.rec.borrow_mut().created.push(coin.clone());
+            Ok(None)
+        }
+        fn coin_spent(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Vec<Effect>, Error> {
+            self.rec.borrow_mut().spent.push(coin.clone());
+            Ok(vec![])
+        }
+        fn coin_puzzle_and_solution(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            _coin: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+            Ok((vec![], None))
+        }
+    }
+
+    /// Stand-in for a handshake handler: `coin_created` builds a replacement
+    /// handler (mirroring `try_transition_to_potato`), while `coin_spent` is a
+    /// no-op log -- it records into its own `Recorder` only so the test can
+    /// prove the pre-transition handler never handles the spend.
+    struct HandshakeLikeHandler {
+        own: Rc<RefCell<Recorder>>,
+        replacement_rec: Rc<RefCell<Recorder>>,
+        replacement: Option<PostTransitionHandler>,
+    }
+
+    impl HandshakeLikeHandler {
+        fn take_replacement(&mut self) -> Option<PostTransitionHandler> {
+            self.replacement.take()
+        }
+    }
+
+    impl SpendWalletReceiver for HandshakeLikeHandler {
+        fn coin_created(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Option<Vec<Effect>>, Error> {
+            self.own.borrow_mut().created.push(coin.clone());
+            self.replacement = Some(PostTransitionHandler {
+                rec: self.replacement_rec.clone(),
+            });
+            Ok(Some(vec![]))
+        }
+        fn coin_spent(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Vec<Effect>, Error> {
+            self.own.borrow_mut().spent.push(coin.clone());
+            Ok(vec![])
+        }
+        fn coin_puzzle_and_solution(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            _coin: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+            Ok((vec![], None))
+        }
+    }
+
+    /// A channel coin first observed already-spent is reported in BOTH
+    /// `created_watched` and `deleted_watched`.  The cradle processes the created
+    /// phase, applies the handler transition, then processes the spent phase.
+    /// This guarantees the spend reaches the post-transition handler rather than
+    /// the handshake handler that ignores it.  See
+    /// `SynchronousGameCradle::new_block` for the sequencing this mirrors.
+    #[test]
+    fn first_seen_spent_pair_delivers_spend_to_post_transition_handler() {
+        let mut allocator = AllocEncoder::new();
+        let mut env = ChannelHandlerEnv::new(&mut allocator).expect("env");
+
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([7; 32])),
+            &PuzzleHash::from_bytes([8; 32]),
+            &Amount::new(1),
+        );
+        let mut report = WatchReport::default();
+        report.created_watched.insert(coin.clone());
+        report.deleted_watched.insert(coin.clone());
+
+        let handshake_rec = Rc::new(RefCell::new(Recorder::default()));
+        let replacement_rec = Rc::new(RefCell::new(Recorder::default()));
+        let mut handshake = HandshakeLikeHandler {
+            own: handshake_rec.clone(),
+            replacement_rec: replacement_rec.clone(),
+            replacement: None,
+        };
+
+        // Created phase: the handshake handler builds its replacement.
+        report_coin_changes_to_peer(&mut env, &mut handshake, &report, CoinReportPhase::Created)
+            .expect("created phase");
+        // Transition checkpoint (what detect_phase_transition does inside
+        // process_effects between the two phases).
+        let mut replacement = handshake
+            .take_replacement()
+            .expect("coin_created must trigger the transition");
+        // Spent phase: delivered to the post-transition handler.
+        report_coin_changes_to_peer(&mut env, &mut replacement, &report, CoinReportPhase::Spent)
+            .expect("spent phase");
+
+        assert!(
+            handshake_rec.borrow().spent.is_empty(),
+            "the pre-transition handshake handler must not receive the spend"
+        );
+        assert_eq!(
+            replacement_rec.borrow().spent,
+            vec![coin.clone()],
+            "the post-transition handler must receive the spend"
+        );
+        assert!(
+            replacement_rec.borrow().created.is_empty(),
+            "coin_created went to the handshake handler, not the replacement"
+        );
     }
 }

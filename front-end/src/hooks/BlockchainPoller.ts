@@ -13,6 +13,11 @@ import { jsonStringify } from '../util/jsonSafe';
 export interface PollingCradle {
   getCoinsToPoll(): Array<{ coin_name: string; coin_string: string }>;
   reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
+  // Advance to `peak` with no coin-state change.  Lets the poller deliver a
+  // height tick as soon as the height is known, before the (possibly slow) coin
+  // record lookup, so height-only progress (e.g. handshake new_block) isn't
+  // gated on the coin-records RPC.
+  reportNewBlock(peak: bigint): void;
 }
 
 export class BlockchainPoller {
@@ -109,6 +114,19 @@ export class BlockchainPoller {
     const height = await this.rpc.getHeightInfo();
     this.peak = height;
 
+    // Deliver the height tick immediately, before the (potentially slow) coin
+    // record lookup.  A cradle's new_block only needs the height, so cradles
+    // whose watched coins aren't on chain yet (e.g. the channel coin mid-
+    // handshake) advance right away instead of waiting out the coin-records RPC.
+    // This goes through new_block with an empty created/deleted delta, which
+    // forwards no coin changes -- so unlike the full snapshot below it can never
+    // be misread as a coin deletion and needs no registration/observation guard.
+    // Done every tick (no height dedup) so a pending_coin_spend set mid-block is
+    // cleared on the next poll rather than waiting for the next height change.
+    for (const { c } of perCradle) {
+      c.reportNewBlock(height);
+    }
+
     const records = namesToQuery.length > 0 ? await this.rpc.getCoinRecordsByNames(namesToQuery) : [];
     const recordByName = new Map<string, CoinRecord>();
     for (const rec of records) {
@@ -117,6 +135,27 @@ export class BlockchainPoller {
     }
     for (const name of recordByName.keys()) this.observedNames.add(name);
 
+    this.reportToCradles(perCradle, recordByName, height, previousPeak);
+
+    if (this.firstTick) {
+      this.firstTick = false;
+      const elapsed = Math.round(performance.now() - this.startedAt);
+      log(`[blockchain-poller] first poll: height=${height} coins=${names.length} (${elapsed}ms)`);
+    }
+  }
+
+  // Hand each cradle its coin-state snapshot for `height`, applying the
+  // partial-snapshot guards and per-cradle dedup.  Called twice per tick: once
+  // with an empty record set right after the height is known (so height-only
+  // progress like new_block isn't blocked by the coin-records RPC) and once with
+  // the real records.  The dedup key makes the second call a no-op when the
+  // records didn't add anything beyond what the early pass already delivered.
+  private reportToCradles(
+    perCradle: Array<{ c: PollingCradle; coins: Array<{ coin_name: string; coin_string: string }> }>,
+    recordByName: Map<string, CoinRecord>,
+    height: bigint,
+    previousPeak: bigint,
+  ): void {
     for (const { c, coins } of perCradle) {
       // Never hand the manager a partial snapshot.  If any of this cradle's
       // coins is still pending registration (so we couldn't query it), a coin
@@ -141,26 +180,28 @@ export class BlockchainPoller {
         if (!rec) continue; // not on chain yet
         // A returned record means the coin exists on chain, so confirmedBlockIndex
         // is its true creation height (including height 0); the record's presence,
-        // not confirmedBlockIndex > 0, is what marks it created.  Spend is driven
-        // by the authoritative `spent` flag rather than spentBlockIndex > 0.
+        // not confirmedBlockIndex > 0, is what marks it created.
+        //
+        // A spend is anything the record shows as spent.  The `spent` boolean is
+        // not reliably populated through the WalletConnect bridge (a coin can come
+        // back spent on-chain with `spent:false` but a real spentBlockIndex), so
+        // honor either signal -- spentBlockIndex is set whenever the coin is spent.
+        // Relying on `spent` alone silently misses every channel/unroll/stale
+        // spend, which is how clean-shutdown completion stopped being detected.
         const created = rec.confirmedBlockIndex;
-        const spent = rec.spent ? rec.spentBlockIndex : null;
+        const spent = rec.spent || rec.spentBlockIndex > 0n ? rec.spentBlockIndex : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
       // Sort by coin so the dedup key is independent of the order coins come
       // back in (get_coins_to_poll iterates a HashMap, whose order can shift on
       // mutation or after a reload re-seeds the map).
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
-      const key = `${this.peak}:${jsonStringify(csr)}`;
-      if (this.lastReported.get(c) === key) continue;
+      const key = `${height}:${jsonStringify(csr)}`;
+      if (this.lastReported.get(c) === key) {
+        continue;
+      }
       this.lastReported.set(c, key);
-      c.reportCoinStates(this.peak, csr);
-    }
-
-    if (this.firstTick) {
-      this.firstTick = false;
-      const elapsed = Math.round(performance.now() - this.startedAt);
-      log(`[blockchain-poller] first poll: height=${height} coins=${names.length} (${elapsed}ms)`);
+      c.reportCoinStates(height, csr);
     }
   }
 

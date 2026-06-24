@@ -21,7 +21,7 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
 };
 use crate::potato_handler::handshake::{
     CoinSpendRequest, HandshakeA, HandshakeB, HandshakeC, HandshakeStepInfo,
@@ -887,6 +887,16 @@ impl PeerHandler for HandshakeInitiatorHandler {
             game_allocated,
             have_potato: None,
         })
+    }
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        // Surface the state channel coin once it's known so the host can show
+        // its id in the unfolded data while the channel-creation transaction is
+        // pending (the default returns none, the right answer only before any
+        // coin exists).
+        match self.channel_handler.as_ref() {
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            None => vec![],
+        }
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         HandshakeInitiatorHandler::channel_handler(self)

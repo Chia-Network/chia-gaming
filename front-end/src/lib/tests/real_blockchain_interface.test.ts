@@ -60,4 +60,32 @@ describe('RealBlockchainInterface', () => {
       allowUnsynced: true,
     });
   });
+
+  it('skips a coin whose lookup error is unrecognized instead of aborting the batch', async () => {
+    const unrecognizedName = 'unrecognized-coin-id';
+    const presentName = 'present-coin-id';
+    const record: CoinRecord = {
+      coin: {
+        parentCoinInfo: 'parent',
+        puzzleHash: 'puzzle',
+        amount: 100n,
+      },
+      confirmedBlockIndex: 10n,
+      spentBlockIndex: 0n,
+      spent: false,
+      coinbase: false,
+      timestamp: 123n,
+    };
+
+    mockGetCoinRecordsByNames.mockImplementation(async ({ names }: { names: string[] }) => {
+      if (names[0] === unrecognizedName) {
+        throw new Error('totally unexpected daemon failure');
+      }
+      return { coinRecords: [record] };
+    });
+
+    await expect(
+      new RealBlockchainInterface().getCoinRecordsByNames([unrecognizedName, presentName]),
+    ).resolves.toEqual([record]);
+  });
 });

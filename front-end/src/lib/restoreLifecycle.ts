@@ -4,7 +4,6 @@ import {
   createSessionModel,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
-  selectShouldAutoGoOnChain,
 } from './session/model';
 
 export function isRestoreBlocked(
@@ -15,22 +14,6 @@ export function isRestoreBlocked(
   return selectRestoreBlocked(createSessionModel({
     restore: { restoring, status: restoreStatus, trackerReconciled, error: null },
   }));
-}
-
-export function shouldAutoGoOnChain(
-  peerConnected: boolean | null,
-  sessionPhase: SessionPhase,
-  restoreBlocked: boolean,
-): boolean {
-  return selectShouldAutoGoOnChain(createSessionModel({
-    restore: {
-      restoring: restoreBlocked,
-      status: restoreBlocked ? 'restoring' : 'restored',
-      trackerReconciled: !restoreBlocked,
-      error: null,
-    },
-    peer: { connected: peerConnected },
-  }), sessionPhase);
 }
 
 export function shouldAdvertiseAvailable(

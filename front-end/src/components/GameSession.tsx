@@ -263,7 +263,7 @@ function ChannelStateContent({ info }: { info: ChannelStatusInfo }) {
       )}
       {info.coinAmount && (
         <p className='text-xs text-canvas-text select-text cursor-text'>
-          Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
+          Coin amount: {formatOptionalMojos(info.coinAmount)}
         </p>
       )}
     </>

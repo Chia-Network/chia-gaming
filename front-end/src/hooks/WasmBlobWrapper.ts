@@ -668,6 +668,20 @@ export class WasmBlobWrapper implements PollingCradle {
     this.deliverCoinStates(peak, records);
   }
 
+  // Deliver a height tick with no coin-state change (empty delta).  Drives the
+  // handshake's new_block(height) immediately, decoupled from the full
+  // coin-records snapshot in reportCoinStates.  When the cradle isn't ready yet
+  // there is nothing to advance; the pending coin-state path delivers once it is.
+  reportNewBlock(peak: bigint) {
+    if (!this.cradle) return;
+    try {
+      const result = this.cradle.new_block(peak);
+      this.processResult(result);
+    } catch (e) {
+      diagStack('new_block failed', e);
+    }
+  }
+
   private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
     log(`[wasm] coin states height=${peak} coins=${records.length}`);
     try {

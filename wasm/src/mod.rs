@@ -692,8 +692,26 @@ mod gaming_wasm {
     }
 
     fn decode_offer_to_spend_bundle(offer_bech32: &str) -> Result<SpendBundle, String> {
-        let (_hrp, raw_bytes) = bech32::decode(offer_bech32)
-            .map_err(|e| format!("bech32m decode error: {e}"))?;
+        // Chia offers are bech32m-encoded but routinely exceed the bech32 crate's
+        // 1023-character CODE_LENGTH cap. bech32::decode rejects them on that cap
+        // before validating the checksum (surfacing as the misleading "no valid
+        // bech32 or bech32m checksum"). Decode with a bech32m checksum whose
+        // length cap is lifted, matching chia's own offer decoding which raises
+        // bech32_decode's max_length.
+        enum OfferBech32m {}
+        impl bech32::Checksum for OfferBech32m {
+            type MidstateRepr = u32;
+            const CODE_LENGTH: usize = usize::MAX;
+            const CHECKSUM_LENGTH: usize = 6;
+            const GENERATOR_SH: [u32; 5] =
+                [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+            const TARGET_RESIDUE: u32 = 0x2bc8_30a3;
+        }
+
+        let checked =
+            bech32::primitives::decode::CheckedHrpstring::new::<OfferBech32m>(offer_bech32)
+                .map_err(|e| format!("bech32m decode error: {e}"))?;
+        let raw_bytes: Vec<u8> = checked.byte_iter().collect();
 
         if raw_bytes.len() < 3 {
             return Err(format!("offer data too short ({} bytes)", raw_bytes.len()));

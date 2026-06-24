@@ -19,8 +19,9 @@ use crate::common::types::{
 };
 use crate::games::poker_collection;
 use crate::peer_container::{
-    report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
-    PeerHandler, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
+    report_coin_changes_to_peer, CoinReportPhase, FullCoinSetAdapter, GameCradle, MessagePeerQueue,
+    MessagePipe, PeerHandler, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry,
+    WatchReport,
 };
 use crate::potato_handler::effects::{
     apply_effects, CancelReason, ChannelState, CradleEvent, Effect, GameNotification,
@@ -94,8 +95,18 @@ pub fn update_and_report_coins<'a>(
     for who in 0..=1 {
         {
             let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
-            let reported_effects =
-                report_coin_changes_to_peer(&mut env, &mut peers[who], &watch_report)?;
+            let mut reported_effects = report_coin_changes_to_peer(
+                &mut env,
+                &mut peers[who],
+                &watch_report,
+                CoinReportPhase::Created,
+            )?;
+            reported_effects.extend(report_coin_changes_to_peer(
+                &mut env,
+                &mut peers[who],
+                &watch_report,
+                CoinReportPhase::Spent,
+            )?);
             apply_effects(reported_effects, allocator, &mut pipes[who])?;
         }
     }

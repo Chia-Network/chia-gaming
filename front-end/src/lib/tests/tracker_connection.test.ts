@@ -100,10 +100,6 @@ import {
   MatchedParams,
   ConnectionStatus,
 } from '../../services/TrackerConnection';
-import {
-  isRestoreBlocked,
-  shouldAutoGoOnChain,
-} from '../restoreLifecycle';
 
 let trackerDisconnectCount = 0;
 let expectedTrackerDisconnects = 0;
@@ -203,34 +199,6 @@ describe('event routing', () => {
     const status: ConnectionStatus = { has_pairing: true, token: 'tok', peer_connected: true };
     MockWebSocket.instance!._fire({ type: 'connection_status', ...status });
     expect(cb.onConnectionStatus).toHaveBeenCalledWith(status);
-  });
-
-  it('reconciles restored sessions through connection_status before peer-loss escalation', async () => {
-    let peerConnected: boolean | null = null;
-    let restoreTrackerReconciled = false;
-    const cb = makeCallbacks();
-    cb.onConnectionStatus = jest.fn((status: ConnectionStatus) => {
-      restoreTrackerReconciled = true;
-      peerConnected = status.peer_connected ?? null;
-    });
-
-    new TrackerConnection('http://t', 's1', cb);
-    await Promise.resolve();
-
-    const beforeStatusBlocked = isRestoreBlocked(true, 'restored', restoreTrackerReconciled);
-    expect(shouldAutoGoOnChain(false, 'off-chain', beforeStatusBlocked)).toBe(false);
-
-    MockWebSocket.instance!._fire({
-      type: 'connection_status',
-      has_pairing: true,
-      token: 'tok',
-      peer_connected: false,
-    });
-
-    expect(cb.onConnectionStatus).toHaveBeenCalled();
-    const afterStatusBlocked = isRestoreBlocked(true, 'restored', restoreTrackerReconciled);
-    expect(afterStatusBlocked).toBe(false);
-    expect(shouldAutoGoOnChain(peerConnected, 'off-chain', afterStatusBlocked)).toBe(true);
   });
 
   it('routes peer_reconnected to onPeerReconnected', async () => {

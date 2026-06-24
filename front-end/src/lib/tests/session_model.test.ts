@@ -298,6 +298,9 @@ describe('session model selectors', () => {
   });
 
   it('derives status-bar balances across phases', () => {
+    // Mid-hand Hand shows the running pot total (both contributions) as a single
+    // value, derived from the hand terms.  game_allocated reads 0 during the
+    // hand, so the pot comes from terms while a game is active.
     const active = selectStatusBarBalances(createSessionModel({
       channel: {
         status: {
@@ -305,8 +308,14 @@ describe('session model selectors', () => {
           state: 'Active',
           ourBalance: '70',
           theirBalance: '30',
-          gameAllocated: '20',
+          gameAllocated: '0',
         },
+      },
+      betweenHand: {
+        lastTerms: { gameType: 'calpoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 15n },
+      },
+      game: {
+        activeIds: ['game-1'],
       },
     }));
     expect(active).toEqual([
@@ -387,12 +396,8 @@ describe('session model selectors', () => {
     expect(selectShellView(restoring, 'off-chain')).toMatchObject({
       restoreBlocked: true,
       canAdvertiseAvailable: false,
-      shouldAutoGoOnChain: false,
       sessionError: false,
     });
-
-    const reconciled = updateSessionModel(restoring, { type: 'tracker-reconciled', reconciled: true });
-    expect(selectShellView(reconciled, 'off-chain').shouldAutoGoOnChain).toBe(true);
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {

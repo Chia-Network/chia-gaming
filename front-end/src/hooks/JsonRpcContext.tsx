@@ -48,6 +48,19 @@ type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
 const WC_REQUEST_TIMEOUT_MS = 60000;
+// Quick read-only lookups normally return in 1-6s. WalletConnect requests are
+// serialized (see `serialized` below), so a lookup that hangs for the full long
+// timeout monopolizes the channel and blocks height delivery -- which is all the
+// handshake's new_block needs -- for that whole duration. Cap the quick methods
+// far lower so a stuck lookup is skipped fast and the poll keeps advancing.
+const WC_QUICK_REQUEST_TIMEOUT_MS = 15000;
+// State-changing operations can legitimately take the better part of a minute
+// (e.g. createOfferForIds builds and compresses an offer); keep the long cap.
+const WC_LONG_TIMEOUT_METHODS = new Set<ChiaMethod>([
+  ChiaMethod.CreateOfferForIds,
+  ChiaMethod.PushTransactions,
+  ChiaMethod.CreateNewRemoteWallet,
+]);
 const WC_RETRY_DELAY_MS = 1000;
 const WC_INTER_REQUEST_MS = 50;
 
@@ -138,6 +151,9 @@ async function request<T, D extends object = object>(
   };
 
   const startedAt = Date.now();
+  const timeoutMs = WC_LONG_TIMEOUT_METHODS.has(method)
+    ? WC_REQUEST_TIMEOUT_MS
+    : WC_QUICK_REQUEST_TIMEOUT_MS;
 
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -152,8 +168,8 @@ async function request<T, D extends object = object>(
           }),
           new Promise<never>((_, reject) => {
             setTimeout(() => {
-              reject(new Error(`WalletConnect RPC ${method} timed out after ${WC_REQUEST_TIMEOUT_MS}ms`));
-            }, WC_REQUEST_TIMEOUT_MS);
+              reject(new Error(`WalletConnect RPC ${method} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
           }),
         ]),
       );

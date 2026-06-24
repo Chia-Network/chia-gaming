@@ -73,6 +73,7 @@ describe('BlockchainPoller', () => {
       reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
       },
+      reportNewBlock: () => {},
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
@@ -110,6 +111,7 @@ describe('BlockchainPoller', () => {
       reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
       },
+      reportNewBlock: () => {},
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
@@ -169,6 +171,7 @@ describe('BlockchainPoller', () => {
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
       },
+      reportNewBlock: () => {},
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
@@ -203,5 +206,50 @@ describe('BlockchainPoller', () => {
       });
       throw e;
     }
+  });
+
+  it('reports a coin spent via spentBlockIndex even when the spent flag is false', async () => {
+    // The WalletConnect bridge can return a spent coin with `spent:false` but a
+    // real spentBlockIndex.  Spend detection must honor spentBlockIndex, or
+    // channel/unroll/clean-shutdown spends are silently missed (which broke
+    // clean-shutdown completion detection).
+    const record = makeCoinRecord(7);
+    record.spent = false;
+    record.spentBlockIndex = 42n;
+    const name = await coinRecordToName(record);
+    if (!name) {
+      throw new Error(`coinRecordToName returned undefined; env=${envDiag()}`);
+    }
+
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.resolve([record]),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const cradle: PollingCradle = {
+      getCoinsToPoll: () => [{ coin_name: name, coin_string: 'coin-spent' }],
+      reportCoinStates: (peak, records) => {
+        reports.push({ peak, records });
+      },
+      reportNewBlock: () => {},
+    };
+
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachCradle(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(reports).toEqual([{
+      peak: 100n,
+      records: [{ coin: 'coin-spent', created_height: 10n, spent_height: 42n }],
+    }]);
   });
 });

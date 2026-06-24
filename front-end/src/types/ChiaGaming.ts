@@ -412,6 +412,18 @@ export class ChiaGame {
     return this.wasm.report_coin_states(this.cradle, height, jsonStringify(records));
   }
 
+  /**
+   * Advance to `height` with no coin-state change (an empty created/deleted
+   * delta).  Lets the host deliver a height tick promptly -- driving the
+   * handshake's `new_block(height)` -- without waiting on the slower full
+   * coin-records snapshot reported via `report_coin_states`.  Safe regardless of
+   * which coins exist on chain: an empty delta forwards no coin changes, so it
+   * can never be misread as a coin deletion.
+   */
+  new_block(height: bigint): WasmResult | undefined {
+    return this.wasm.new_block(this.cradle, height, [], []);
+  }
+
   /** Coins the host should poll for on-chain state. */
   get_coins_to_poll(): Array<{ coin_name: string; coin_string: string }> {
     return this.wasm.get_coins_to_poll(this.cradle);

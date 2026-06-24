@@ -1,7 +1,6 @@
 import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
-  shouldAutoGoOnChain,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
@@ -12,13 +11,6 @@ describe('restore lifecycle gates', () => {
     expect(isRestoreBlocked(true, 'failed', true)).toBe(true);
     expect(isRestoreBlocked(true, 'restored', true)).toBe(false);
     expect(isRestoreBlocked(false, 'idle', false)).toBe(false);
-  });
-
-  it('suppresses peer-loss go-on-chain while restore is blocked', () => {
-    expect(shouldAutoGoOnChain(false, 'off-chain', true)).toBe(false);
-    expect(shouldAutoGoOnChain(false, 'off-chain', false)).toBe(true);
-    expect(shouldAutoGoOnChain(null, 'off-chain', false)).toBe(false);
-    expect(shouldAutoGoOnChain(false, 'on-chain', false)).toBe(false);
   });
 
   it('keeps the lobby unavailable while restore is blocked', () => {

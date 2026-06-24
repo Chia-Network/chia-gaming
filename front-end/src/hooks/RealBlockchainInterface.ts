@@ -266,7 +266,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getHeightInfo(): Promise<bigint> {
     const resp = await rpc.getHeightInfo({ usePeakHeight: true });
-    return resp.prevTransactionBlockHeight ?? 0n;
+    const chosen = resp.height ?? 0n;
+    return chosen;
   }
 
   async createOfferForIds(
@@ -407,12 +408,21 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         records.push(...r);
       } catch (e) {
+        // A single coin lookup must never abort the whole poll. The wallet
+        // raises ValueError("Coin ID's: [...] not found.") for coins that
+        // don't exist on-chain yet, and that message can arrive mangled
+        // through the WalletConnect/IPC bridge so isCoinRecordMiss can't
+        // always recognize it. The poller already treats an absent coin as
+        // "not on chain yet", so skip this coin instead of rethrowing —
+        // rethrowing aborted the poll right after the height was fetched,
+        // stalling the handshake on "waiting for height".
         if (isCoinRecordMiss(e)) {
           log(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${collectErrorText(e)}`);
-          continue;
+        } else {
+          console.error(`[wc-blockchain] getCoinRecordsByNames unexpected error (skipping coin) name=${name}:`, e);
+          log(`[wc-blockchain] getCoinRecordsByNames unexpected error (skipping coin) name=${name}: ${collectErrorText(e)}`);
         }
-        console.error(`[wc-blockchain] getCoinRecordsByNames unexpected error name=${name}:`, e);
-        throw e;
+        continue;
       }
     }
     return records;
