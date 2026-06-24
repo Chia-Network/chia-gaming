@@ -101,7 +101,8 @@ jobs:
           export LOAD_WASM_DIAG_FILE="${GW}/front-end/load_wasm_diag.log"
           # A missing simulator must be a hard failure here, never a silent skip.
           export LOAD_WASM_REQUIRE_SIM=1
-          rm -f "${SIM_LOG}" "${LOAD_WASM_DIAG_FILE}"
+          # DBG_SUITE: suite-wide per-worker flake diagnostics (jest_diag.<worker>.log).
+          rm -f "${SIM_LOG}" "${LOAD_WASM_DIAG_FILE}" "${GW}"/front-end/jest_diag.*.log
 
           # These diagnostics are written synchronously to disk during the test
           # (so they survive a dying jest worker that loses buffered stderr).
@@ -113,6 +114,12 @@ jobs:
               cat "${SIM_LOG}" 2>/dev/null || echo "(no sim.log produced)"
               echo "=============== load_wasm diag file ============="
               cat "${LOAD_WASM_DIAG_FILE}" 2>/dev/null || echo "(no diag file produced)"
+              echo "=============== suite flake diag (per worker) ==="
+              for f in "${GW}"/front-end/jest_diag.*.log; do
+                  [ -e "$f" ] || continue
+                  echo "----- ${f} -----"
+                  cat "$f"
+              done
               echo "================================================="
           }
 
