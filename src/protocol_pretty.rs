@@ -267,7 +267,10 @@ mod tests {
             // 32-byte coin-id-ish blob is kept as hex.
             (text("coin"), BencodexValue::Bytes(vec![0xab; 32])),
             // A Vec<u8> field now arrives as a byte string and renders as hex.
-            (text("move_made"), BencodexValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef])),
+            (
+                text("move_made"),
+                BencodexValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            ),
             // Over-threshold blob (aggsig-ish) is elided by length.
             (text("aggsig"), BencodexValue::Bytes(vec![0x11; 96])),
             // Secrets and huge/uninformative structures are skipped entirely.
