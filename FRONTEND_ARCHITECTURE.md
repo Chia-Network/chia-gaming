@@ -326,7 +326,6 @@ full mid-game session state:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `version` | `number` | Save schema version; currently `3`. |
-| `buildNonce` | `string?` | Build nonce stamped on every save; used for stale-build detection. |
 | `playerId` | `string` | Stable local lobby/player identity for this browser state. |
 | `sessionId` | `string?` | Stable token linking the lobby iframe and game-channel WebSocket. |
 | `alias` | `string?` | Local lobby display alias preference. |
@@ -459,9 +458,6 @@ React-only copy that restore has to reconstruct by hand.
 soon as the user picks a connection type (before any WASM cradle exists). This
 ensures that even pre-game state is persisted and detected on reload.
 
-`saveSession()` always stamps `buildNonce` from the current build, so every
-save carries the nonce it was created under.
-
 #### Boot state machine
 
 On page load, `Shell.tsx` runs a boot sequence that determines which dialog
@@ -470,10 +466,7 @@ On page load, `Shell.tsx` runs a boot sequence that determines which dialog
 ```
 peekSession() → save
                  │
-                 ├─ save exists, save.buildNonce !== currentNonce
-                 │   → clearSession(), clearLease(), save = null
-                 │
-                 ├─ save exists (nonce matches)
+                 ├─ save exists
                  │   → show Resume / Start Over dialog
                  │       │
                  │       ├─ Start Over → hardReset(), reload
@@ -492,12 +485,6 @@ peekSession() → save
                  └─ no save, no conflict
                      → claimLease(), ready (fresh start)
 ```
-
-**Stale nonce handling:** Every frontend build gets a unique nonce (milliseconds
-since epoch). `saveSession()` stamps it on every save. On boot, if the save's
-nonce doesn't match the current build, the save is from a previous build and is
-wiped along with the tab lease. This prevents stale saves from interfering with
-a fresh build.
 
 **Start over hard reset:** Start over is deliberately not graceful cleanup. It
 is the escape hatch for garbled local state, so it must not deserialize saved

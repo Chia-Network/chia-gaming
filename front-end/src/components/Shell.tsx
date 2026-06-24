@@ -18,8 +18,6 @@ import {
   saveSession,
   clearSession,
   hardReset,
-  getBuildNonce,
-  clearWalletConnectStorage,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -39,7 +37,6 @@ import {
   setTrackerUrl as saveTrackerUrl,
   isLeaseConflict,
   claimLease,
-  clearLease,
   onFenced,
   offFenced,
 } from '../hooks/save';
@@ -400,25 +397,6 @@ function LogPanel({ lines }: { lines: string[] }) {
 }
 
 const Shell = () => {
-  // Wipe stale saves before any useState reads from localStorage, so that
-  // hooks like activeTab don't latch values from an old session.
-  const staleWipeRef = useRef(false);
-  if (!staleWipeRef.current) {
-    staleWipeRef.current = true;
-    const save = peekSession();
-    const currentNonce = getBuildNonce();
-    if (save && save.buildNonce !== currentNonce) {
-      console.log(
-        '[Shell] boot: stale save (build %s != %s), wiping',
-        save.buildNonce ?? 'none',
-        currentNonce ?? 'none',
-      );
-      clearSession();
-      clearLease();
-      clearWalletConnectStorage();
-    }
-  }
-
   const uniqueId = getPlayerId();
   const [, setSessionId] = useState(() => getSessionId());
 
@@ -492,10 +470,8 @@ const Shell = () => {
   // to localStorage, which fences any existing tab via the storage event.
   // We must not do that until the user has made a conscious choice.
   //
-  //   1. Save exists with matching nonce → 'resumeDialog'.
-  //   2. Save exists but nonce is stale → clearSession(), then fall through
-  //      to "no save" logic.
-  //   3. No save → if another tab holds the lease, 'tabConflict'
+  //   1. Save exists → 'resumeDialog'.
+  //   2. No save → if another tab holds the lease, 'tabConflict'
   //      (the other tab is live even if we don't have its save locally);
   //      otherwise claim the lease and go 'ready'.
   //

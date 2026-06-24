@@ -101,7 +101,10 @@ jobs:
           export LOAD_WASM_DIAG_FILE="${GW}/front-end/load_wasm_diag.log"
           # A missing simulator must be a hard failure here, never a silent skip.
           export LOAD_WASM_REQUIRE_SIM=1
-          # DBG_SUITE: suite-wide per-worker flake diagnostics (jest_diag.<worker>.log).
+          # DBG_SUITE: suite-wide per-worker flake diagnostics. Pin to an absolute
+          # base so the files land exactly where dump_logs cats them, regardless of
+          # each jest worker's process.cwd().
+          export JEST_DIAG_FILE_BASE="${GW}/front-end/jest_diag"
           rm -f "${SIM_LOG}" "${LOAD_WASM_DIAG_FILE}" "${GW}"/front-end/jest_diag.*.log
 
           # These diagnostics are written synchronously to disk during the test

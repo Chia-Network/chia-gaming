@@ -14,7 +14,6 @@ import {
   setAlias,
   getTheme,
   setTheme,
-  getBuildNonce,
   hardReset,
   flushSessionState,
   getTrackerAlert,
@@ -71,21 +70,19 @@ beforeEach(() => {
   _resetForTests();
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
-  setTestGlobal('__buildNonce', '/app/test-nonce/');
 });
 
 afterEach(() => {
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');
   clearTestGlobal('indexedDB');
-  clearTestGlobal('__buildNonce');
 });
 
 describe('session persistence', () => {
   it('round-trips session fields through save and peek', () => {
     saveSession(sampleSession);
     const loaded = peekSession();
-    expect(loaded).toMatchObject({ ...sampleSession, buildNonce: '/app/test-nonce/' });
+    expect(loaded).toMatchObject(sampleSession);
   });
 
   it('returns null when nothing is saved', () => {
@@ -96,18 +93,6 @@ describe('session persistence', () => {
     saveSession(sampleSession);
     clearSession();
     expect(peekSession()).toBeNull();
-  });
-
-  it('peekSession returns stale saves as-is; callers check buildNonce', () => {
-    saveSession(sampleSession);
-    const first = peekSession();
-    expect(first?.buildNonce).toBe('/app/test-nonce/');
-
-    setTestGlobal('__buildNonce', '/app/different-nonce/');
-    const stale = peekSession();
-    expect(stale).not.toBeNull();
-    expect(stale!.buildNonce).toBe('/app/test-nonce/');
-    expect(stale!.buildNonce).not.toBe(getBuildNonce());
   });
 
   it('saveSession preserves blockchainType', () => {
@@ -178,7 +163,6 @@ describe('flat state', () => {
     const state = loadAppState();
     expect(state.serializedCradle).toBe(sampleSession.serializedCradle);
     expect(state.pairingToken).toBe(sampleSession.pairingToken);
-    expect(state.buildNonce).toBe('/app/test-nonce/');
   });
 
   it('version field is set on fresh state', () => {

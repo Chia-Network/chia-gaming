@@ -131,12 +131,11 @@ export interface PersistedGameState<T = unknown> {
 type BlockchainType = 'simulator' | 'walletconnect';
 
 /**
- * Single flat state object stored in localStorage. Stale nonce = wipe
+ * Single flat state object stored in localStorage. Stale version = wipe
  * everything. No nesting, no migration — alpha-mode simplicity.
  */
 export interface SessionState {
   version: bigint;
-  buildNonce?: string;
 
   // Identity (regenerated on wipe)
   playerId: string;
@@ -548,16 +547,9 @@ export function getBlockchainType(): BlockchainType | undefined {
   return loadState().blockchainType;
 }
 
-export function getBuildNonce(): string | undefined {
-  if (typeof window !== 'undefined') return window.__buildNonce;
-  if (typeof globalThis !== 'undefined') return (globalThis as any).__buildNonce;
-  return undefined;
-}
-
 export function saveSession(fields: Partial<SessionState>): void {
   mutate(s => {
     Object.assign(s, fields);
-    s.buildNonce = getBuildNonce();
   });
 }
 
@@ -575,7 +567,7 @@ function hasWalletConnectStorage(): boolean {
  * Returns the current state if there's anything worth resuming — a
  * serialized cradle or leftover WalletConnect storage from a partial
  * connection. `blockchainType` alone (preserved across session clears)
- * does not count as resumable. Callers check buildNonce themselves.
+ * does not count as resumable.
  */
 export function peekSession(): SessionState | null {
   const state = loadState();
@@ -588,7 +580,6 @@ export function clearSession(): void {
   const prev = loadState();
   cached = {
     version: prev.version,
-    buildNonce: prev.buildNonce,
     playerId: prev.playerId,
     sessionId: prev.sessionId,
     alias: prev.alias,

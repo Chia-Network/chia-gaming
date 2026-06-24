@@ -37,13 +37,18 @@ function diagFilePath(): string {
   return `${base}.${worker}.log`;
 }
 
-function write(line: string): void {
+function fileWrite(line: string): void {
   const stamped = `[${new Date().toISOString()}] ${line}`;
   try {
     fs.appendFileSync(proc.__DBG_SUITE_FILE as string, stamped + '\n');
   } catch {
     /* never let diagnostics throw */
   }
+}
+
+function write(line: string): void {
+  fileWrite(line);
+  const stamped = `[${new Date().toISOString()}] ${line}`;
   try {
     process.stderr.write(stamped + '\n');
   } catch {
@@ -99,18 +104,27 @@ if (!proc.__DBG_SUITE_INSTALLED) {
 
 // Runs in every file (setupFilesAfterEnv is per-file). Stash the current test on
 // the shared process object so the single installed handler sees the latest.
+function shortFile(file: string): string {
+  const idx = file.lastIndexOf('/');
+  return idx >= 0 ? file.slice(idx + 1) : file;
+}
+
 beforeEach(() => {
   const state = expect.getState();
   proc.__DBG_SUITE_CURRENT = {
     test: state.currentTestName ?? '(unknown)',
     file: state.testPath ?? '(unknown)',
   };
+  // File-only timeline so an opaque rejection (no stack) can be placed relative
+  // to the test sequence and file boundaries within this worker.
+  fileWrite(`DBG_SUITE > start [${shortFile(proc.__DBG_SUITE_CURRENT.file)}] ${proc.__DBG_SUITE_CURRENT.test}`);
 });
 
 afterEach(() => {
-  const prev = proc.__DBG_SUITE_CURRENT?.test ?? '(unknown)';
+  const cur = proc.__DBG_SUITE_CURRENT ?? { test: '(unknown)', file: '(unknown)' };
+  fileWrite(`DBG_SUITE < end   [${shortFile(cur.file)}] ${cur.test}`);
   proc.__DBG_SUITE_CURRENT = {
-    test: `(between tests, last=${prev})`,
-    file: proc.__DBG_SUITE_CURRENT?.file ?? '(unknown)',
+    test: `(between tests, last=${cur.test})`,
+    file: cur.file,
   };
 });
