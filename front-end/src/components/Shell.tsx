@@ -4,7 +4,7 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, CoinOfInterestEntry } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeLog } from '../services/log';
 import {
@@ -188,17 +188,21 @@ function GameDashboard({
   balances,
   onAction,
   getProtocolState,
+  getCoins,
 }: {
   view: GameDashboardViewModel;
   balances: StatusBarBalanceSegment[] | null;
   onAction: (kind: GameDashboardActionKind) => void;
   getProtocolState: () => string | null;
+  getCoins: () => CoinOfInterestEntry[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [protocolText, setProtocolText] = useState<string | null>(null);
+  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
   const refreshProtocolState = useCallback(() => {
     setProtocolText(getProtocolState());
-  }, [getProtocolState]);
+    setCoins(getCoins());
+  }, [getProtocolState, getCoins]);
   useEffect(() => {
     if (expanded) refreshProtocolState();
   }, [expanded, refreshProtocolState]);
@@ -268,6 +272,16 @@ function GameDashboard({
       </div>
       {expanded && (
         <div className='mt-2'>
+          {coins.length > 0 && (
+            <div className='mb-2 flex flex-col gap-y-0.5 text-xs'>
+              {coins.map(coin => (
+                <span key={`${coin.label}:${coin.id}`} className='flex min-w-0 flex-wrap gap-x-1'>
+                  <span className='text-canvas-solid'>{coin.label}:</span>
+                  <span className='break-all font-mono text-canvas-text-contrast select-text cursor-text'>{coin.id}</span>
+                </span>
+              ))}
+            </div>
+          )}
           <div className='mb-1 flex items-center justify-between'>
             <span className='text-xs text-canvas-solid'>Protocol state</span>
             <Button variant='ghost' color='neutral' size='sm' onClick={refreshProtocolState}>
@@ -435,6 +449,15 @@ const Shell = () => {
     [],
   );
   const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
+
+  const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
+  const handleCoinsProviderChange = useCallback(
+    (getter: (() => CoinOfInterestEntry[]) | null) => {
+      coinsGetterRef.current = getter;
+    },
+    [],
+  );
+  const getCoins = useCallback(() => coinsGetterRef.current?.() ?? [], []);
 
   const peerConnTargetRef = useRef<PeerConnectionResult>({
     sendMessage: () => {},
@@ -1986,6 +2009,7 @@ const Shell = () => {
             balances={statusBarBalances}
             onAction={handleDashboardAction}
             getProtocolState={getProtocolState}
+            getCoins={getCoins}
           />
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
             {keepSession && restoreStatus === 'failed' ? (
@@ -2015,6 +2039,7 @@ const Shell = () => {
                   onRestoreStatusChange={handleRestoreStatusChange}
                   onSessionModelChange={handleSessionModelChange}
                   onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                  onCoinsProviderChange={handleCoinsProviderChange}
                   suppressPhaseReporting={restoreBlocked}
                 />
               </GameSessionErrorBoundary>

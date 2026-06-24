@@ -654,10 +654,11 @@ export interface GameSessionProps {
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
   onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
+  onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, suppressPhaseReporting }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
@@ -676,6 +677,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
   }, [session.gameObject, onProtocolStateProviderChange]);
+
+  useEffect(() => {
+    if (!onCoinsProviderChange) return;
+    const gameObject = session.gameObject;
+    onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
+    return () => onCoinsProviderChange(null);
+  }, [session.gameObject, onCoinsProviderChange]);
 
   useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;

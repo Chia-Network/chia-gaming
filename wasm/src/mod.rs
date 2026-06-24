@@ -1004,6 +1004,25 @@ mod gaming_wasm {
         })
     }
 
+    #[derive(Serialize)]
+    struct JsCoinOfInterest {
+        label: String,
+        id: String,
+    }
+
+    /// Labeled coin ids (hex) to show above the protocol state. 0-2 entries.
+    #[wasm_bindgen]
+    pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
+        let coins = with_game(cid, move |cradle: &mut JsCradle| {
+            Ok(cradle.cradle.coins_of_interest())
+        })?;
+        let entries: Vec<JsCoinOfInterest> = coins
+            .into_iter()
+            .map(|(label, id)| JsCoinOfInterest { label, id })
+            .collect();
+        serde_wasm_bindgen::to_value(&entries).into_js()
+    }
+
     #[wasm_bindgen]
     pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {

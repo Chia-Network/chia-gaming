@@ -20,8 +20,8 @@ use crate::common::types::{
     Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{
-    apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
-    GameNotification, ResyncInfo,
+    apply_effects, ChannelState, ChannelStatusSnapshot, CoinOfInterest, CradleEvent,
+    CradleEventQueue, Effect, GameNotification, ResyncInfo,
 };
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
@@ -187,6 +187,13 @@ pub trait PeerHandler {
 
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         None
+    }
+
+    /// Coin ids worth surfacing in the dashboard (channel/unroll/change/game/
+    /// game-change), each tagged with its kind. Defaults to none, which is the
+    /// correct answer during handshake before any coin exists.
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        vec![]
     }
 
     fn as_any(&self) -> &dyn std::any::Any;
@@ -767,6 +774,17 @@ impl SynchronousGameCradle {
         let value: crate::protocol_pretty::BencodexValue = bencodex::from_slice(&bytes)
             .map_err(|e| Error::StrErr(format!("protocol_state_pretty parse: {e:?}")))?;
         Ok(crate::protocol_pretty::pretty_print(&value))
+    }
+
+    /// Labeled coin ids (hex) the dashboard shows above the protocol state so
+    /// the user can look them up in a block explorer. Sourced from the active
+    /// phase handler; 0-2 entries in practice.
+    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
+        self.peer
+            .coins_of_interest()
+            .into_iter()
+            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
+            .collect()
     }
 
     pub fn get_our_current_share(&self) -> Option<Amount> {

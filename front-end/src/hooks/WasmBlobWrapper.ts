@@ -6,6 +6,7 @@ import {
   PeerConnectionResult,
   WasmConnection,
   ChiaGame,
+  CoinOfInterestEntry,
   CoinStateRecord,
   WasmResult,
   SpendBundle,
@@ -780,6 +781,16 @@ export class WasmBlobWrapper implements PollingCradle {
     } catch (e) {
       console.error('[wasm] getProtocolStatePretty failed:', e);
       return null;
+    }
+  }
+
+  getCoinsOfInterest(): CoinOfInterestEntry[] {
+    if (!this.cradle) return [];
+    try {
+      return this.cradle.coins_of_interest();
+    } catch (e) {
+      console.error('[wasm] getCoinsOfInterest failed:', e);
+      return [];
     }
   }
 

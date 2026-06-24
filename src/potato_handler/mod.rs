@@ -20,8 +20,8 @@ use crate::common::types::{
     ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
-    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
+    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::utils::proper_list;
@@ -1739,6 +1739,12 @@ impl PeerHandler for PotatoHandler {
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
         })
+    }
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        match self.channel_handler.as_ref() {
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            None => vec![],
+        }
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         PotatoHandler::channel_handler(self)

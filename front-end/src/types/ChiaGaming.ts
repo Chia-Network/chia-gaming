@@ -185,6 +185,12 @@ interface GameCradleCreateConfig {
   reward_puzzle_hash: string;
 }
 
+/// A labeled coin id (hex) surfaced in the dashboard for explorer lookup.
+export interface CoinOfInterestEntry {
+  label: string;
+  id: string;
+}
+
 export interface WasmConnection {
   // System
   init: (print: (msg: string) => void) => void;
@@ -255,6 +261,7 @@ export interface WasmConnection {
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   protocol_state_pretty: (cid: number) => string;
+  coins_of_interest: (cid: number) => CoinOfInterestEntry[];
   serialize_cradle: (cid: number) => Uint8Array;
   get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
 
@@ -310,6 +317,10 @@ export class ChiaGame {
 
   protocol_state_pretty(): string {
     return this.wasm.protocol_state_pretty(this.cradle);
+  }
+
+  coins_of_interest(): CoinOfInterestEntry[] {
+    return this.wasm.coins_of_interest(this.cradle);
   }
 
   serialize(): Uint8Array {

@@ -12,8 +12,8 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
+    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::potato_handler::handler_base::{
     build_channel_to_unroll_bundle, classify_unroll, ChannelHandlerBase, UnrollOutcome,
@@ -1154,6 +1154,23 @@ impl PeerHandler for SpendChannelCoinHandler {
             game_allocated,
             have_potato: None,
         })
+    }
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        let mut coins = match &self.state {
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => {
+                vec![(CoinOfInterest::Channel, channel_coin.clone())]
+            }
+            SpendChannelCoinState::UnrollTimeoutOrSpend { unroll_coin, .. }
+            | SpendChannelCoinState::UnrollSpend { unroll_coin, .. }
+            | SpendChannelCoinState::UnrollConditions { unroll_coin, .. } => {
+                vec![(CoinOfInterest::Unroll, unroll_coin.clone())]
+            }
+        };
+        if let Some(reward) = self.terminal_reward_coin.as_ref() {
+            coins.push((CoinOfInterest::Change, reward.clone()));
+        }
+        coins
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         self.base.channel_handler()

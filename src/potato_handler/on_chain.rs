@@ -14,8 +14,8 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
-    GameStatusOtherParams, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
+    GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::potato_handler::types::{GameAction, PotatoState};
 use crate::referee::types::{
@@ -1883,6 +1883,22 @@ impl PeerHandler for OnChainGameHandler {
         })
     }
 
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        // Only surface the coin for a game that's still live: once the game is
+        // finished (settled, slashed, or forfeited) its coin is no longer of
+        // interest. The forfeit path also prunes game_map, but the explicit
+        // game_finished check makes the disappearance reliable regardless.
+        let mut coins: Vec<(CoinOfInterest, CoinString)> = self
+            .game_map
+            .iter()
+            .filter(|(_, state)| !state.game_finished)
+            .map(|(coin, _)| (CoinOfInterest::Game, coin.clone()))
+            .collect();
+        if let Some(reward) = self.terminal_reward_coin.as_ref() {
+            coins.push((CoinOfInterest::GameChange, reward.clone()));
+        }
+        coins
+    }
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
