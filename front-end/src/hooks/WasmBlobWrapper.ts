@@ -773,6 +773,16 @@ export class WasmBlobWrapper implements PollingCradle {
     }
   }
 
+  getProtocolStatePretty(): string | null {
+    if (!this.cradle) return null;
+    try {
+      return this.cradle.protocol_state_pretty();
+    } catch (e) {
+      console.error('[wasm] getProtocolStatePretty failed:', e);
+      return null;
+    }
+  }
+
   setHandState(state: PersistedGameState | null) {
     this.handState = state;
     this.scheduleSave();

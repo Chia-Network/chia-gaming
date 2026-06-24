@@ -62,7 +62,6 @@ pub struct TheirTurnReferee {
 
     pub state: Rc<TheirTurnRefereeGameState>,
     pub state_number: usize,
-    pub parent: Option<Rc<MyTurnReferee>>,
 }
 
 impl TheirTurnReferee {
@@ -113,7 +112,6 @@ impl TheirTurnReferee {
                 message_handler: None,
                 state,
                 state_number,
-                parent: None,
             },
             setup.puzzle_hash,
         ))
@@ -201,16 +199,11 @@ impl TheirTurnReferee {
             move_spend: self.get_move_info(),
         };
 
-        let new_parent = TheirTurnReferee {
-            state_number,
-            ..self.clone()
-        };
         Ok(MyTurnReferee {
             finished: self.finished,
             fixed: self.fixed.clone(),
             state: Rc::new(new_state),
             state_number,
-            parent: Some(Rc::new(new_parent)),
             enable_cheating: None,
         })
     }

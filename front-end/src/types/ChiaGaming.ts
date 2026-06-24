@@ -254,6 +254,7 @@ export interface WasmConnection {
   cradle_their_share: (cid: number) => bigint;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
+  protocol_state_pretty: (cid: number) => string;
   serialize_cradle: (cid: number) => Uint8Array;
   get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
 
@@ -305,6 +306,10 @@ export class ChiaGame {
 
   get_game_state_id(): string | undefined {
     return this.wasm.get_game_state_id(this.cradle);
+  }
+
+  protocol_state_pretty(): string {
+    return this.wasm.protocol_state_pretty(this.cradle);
   }
 
   serialize(): Uint8Array {

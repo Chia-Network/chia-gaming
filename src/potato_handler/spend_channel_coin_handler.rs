@@ -529,6 +529,24 @@ impl SpendChannelCoinHandler {
                         }));
                     }
                 }
+                // Record the change coin we receive so the resolved coin id
+                // stays visible in the protocol-state pretty-print (it flows
+                // into the terminal OnChainGameHandler's terminal_reward_coin).
+                self.terminal_reward_coin = {
+                    let conditions =
+                        CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+                    let player_ch = self.base.channel_handler()?;
+                    let reward_puzzle_hash = player_ch.get_reward_puzzle_hash(env)?;
+                    let channel_coin_id = coin_id.to_coin_id();
+                    conditions.iter().find_map(|c| {
+                        if let CoinCondition::CreateCoin(ph, amt) = c {
+                            if *ph == reward_puzzle_hash && *amt > Amount::default() {
+                                return Some(CoinString::from_parts(&channel_coin_id, ph, amt));
+                            }
+                        }
+                        None
+                    })
+                };
                 self.transition_to_completed_terminal(true);
                 return Ok(effects);
             }

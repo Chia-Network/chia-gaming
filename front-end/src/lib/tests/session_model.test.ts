@@ -5,6 +5,7 @@ import {
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
   selectGameDashboardView,
+  selectStatusBarBalances,
   selectGameSessionView,
   selectGameSpecificView,
   selectHideGameInterfaceForBetweenHandDialog,
@@ -145,7 +146,7 @@ describe('session model selectors', () => {
     });
   });
 
-  it('uses hand terminology for per-hand dashboard details', () => {
+  it('uses hand terminology for the collapsed hand status', () => {
     const view = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: {
@@ -153,16 +154,10 @@ describe('session model selectors', () => {
         coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
         terminal: { type: 'none', label: null, myReward: null, rewardCoinHex: null },
       },
-    }), { currentHandSize: '10 mojos' });
+    }));
 
     expect(view.handStatusLabel).toBe('Active');
-    expect(view.details).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'Hand size', value: '10 mojos' }),
-      expect.objectContaining({ label: 'Hand status', value: 'Active' }),
-      expect.objectContaining({ label: 'Raw turn state', value: 'Playing our move on-chain' }),
-      expect.objectContaining({ label: 'Hand result', value: null }),
-    ]));
-    expect(view.details.some(row => row.label === 'Game state' || row.label === 'Game size')).toBe(false);
+    expect(view.handDetail).toBeNull();
   });
 
   it('uses turn-specific hand status in the bar only once a game coin is on-chain', () => {
@@ -226,9 +221,6 @@ describe('session model selectors', () => {
       },
     }));
     expect(slashing.handStatusLabel).toBe('Slashing cheater');
-    expect(slashing.details).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'Raw turn state', value: 'Slashing cheater' }),
-    ]));
   });
 
   it('shows a premature opponent timeout as an explicit ended detail', () => {
@@ -247,11 +239,6 @@ describe('session model selectors', () => {
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Opponent took too long to move');
-    expect(view.details).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'Hand status', value: 'Ended' }),
-      expect.objectContaining({ label: 'Terminal kind', value: 'opponent-timed-out' }),
-      expect.objectContaining({ label: 'Hand result', value: 'Opponent took too long to move' }),
-    ]));
   });
 
   it('keeps a clean opponent timeout collapsed (no premature-timeout detail)', () => {
@@ -289,10 +276,6 @@ describe('session model selectors', () => {
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Move too late');
-    expect(view.details).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'Terminal kind', value: 'we-timed-out' }),
-      expect.objectContaining({ label: 'Hand result', value: 'Move too late' }),
-    ]));
   });
 
   it('prefers terminal hand state over stale on-chain turn state', () => {
@@ -312,10 +295,72 @@ describe('session model selectors', () => {
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Forfeited');
-    expect(view.details).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'Hand status', value: 'Ended' }),
-      expect.objectContaining({ label: 'Hand result', value: 'Forfeited' }),
-    ]));
+  });
+
+  it('derives status-bar balances across phases', () => {
+    const active = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Active',
+          ourBalance: '70',
+          theirBalance: '30',
+          gameAllocated: '20',
+        },
+      },
+    }));
+    expect(active).toEqual([
+      { label: 'Me', value: '70' },
+      { label: 'Opp', value: '30' },
+      { label: 'Hand', value: '20' },
+    ]);
+
+    // At hand end Me/Opp stay and Hand shows the mine/opp split (pot from the
+    // hand terms, since game_allocated is back to zero).
+    const reward = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Active',
+          ourBalance: '85',
+          theirBalance: '15',
+          gameAllocated: '0',
+        },
+      },
+      betweenHand: {
+        lastTerms: { gameType: 'calpoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 15n },
+      },
+      game: {
+        coin: { coinHex: null, turnState: 'ended' },
+        terminal: { type: 'we-slashed-opponent', label: 'We won', myReward: '15', rewardCoinHex: null },
+      },
+    }));
+    expect(reward).toEqual([
+      { label: 'Me', value: '85' },
+      { label: 'Opp', value: '15' },
+      { label: 'Hand', value: '15', value2: '5' },
+    ]);
+
+    const clean = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean', ourBalance: '60', theirBalance: '40' },
+      },
+      game: {
+        terminal: { type: 'opponent-timed-out', label: 'done', myReward: '10', rewardCoinHex: null, cleanEnd: true },
+      },
+    }));
+    expect(clean).toEqual([
+      { label: 'Me', value: '60' },
+      { label: 'Opp', value: '40' },
+    ]);
+
+    const errored = selectStatusBarBalances(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Failed', ourBalance: '60', theirBalance: '40' } },
+    }));
+    expect(errored).toEqual([
+      { label: 'Me', value: '0' },
+      { label: 'Opp', value: '?' },
+    ]);
   });
 
   it('derives restore blocking and shell decisions from the canonical model', () => {

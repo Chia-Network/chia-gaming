@@ -757,6 +757,18 @@ impl SynchronousGameCradle {
         self.amount.clone()
     }
 
+    /// Render the current protocol-level peer state as indented text for the
+    /// dashboard. The peer is serialized to bencodex (via typetag, so the
+    /// concrete phase becomes the top-level tag) and re-read into an untyped
+    /// tree so the renderer can apply length- and name-based elision.
+    pub fn protocol_state_pretty(&self) -> Result<String, Error> {
+        let bytes = bencodex::to_vec(&self.peer)
+            .map_err(|e| Error::StrErr(format!("protocol_state_pretty serialize: {e:?}")))?;
+        let value: crate::protocol_pretty::BencodexValue = bencodex::from_slice(&bytes)
+            .map_err(|e| Error::StrErr(format!("protocol_state_pretty parse: {e:?}")))?;
+        Ok(crate::protocol_pretty::pretty_print(&value))
+    }
+
     pub fn get_our_current_share(&self) -> Option<Amount> {
         self.peer
             .channel_handler()

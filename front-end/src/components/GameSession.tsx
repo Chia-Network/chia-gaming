@@ -653,10 +653,11 @@ export interface GameSessionProps {
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
+  onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
   suppressPhaseReporting?: boolean;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, suppressPhaseReporting }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, suppressPhaseReporting }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
@@ -668,6 +669,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   useEffect(() => {
     onSessionModelChange?.(session.sessionModel);
   }, [session.sessionModel, onSessionModelChange]);
+
+  useEffect(() => {
+    if (!onProtocolStateProviderChange) return;
+    const gameObject = session.gameObject;
+    onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
+    return () => onProtocolStateProviderChange(null);
+  }, [session.gameObject, onProtocolStateProviderChange]);
 
   useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;

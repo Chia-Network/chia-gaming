@@ -994,6 +994,16 @@ mod gaming_wasm {
         })
     }
 
+    /// Pull the protocol-level peer state, rendered as indented text for the
+    /// dashboard. This reads directly out of Rust (borrow-safe) rather than
+    /// being pushed through notifications.
+    #[wasm_bindgen]
+    pub fn protocol_state_pretty(cid: i32) -> Result<String, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.protocol_state_pretty()
+        })
+    }
+
     #[wasm_bindgen]
     pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {

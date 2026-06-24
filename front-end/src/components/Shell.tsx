@@ -52,6 +52,7 @@ import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldAdvertiseAvailable, shouldAutoGoOnChain } from '../lib/restoreLifecycle';
 import {
   selectGameDashboardView,
+  selectStatusBarBalances,
   selectSessionPhase,
   sessionAmountsFromSave,
   sessionModelFromSave,
@@ -60,6 +61,7 @@ import {
   type GameDashboardActionKind,
   type GameDashboardViewModel,
   type SessionModel,
+  type StatusBarBalanceSegment,
 } from '../lib/session/model';
 import { gameDisplayName } from '../lib/gameRegistry';
 import { log } from '../services/log';
@@ -172,38 +174,34 @@ const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   disconnected: 'Disconnected',
 };
 
-function channelCoinLabelForDashboard(model: SessionModel | null): string {
-  const state = model?.channel.status.state;
-  if (state === 'ResolvedClean' || state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
-    return 'Channel reward coin ID';
-  }
-  if (state === 'Unrolling') {
-    return 'Unroll coin ID';
-  }
-  return 'Channel coin ID';
-}
-
-function gameCoinLabelForDashboard(model: SessionModel | null): string {
-  return model?.game.terminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';
-}
-
-function formatOptionalDashboardMojos(raw: string | null): string | null {
-  if (raw == null) return null;
+function formatBalanceValue(raw: string): string {
   try {
     return formatMojos(BigInt(raw));
   } catch {
+    // Non-numeric sentinel (e.g. the '?' error convention) — show as-is.
     return raw;
   }
 }
 
 function GameDashboard({
   view,
+  balances,
   onAction,
+  getProtocolState,
 }: {
   view: GameDashboardViewModel;
+  balances: StatusBarBalanceSegment[] | null;
   onAction: (kind: GameDashboardActionKind) => void;
+  getProtocolState: () => string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [protocolText, setProtocolText] = useState<string | null>(null);
+  const refreshProtocolState = useCallback(() => {
+    setProtocolText(getProtocolState());
+  }, [getProtocolState]);
+  useEffect(() => {
+    if (expanded) refreshProtocolState();
+  }, [expanded, refreshProtocolState]);
 
   return (
     <div className='flex-shrink-0 border-b border-canvas-border bg-canvas-bg-subtle px-4 py-2 text-canvas-text sm:px-6 md:px-8'>
@@ -223,21 +221,36 @@ function GameDashboard({
               ▶
             </span>
           </button>
-          <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
-            <span className='flex min-w-0 flex-wrap gap-x-1'>
-              <span className='text-canvas-solid'>Channel:</span>
-              <span className='font-medium text-canvas-text-contrast'>{view.channelStatusLabel}</span>
-              {view.channelDetail && (
-                <span className='text-canvas-text'>{view.channelDetail}</span>
-              )}
-            </span>
-            <span className='flex min-w-0 flex-wrap gap-x-1'>
-              <span className='text-canvas-solid'>Hand:</span>
-              <span className='font-medium text-canvas-text-contrast'>{view.handStatusLabel}</span>
-              {view.handDetail && (
-                <span className='text-canvas-text'>{view.handDetail}</span>
-              )}
-            </span>
+          <div className='flex min-w-0 flex-col gap-y-0.5'>
+            <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+              <span className='flex min-w-0 flex-wrap gap-x-1'>
+                <span className='text-canvas-solid'>Channel:</span>
+                <span className='font-medium text-canvas-text-contrast'>{view.channelStatusLabel}</span>
+                {view.channelDetail && (
+                  <span className='text-canvas-text'>{view.channelDetail}</span>
+                )}
+              </span>
+              <span className='flex min-w-0 flex-wrap gap-x-1'>
+                <span className='text-canvas-solid'>Hand:</span>
+                <span className='font-medium text-canvas-text-contrast'>{view.handStatusLabel}</span>
+                {view.handDetail && (
+                  <span className='text-canvas-text'>{view.handDetail}</span>
+                )}
+              </span>
+            </div>
+            {balances && (
+              <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+                {balances.map(seg => (
+                  <span key={seg.label} className='flex min-w-0 flex-wrap gap-x-1'>
+                    <span className='text-canvas-solid'>{seg.label}:</span>
+                    <span className='font-medium text-canvas-text-contrast'>
+                      {formatBalanceValue(seg.value)}
+                      {seg.value2 !== undefined ? ` / ${formatBalanceValue(seg.value2)}` : ''}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className='flex flex-wrap items-center gap-2'>
@@ -254,20 +267,16 @@ function GameDashboard({
         </div>
       </div>
       {expanded && (
-        <div className='mt-2 grid gap-x-4 gap-y-1 text-xs text-canvas-text sm:grid-cols-2'>
-          {view.details.length > 0 ? view.details.map(row => {
-            const displayValue = row.value == null || row.value === '' ? 'None' : row.value;
-            return (
-            <div key={`${row.label}:${row.value}`} className='flex min-w-0 flex-wrap gap-x-1'>
-              <span className='text-canvas-solid'>{row.label}:</span>
-              <span className={row.copyValue ? 'font-mono break-all text-canvas-text-contrast' : 'font-medium text-canvas-text-contrast'}>
-                {row.copyValue ? `0x${displayValue}` : displayValue}
-              </span>
-            </div>
-            );
-          }) : (
-            <div className='text-canvas-solid'>No active channel.</div>
-          )}
+        <div className='mt-2'>
+          <div className='mb-1 flex items-center justify-between'>
+            <span className='text-xs text-canvas-solid'>Protocol state</span>
+            <Button variant='ghost' color='neutral' size='sm' onClick={refreshProtocolState}>
+              Refresh
+            </Button>
+          </div>
+          <pre className='max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text'>
+            {protocolText ?? 'No active channel.'}
+          </pre>
         </div>
       )}
     </div>
@@ -414,6 +423,18 @@ const Shell = () => {
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The dashboard pulls the protocol-state pretty-print on demand (when its
+  // detail view is expanded) rather than having it pushed on every change. The
+  // live session registers a getter here; the dashboard reads through it.
+  const protocolStateGetterRef = useRef<(() => string | null) | null>(null);
+  const handleProtocolStateProviderChange = useCallback(
+    (getter: (() => string | null) | null) => {
+      protocolStateGetterRef.current = getter;
+    },
+    [],
+  );
+  const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
 
   const peerConnTargetRef = useRef<PeerConnectionResult>({
     sendMessage: () => {},
@@ -1617,32 +1638,11 @@ const Shell = () => {
   console.log('[Shell] render: gameParams=%s peerConn=%s activeBlockchain=%s walletConnected=%s restoring=%s → keepSession=%s',
     !!gameParams, !!peerConn, hasActiveBlockchain, walletConnected, !!gameParams?.restoring, keepSession);
 
-  const trackerStatusLabel = trackerOrigin
-    ? (trackerLiveness ? TRACKER_LIVENESS_LABELS[trackerLiveness] : 'Connecting')
-    : 'Not connected';
-  const peerStatusLabel = peerConnected === null ? 'Unknown' : peerConnected ? 'Active' : 'Inactive';
-  const rawDashboardView = selectGameDashboardView(dashboardSessionModel, {
+  const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     cleanShutdownGraceActive,
-    channelSize: gameParams ? formatMojos(gameParams.amount * 2n) : null,
-    currentHandSize: dashboardSessionModel
-      ? formatMojos(dashboardSessionModel.betweenHand.lastTerms.myContribution * 2n)
-      : null,
-    gameTypeLabel: dashboardSessionModel ? gameDisplayName(dashboardSessionModel.game.activeGameType) : null,
-    channelCoinLabel: channelCoinLabelForDashboard(dashboardSessionModel),
-    gameCoinLabel: gameCoinLabelForDashboard(dashboardSessionModel),
-    trackerStatus: trackerStatusLabel,
-    peerStatus: peerStatusLabel,
   });
-  const dashboardView: GameDashboardViewModel = {
-    ...rawDashboardView,
-    details: rawDashboardView.details.map(row => {
-      if (row.label === 'My stack' || row.label === 'Their stack' || row.label === 'My reward') {
-        return { ...row, value: formatOptionalDashboardMojos(row.value) };
-      }
-      return row;
-    }),
-  };
+  const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
 
   // --- Main tabbed app ---
   return (
@@ -1981,7 +1981,12 @@ const Shell = () => {
 
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
-          <GameDashboard view={dashboardView} onAction={handleDashboardAction} />
+          <GameDashboard
+            view={dashboardView}
+            balances={statusBarBalances}
+            onAction={handleDashboardAction}
+            getProtocolState={getProtocolState}
+          />
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
             {keepSession && restoreStatus === 'failed' ? (
               <div className='w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8'>
@@ -2009,6 +2014,7 @@ const Shell = () => {
                   onSessionPhaseChange={handleSessionPhaseChange}
                   onRestoreStatusChange={handleRestoreStatusChange}
                   onSessionModelChange={handleSessionModelChange}
+                  onProtocolStateProviderChange={handleProtocolStateProviderChange}
                   suppressPhaseReporting={restoreBlocked}
                 />
               </GameSessionErrorBoundary>

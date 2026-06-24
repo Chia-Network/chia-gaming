@@ -44,7 +44,7 @@ export type GameplayEvent =
   | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: Uint8Array | number[] } }
   | { GameMessage: { readable: Uint8Array | number[] } }
-  | { Timeout: { byUs: boolean; forfeited: boolean } }
+  | { Timeout: { byUs: boolean; forfeited: boolean; cleanEnd?: boolean } }
   | { GameError: { reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
@@ -62,9 +62,11 @@ function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): 
       // ended-opponent-timed-out.
       return { Timeout: { byUs: status === 'ended-we-timed-out', forfeited: true } };
     case 'we-timed-out':
-      return { Timeout: { byUs: true, forfeited: false } };
+      // cleanEnd (game_finished) means the game completed normally and the
+      // "timeout" is just the off-chain endgame give-up, not a real timeout.
+      return { Timeout: { byUs: true, forfeited: false, cleanEnd: info.cleanEnd } };
     case 'opponent-timed-out':
-      return { Timeout: { byUs: false, forfeited: false } };
+      return { Timeout: { byUs: false, forfeited: false, cleanEnd: info.cleanEnd } };
     default:
       return { GameError: { reason: info.label ?? info.type } };
   }
@@ -210,9 +212,9 @@ const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
   rewardCoinHex: null,
 };
 
-const ATTENTION_STATES: ChannelState[] = [
-  'GoingOnChain', 'ResolvedClean', 'ResolvedStale', 'Failed',
-];
+// Channel states that still warrant a pop-up. Routine transitions are shown in
+// the status bar instead; only error resolutions interrupt the user.
+const ERROR_CHANNEL_STATES: ChannelState[] = ['ResolvedStale', 'Failed'];
 
 const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
   'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
@@ -989,10 +991,9 @@ export function useGameSession(
         dismissedChannelStateRef.current = null;
         setDismissedChannelState(null);
       }
-      if (ATTENTION_STATES.includes(cs.state)
+      if (ERROR_CHANNEL_STATES.includes(cs.state)
           && dismissedChannelStateRef.current !== cs.state) {
-        const label = cs.state === 'Failed' || cs.state === 'ResolvedStale' ? 'Error' : `Channel: ${cs.state}`;
-        pushChannel({ kind: 'channel-state', title: label, message: info.advisory ?? '', payload: info });
+        pushChannel({ kind: 'channel-state', title: 'Error', message: info.advisory ?? '', payload: info });
       }
       if (cs.state === 'Active' && info.gameAllocated === '0') {
         const ours = BigInt(info.ourBalance ?? '0');
@@ -1193,14 +1194,8 @@ export function useGameSession(
           setBetweenHandMode('decision');
           setCachedPeerProposal(null);
           setReviewPeerProposal(null);
-          if (inOnChainFlow && terminalInfo.type !== 'forfeit') {
-            const attentionInfo: GameTerminalAttentionInfo = {
-              label: terminalInfo.label ?? `Ended: ${status}`,
-              myReward: terminalInfo.myReward,
-              rewardCoinHex: terminalInfo.rewardCoinHex,
-            };
-            pushGame({ kind: 'game-terminal', title: attentionInfo.label, message: '', payload: attentionInfo });
-          }
+          // Routine end-of-hand transitions no longer pop up; the result is
+          // shown in the status-bar balances and (for Space Poker) on the table.
         }
         gameplayEventSubject.next(terminalEventForInfo(terminalInfo, status));
         return;

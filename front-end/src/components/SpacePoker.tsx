@@ -128,13 +128,34 @@ function CardColumn({
   );
 }
 
-function HoleCardsGroup({ boosted, children }: { boosted?: boolean; children: ReactNode }) {
+type HoleCardsBannerKind = 'fold' | 'win' | null;
+
+function HoleCardsGroup({
+  boosted,
+  banner,
+  children,
+}: {
+  boosted?: boolean;
+  banner?: HoleCardsBannerKind;
+  children: ReactNode;
+}) {
   return (
     <div className='relative inline-flex items-center'>
       <div className='flex gap-2 items-center'>{children}</div>
       {boosted && (
         <span className='absolute left-full top-1/2 -translate-y-1/2 ml-1 text-2xl font-bold text-canvas-text-contrast leading-none'>
           +
+        </span>
+      )}
+      {banner && (
+        <span
+          className={`absolute left-full top-1/2 -translate-y-1/2 ${boosted ? 'ml-6' : 'ml-2'} whitespace-nowrap rounded-full px-4 py-2 text-base font-bold shadow-lg ${
+            banner === 'win'
+              ? 'bg-primary-solid text-primary-on-primary'
+              : 'bg-canvas-solid text-canvas-on-solid'
+          }`}
+        >
+          {banner === 'win' ? 'Winner!' : 'Fold'}
         </span>
       )}
     </div>
@@ -378,6 +399,23 @@ export default function SpacePoker({
         ? 'You accepted the result after the final call.'
         : '';
 
+  // Calpoker-style pill banners shown immediately to the right of each player's
+  // hole cards: "Fold" (canvas-colored) on whoever folded/conceded, and a
+  // winner-colored "Winner!" on the winning side at a showdown.
+  let playerBanner: HoleCardsBannerKind = null;
+  let oppBanner: HoleCardsBannerKind = null;
+  if (sp.terminalState === 'folded-by-you' || sp.terminalState === 'conceded-by-you') {
+    playerBanner = 'fold';
+  } else if (sp.terminalState === 'folded-by-opponent' || sp.terminalState === 'conceded-by-opponent') {
+    oppBanner = 'fold';
+  } else if (sp.terminalState === 'revealed' && sp.outcome) {
+    if (sp.outcome.result > 0n) {
+      playerBanner = 'win';
+    } else if (sp.outcome.result < 0n) {
+      oppBanner = 'win';
+    }
+  }
+
   let turnLine = '';
   if (myTurn && inBetting && !(handler === SpHandler.BeginRound && N === 4n && sp.coinTossIOpen === false)) {
     turnLine =
@@ -413,7 +451,7 @@ export default function SpacePoker({
         <div className='absolute left-0 top-1/2 -translate-y-1/2'>
           <AmountBadge>{sp.formatBet(sp.opponentStack)}</AmountBadge>
         </div>
-        <HoleCardsGroup boosted={sp.opponentHoleCards ? sp.opponentBoost ?? false : false}>
+        <HoleCardsGroup boosted={sp.opponentHoleCards ? sp.opponentBoost ?? false : false} banner={oppBanner}>
           {sp.opponentHoleCards ? (
             sp.opponentHoleCards.map((c, i) => (
               <CardColumn key={i} topSel={showPrivateShowdown && sp.outcome?.opponentHandCards?.includes(c)}>
@@ -468,7 +506,7 @@ export default function SpacePoker({
         <div className='absolute left-0 top-1/2 -translate-y-1/2'>
           <AmountBadge>{sp.formatBet(sp.playerStack)}</AmountBadge>
         </div>
-        <HoleCardsGroup boosted={sp.playerHoleCards ? sp.playerBoost : false}>
+        <HoleCardsGroup boosted={sp.playerHoleCards ? sp.playerBoost : false} banner={playerBanner}>
           {sp.playerHoleCards ? (
             sp.playerHoleCards.map((c, i) => (
               <CardColumn key={i} bottomSel={showPrivateShowdown && sp.outcome?.playerHandCards?.includes(c)}>

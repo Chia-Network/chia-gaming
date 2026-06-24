@@ -218,12 +218,6 @@ export type GameDashboardActionLabel =
   | 'Go On-Chain'
   | 'Done';
 
-export interface GameDashboardDetailRow {
-  label: string;
-  value: string | null;
-  copyValue?: string;
-}
-
 export interface GameDashboardViewModel {
   channelStatusLabel: string;
   channelDetail: string | null;
@@ -232,7 +226,16 @@ export interface GameDashboardViewModel {
   actionLabel: GameDashboardActionLabel;
   actionEnabled: boolean;
   actionKind: GameDashboardActionKind;
-  details: GameDashboardDetailRow[];
+}
+
+/// One labeled balance shown in the status bar header. `value` is a raw mojo
+/// string the renderer formats, except for the error convention where it may be
+/// a literal like `?`. When `value2` is set the segment renders as
+/// `value / value2` (used for the end-of-hand mine/opp split).
+export interface StatusBarBalanceSegment {
+  label: string;
+  value: string;
+  value2?: string;
 }
 
 export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
@@ -305,16 +308,6 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
   ResolvedUnrolled: 'Resolved Unrolled',
   ResolvedStale: 'Resolved Stale',
   Failed: 'Failed',
-};
-
-const GAME_TURN_LABELS: Record<GameTurnState, string> = {
-  'my-turn': 'Your turn',
-  'their-turn': 'Their turn',
-  'playing-on-chain': 'Playing our move on-chain',
-  'replaying': 'Replaying our move on-chain',
-  'finishing': 'Finishing',
-  'opponent-illegal-move': 'Slashing cheater',
-  'ended': 'Ended',
 };
 
 const HAND_STATUS_LABELS: Record<HandStatus, string> = {
@@ -520,13 +513,6 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
   cleanShutdownGraceActive?: boolean;
-  channelSize?: string | null;
-  currentHandSize?: string | null;
-  gameTypeLabel?: string | null;
-  channelCoinLabel?: string | null;
-  gameCoinLabel?: string | null;
-  trackerStatus?: string | null;
-  peerStatus?: string | null;
 }
 
 function channelStatusDetail(model: SessionModel): string | null {
@@ -572,17 +558,6 @@ function selectHandStatus(model: SessionModel): HandStatus {
 
 function collapsedHandStatusLabel(model: SessionModel): string {
   return HAND_STATUS_LABELS[selectHandStatus(model)];
-}
-
-function detailedHandStatusLabel(model: SessionModel): string {
-  return HAND_STATUS_LABELS[selectHandStatus(model)];
-}
-
-function rawTurnStateDetail(model: SessionModel): string | null {
-  if (model.game.activeIds.length === 0) {
-    return null;
-  }
-  return GAME_TURN_LABELS[model.game.coin.turnState];
 }
 
 function collapsedHandDetail(model: SessionModel): string | null {
@@ -647,17 +622,11 @@ export function selectGameDashboardView(
       actionLabel: 'No Session',
       actionEnabled: false,
       actionKind: 'none',
-      details: [
-        { label: 'Session', value: 'No active channel' },
-        { label: 'Tracker', value: options.trackerStatus ?? 'Unknown' },
-        { label: 'Peer', value: options.peerStatus ?? 'Unknown' },
-      ],
     };
   }
 
   const channel = model.channel.status;
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false);
-  const gameCoin = model.game.terminal.rewardCoinHex ?? model.game.coin.coinHex;
 
   return {
     channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],
@@ -665,31 +634,86 @@ export function selectGameDashboardView(
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
     ...action,
-    details: [
-      { label: 'Channel size', value: options.channelSize ?? null },
-      { label: 'My stack', value: channel.ourBalance },
-      { label: 'Their stack', value: channel.theirBalance },
-      { label: 'Game', value: options.gameTypeLabel ?? model.game.activeGameType },
-      { label: 'Hand size', value: options.currentHandSize ?? null },
-      {
-        label: options.channelCoinLabel ?? 'Channel coin ID',
-        value: channel.coinHex,
-        copyValue: channel.coinHex ? `0x${channel.coinHex}` : undefined,
-      },
-      { label: 'Tracker', value: options.trackerStatus ?? 'Unknown' },
-      { label: 'Peer', value: options.peerStatus ?? 'Unknown' },
-      { label: 'Hand status', value: detailedHandStatusLabel(model) },
-      { label: 'Raw turn state', value: rawTurnStateDetail(model) },
-      { label: 'Terminal kind', value: model.game.terminal.type !== 'none' ? model.game.terminal.type : null },
-      { label: 'Hand result', value: model.game.terminal.label },
-      {
-        label: options.gameCoinLabel ?? 'Game coin ID',
-        value: gameCoin,
-        copyValue: gameCoin ? `0x${gameCoin}` : undefined,
-      },
-      { label: 'My reward', value: model.game.terminal.myReward },
-    ],
   };
+}
+
+const STATUS_BAR_ERROR_TERMINALS = new Set<GameTerminalType>([
+  'forfeit',
+  'opponent-successfully-cheated',
+  'game-error',
+  'opponent-slashed-us',
+  'insufficient-balance',
+]);
+
+/// Derive the compact balance strip shown in the status bar header.
+///
+/// Layout is always `Me` / `Opp` / `Hand`:
+/// - Active hand: `Hand` is the in-game pot.
+/// - Hand end: `Hand` is the realized mine/opp split (`myReward / theirReward`),
+///   still shown alongside the updated `Me`/`Opp` stacks.
+/// - Clean shutdown: no hand, so `Me`/`Opp` show the final balances ("change").
+/// - Error: `Me 0` / `Opp ?` (the convention for an unrecoverable channel/game).
+export function selectStatusBarBalances(
+  model: SessionModel | null,
+): StatusBarBalanceSegment[] | null {
+  if (!model) {
+    return null;
+  }
+
+  const channel = model.channel.status;
+  const terminal = model.game.terminal;
+
+  const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
+  if (channelFailed || STATUS_BAR_ERROR_TERMINALS.has(terminal.type)) {
+    return [
+      { label: 'Me', value: '0' },
+      { label: 'Opp', value: '?' },
+    ];
+  }
+
+  const ours = channel.ourBalance;
+  const theirs = channel.theirBalance;
+  if (ours == null || theirs == null) {
+    return null;
+  }
+
+  // A *channel* clean shutdown (distinct from a hand ending) has no hand pot;
+  // Me/Opp show the final balances ("change").
+  const cleanShutdown =
+    channel.state === 'ShuttingDown' ||
+    channel.state === 'ShutdownTransactionPending' ||
+    channel.state === 'ResolvedClean';
+  if (cleanShutdown) {
+    return [
+      { label: 'Me', value: ours },
+      { label: 'Opp', value: theirs },
+    ];
+  }
+
+  const segments: StatusBarBalanceSegment[] = [
+    { label: 'Me', value: ours },
+    { label: 'Opp', value: theirs },
+  ];
+
+  if (terminal.type !== 'none' && terminal.myReward != null) {
+    // Hand ended: the pot (a zero-sum split of both contributions) is realized
+    // as my reward vs theirs. game_allocated is already back to zero here, so
+    // the pot comes from the hand's terms.
+    const terms = model.betweenHand.lastTerms;
+    const pot = terms.myContribution + terms.theirContribution;
+    let theirReward = terminal.myReward;
+    try {
+      const rem = pot - BigInt(terminal.myReward);
+      theirReward = (rem < 0n ? 0n : rem).toString();
+    } catch {
+      theirReward = theirs;
+    }
+    segments.push({ label: 'Hand', value: terminal.myReward, value2: theirReward });
+  } else if (channel.gameAllocated != null && channel.gameAllocated !== '0') {
+    segments.push({ label: 'Hand', value: channel.gameAllocated });
+  }
+
+  return segments;
 }
 
 export interface GameSessionViewModel {
