@@ -52,6 +52,65 @@ function decodeNonNegativeClvmIntHex(hex: string): bigint {
   return result;
 }
 
+function collectErrorText(err: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+
+  const visit = (value: unknown) => {
+    if (value == null || seen.has(value)) return;
+    seen.add(value);
+
+    if (typeof value === 'string') {
+      parts.push(value);
+      return;
+    }
+
+    if (value instanceof Error) {
+      parts.push(value.message);
+      visit((value as any).cause);
+      return;
+    }
+
+    if (typeof value !== 'object') {
+      parts.push(String(value));
+      return;
+    }
+
+    const obj = value as Record<string, unknown>;
+    for (const key of ['message', 'error', 'code']) {
+      if (obj[key] !== undefined) parts.push(String(obj[key]));
+    }
+    visit(obj.data);
+    visit(obj.structuredError);
+
+    try {
+      parts.push(jsonStringify(obj));
+    } catch {
+      // Ignore unserializable error objects; earlier fields still help.
+    }
+  };
+
+  visit(err);
+  // Chia GUI IPC may encode the daemon error as [wc:<code>|<base64-json>] ....
+  // Decode that payload when present so "Coin ID ... not found" is visible here.
+  for (const part of [...parts]) {
+    const match = part.match(/\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/);
+    if (!match || typeof atob !== 'function') continue;
+    try {
+      parts.push(atob(match[1]));
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  return parts.join(' ');
+}
+
+function isCoinRecordMiss(err: unknown): boolean {
+  const text = collectErrorText(err).toLowerCase();
+  return text.includes('not found') || text.includes('coin id') && text.includes('unknown');
+}
+
 function isRetryablePushError(errStr: string): boolean {
   return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
 }
@@ -348,6 +407,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         records.push(...r);
       } catch (e) {
+        if (isCoinRecordMiss(e)) {
+          log(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${collectErrorText(e)}`);
+          continue;
+        }
         console.error(`[wc-blockchain] getCoinRecordsByNames unexpected error name=${name}:`, e);
         throw e;
       }
