@@ -44,6 +44,11 @@ import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
+import {
+  walletConnectScheduler,
+  WC_BALANCE_POLL_INTERVAL_MS,
+  WC_CHAIN_POLL_INTERVAL_MS,
+} from '../hooks/JsonRpcContext';
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldAdvertiseAvailable } from '../lib/restoreLifecycle';
@@ -74,7 +79,7 @@ const MOJOS_PER_XCH = 1_000_000_000_000;
 
 function getInterface(bcType: 'simulator' | 'walletconnect') {
   return bcType === 'walletconnect'
-    ? { iface: realBlockchainInfo, pollMs: 10000 }
+    ? { iface: realBlockchainInfo, pollMs: WC_CHAIN_POLL_INTERVAL_MS }
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
@@ -749,28 +754,56 @@ const Shell = () => {
   const [userReady, setUserReady] = useState(false);
 
   // Balance polling
+  const stopBalancePolling = useCallback(() => {
+    walletConnectScheduler.stopBalanceInterest();
+    if (balanceTimerRef.current) {
+      clearTimeout(balanceTimerRef.current);
+      balanceTimerRef.current = null;
+    }
+  }, []);
+
   const requestBalance = useCallback(() => {
+    if (balanceTimerRef.current) {
+      clearTimeout(balanceTimerRef.current);
+      balanceTimerRef.current = null;
+    }
     try {
       getActiveBlockchain().rpc.getBalance()
         .then((bal) => {
           setBalance(bal);
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          balanceTimerRef.current = setTimeout(requestBalance, 15000);
+          if (blockchainTypeRef.current !== 'walletconnect') {
+            balanceTimerRef.current = setTimeout(requestBalance, WC_BALANCE_POLL_INTERVAL_MS);
+          }
         })
         .catch(() => {
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          balanceTimerRef.current = setTimeout(requestBalance, 15000);
+          if (blockchainTypeRef.current !== 'walletconnect') {
+            balanceTimerRef.current = setTimeout(requestBalance, WC_BALANCE_POLL_INTERVAL_MS);
+          }
         });
     } catch {
       // blockchain not set yet
     }
   }, []);
 
+  const startBalancePolling = useCallback((bcType: 'simulator' | 'walletconnect') => {
+    stopBalancePolling();
+    if (bcType === 'walletconnect') {
+      walletConnectScheduler.startBalanceInterest(WC_BALANCE_POLL_INTERVAL_MS, {
+        onBalance: (bal) => setBalance(bal),
+        onError: () => {
+          // Keep balance polling best-effort; the scheduler will schedule the next attempt.
+        },
+      });
+      return;
+    }
+    requestBalance();
+  }, [requestBalance, stopBalancePolling]);
+
   useEffect(() => {
     return () => {
-      if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+      stopBalancePolling();
     };
-  }, []);
+  }, [stopBalancePolling]);
 
   // QR code generation (inline in wallet tab, type-agnostic)
   useEffect(() => {
@@ -1107,9 +1140,9 @@ const Shell = () => {
     setConnectionSetup(null);
     setUserReady(true);
     setActiveTabRaw(prev => prev === 'wallet' ? 'tracker' : prev);
-    requestBalance();
+    startBalancePolling(bcType);
     log(`${bcType} wallet connected`);
-  }, [requestBalance, setConnecting]);
+  }, [startBalancePolling, setConnecting]);
 
   // --- Unified connection flow ---
   // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
@@ -1184,6 +1217,7 @@ const Shell = () => {
 
   const handleCancelConnect = useCallback(async () => {
     wcAbortRef.current = true;
+    stopBalancePolling();
     if (activeBlockchainRef.current) {
       try { await activeBlockchainRef.current.disconnect(); } catch { /* ignore */ }
     } else if (blockchainType) {
@@ -1198,7 +1232,7 @@ const Shell = () => {
     setConnecting(false);
     setWalletConnected(false);
     setShowSimModal(false);
-  }, [blockchainType]);
+  }, [blockchainType, stopBalancePolling]);
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
@@ -1382,12 +1416,13 @@ const Shell = () => {
   }, [performResume, handleConnect]);
 
   const handleCloseTab = useCallback(() => {
+    stopBalancePolling();
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
     activeBlockchainRef.current?.disconnect().catch(() => {});
     activeBlockchainRef.current = null;
     setBootState({ kind: 'tabDead' });
-  }, []);
+  }, [stopBalancePolling]);
 
   const handleStartOver = useCallback(() => {
     try {
@@ -1400,6 +1435,7 @@ const Shell = () => {
   }, []);
 
   const doDisconnectWallet = useCallback(async () => {
+    stopBalancePolling();
     if (activeBlockchainRef.current) {
       try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
     }
@@ -1408,7 +1444,7 @@ const Shell = () => {
     setWalletConnected(false);
     setBlockchainType(undefined);
     setBalance(undefined);
-  }, []);
+  }, [stopBalancePolling]);
 
   const handleDisconnectWallet = useCallback(() => {
     if (sessionPhase !== 'none') {

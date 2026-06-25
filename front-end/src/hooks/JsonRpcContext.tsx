@@ -42,42 +42,24 @@ import {
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 
+import {
+  AsyncJobQueue,
+  AsyncQueueJob,
+  AsyncPollingScheduler,
+  AsyncPollingTarget,
+  clearGapTimer,
+  makeGapTimer,
+  scheduleGapTimer,
+} from '../lib/AsyncScheduler';
 import { walletConnectState } from './useWalletConnect';
 
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
-const WC_REQUEST_TIMEOUT_MS = 60000;
 const WC_RELAY_CONNECT_TIMEOUT_MS = 15000;
-// Quick read-only lookups normally return in 1-6s. WalletConnect requests are
-// serialized (see `serialized` below), so a lookup that hangs for the full long
-// timeout monopolizes the channel and blocks height delivery -- which is all the
-// handshake's new_block needs -- for that whole duration. Cap the quick methods
-// far lower so a stuck lookup is skipped fast and the poll keeps advancing.
-const WC_QUICK_REQUEST_TIMEOUT_MS = 15000;
-// State-changing operations can legitimately take the better part of a minute
-// (e.g. createOfferForIds builds and compresses an offer); keep the long cap.
-const WC_LONG_TIMEOUT_METHODS = new Set<ChiaMethod>([
-  ChiaMethod.GetNextAddress,
-  ChiaMethod.CreateOfferForIds,
-  ChiaMethod.PushTransactions,
-  ChiaMethod.CreateNewRemoteWallet,
-]);
-const WC_RETRY_DELAY_MS = 1000;
 const WC_INTER_REQUEST_MS = 50;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-let queueTail: Promise<unknown> = Promise.resolve();
-
-function serialized<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = queueTail;
-  const result = prev.then(() => delay(WC_INTER_REQUEST_MS)).then(fn);
-  queueTail = result.catch(() => {});
-  return result;
-}
+export const WC_CHAIN_POLL_INTERVAL_MS = 10000;
+export const WC_BALANCE_POLL_INTERVAL_MS = 60000;
 
 function getErrorText(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -114,6 +96,19 @@ function shouldLogRpcError(method: ChiaMethod): boolean {
   return method !== ChiaMethod.GetCoinRecordsByNames;
 }
 
+function shouldEnqueueAtFront(method: ChiaMethod): boolean {
+  return method === ChiaMethod.PushTransactions
+    || method === ChiaMethod.SelectCoins
+    || method === ChiaMethod.CreateOfferForIds;
+}
+
+function isCoinRecordMiss(err: unknown): boolean {
+  const text = getErrorText(err).toLowerCase();
+  return text.includes('not found')
+    || text.includes('coin id') && text.includes('unknown')
+    || text.includes('internal error') && text.includes('-32603');
+}
+
 function deepNumbersToBigInt(value: unknown): unknown {
   if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
   if (Array.isArray(value)) return value.map(deepNumbersToBigInt);
@@ -125,18 +120,6 @@ function deepNumbersToBigInt(value: unknown): unknown {
     return out;
   }
   return value;
-}
-
-function isTransientWalletConnectError(err: unknown): boolean {
-  const message = getErrorText(err).toLowerCase();
-  return (
-    message.includes('socket stalled') ||
-    message.includes('failed to fetch') ||
-    message.includes('networkerror') ||
-    message.includes('connection') ||
-    message.includes('websocket') ||
-    message.includes('timed out')
-  );
 }
 
 async function waitForRelayerConnected(): Promise<void> {
@@ -174,95 +157,426 @@ async function waitForRelayerConnected(): Promise<void> {
   });
 }
 
+type PreparedRpc<T> = {
+  method: ChiaMethod;
+  params: Record<string, unknown>;
+  data: object;
+  paramKeys: string;
+  enqueuedAt: number;
+};
+
+type HeightCallbacks = {
+  onHeight: (height: bigint, response: GetHeightInfoResponse) => void;
+  onError?: (err: unknown) => void;
+};
+
+type BalanceCallbacks = {
+  onBalance: (balance: bigint, response: GetWalletBalanceResponse) => void;
+  onError?: (err: unknown) => void;
+};
+
+export type WalletConnectCoinInterest = {
+  coin_name: string;
+  coin_string: string;
+};
+
+type CoinCallbacks = {
+  onRecords: (records: GetCoinRecordsByNamesResponse['coinRecords'], registeredNames: Set<string>) => void;
+  onError?: (err: unknown) => void;
+};
+
+class WalletConnectScheduler {
+  private lane = new AsyncJobQueue({
+    gapMs: WC_INTER_REQUEST_MS,
+    onError: (job, e) => {
+      log(`[WC scheduler] job failed label=${job.label}: ${getErrorText(e)}`);
+    },
+  });
+  private height: AsyncPollingScheduler;
+  private balance: AsyncPollingScheduler;
+  private coinTimer = makeGapTimer(WC_CHAIN_POLL_INTERVAL_MS);
+  private coinInterested = false;
+  private coinCallbacks: CoinCallbacks | null = null;
+  private watchedCoins = new Map<string, WalletConnectCoinInterest>();
+  private registeredCoinNames = new Set<string>();
+  private coinQueuedNames = new Set<string>();
+  private coinInFlightNames = new Set<string>();
+  private coinRecords: GetCoinRecordsByNamesResponse['coinRecords'] = [];
+  private coinDirty = false;
+  private remoteWalletId: bigint | number | undefined;
+  private heightCallbacks: HeightCallbacks | null = null;
+  private balanceCallbacks: BalanceCallbacks | null = null;
+
+  constructor() {
+    const walletConnectHeightPollingTarget: AsyncPollingTarget = {
+      runOnce: () => this.runHeightPoll(),
+      onError: (e) => this.heightCallbacks?.onError?.(e),
+    };
+    const walletConnectBalancePollingTarget: AsyncPollingTarget = {
+      runOnce: () => this.runBalancePoll(),
+      onError: (e) => this.balanceCallbacks?.onError?.(e),
+    };
+
+    this.height = new AsyncPollingScheduler(
+      {
+        label: 'walletconnect-height',
+        queue: this.lane,
+        intervalMs: WC_CHAIN_POLL_INTERVAL_MS,
+      },
+      walletConnectHeightPollingTarget,
+    );
+    this.balance = new AsyncPollingScheduler(
+      {
+        label: 'walletconnect-balance',
+        queue: this.lane,
+        intervalMs: WC_BALANCE_POLL_INTERVAL_MS,
+      },
+      walletConnectBalancePollingTarget,
+    );
+  }
+
+  request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let prepared: PreparedRpc<T>;
+      try {
+        prepared = this.prepareRpc(method, data);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      this.enqueue({
+        label: String(method),
+        run: async () => {
+          try {
+            const value = await this.runPreparedRpc(prepared);
+            resolve(value);
+          } catch (e) {
+            this.logRpcError(prepared, e);
+            reject(walletConnectError(method, getErrorText(e), e));
+          }
+        },
+      });
+    });
+  }
+
+  setRemoteWalletId(walletId: bigint | number | undefined): void {
+    this.remoteWalletId = walletId;
+  }
+
+  startHeightInterest(intervalMs: number, callbacks: HeightCallbacks): void {
+    this.heightCallbacks = callbacks;
+    this.height.start(intervalMs);
+  }
+
+  stopHeightInterest(): void {
+    this.height.stop();
+  }
+
+  startBalanceInterest(intervalMs: number, callbacks: BalanceCallbacks): void {
+    this.balanceCallbacks = callbacks;
+    this.balance.start(intervalMs);
+  }
+
+  stopBalanceInterest(): void {
+    this.balance.stop();
+  }
+
+  setCoinInterest(
+    coins: WalletConnectCoinInterest[],
+    intervalMs: number,
+    callbacks: CoinCallbacks,
+  ): void {
+    this.coinCallbacks = callbacks;
+    this.coinTimer.intervalMs = intervalMs;
+    this.coinInterested = true;
+    const previous = this.watchedCoins;
+    this.watchedCoins = new Map(coins.map((coin) => [coin.coin_name, coin]));
+    const added = coins.some((coin) => !previous.has(coin.coin_name));
+    if (this.watchedCoins.size === 0) {
+      this.clearCoinTimer();
+      return;
+    }
+    if (added) {
+      this.clearCoinTimer();
+      this.enqueueCoinSweepOrMarkDirty();
+    } else if (!this.coinTimer.timerActive && this.coinQueuedNames.size === 0 && this.coinInFlightNames.size === 0) {
+      this.scheduleCoinTimer();
+    }
+  }
+
+  stopCoinInterest(): void {
+    this.coinInterested = false;
+    this.watchedCoins.clear();
+    this.clearCoinTimer();
+  }
+
+  resetForTests(): void {
+    this.lane.resetForTests();
+    this.height.resetForTests(WC_CHAIN_POLL_INTERVAL_MS);
+    this.balance.resetForTests(WC_BALANCE_POLL_INTERVAL_MS);
+    this.clearCoinTimer();
+    this.coinInterested = false;
+    this.coinCallbacks = null;
+    this.watchedCoins.clear();
+    this.registeredCoinNames.clear();
+    this.coinQueuedNames.clear();
+    this.coinInFlightNames.clear();
+    this.coinRecords = [];
+    this.coinDirty = false;
+    this.remoteWalletId = undefined;
+    this.heightCallbacks = null;
+    this.balanceCallbacks = null;
+  }
+
+  private prepareRpc<T, D extends object>(
+    method: ChiaMethod,
+    data: D,
+  ): PreparedRpc<T> {
+    if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
+    if (!walletConnectState.getSession()) throw new Error('Session is not connected');
+
+    const address = walletConnectState.getAddress();
+    if (!address) {
+      throw new Error('no fingerprint set in walletconnect');
+    }
+    const fingerprint = Number.parseInt(address, 10);
+    if (!Number.isFinite(fingerprint)) {
+      throw new Error('walletconnect fingerprint is not a valid integer');
+    }
+
+    const params: Record<string, unknown> = {
+      ...data,
+      fingerprint,
+    };
+    const paramKeys = Object.keys(params).join(',');
+    const enqueuedAt = Date.now();
+
+    return {
+      method,
+      params,
+      data,
+      paramKeys,
+      enqueuedAt,
+    };
+  }
+
+  private async runPreparedRpc<T>(prepared: PreparedRpc<T>): Promise<T> {
+    const session = walletConnectState.getSession();
+    const client = walletConnectState.getClient();
+    if (!session) throw new Error('Session is not connected');
+    if (!client) throw new Error('WalletConnect is not initialized');
+
+    await waitForRelayerConnected();
+
+    try {
+      const raw = await client.request({
+        topic: session.topic,
+        chainId: walletConnectState.getChainId(),
+        request: { method: prepared.method, params: prepared.params },
+      });
+      return this.normalizeResult(prepared, raw);
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  private normalizeResult<T>(prepared: PreparedRpc<T>, raw: unknown): T {
+    const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
+    if (result?.error) {
+      const errorText = toDebugJson(result.error);
+      const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
+      if (shouldLogRpcError(prepared.method)) {
+        console.error(`[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}]\n  error: ${errorText}\n${trace}`);
+        log(`[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}] error=${errorText}`);
+      }
+      throw walletConnectError(prepared.method, errorText, result.error);
+    }
+
+    if (result?.data !== undefined) return result.data as T;
+    return result as T;
+  }
+
+  private logRpcError(prepared: PreparedRpc<unknown>, e: unknown): void {
+    const elapsed = Date.now() - prepared.enqueuedAt;
+    const errText = getErrorText(e);
+    if (shouldLogRpcError(prepared.method)) {
+      const knownTopics = walletConnectState.getClient()?.session?.keys ?? [];
+      const activeTopicNow = walletConnectState.getSession()?.topic ?? 'none';
+      log(
+        `[WC RPC error] ${prepared.method} after ${elapsed}ms: ${errText} paramKeys=[${prepared.paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
+      );
+      console.error(`[WC RPC error] ${prepared.method} paramKeys=[${prepared.paramKeys}]`, e);
+    }
+  }
+
+  private enqueue(job: AsyncQueueJob): void {
+    if (shouldEnqueueAtFront(job.label as ChiaMethod)) {
+      this.lane.enqueueFront(job);
+    } else {
+      this.lane.enqueue(job);
+    }
+  }
+
+  private async runHeightPoll(): Promise<void> {
+    const prepared = this.prepareRpc<GetHeightInfoResponse, GetHeightInfoRequest>(
+      ChiaMethod.GetHeightInfo,
+      { usePeakHeight: true },
+    );
+    try {
+      const response = await this.runPreparedRpc(prepared);
+      if (this.height.isInterested()) {
+        this.heightCallbacks?.onHeight(response.height ?? 0n, response);
+      }
+    } catch (e) {
+      this.logRpcError(prepared, e);
+      throw e;
+    }
+  }
+
+  private async runBalancePoll(): Promise<void> {
+    const prepared = this.prepareRpc<GetWalletBalanceResponse, GetWalletBalanceRequest>(
+      ChiaMethod.GetWalletBalance,
+      { walletId: 1n },
+    );
+    try {
+      const response = await this.runPreparedRpc(prepared);
+      if (this.balance.isInterested()) {
+        this.balanceCallbacks?.onBalance((response as any)?.confirmedWalletBalance ?? 0n, response);
+      }
+    } catch (e) {
+      this.logRpcError(prepared, e);
+      throw e;
+    }
+  }
+
+  private enqueueCoinSweepOrMarkDirty(): void {
+    if (this.coinQueuedNames.size > 0 || this.coinInFlightNames.size > 0) {
+      this.coinDirty = true;
+      return;
+    }
+    this.enqueueCoinSweep();
+  }
+
+  private enqueueCoinSweep(): void {
+    if (!this.coinInterested || this.watchedCoins.size === 0) return;
+    this.coinRecords = [];
+    const unregistered = [...this.watchedCoins.keys()].filter((name) => !this.registeredCoinNames.has(name));
+    if (unregistered.length > 0 && this.remoteWalletId !== undefined) {
+      this.enqueueCoinRegistration(unregistered);
+    }
+    for (const name of this.watchedCoins.keys()) {
+      this.enqueueCoinRequest(name);
+    }
+  }
+
+  private enqueueCoinRegistration(names: string[]): void {
+    let prepared: PreparedRpc<RegisterRemoteCoinsResponse>;
+    try {
+      prepared = this.prepareRpc(
+        ChiaMethod.RegisterRemoteCoins,
+        { walletId: this.remoteWalletId!, coinIds: names },
+      );
+    } catch (e) {
+      this.coinCallbacks?.onError?.(e);
+      return;
+    }
+    this.enqueue({
+      label: 'coin-registration',
+      run: async () => {
+        if (!this.coinInterested) return;
+        try {
+          await this.runPreparedRpc(prepared);
+          for (const name of names) this.registeredCoinNames.add(name);
+        } catch (e) {
+          this.logRpcError(prepared, e);
+          this.coinCallbacks?.onError?.(e);
+        }
+      },
+    });
+  }
+
+  private enqueueCoinRequest(name: string): void {
+    if (this.coinQueuedNames.has(name) || this.coinInFlightNames.has(name)) return;
+    this.coinQueuedNames.add(name);
+    this.enqueue({
+      label: `coin:${name}`,
+      run: async () => {
+        this.coinQueuedNames.delete(name);
+        if (!this.coinInterested || !this.watchedCoins.has(name)) {
+          this.finishCoinRequest(name);
+          return;
+        }
+        if (!this.registeredCoinNames.has(name)) {
+          this.finishCoinRequest(name);
+          return;
+        }
+        let prepared: PreparedRpc<GetCoinRecordsByNamesResponse>;
+        try {
+          prepared = this.prepareRpc(
+            ChiaMethod.GetCoinRecordsByNames,
+            { names: [name], includeSpentCoins: true, allowUnsynced: true },
+          );
+        } catch (e) {
+          this.coinCallbacks?.onError?.(e);
+          this.finishCoinRequest(name);
+          return;
+        }
+        this.coinInFlightNames.add(name);
+        try {
+          const response = await this.runPreparedRpc(prepared);
+          if ((response as any)?.error) {
+            const msg = String((response as any).error);
+            if (!msg.includes('not found')) {
+              log(`[wc-scheduler] getCoinRecordsByNames daemon error (skipping coin) name=${name}: ${msg}`);
+            }
+          } else {
+            this.coinRecords.push(...(response.coinRecords ?? []));
+          }
+        } catch (e) {
+          if (!isCoinRecordMiss(e)) {
+            log(`[wc-scheduler] getCoinRecordsByNames unexpected error (skipping coin) name=${name}: ${getErrorText(e)}`);
+          }
+        } finally {
+          this.finishCoinRequest(name);
+        }
+      },
+    });
+  }
+
+  private finishCoinRequest(name: string): void {
+    this.coinInFlightNames.delete(name);
+    if (this.coinQueuedNames.size > 0 || this.coinInFlightNames.size > 0) return;
+    if (this.coinCallbacks && this.coinInterested) {
+      this.coinCallbacks.onRecords([...this.coinRecords], new Set(this.registeredCoinNames));
+    }
+    this.coinRecords = [];
+    if (!this.coinInterested || this.watchedCoins.size === 0) return;
+    if (this.coinDirty) {
+      this.coinDirty = false;
+      this.enqueueCoinSweep();
+    } else {
+      this.scheduleCoinTimer();
+    }
+  }
+
+  private scheduleCoinTimer(): void {
+    scheduleGapTimer(this.coinTimer, () => {
+      if (this.coinInterested) this.enqueueCoinSweepOrMarkDirty();
+    }, this.coinInterested && this.watchedCoins.size > 0);
+  }
+
+  private clearCoinTimer(): void {
+    clearGapTimer(this.coinTimer);
+  }
+}
+
+export const walletConnectScheduler = new WalletConnectScheduler();
+
 async function request<T, D extends object = object>(
   method: ChiaMethod,
   data: D,
 ): Promise<T> {
-  if (!walletConnectState.getClient())
-    throw new Error('WalletConnect is not initialized');
-  if (!walletConnectState.getSession())
-    throw new Error('Session is not connected');
-
-  const address = walletConnectState.getAddress();
-  if (!address) {
-    throw new Error('no fingerprint set in walletconnect');
-  }
-  const fingerprint = Number.parseInt(address, 10);
-  if (!Number.isFinite(fingerprint)) {
-    throw new Error('walletconnect fingerprint is not a valid integer');
-  }
-
-  const params: Record<string, unknown> = {
-    ...data,
-    fingerprint,
-  };
-
-  const startedAt = Date.now();
-  const timeoutMs = WC_LONG_TIMEOUT_METHODS.has(method)
-    ? WC_REQUEST_TIMEOUT_MS
-    : WC_QUICK_REQUEST_TIMEOUT_MS;
-
-  let raw: unknown;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      const session = walletConnectState.getSession()!;
-      raw = await serialized(async () => {
-        await waitForRelayerConnected();
-        return Promise.race([
-          walletConnectState.getClient()!.request({
-            topic: session.topic,
-            chainId: walletConnectState.getChainId(),
-            request: { method, params },
-          }),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              reject(new Error(`WalletConnect RPC ${method} timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
-          }),
-        ]);
-      });
-      break;
-    } catch (e) {
-      const elapsed = Date.now() - startedAt;
-      const errText = getErrorText(e);
-      const knownTopics = walletConnectState.getClient()?.session?.keys ?? [];
-      const activeTopicNow = walletConnectState.getSession()?.topic ?? 'none';
-      const retryBlockedByMethod =
-        method === ChiaMethod.CreateOfferForIds
-        || method === ChiaMethod.CreateNewRemoteWallet;
-      const isRetryable = false
-        && attempt < 2
-        && !retryBlockedByMethod
-        && isTransientWalletConnectError(e);
-      const paramKeys = Object.keys(params).join(',');
-      if (shouldLogRpcError(method)) {
-        log(
-          `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} paramKeys=[${paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
-        );
-        console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}]`, e);
-      }
-      if (!isRetryable) {
-        throw walletConnectError(method, errText, e);
-      }
-      console.warn(`[WC] ${method} transient failure, retrying once...`, e);
-      await delay(WC_RETRY_DELAY_MS);
-    }
-  }
-
-  const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
-  if (result?.error) {
-    const errorText = toDebugJson(result.error);
-    const paramKeys = Object.keys(params).join(',');
-    const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
-    if (shouldLogRpcError(method)) {
-      console.error(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}]\n  error: ${errorText}\n${trace}`);
-      log(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}] error=${errorText}`);
-    }
-    throw walletConnectError(method, errorText, result.error);
-  }
-
-  if (result?.data !== undefined) return result.data as T;
-  return result as T;
+  return walletConnectScheduler.request<T, D>(method, data);
 }
 
 async function getWallets(data: GetWalletsRequest) {

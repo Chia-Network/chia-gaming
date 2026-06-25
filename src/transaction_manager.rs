@@ -54,8 +54,9 @@ struct SubmittedTx {
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
     /// Output coins this transaction should create, derived from its
-    /// `CREATE_COIN` conditions.  These let us distinguish the transaction
-    /// winning from a conflicting spend of the same input winning.
+    /// `CREATE_COIN` conditions.  These are replay/conflict metadata only:
+    /// they do not become poll targets unless a protocol handler separately
+    /// registers the coin as watched.
     #[serde(default)]
     expected_output_coins: Vec<CoinString>,
     /// Set once any expected output is observed on-chain.
@@ -240,8 +241,9 @@ pub struct TransactionManager<C> {
     /// reorged out before their creating transaction re-confirmed).  Surfaced to
     /// the resubmission layer so the creating transaction can be replayed.
     vanished_coins: std::collections::HashSet<CoinString>,
-    /// Transactions handed out for submission, kept so a reorged-out output can
-    /// be replayed by resubmitting the transaction that created it.
+    /// Transactions handed out for submission, kept so a reorged-out watched
+    /// protocol output can be replayed by resubmitting the transaction that
+    /// created it.
     submitted: Vec<SubmittedTx>,
     /// Coins observed live on-chain in the previous report.  Used to compute
     /// the created/deleted set difference, exactly mirroring the previous
@@ -330,12 +332,12 @@ impl<C> TransactionManager<C> {
 
     /// Coin strings the hosting layer should poll for on-chain state.
     pub fn get_coins_to_poll(&self) -> Vec<CoinString> {
-        let mut coins: std::collections::BTreeSet<CoinString> =
-            self.watched_coins.keys().cloned().collect();
-        for tx in &self.submitted {
-            coins.extend(tx.expected_output_coins.iter().cloned());
-        }
-        coins.into_iter().collect()
+        self.watched_coins
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// Coin string for a watched coin, if tracked.
@@ -362,9 +364,10 @@ impl<C> TransactionManager<C> {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
             } else {
                 let outputs = expected_output_coins(bundle);
-                // Eligible for blind rebroadcast only when we can observe it
-                // land (it creates a coin) and rebroadcasting it at any later
-                // height stays valid (no relative timelock).
+                // Eligible for blind rebroadcast only when it creates an output
+                // and rebroadcasting it at any later height stays valid (no
+                // relative timelock). Outputs are not polled from here; the
+                // input-spent path stops resubmission once any spend wins.
                 let auto_resubmit = !outputs.is_empty() && !bundle_has_relative_timelock(bundle);
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
@@ -730,12 +733,13 @@ impl<C: ManagedCradle> TransactionManager<C> {
         }
     }
 
-    /// Rebroadcast resubmit-eligible transactions that have not yet landed, once
-    /// per block, so a single dropped broadcast cannot strand the protocol while
-    /// waiting for a coin spend that never comes.  Only transactions that
+    /// Rebroadcast resubmit-eligible transactions that have not yet been proven
+    /// landed by an independently-watched protocol output, once per block, so a
+    /// single dropped broadcast cannot strand the protocol while waiting for a
+    /// coin spend that never comes.  Only transactions that
     ///
-    ///   * are flagged `auto_resubmit` (create an observable output and carry no
-    ///     relative timelock, so rebroadcasting at this height stays valid),
+    ///   * are flagged `auto_resubmit` (create an output and carry no relative
+    ///     timelock, so rebroadcasting at this height stays valid),
     ///   * have not been observed to land, and
     ///   * still have at least one input coin present (unspent)
     ///
@@ -1295,6 +1299,40 @@ mod tests {
         assert_eq!(resubmitted[0].name.as_deref(), Some("create-child"));
     }
 
+    #[test]
+    fn submitted_outputs_are_not_poll_targets_unless_registered() {
+        let mut allocator = AllocEncoder::new();
+        let parent = test_coin(22);
+        let protocol_child = CoinString::from_parts(
+            &parent.to_coin_id(),
+            &PuzzleHash::from_bytes([23; 32]),
+            &Amount::new(1),
+        );
+        let untracked_child = CoinString::from_parts(
+            &parent.to_coin_id(),
+            &PuzzleHash::from_bytes([24; 32]),
+            &Amount::new(1),
+        );
+        let creating_tx =
+            test_bundle_spending_creating("create-untracked-child", &parent, &untracked_child);
+
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&protocol_child, 50),
+            CradleEvent::OutboundTransaction(creating_tx, None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // Retained transaction outputs are replay/conflict metadata. They do
+        // not become host poll targets unless a protocol handler explicitly
+        // registers them as watched coins.
+        let poll_set = mgr.get_coins_to_poll();
+        assert!(poll_set.contains(&protocol_child));
+        assert!(!poll_set.contains(&untracked_child));
+    }
+
     /// Build a funding transaction spending `parent` and the channel coin it
     /// creates (its parent is the funding spend).
     fn funding_setup() -> (CoinString, CoinString, SpendBundle) {
@@ -1811,7 +1849,7 @@ mod tests {
 
         // Host submits the spend; the manager retains it.
         assert_eq!(mgr.drain_submissions().len(), 1);
-        assert!(mgr.get_coins_to_poll().contains(&child));
+        assert!(!mgr.get_coins_to_poll().contains(&child));
 
         // The input is spent, but the retained tx's expected child did not
         // appear.  A conflicting transaction won, so this local intent must be

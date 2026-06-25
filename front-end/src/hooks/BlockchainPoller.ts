@@ -3,6 +3,16 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 import { coinRecordToName } from '../util/coinWatch';
 import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
+import {
+  walletConnectScheduler,
+  WC_CHAIN_POLL_INTERVAL_MS,
+  WalletConnectCoinInterest,
+} from './JsonRpcContext';
+import {
+  AsyncJobQueue,
+  AsyncPollingScheduler,
+  AsyncPollingTarget,
+} from '../lib/AsyncScheduler';
 
 /**
  * A cradle that the poller drives with raw chain state.  The transaction
@@ -36,22 +46,39 @@ export class BlockchainPoller {
   private startedAt = 0;
   private consecutiveFailures = 0;
   private peak = 0n;
-  private sleepTimer: ReturnType<typeof setTimeout> | null = null;
-  private wakeSleep: (() => void) | null = null;
+  private useWalletConnectScheduler: boolean;
+  private previousPeakForCoinReport = 0n;
+  private genericPollLane = new AsyncJobQueue();
+  private simulatorBlockchainPollingScheduler: AsyncPollingScheduler;
 
   constructor(blockchain: InternalBlockchainInterface, pollIntervalMs: number, maxBackoffMs?: number) {
     this.rpc = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
+    this.useWalletConnectScheduler = (blockchain as any).usesWalletConnectScheduler === true;
+    const simulatorBlockchainPollingTarget: AsyncPollingTarget = {
+      runOnce: () => this.runGenericPollOnce(),
+      getNextIntervalMs: () => this.currentBackoffMs(),
+    };
+    this.simulatorBlockchainPollingScheduler = new AsyncPollingScheduler(
+      {
+        label: 'simulator-blockchain',
+        queue: this.genericPollLane,
+        intervalMs: this.pollIntervalMs,
+      },
+      simulatorBlockchainPollingTarget,
+    );
   }
 
   attachCradle(cradle: PollingCradle) {
     this.cradles.add(cradle);
+    this.refreshWalletConnectCoinInterest();
   }
 
   detachCradle(cradle: PollingCradle) {
     this.cradles.delete(cradle);
     this.lastReported.delete(cradle);
+    this.refreshWalletConnectCoinInterest();
   }
 
   getPeak(): bigint {
@@ -64,17 +91,92 @@ export class BlockchainPoller {
     this.firstTick = true;
     this.startedAt = performance.now();
     log(`[blockchain-poller] started, pollMs=${this.pollIntervalMs}`);
-    this.tick().catch((e) => diagStack('blockchain-poller tick loop rejected', e));
+    if (this.useWalletConnectScheduler) {
+      walletConnectScheduler.startHeightInterest(WC_CHAIN_POLL_INTERVAL_MS, {
+        onHeight: (height) => this.handleWalletConnectHeight(height),
+        onError: (e) => {
+          this.consecutiveFailures++;
+          diagStack('blockchain-poller height failed', e);
+          log(`[blockchain-poller] height failed: ${String(e)}`);
+        },
+      });
+      this.refreshWalletConnectCoinInterest();
+      return;
+    }
+    this.simulatorBlockchainPollingScheduler.start(this.pollIntervalMs);
   }
 
   stop() {
     this.running = false;
-    if (this.sleepTimer !== null) {
-      clearTimeout(this.sleepTimer);
-      this.sleepTimer = null;
-      this.wakeSleep?.();
-      this.wakeSleep = null;
+    if (this.useWalletConnectScheduler) {
+      walletConnectScheduler.stopHeightInterest();
+      walletConnectScheduler.stopCoinInterest();
     }
+    this.simulatorBlockchainPollingScheduler.stop();
+  }
+
+  private collectCradleCoins(): Array<{ c: PollingCradle; coins: Array<{ coin_name: string; coin_string: string }> }> {
+    return [...this.cradles].map((c) => ({ c, coins: c.getCoinsToPoll() }));
+  }
+
+  private uniqueCoinInterest(
+    perCradle: Array<{ c: PollingCradle; coins: Array<{ coin_name: string; coin_string: string }> }>,
+  ): WalletConnectCoinInterest[] {
+    const byName = new Map<string, WalletConnectCoinInterest>();
+    for (const { coins } of perCradle) {
+      for (const coin of coins) {
+        byName.set(coin.coin_name, coin);
+      }
+    }
+    return [...byName.values()];
+  }
+
+  private refreshWalletConnectCoinInterest(): void {
+    if (!this.useWalletConnectScheduler || !this.running) return;
+    const perCradle = this.collectCradleCoins();
+    walletConnectScheduler.setCoinInterest(
+      this.uniqueCoinInterest(perCradle),
+      WC_CHAIN_POLL_INTERVAL_MS,
+      {
+        onRecords: (records, registeredNames) => {
+          this.registeredNames = new Set(registeredNames);
+          void this.handleWalletConnectCoinRecords(records);
+        },
+        onError: (e) => {
+          this.consecutiveFailures++;
+          diagStack('blockchain-poller coin poll failed', e);
+          log(`[blockchain-poller] coin poll failed: ${String(e)}`);
+        },
+      },
+    );
+  }
+
+  private handleWalletConnectHeight(height: bigint): void {
+    if (!this.running) return;
+    const previousPeak = this.peak;
+    this.previousPeakForCoinReport = previousPeak;
+    this.peak = height;
+    for (const { c } of this.collectCradleCoins()) {
+      c.reportNewBlock(height);
+    }
+    this.refreshWalletConnectCoinInterest();
+    if (this.firstTick) {
+      this.firstTick = false;
+      const elapsed = Math.round(performance.now() - this.startedAt);
+      log(`[blockchain-poller] first scheduler height: height=${height} (${elapsed}ms)`);
+    }
+  }
+
+  private async handleWalletConnectCoinRecords(records: CoinRecord[]): Promise<void> {
+    if (!this.running) return;
+    const recordByName = await this.recordMap(records);
+    if (!recordByName) return;
+    this.reportToCradles(
+      this.collectCradleCoins(),
+      recordByName,
+      this.peak,
+      this.previousPeakForCoinReport,
+    );
   }
 
   private async ensureRegistered(names: string[]) {
@@ -90,7 +192,7 @@ export class BlockchainPoller {
   }
 
   private async pollOnce(): Promise<void> {
-    const perCradle = [...this.cradles].map((c) => ({ c, coins: c.getCoinsToPoll() }));
+    const perCradle = this.collectCradleCoins();
 
     const allNames = new Set<string>();
     for (const { coins } of perCradle) {
@@ -125,6 +227,19 @@ export class BlockchainPoller {
     }
 
     const records = namesToQuery.length > 0 ? await this.rpc.getCoinRecordsByNames(namesToQuery) : [];
+    const recordByName = await this.recordMap(records);
+    if (recordByName) {
+      this.reportToCradles(perCradle, recordByName, height, previousPeak);
+    }
+
+    if (this.firstTick) {
+      this.firstTick = false;
+      const elapsed = Math.round(performance.now() - this.startedAt);
+      log(`[blockchain-poller] first poll: height=${height} coins=${names.length} (${elapsed}ms)`);
+    }
+  }
+
+  private async recordMap(records: CoinRecord[]): Promise<Map<string, CoinRecord> | null> {
     const recordByName = new Map<string, CoinRecord>();
     let hasUnmappedRecord = false;
     for (const rec of records) {
@@ -136,16 +251,7 @@ export class BlockchainPoller {
       }
     }
     for (const name of recordByName.keys()) this.observedNames.add(name);
-
-    if (!hasUnmappedRecord) {
-      this.reportToCradles(perCradle, recordByName, height, previousPeak);
-    }
-
-    if (this.firstTick) {
-      this.firstTick = false;
-      const elapsed = Math.round(performance.now() - this.startedAt);
-      log(`[blockchain-poller] first poll: height=${height} coins=${names.length} (${elapsed}ms)`);
-    }
+    return hasUnmappedRecord ? null : recordByName;
   }
 
   // Hand each cradle its coin-state snapshot for `height`, applying the
@@ -209,34 +315,21 @@ export class BlockchainPoller {
     }
   }
 
-  private async tick(): Promise<void> {
-    while (this.running) {
-      try {
-        await this.pollOnce();
-        this.consecutiveFailures = 0;
-      } catch (e) {
-        this.consecutiveFailures++;
-        diagStack('blockchain-poller poll failed', e);
-        log(`[blockchain-poller] poll failed: ${String(e)}`);
-      }
-      const backoff = this.consecutiveFailures > 0
-        ? Math.min(this.pollIntervalMs * 2 ** this.consecutiveFailures, this.maxBackoffMs)
-        : this.pollIntervalMs;
-      await this.sleep(backoff);
+  private async runGenericPollOnce(): Promise<void> {
+    if (!this.running) return;
+    try {
+      await this.pollOnce();
+      this.consecutiveFailures = 0;
+    } catch (e) {
+      this.consecutiveFailures++;
+      diagStack('blockchain-poller poll failed', e);
+      log(`[blockchain-poller] poll failed: ${String(e)}`);
     }
   }
 
-  private sleep(ms: number): Promise<void> {
-    if (!this.running) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      this.wakeSleep = resolve;
-      const timer = setTimeout(() => {
-        this.sleepTimer = null;
-        this.wakeSleep = null;
-        resolve();
-      }, ms);
-      if (typeof timer === 'object' && 'unref' in timer) timer.unref();
-      this.sleepTimer = timer;
-    });
+  private currentBackoffMs(): number {
+    return this.consecutiveFailures > 0
+      ? Math.min(this.pollIntervalMs * 2 ** this.consecutiveFailures, this.maxBackoffMs)
+      : this.pollIntervalMs;
   }
 }
