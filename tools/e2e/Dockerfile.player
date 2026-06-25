@@ -1,0 +1,29 @@
+# E2E player: Selenium Chrome (primary) + Node test driver.
+# Firefox is available in sibling selenium/standalone-firefox image if needed;
+# this harness uses Chrome, the most common Selenium browser.
+
+FROM selenium/standalone-chrome:4
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/e2e
+COPY tools/e2e/package.json tools/e2e/package-lock.json* ./
+RUN npm install --omit=dev
+
+COPY tools/e2e/lib ./lib/
+COPY tools/e2e/play.mjs ./
+COPY tools/e2e/player-entrypoint.sh /player-entrypoint.sh
+RUN chmod +x /player-entrypoint.sh
+
+USER seluser
+
+ENV SE_NODE_OVERRIDE_MAX_SESSIONS=1
+ENV SE_NODE_MAX_SESSIONS=1
+
+ENTRYPOINT ["/player-entrypoint.sh"]

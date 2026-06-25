@@ -46,12 +46,13 @@ export function TrackerPicker({ onConnect }: TrackerPickerProps) {
               onChange={(e) => { setCustomUrl(e.target.value); setError(''); }}
               onKeyDown={(e) => { if (e.key === 'Enter') handleCustomConnect(); }}
               placeholder='https://tracker.example.com'
+              data-testid='tracker-url'
               className={
                 'flex-1 px-3 py-2 rounded-lg text-sm bg-canvas-bg border text-canvas-text placeholder:text-canvas-solid outline-none ' +
                 (error ? 'border-alert-border' : 'border-canvas-border focus:border-primary-border-hover')
               }
             />
-            <Button variant='solid' onClick={handleCustomConnect} disabled={!customUrl.trim()}>
+            <Button variant='solid' onClick={handleCustomConnect} disabled={!customUrl.trim()} data-testid='tracker-connect'>
               Connect
             </Button>
           </div>

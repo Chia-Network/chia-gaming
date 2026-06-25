@@ -1,0 +1,56 @@
+diff --git a/.github/workflows/build-macos.yml b/.github/workflows/build-macos.yml
+index 0ceb4a8f..79a05884 100644
+--- a/.github/workflows/build-macos.yml
++++ b/.github/workflows/build-macos.yml
+@@ -60,7 +60,6 @@ jobs:
+ 
+   release:
+     name: Build deploy tarballs (macOS)
+-    if: github.event_name == 'release'
+     needs: [test_macos_arm]
+     runs-on: [macos-13-arm64]
+     steps:
+@@ -105,6 +104,7 @@ jobs:
+         run: tools/test-deploy-archives.sh --platform=macos
+ 
+       - name: Upload player app artifacts
++        if: github.event_name == 'release'
+         uses: actions/upload-artifact@v4
+         with:
+           name: chia-gaming-macos
+@@ -113,6 +113,7 @@ jobs:
+             deploy_player_app/chia-gaming-macos-*.zip
+ 
+       - name: Upload lobby artifacts
++        if: github.event_name == 'release'
+         uses: actions/upload-artifact@v4
+         with:
+           name: chia-gaming-lobby-macos
+diff --git a/.github/workflows/build-test.yml b/.github/workflows/build-test.yml
+index 82b13cff..94355aea 100644
+--- a/.github/workflows/build-test.yml
++++ b/.github/workflows/build-test.yml
+@@ -92,7 +92,6 @@ jobs:
+   release:
+     runs-on: ubuntu-22.04
+     name: Build deploy tarballs (Linux)
+-    if: github.event_name == 'release'
+     needs: [unit_tests]
+     steps:
+       - uses: actions/checkout@v4
+@@ -128,6 +127,7 @@ jobs:
+         run: tools/e2e-docker-test.sh --platform=linux
+ 
+       - name: Upload player app artifacts
++        if: github.event_name == 'release'
+         uses: actions/upload-artifact@v4
+         with:
+           name: chia-gaming-linux
+@@ -136,6 +136,7 @@ jobs:
+             deploy_player_app/chia-gaming-linux-*.zip
+ 
+       - name: Upload lobby artifacts
++        if: github.event_name == 'release'
+         uses: actions/upload-artifact@v4
+         with:
+           name: chia-gaming-lobby-linux

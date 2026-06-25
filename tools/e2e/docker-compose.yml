@@ -1,0 +1,56 @@
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: tools/e2e/Dockerfile.server
+      args:
+        PLAYER_TGZ: ${PLAYER_TGZ}
+        LOBBY_TGZ: ${LOBBY_TGZ}
+    networks:
+      - gaming
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf -X POST http://127.0.0.1:5800/get_peak && curl -sf http://127.0.0.1:3002/ && curl -sf http://127.0.0.1:3003/",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  alice:
+    build:
+      context: ../..
+      dockerfile: tools/e2e/Dockerfile.player
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      ROLE: alice
+      ALIAS: Alice
+      OPPONENT_NAME: Bob
+      PLAYER_URL: http://server:3002
+      TRACKER_URL: http://server:3003
+    networks:
+      - gaming
+
+  bob:
+    build:
+      context: ../..
+      dockerfile: tools/e2e/Dockerfile.player
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      ROLE: bob
+      ALIAS: Bob
+      OPPONENT_NAME: Alice
+      PLAYER_URL: http://server:3002
+      TRACKER_URL: http://server:3003
+    networks:
+      - gaming
+
+networks:
+  gaming:
+    driver: bridge
