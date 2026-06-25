@@ -168,12 +168,16 @@ afterEach(() => {
   clearTestGlobal('localStorage');
 });
 
-async function flushDeferredWork(ticks = 4) {
-  for (let i = 0; i < ticks; i += 1) {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-  }
+function flushDeferredWork(blob: WasmBlobWrapper) {
+  blob.flushDeferredWork();
+}
+
+function transactionSubmitQueue(blob: WasmBlobWrapper): Promise<void> {
+  return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+}
+
+async function flushPromiseJobs(): Promise<void> {
+  await Promise.resolve();
 }
 
 describe('in-order delivery', () => {
@@ -187,7 +191,7 @@ describe('in-order delivery', () => {
 
     expect(blob.remoteNumber).toBe(3n);
     expect(sentAcks).toEqual([]);
-    await flushDeferredWork();
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 2, 3]);
     expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
     expect(
@@ -205,7 +209,7 @@ describe('duplicate detection', () => {
     blob.deliverMessage(1n, enc('a'));
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
-    await flushDeferredWork();
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 1]);
   });
 });
@@ -225,7 +229,7 @@ describe('out-of-order delivery with reorder queue', () => {
 
     expect(delivered).toEqual([enc('a'), enc('b'), enc('c')]);
     expect(blob.remoteNumber).toBe(3n);
-    await flushDeferredWork();
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 2, 3]);
   });
 });
@@ -243,7 +247,7 @@ describe('buffering before system ready, then spill', () => {
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
     expect(blob.remoteNumber).toBe(2n);
-    await flushDeferredWork();
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 2]);
   });
 
@@ -346,7 +350,7 @@ describe('restore ordering', () => {
 
     blob.kickSystem(2);
     blob.deliverMessage(1n, enc('already-processed'));
-    await flushDeferredWork();
+    flushDeferredWork(blob);
     const statuses: string[] = [];
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
@@ -483,10 +487,10 @@ describe('transaction submission', () => {
     blob.setGameCradle(cradle);
     blob.processResult({ events: [] });
 
-    await flushDeferredWork(1);
+    await flushPromiseJobs();
     expect(spend).toHaveBeenCalledTimes(1);
     resolveFirst?.();
-    await flushDeferredWork();
+    await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
   });
 
@@ -523,7 +527,7 @@ describe('transaction submission', () => {
     blob.setGameCradle(cradle);
     blob.processResult({ events: [] });
 
-    await flushDeferredWork();
+    await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
     expect(errors).toEqual([]);
   });

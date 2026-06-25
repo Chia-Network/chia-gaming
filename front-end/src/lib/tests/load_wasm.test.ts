@@ -294,11 +294,12 @@ function debugCradleState(cradle: WasmBlobWrapperAdapter): string {
   ].join('/');
 }
 
-async function yieldToWrapperDrain(): Promise<void> {
-  // WasmBlobWrapper drains events and then performs the durability/send flush
-  // on nested zero-delay timers.
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+async function flushWrapperDrain(cradles: Array<WasmBlobWrapperAdapter>): Promise<void> {
+  await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+}
+
+async function pollOnce(poller: BlockchainPoller): Promise<void> {
+  await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 }
 
 async function action_with_messages(
@@ -335,13 +336,24 @@ async function action_with_messages(
     const startedAt = Date.now();
     while (!all_handshaked(cradles)) {
       iterations++;
+      let deliveredOutbound = false;
       for (let c = 0; c < 2; c++) {
         let outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
+          deliveredOutbound = true;
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
         }
       }
-      await yieldToWrapperDrain();
+      await flushWrapperDrain(cradles);
+      if (!deliveredOutbound && !all_handshaked(cradles)) {
+        await pollOnce(poller);
+        await flushWrapperDrain(cradles);
+      }
+      if (!deliveredOutbound && !all_handshaked(cradles)) {
+        await fakeBlockchainInfo.waitForNextBlock();
+        await pollOnce(poller);
+        await flushWrapperDrain(cradles);
+      }
       evt_results = evt_results.map((seen, index) => seen || cradles[index].observedActiveStatus());
       if (Date.now() - startedAt > 30_000) {
         throw new Error(

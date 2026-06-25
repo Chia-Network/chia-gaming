@@ -105,6 +105,7 @@ export class WasmBlobWrapper implements PollingCradle {
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
   private drainScheduled = false;
+  private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCoinStates: { peak: bigint; records: CoinStateRecord[] } | null = null;
   launcherProvided: boolean;
   private lastSelectCoinsValue: string | null = null;
@@ -123,9 +124,11 @@ export class WasmBlobWrapper implements PollingCradle {
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
   private beforeUnloadHandler: (() => void) | null = null;
   private durabilityFlushScheduled = false;
+  private durabilityFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private needsImmediateDurability = false;
   private pendingOutboundSends: Array<{ msgno: bigint; msg: Uint8Array }> = [];
   private pendingAcks: bigint[] = [];
+  private pendingEffects = new Set<Promise<void>>();
   activeGameId: string | null = null;
   private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
@@ -207,6 +210,15 @@ export class WasmBlobWrapper implements PollingCradle {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    if (this.durabilityFlushTimer) {
+      clearTimeout(this.durabilityFlushTimer);
+      this.durabilityFlushTimer = null;
+    }
+    this.drainScheduled = false;
     this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
@@ -491,20 +503,59 @@ export class WasmBlobWrapper implements PollingCradle {
   private scheduleDrain(): void {
     if (this.drainScheduled || this.eventQueue.length === 0) return;
     this.drainScheduled = true;
-    setTimeout(() => {
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = null;
       this.drainScheduled = false;
-      const event = this.eventQueue.shift();
-      if (event) {
-        try {
-          this.dispatchEvent(event);
-        } catch (e) {
-          diagStack('dispatchEvent error', e);
-          this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
-        }
-        this.scheduleSave();
-      }
+      this.drainOneEvent();
       this.scheduleDrain();
     }, 0);
+  }
+
+  private drainOneEvent(): void {
+    const event = this.eventQueue.shift();
+    if (!event) return;
+    try {
+      this.dispatchEvent(event);
+    } catch (e) {
+      diagStack('dispatchEvent error', e);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+    }
+    this.scheduleSave();
+  }
+
+  flushDeferredWork(): void {
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    this.drainScheduled = false;
+    while (this.eventQueue.length > 0) {
+      this.drainOneEvent();
+    }
+
+    if (this.durabilityFlushTimer) {
+      clearTimeout(this.durabilityFlushTimer);
+      this.durabilityFlushTimer = null;
+    }
+    this.durabilityFlushScheduled = false;
+    this.flushDurabilityAndSend();
+  }
+
+  async flushPendingWork(): Promise<void> {
+    for (let i = 0; i < 100; i += 1) {
+      this.flushDeferredWork();
+      const effects = [...this.pendingEffects];
+      await Promise.allSettled(effects);
+      await this.transactionSubmitQueue;
+      this.flushDeferredWork();
+      if (this.pendingEffects.size === 0
+          && this.eventQueue.length === 0
+          && !this.drainScheduled
+          && !this.durabilityFlushScheduled) {
+        return;
+      }
+    }
+    throw new Error('WasmBlobWrapper pending work did not settle');
   }
 
   private dispatchEvent(event: CradleEvent): void {
@@ -545,15 +596,22 @@ export class WasmBlobWrapper implements PollingCradle {
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
-      this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
+      this.trackEffect(this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest));
     } else if ('Log' in event) {
       this.logHistory.push(event.Log);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
     } else if ('NeedLauncherCoin' in event) {
-      this.handleNeedLauncherCoin();
+      this.trackEffect(this.handleNeedLauncherCoin());
     } else if ('NeedCoinSpend' in event) {
-      this.handleNeedCoinSpend(event.NeedCoinSpend);
+      this.trackEffect(this.handleNeedCoinSpend(event.NeedCoinSpend));
     }
+  }
+
+  private trackEffect(effect: Promise<void>): void {
+    const tracked = effect.finally(() => {
+      this.pendingEffects.delete(tracked);
+    });
+    this.pendingEffects.add(tracked);
   }
 
   private async fulfillPuzzleSolutionRequest(coinHex: string) {
@@ -725,6 +783,7 @@ export class WasmBlobWrapper implements PollingCradle {
     if (this.durabilityFlushScheduled) return;
     this.durabilityFlushScheduled = true;
     const timer = setTimeout(() => {
+      this.durabilityFlushTimer = null;
       this.durabilityFlushScheduled = false;
       if (this.drainScheduled || this.eventQueue.length > 0) {
         this.scheduleDurabilityFlush();
@@ -733,6 +792,7 @@ export class WasmBlobWrapper implements PollingCradle {
       this.flushDurabilityAndSend();
     }, 0);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.durabilityFlushTimer = timer;
   }
 
   private flushDurabilityAndSend() {

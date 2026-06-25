@@ -53,6 +53,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000, 60000];
   private reconnectAttempt = 0;
   private connectLoopPromise: Promise<void> | null = null;
+  private blockWaiters = new Set<() => void>();
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -118,6 +119,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         try { data = jsonParse(raw); } catch (e) { diagStack('FakeBlockchain onmessage JSON parse failed', e); return; }
 
         if (data.event === 'block') {
+          for (const resolve of this.blockWaiters) resolve();
+          this.blockWaiters.clear();
           return;
         }
 
@@ -242,6 +245,21 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   async getHeightInfo(): Promise<bigint> {
     return this.sendRequest('get_peak');
+  }
+
+  waitForNextBlock(timeoutMs = 15_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.blockWaiters.delete(finish);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.blockWaiters.delete(finish);
+        reject(new Error(`simulator did not emit a block within ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.blockWaiters.add(finish);
+    });
   }
 
   async createOfferForIds(
