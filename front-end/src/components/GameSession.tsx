@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, QueuedNotification } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -15,6 +15,12 @@ import {
 import SpacePoker from './SpacePoker';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog, type SessionModel } from '../lib/session/model';
+import type { ChannelState } from '../types/ChiaGaming';
+
+const PRE_ACTIVE_STATES: ReadonlySet<ChannelState> = new Set([
+  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
+  'WaitingForOffer', 'OfferSent', 'TransactionPending',
+]);
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -810,12 +816,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             </GameAreaErrorBoundary>
           )}
 
-          {!handEverStarted && (
+          {(!handEverStarted || PRE_ACTIVE_STATES.has(session.channelStatus.state)) && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
-          {handEverStarted && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
+          {handEverStarted && !PRE_ACTIVE_STATES.has(session.channelStatus.state) && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>
@@ -823,8 +829,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
         </div>
 
-        {/* Between-hand session controls */}
-        {session.betweenHands && !isWindingDown(session.channelStatus.state) && session.channelStatus.state !== 'ShuttingDown' && !session.cleanShutdownStarted && (
+        {/* Between-hand session controls — only when the channel is Active */}
+        {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (
           <>
             {session.betweenHandMode === 'decision' && (
               <div className='relative flex w-full items-center justify-center py-2'>

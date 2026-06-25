@@ -514,7 +514,9 @@ const Shell = () => {
     const handler = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
-      activeBlockchainRef.current?.disconnect().catch(() => {});
+      if (blockchainTypeRef.current !== 'walletconnect') {
+        activeBlockchainRef.current?.disconnect().catch(() => {});
+      }
       activeBlockchainRef.current = null;
       setBootState(prev => {
         if (prev.kind !== 'ready') return prev;
@@ -530,7 +532,11 @@ const Shell = () => {
   useEffect(() => {
     const cleanup = () => {
       trackerConnRef.current?.disconnect();
-      activeBlockchainRef.current?.disconnect().catch(() => {});
+      // WalletConnect sessions are intentionally durable across reloads.
+      // Calling disconnect() here sends a protocol-level session_delete.
+      if (blockchainTypeRef.current !== 'walletconnect') {
+        activeBlockchainRef.current?.disconnect().catch(() => {});
+      }
     };
     window.addEventListener('beforeunload', cleanup);
     return () => { window.removeEventListener('beforeunload', cleanup); };
@@ -561,7 +567,12 @@ const Shell = () => {
   const [balance, setBalance] = useState<bigint | undefined>();
 
   const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
+  const blockchainTypeRef = useRef<'simulator' | 'walletconnect' | undefined>(blockchainType);
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
+
+  useEffect(() => {
+    blockchainTypeRef.current = blockchainType;
+  }, [blockchainType]);
 
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
@@ -1112,10 +1123,23 @@ const Shell = () => {
       setConnecting(true);
       const setup = await iface.beginConnect(uniqueId);
       if (wcAbortRef.current) return;
+      const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+      if (needsWalletPairing) {
+        setConnectionSetup(setup);
+        setWalletConnected(false);
+        setConnecting(false);
+        if (silent) {
+          setActiveTabRaw('wallet');
+          return;
+        }
+      }
       if (!setup.skipQr) setConnectionSetup(setup);
       if (setup.fields && !silent) {
         setShowSimModal(true);
         setConnecting(false);
+        return;
+      }
+      if (silent && !setup.skipQr && !setup.fields) {
         return;
       }
       log(`[Shell] handleConnect: calling finalize`);
@@ -1127,10 +1151,17 @@ const Shell = () => {
       if (!wcAbortRef.current) {
         console.error(`[Shell] ${bcType} connect failed`, err);
       }
-      setBlockchainType(undefined);
-      clearSession();
-      setConnectionSetup(null);
-      setConnecting(false);
+      if (silent) {
+        // beginConnect may have failed before completeConnection ran.
+        if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+          completeConnection(iface, bcType, pollMs);
+        }
+      } else {
+        setBlockchainType(undefined);
+        clearSession();
+        setConnectionSetup(null);
+        setConnecting(false);
+      }
     }
   }, [uniqueId, completeConnection, setConnecting]);
 
@@ -1274,13 +1305,31 @@ const Shell = () => {
     setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
+
+    // For WalletConnect restores, finalize performs the first wallet RPC
+    // (address lookup).  Keep it ahead of completeConnection so requestBalance
+    // and the poller do not occupy the serialized WalletConnect queue first.
     try {
       const setup = await iface.beginConnect(uniqueId);
-      await setup.finalize();
+      const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+      if (needsWalletPairing) {
+        setConnectionSetup(setup);
+        setWalletConnected(false);
+        setConnecting(false);
+        setActiveTabRaw('wallet');
+        setResuming(false);
+        return;
+      }
+      if (setup.skipQr || setup.fields) {
+        await setup.finalize();
+      }
       completeConnection(iface, bcType, pollMs);
     } catch (err) {
       console.warn('[Shell] performResume connect failed, falling back', err);
-      setUserReady(true);
+      // beginConnect may have failed before completeConnection ran.
+      if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+        completeConnection(iface, bcType, pollMs);
+      }
     }
     console.log('[Shell] performResume: done');
     setResuming(false);

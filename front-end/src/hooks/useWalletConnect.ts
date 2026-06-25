@@ -64,8 +64,45 @@ class WalletState {
     log(`[WC session] ${label} active=${sessionTopic} known=${knownTopics.join(',') || 'none'}`);
   }
 
+  private chiaAccountFor(session: SessionTypes.Struct): string | null {
+    const namespace = session.namespaces.chia;
+    if (!namespace) return null;
+
+    const accounts = namespace.accounts ?? [];
+    const methods = namespace.methods ?? [];
+    const chains = namespace.chains ?? [];
+    const account = accounts.find((candidate) => candidate.startsWith(`${CHAIN_ID}:`)) ?? null;
+    const chainGranted = chains.includes(CHAIN_ID) || !!account;
+    const methodsGranted = REQUIRED_NAMESPACES.chia.methods.every((method) => methods.includes(method));
+
+    return account && chainGranted && methodsGranted ? account : null;
+  }
+
+  private async restoreExistingSession(signClient: InstanceType<typeof Client>): Promise<boolean> {
+    const sessions = signClient.session.keys.map((key) => signClient.session.get(key));
+    for (const session of sessions.reverse()) {
+      const account = this.chiaAccountFor(session);
+      if (!account) {
+        continue;
+      }
+
+      console.log('[WC] restoring existing session', {
+        topic: session.topic,
+        peer: session.peer?.metadata?.name,
+        expiry: session.expiry,
+      });
+      this.onSessionConnected(session);
+      return true;
+    }
+    return false;
+  }
+
   private onSessionConnected(session: SessionTypes.Struct) {
-    const accountParts = session.namespaces.chia.accounts[0].split(':');
+    const account = this.chiaAccountFor(session);
+    if (!account) {
+      throw new Error('WalletConnect session does not grant the required Chia namespace');
+    }
+    const accountParts = account.split(':');
     const address = accountParts[2];
     const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
 
@@ -155,23 +192,20 @@ class WalletState {
         this.resetSession();
       });
 
-      if (signClient.session.length) {
-        const lastKey = signClient.session.keys[signClient.session.keys.length - 1];
-        const session = signClient.session.get(lastKey);
-        console.log('[WC] restoring existing session', {
-          topic: session.topic,
-          peer: session.peer?.metadata?.name,
-          expiry: session.expiry,
-        });
-        this.onSessionConnected(session);
-      }
-
       log('WalletConnect initialized');
       this.observable.next({
         stateName: 'initialized',
         initialized: true,
         haveClient: true,
+        sessions: signClient.session.length,
       });
+
+      if (signClient.session.length) {
+        const restored = await this.restoreExistingSession(signClient);
+        if (!restored) {
+          log('[WC session] no compatible restored Chia sessions found');
+        }
+      }
     } catch (err) {
       console.error('[WC] Client.init() FAILED', err);
       log(`WalletConnect init failed: ${err}`);
@@ -219,7 +253,7 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        optionalNamespaces: REQUIRED_NAMESPACES,
+        requiredNamespaces: REQUIRED_NAMESPACES,
       });
 
       console.log('[WC] startConnect() got URI', {

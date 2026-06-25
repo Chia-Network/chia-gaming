@@ -922,23 +922,32 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       handState: save.handState ?? null,
       queue: parseQueuedNotifications(save.gameNotifQueue),
     },
-    betweenHand: {
-      mode: (save.betweenHandMode as BetweenHandModeModel | undefined) ?? 'decision',
-      cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
-      reviewPeerProposal: parseProposalSnapshot(save.betweenHandReviewPeerProposal, lastTerms),
-      rejectedOnceTerms: parseOptionalTermsSnapshot(save.betweenHandRejectedOnceTerms, lastTerms),
-      lastTerms,
-      composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
-      composeGameTimeout: parsePositiveBigintString(save.betweenHandComposeGameTimeout, lastTerms.gameTimeout),
-      composeGameType: save.betweenHandComposeGameType ?? lastTerms.gameType,
-      outgoingProposalTerms: save.outgoingProposalTerms
+    betweenHand: (() => {
+      const mode = (save.betweenHandMode as BetweenHandModeModel | undefined) ?? 'decision';
+      const outgoingProposalTerms = save.outgoingProposalTerms
         ? Object.fromEntries(
             Object.entries(save.outgoingProposalTerms).map(
               ([id, saved]) => [id, parseTermsSnapshot(saved, lastTerms)]
             )
           )
-        : {},
-    },
+        : {};
+      const outgoingProposalIds = Object.keys(outgoingProposalTerms);
+      const hasOutgoing = outgoingProposalIds.length > 0;
+      return {
+        mode,
+        cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
+        reviewPeerProposal: parseProposalSnapshot(save.betweenHandReviewPeerProposal, lastTerms),
+        rejectedOnceTerms: parseOptionalTermsSnapshot(save.betweenHandRejectedOnceTerms, lastTerms),
+        lastTerms,
+        composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
+        composeGameTimeout: parsePositiveBigintString(save.betweenHandComposeGameTimeout, lastTerms.gameTimeout),
+        composeGameType: save.betweenHandComposeGameType ?? lastTerms.gameType,
+        composeProposalSent: hasOutgoing && mode === 'compose-proposal',
+        newHandRequested: hasOutgoing && mode === 'decision',
+        outgoingProposalIds,
+        outgoingProposalTerms,
+      };
+    })(),
     history: {
       humanHistory: save.humanHistory ?? save.history ?? [],
       wasmNotificationHistory: save.wasmNotificationHistory ?? [],

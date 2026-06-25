@@ -48,6 +48,7 @@ type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
 const WC_REQUEST_TIMEOUT_MS = 60000;
+const WC_RELAY_CONNECT_TIMEOUT_MS = 15000;
 // Quick read-only lookups normally return in 1-6s. WalletConnect requests are
 // serialized (see `serialized` below), so a lookup that hangs for the full long
 // timeout monopolizes the channel and blocks height delivery -- which is all the
@@ -57,6 +58,7 @@ const WC_QUICK_REQUEST_TIMEOUT_MS = 15000;
 // State-changing operations can legitimately take the better part of a minute
 // (e.g. createOfferForIds builds and compresses an offer); keep the long cap.
 const WC_LONG_TIMEOUT_METHODS = new Set<ChiaMethod>([
+  ChiaMethod.GetNextAddress,
   ChiaMethod.CreateOfferForIds,
   ChiaMethod.PushTransactions,
   ChiaMethod.CreateNewRemoteWallet,
@@ -127,6 +129,41 @@ function isTransientWalletConnectError(err: unknown): boolean {
   );
 }
 
+async function waitForRelayerConnected(): Promise<void> {
+  const client = walletConnectState.getClient();
+  if (!client) throw new Error('WalletConnect is not initialized');
+
+  const relayer = client.core.relayer;
+  if (relayer.connected) return;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      relayer.off('relayer_connect', onConnect);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    const onConnect = () => finish();
+    const timer = setTimeout(() => {
+      fail(new Error(`WalletConnect relayer did not connect after ${WC_RELAY_CONNECT_TIMEOUT_MS}ms`));
+    }, WC_RELAY_CONNECT_TIMEOUT_MS);
+
+    relayer.on('relayer_connect', onConnect);
+    if (relayer.connected) finish();
+  });
+}
+
 async function request<T, D extends object = object>(
   method: ChiaMethod,
   data: D,
@@ -159,8 +196,9 @@ async function request<T, D extends object = object>(
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       const session = walletConnectState.getSession()!;
-      raw = await serialized(() =>
-        Promise.race([
+      raw = await serialized(async () => {
+        await waitForRelayerConnected();
+        return Promise.race([
           walletConnectState.getClient()!.request({
             topic: session.topic,
             chainId: walletConnectState.getChainId(),
@@ -171,8 +209,8 @@ async function request<T, D extends object = object>(
               reject(new Error(`WalletConnect RPC ${method} timed out after ${timeoutMs}ms`));
             }, timeoutMs);
           }),
-        ]),
-      );
+        ]);
+      });
       break;
     } catch (e) {
       const elapsed = Date.now() - startedAt;

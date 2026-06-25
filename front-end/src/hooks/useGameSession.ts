@@ -736,8 +736,12 @@ export function useGameSession(
   const [composeGameType, setComposeGameType] = useState<string>(() =>
     restoredModel?.betweenHand.composeGameType ?? lastHandTerms.gameType
   );
-  const [composeProposalSent, setComposeProposalSent] = useState(false);
-  const [newHandRequested, setNewHandRequested] = useState(false);
+  const [composeProposalSent, setComposeProposalSent] = useState(
+    () => restoredModel?.betweenHand.composeProposalSent ?? false
+  );
+  const [newHandRequested, setNewHandRequested] = useState(
+    () => restoredModel?.betweenHand.newHandRequested ?? false
+  );
   const [cleanShutdownStarted, setCleanShutdownStarted] = useState(
     () => restoredModel?.channel.cleanShutdownStarted ?? gameObject.cleanShutdownCalled
   );

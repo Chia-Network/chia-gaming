@@ -1722,10 +1722,11 @@ impl PeerHandler for PotatoHandler {
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let ch = self.channel_handler.as_ref()?;
-        let shutting_down = self
-            .game_action_queue
-            .iter()
-            .any(|a| matches!(a, GameAction::CleanShutdown));
+        let shutting_down = self.pending_clean_shutdown.is_some()
+            || self
+                .game_action_queue
+                .iter()
+                .any(|a| matches!(a, GameAction::CleanShutdown));
         Some(ChannelStatusSnapshot {
             state: if shutting_down {
                 ChannelState::ShuttingDown
