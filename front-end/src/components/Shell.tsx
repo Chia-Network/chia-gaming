@@ -808,13 +808,15 @@ const Shell = () => {
   const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
 
   // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
-  const connectToTracker = useCallback((rawOrigin: string) => {
+  const connectToTracker = useCallback((rawOrigin: string, options: { preserveSession?: boolean } = {}) => {
     const origin = normalizeTrackerOrigin(rawOrigin);
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
     const initialSave = peekSession();
     const hasActiveTrackerSession = !!(initialSave?.serializedCradle || initialSave?.pairingToken);
-    const trackerSessionId = hasActiveTrackerSession ? getSessionId() : regenerateSessionId();
+    const trackerSessionId = (options.preserveSession || hasActiveTrackerSession)
+      ? getSessionId()
+      : regenerateSessionId();
     setSessionId(trackerSessionId);
 
     setTrackerOrigin(origin);
@@ -1073,7 +1075,7 @@ const Shell = () => {
     const url = getTrackerUrl();
     console.log('[Shell] tracker-reconnect effect: userReady=true trackerUrl=%s', url ?? 'none');
     if (url) {
-      connectToTracker(url);
+      connectToTracker(url, { preserveSession: true });
     }
     return () => {
       trackerConnRef.current?.disconnect();
@@ -1089,7 +1091,7 @@ const Shell = () => {
     } else if (userReady) {
       const url = getTrackerUrl();
       if (url && !trackerConnRef.current) {
-        connectToTracker(url);
+        connectToTracker(url, { preserveSession: true });
       }
     }
   }, [bootState.kind, userReady, connectToTracker]);
