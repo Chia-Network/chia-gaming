@@ -103,6 +103,7 @@ import {
 
 let trackerDisconnectCount = 0;
 let expectedTrackerDisconnects = 0;
+const activeConnections = new Set<TrackerConnection>();
 
 beforeAll(() => {
   Object.defineProperty(globalThis, 'WebSocket', {
@@ -137,6 +138,17 @@ function makeCallbacks(): TrackerConnectionCallbacks {
   };
 }
 
+function makeConnection(
+  trackerUrl: string,
+  sessionId: string,
+  callbacks: TrackerConnectionCallbacks,
+  options?: ConstructorParameters<typeof TrackerConnection>[3],
+): TrackerConnection {
+  const conn = new TrackerConnection(trackerUrl, sessionId, callbacks, options);
+  activeConnections.add(conn);
+  return conn;
+}
+
 beforeEach(() => {
   trackerDisconnectCount = 0;
   expectedTrackerDisconnects = 0;
@@ -145,6 +157,10 @@ beforeEach(() => {
 
 afterEach(() => {
   expect(trackerDisconnectCount).toBe(expectedTrackerDisconnects);
+  for (const conn of activeConnections) {
+    conn.forceDisconnect();
+  }
+  activeConnections.clear();
 });
 
 // ---------------------------------------------------------------------------
@@ -154,7 +170,7 @@ afterEach(() => {
 describe('connection setup', () => {
   it('sends identify with busy=false over ws on open', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve(); // flush microtasks
 
     const ws = MockWebSocket.instance!;
@@ -164,7 +180,7 @@ describe('connection setup', () => {
 
   it('sends identify with initial busy=true over ws on open', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb, { initialBusy: true });
+    makeConnection('http://t', 's1', cb, { initialBusy: true });
     await Promise.resolve(); // flush microtasks
 
     const ws = MockWebSocket.instance!;
@@ -179,7 +195,7 @@ describe('connection setup', () => {
 describe('event routing', () => {
   it('routes matched to onMatched', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     const params: MatchedParams = {
@@ -193,7 +209,7 @@ describe('event routing', () => {
 
   it('routes connection_status to onConnectionStatus', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     const status: ConnectionStatus = { has_pairing: true, token: 'tok', peer_connected: true };
@@ -203,7 +219,7 @@ describe('event routing', () => {
 
   it('routes peer_reconnected to onPeerReconnected', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     MockWebSocket.instance!._fire({ type: 'peer_reconnected' });
@@ -212,7 +228,7 @@ describe('event routing', () => {
 
   it('routes closed to onClosed', async () => {
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     MockWebSocket.instance!._fire({ type: 'closed' });
@@ -221,7 +237,7 @@ describe('event routing', () => {
 
   it('sends close immediately when the websocket is open', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     conn.close();
@@ -231,7 +247,7 @@ describe('event routing', () => {
 
   it('sends a pending close after the websocket opens', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
 
     conn.close();
     expect(MockWebSocket.instance!.sentJson).toEqual([]);
@@ -245,7 +261,7 @@ describe('event routing', () => {
   it('fires onTrackerDisconnected on ws error', async () => {
     expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     MockWebSocket.instance!._fireError();
@@ -255,7 +271,7 @@ describe('event routing', () => {
   it('fires onTrackerReconnected on ws reopen after error', async () => {
     expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     MockWebSocket.instance!._fireError();
@@ -271,7 +287,7 @@ describe('event routing', () => {
 describe('binary frame discrimination', () => {
   it('routes keepalive binary frames to onKeepalive', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     conn.registerMessageHandler(jest.fn(), jest.fn(), jest.fn());
@@ -282,7 +298,7 @@ describe('binary frame discrimination', () => {
 
   it('routes ack binary frames to onAck', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     conn.registerMessageHandler(jest.fn(), jest.fn(), jest.fn());
@@ -293,7 +309,7 @@ describe('binary frame discrimination', () => {
 
   it('routes data binary frames to handler after registerMessageHandler', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     const handler = jest.fn();
@@ -312,7 +328,7 @@ describe('binary frame discrimination', () => {
 describe('message buffering before registerMessageHandler', () => {
   it('buffers data messages then delivers them on registration', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     const first = new TextEncoder().encode('first');
@@ -337,7 +353,7 @@ describe('message buffering before registerMessageHandler', () => {
 describe('close-pending suppresses messages', () => {
   it('suppresses messages while close is pending, resumes after closed event', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     const handler = jest.fn();
@@ -365,7 +381,7 @@ describe('close-pending suppresses messages', () => {
 describe('outbound message format', () => {
   it('sendMessage posts type-tagged binary frame', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
@@ -381,7 +397,7 @@ describe('outbound message format', () => {
 
   it('sendAck posts ack as binary frame', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
@@ -395,7 +411,7 @@ describe('outbound message format', () => {
 
   it('sendKeepalive posts keepalive as binary frame', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
@@ -412,7 +428,7 @@ describe('outbound message format', () => {
 describe('forceDisconnect lifecycle', () => {
   it('forceDisconnect does not post close', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     conn.forceDisconnect();
     expect(MockWebSocket.instance!.sentJson.some((m) => (m as any).type === 'close')).toBe(false);
@@ -427,7 +443,7 @@ describe('forceDisconnect lifecycle', () => {
 describe('setBusy', () => {
   it('sends set_busy with busy=false', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentJson = [];
@@ -437,7 +453,7 @@ describe('setBusy', () => {
 
   it('sends set_busy with busy=true', async () => {
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentJson = [];
@@ -448,7 +464,7 @@ describe('setBusy', () => {
   it('includes busy=true in identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
-    const conn = new TrackerConnection('http://t', 's1', cb);
+    const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedTrackerDisconnects = 1;
     conn.setBusy(true);
@@ -479,7 +495,7 @@ describe('retry budget', () => {
   it('does not fire onClosed on a normal single close', async () => {
     const cb = makeCallbacks();
     expectedTrackerDisconnects = 1;
-    new TrackerConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     MockWebSocket.instance!._fireClose();
     expect(cb.onClosed).not.toHaveBeenCalled();
