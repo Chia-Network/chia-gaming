@@ -401,8 +401,11 @@ export class WasmBlobWrapper implements PollingCradle {
       let result;
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
         console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
+        const localSpendBundle = this.wc?.convert_offer_to_coinset_org(bundle);
+        await this.blockchain.rpc.rememberLocalRemovals?.(localSpendBundle);
         result = this.cradle?.provide_offer_bech32(bundle);
       } else {
+        await this.blockchain.rpc.rememberLocalRemovals?.(bundle);
         const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
         result = this.cradle?.provide_coin_spend_bundle(bundleJson);
       }
@@ -454,7 +457,7 @@ export class WasmBlobWrapper implements PollingCradle {
         return;
       }
       diagStack('submitTransaction failed', e);
-      log(`[wasm] submitTransaction failed: ${String(e)}`);
+      log(`[wasm] submitTransaction failed: ${message}`);
       this.rxjsEmitter?.next({ type: 'error', error: message });
     }
   }

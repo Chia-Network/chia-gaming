@@ -1231,7 +1231,7 @@ const Shell = () => {
     trackerConnRef.current?.setBusy(false);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
-    if (previousPhase !== 'on-chain') {
+    if (previousPhase !== 'on-chain' && !hasError) {
       setActiveTab('tracker');
     }
   }, [setActiveTab]);

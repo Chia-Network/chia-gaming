@@ -8,9 +8,9 @@ import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { log } from '../services/log';
-import { normalizeHexString, toUint8, toHexString } from '../util';
+import { coinIdFromBytes, normalizeHexString, toUint8, toHexString } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
-import { TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
+import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
 
@@ -108,11 +108,36 @@ function collectErrorText(err: unknown): string {
 
 function isCoinRecordMiss(err: unknown): boolean {
   const text = collectErrorText(err).toLowerCase();
-  return text.includes('not found') || text.includes('coin id') && text.includes('unknown');
+  return text.includes('not found')
+    || text.includes('coin id') && text.includes('unknown')
+    || text.includes('internal error') && text.includes('-32603');
 }
 
 function isRetryablePushError(errStr: string): boolean {
   return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
+}
+
+function coinAmount(coin: CoinsetCoin): bigint {
+  return typeof coin.amount === 'bigint' ? coin.amount : BigInt(coin.amount);
+}
+
+function coinStringFromCoinsetCoin(coin: CoinsetCoin): string {
+  return `${normalizeHexString(coin.parent_coin_info)}${normalizeHexString(coin.puzzle_hash)}${encodeU64AsClvmHex(coinAmount(coin))}`;
+}
+
+async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Promise<CoinsetCoin[]> {
+  const coinSpends = spendBundle.coin_spends;
+  if (!Array.isArray(coinSpends)) return [];
+  const candidateRemovals = coinSpends
+    .map((cs) => cs.coin)
+    .filter((coin): coin is CoinsetCoin => coin !== undefined);
+  const spentCoinIds = new Set<string>();
+  for (const coin of candidateRemovals) {
+    spentCoinIds.add(await coinIdFromBytes(toUint8(coinStringFromCoinsetCoin(coin))));
+  }
+  return candidateRemovals.filter(
+    (coin) => !spentCoinIds.has(normalizeHexString(coin.parent_coin_info)),
+  );
 }
 
 export class RealBlockchainInterface implements InternalBlockchainInterface {
@@ -123,6 +148,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private connectionListeners = new Set<(connected: boolean) => void>();
   private lastConnectedState = false;
   private wcSubscription: { unsubscribe: () => void } | null = null;
+  private pendingLocalRemovalsForNextPush: CoinsetCoin[] = [];
 
   constructor() {
     this.blockchainAddressData = { puzzleHash: '' };
@@ -154,6 +180,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private async buildTransactionRecord(
     spendBundle: WalletSpendBundle,
     fee: bigint,
+    removals: CoinsetCoin[],
   ): Promise<TransactionRecord> {
     const puzzleHash = this.blockchainAddressData.puzzleHash || '0'.repeat(64);
     const toAddress = encodePuzzleHashToBech32m(puzzleHash);
@@ -172,7 +199,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       sent: 0n,
       spend_bundle: spendBundle,
       additions: [],
-      removals: [],
+      removals,
       wallet_id: 0n,
       sent_to: [],
       trade_id: null,
@@ -191,7 +218,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     log(`[wc-blockchain] pushTransactions submitting #${seq} from=${src} fee=${feeValue}`);
 
     try {
-      const txRecord = await this.buildTransactionRecord(spendBundle as WalletSpendBundle, feeValue);
+      const submittedRootRemovals = await rootRemovalsFromSpendBundle(spendBundle as WalletSpendBundle);
+      const submittedRootIds = new Set<string>();
+      for (const coin of submittedRootRemovals) {
+        submittedRootIds.add(await coinIdFromBytes(toUint8(coinStringFromCoinsetCoin(coin))));
+      }
+      const removals: CoinsetCoin[] = [];
+      for (const coin of this.pendingLocalRemovalsForNextPush) {
+        const coinId = await coinIdFromBytes(toUint8(coinStringFromCoinsetCoin(coin)));
+        if (submittedRootIds.has(coinId)) {
+          removals.push(coin);
+        }
+      }
+      if (feeValue !== 0n && removals.length === 0) {
+        throw new Error('nonzero wallet fee requires local removal metadata for chia_pushTransactions');
+      }
+      const txRecord = await this.buildTransactionRecord(
+        spendBundle as WalletSpendBundle,
+        feeValue,
+        removals,
+      );
       const result = await rpc.pushTransactions({
         transactions: [txRecord],
         push: true,
@@ -199,10 +245,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         fee: feeValue || undefined,
         allowUnsynced: true,
       });
-      log(`[wc-blockchain] pushTransactions submitted #${seq} result=${jsonStringify(result)}`);
+      this.pendingLocalRemovalsForNextPush = [];
+      log(`[wc-blockchain] pushTransactions submitted #${seq} removals=${removals.length} result=${jsonStringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
-      const errStr = typeof e === 'string' ? e : ((e as any)?.message || jsonStringify(e));
+      const errStr = collectErrorText(e);
       if (isRetryablePushError(errStr)) {
         return new Promise((resolve, reject) => {
           setTimeout(() => {
@@ -210,9 +257,16 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           }, PUSH_RETRY_DELAY);
         });
       }
-      log(`[wc-blockchain] pushTransactions error #${seq}: ${String(e)}`);
-      throw e;
+      log(`[wc-blockchain] pushTransactions error #${seq}: ${errStr}`);
+      throw new Error(`Wallet transaction submit failed from ${src}: ${errStr}`);
     }
+  }
+
+  async rememberLocalRemovals(spendBundle: unknown): Promise<void> {
+    const removals = await rootRemovalsFromSpendBundle(spendBundle as WalletSpendBundle);
+    if (removals.length === 0) return;
+    this.pendingLocalRemovalsForNextPush = removals;
+    log(`[wc-blockchain] remembered local removals count=${removals.length}`);
   }
 
   async getBalance(): Promise<bigint> {
@@ -374,11 +428,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           maxHeight,
         })}`,
       );
+      const errorText = collectErrorText(e);
       const errorMsg = (parsedError as any)?.data?.error
         ?? (parsedError as any)?.data?.structuredError?.message
         ?? '';
-      if (/insufficient funds/i.test(errorMsg)) {
-        throw new Error(errorMsg);
+      if (/insufficient funds/i.test(errorMsg) || /insufficient funds/i.test(errorText)) {
+        throw new Error(errorMsg || errorText);
       }
       return null;
     }

@@ -224,6 +224,7 @@ export interface WasmConnection {
     solution: string,
   ) => WatchReport | undefined;
   convert_spend_to_coinset_org: (spend: string) => unknown;
+  convert_offer_to_coinset_org: (offer: string) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -616,6 +617,7 @@ export interface ConnectionSetup {
 
 export interface InternalBlockchainInterface {
   spend(blob: string, spendBundle: unknown, source?: string, fee?: bigint): Promise<string>;
+  rememberLocalRemovals?(spendBundle: unknown): void | Promise<void>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

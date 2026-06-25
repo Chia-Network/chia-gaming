@@ -766,6 +766,13 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn convert_offer_to_coinset_org(offer_bech32: &str) -> Result<JsValue, JsValue> {
+        let bundle = decode_offer_to_spend_bundle(offer_bech32)
+            .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
+        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
+    }
+
+    #[wasm_bindgen]
     pub fn get_channel_puzzle_hash(cid: i32) -> Result<JsValue, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
             let ph = cradle.cradle.channel_puzzle_hash();

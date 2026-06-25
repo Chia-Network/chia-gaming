@@ -104,6 +104,16 @@ function toDebugJson(value: unknown): string {
   }
 }
 
+function walletConnectError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+  const err = new Error(`WalletConnect RPC ${method} failed: ${detail}`);
+  (err as any).cause = cause;
+  return err;
+}
+
+function shouldLogRpcError(method: ChiaMethod): boolean {
+  return method !== ChiaMethod.GetCoinRecordsByNames;
+}
+
 function deepNumbersToBigInt(value: unknown): unknown {
   if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
   if (Array.isArray(value)) return value.map(deepNumbersToBigInt);
@@ -225,12 +235,14 @@ async function request<T, D extends object = object>(
         && !retryBlockedByMethod
         && isTransientWalletConnectError(e);
       const paramKeys = Object.keys(params).join(',');
-      log(
-        `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} paramKeys=[${paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
-      );
-      console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}]`, e);
+      if (shouldLogRpcError(method)) {
+        log(
+          `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} paramKeys=[${paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
+        );
+        console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}]`, e);
+      }
       if (!isRetryable) {
-        throw e;
+        throw walletConnectError(method, errText, e);
       }
       console.warn(`[WC] ${method} transient failure, retrying once...`, e);
       await delay(WC_RETRY_DELAY_MS);
@@ -242,9 +254,11 @@ async function request<T, D extends object = object>(
     const errorText = toDebugJson(result.error);
     const paramKeys = Object.keys(params).join(',');
     const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
-    console.error(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}]\n  error: ${errorText}\n${trace}`);
-    log(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}] error=${errorText}`);
-    throw new Error(errorText);
+    if (shouldLogRpcError(method)) {
+      console.error(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}]\n  error: ${errorText}\n${trace}`);
+      log(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}] error=${errorText}`);
+    }
+    throw walletConnectError(method, errorText, result.error);
   }
 
   if (result?.data !== undefined) return result.data as T;
