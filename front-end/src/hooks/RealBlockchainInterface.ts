@@ -395,10 +395,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         });
         if ((resp as any)?.error) {
           const msg = String((resp as any).error);
-          if (msg.includes('not found')) {
-            log(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${msg}`);
-          } else {
-            console.error(`[wc-blockchain] getCoinRecordsByNames daemon error name=${name}: ${msg}`);
+          if (!msg.includes('not found')) {
+            log(`[wc-blockchain] getCoinRecordsByNames daemon error (skipping coin) name=${name}: ${msg}`);
           }
           continue;
         }
@@ -416,10 +414,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         // "not on chain yet", so skip this coin instead of rethrowing —
         // rethrowing aborted the poll right after the height was fetched,
         // stalling the handshake on "waiting for height".
-        if (isCoinRecordMiss(e)) {
-          log(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${collectErrorText(e)}`);
-        } else {
-          console.error(`[wc-blockchain] getCoinRecordsByNames unexpected error (skipping coin) name=${name}:`, e);
+        if (!isCoinRecordMiss(e)) {
           log(`[wc-blockchain] getCoinRecordsByNames unexpected error (skipping coin) name=${name}: ${collectErrorText(e)}`);
         }
         continue;
