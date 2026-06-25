@@ -8,6 +8,7 @@ import {
   getSaveList,
   getPlayerId,
   getSessionId,
+  clearSessionId,
   getBlockchainType,
   loadAppState,
   getAlias,
@@ -128,6 +129,18 @@ describe('flat state', () => {
     const id = getSessionId();
     expect(id).toBeTruthy();
     expect(getSessionId()).toBe(id);
+  });
+
+  it('clearSessionId wipes only the tracker session ID', () => {
+    const id = getSessionId();
+    setAlias('MyName');
+
+    clearSessionId();
+
+    expect(loadAppState().sessionId).toBeUndefined();
+    expect(loadAppState().alias).toBe('MyName');
+    expect(getSessionId()).toBeTruthy();
+    expect(getSessionId()).not.toBe(id);
   });
 
   it('clearSession preserves playerId', () => {
