@@ -16,7 +16,7 @@ const FULL_RANKS: Record<number, string> = {
   2: 'Two',
 };
 
-const getRankName = (n: number) => FULL_RANKS[n] ?? n.toString();
+const getRankName = (n: bigint) => FULL_RANKS[Number(n)] ?? n.toString();
 
 export const makeDescription = (desc: OutcomeHandType) => {
   if (!desc || !desc.name) return '';

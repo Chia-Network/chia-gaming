@@ -692,8 +692,26 @@ mod gaming_wasm {
     }
 
     fn decode_offer_to_spend_bundle(offer_bech32: &str) -> Result<SpendBundle, String> {
-        let (_hrp, raw_bytes) = bech32::decode(offer_bech32)
-            .map_err(|e| format!("bech32m decode error: {e}"))?;
+        // Chia offers are bech32m-encoded but routinely exceed the bech32 crate's
+        // 1023-character CODE_LENGTH cap. bech32::decode rejects them on that cap
+        // before validating the checksum (surfacing as the misleading "no valid
+        // bech32 or bech32m checksum"). Decode with a bech32m checksum whose
+        // length cap is lifted, matching chia's own offer decoding which raises
+        // bech32_decode's max_length.
+        enum OfferBech32m {}
+        impl bech32::Checksum for OfferBech32m {
+            type MidstateRepr = u32;
+            const CODE_LENGTH: usize = usize::MAX;
+            const CHECKSUM_LENGTH: usize = 6;
+            const GENERATOR_SH: [u32; 5] =
+                [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+            const TARGET_RESIDUE: u32 = 0x2bc8_30a3;
+        }
+
+        let checked =
+            bech32::primitives::decode::CheckedHrpstring::new::<OfferBech32m>(offer_bech32)
+                .map_err(|e| format!("bech32m decode error: {e}"))?;
+        let raw_bytes: Vec<u8> = checked.byte_iter().collect();
 
         if raw_bytes.len() < 3 {
             return Err(format!("offer data too short ({} bytes)", raw_bytes.len()));
@@ -745,6 +763,13 @@ mod gaming_wasm {
                 .cradle
                 .provide_coin_spend_bundle(&mut cradle.allocator, bundle)
         })
+    }
+
+    #[wasm_bindgen]
+    pub fn convert_offer_to_coinset_org(offer_bech32: &str) -> Result<JsValue, JsValue> {
+        let bundle = decode_offer_to_spend_bundle(offer_bech32)
+            .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
+        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
     }
 
     #[wasm_bindgen]
@@ -994,6 +1019,35 @@ mod gaming_wasm {
         })
     }
 
+    /// Pull the protocol-level peer state, rendered as indented text for the
+    /// dashboard. This reads directly out of Rust (borrow-safe) rather than
+    /// being pushed through notifications.
+    #[wasm_bindgen]
+    pub fn protocol_state_pretty(cid: i32) -> Result<String, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.protocol_state_pretty()
+        })
+    }
+
+    #[derive(Serialize)]
+    struct JsCoinOfInterest {
+        label: String,
+        id: String,
+    }
+
+    /// Labeled coin ids (hex) to show above the protocol state. 0-2 entries.
+    #[wasm_bindgen]
+    pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
+        let coins = with_game(cid, move |cradle: &mut JsCradle| {
+            Ok(cradle.cradle.coins_of_interest())
+        })?;
+        let entries: Vec<JsCoinOfInterest> = coins
+            .into_iter()
+            .map(|(label, id)| JsCoinOfInterest { label, id })
+            .collect();
+        serde_wasm_bindgen::to_value(&entries).into_js()
+    }
+
     #[wasm_bindgen]
     pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
@@ -1200,6 +1254,16 @@ mod gaming_wasm {
             .into_e()
     }
 
+    fn notification_event_to_js(notification: &GameNotification) -> Result<JsValue, types::Error> {
+        let serializer = serde_wasm_bindgen::Serializer::new()
+            .serialize_missing_as_null(true)
+            .serialize_large_number_types_as_bigints(true);
+        let obj = js_sys::Object::new();
+        let value = notification.serialize(&serializer).into_e()?;
+        js_sys::Reflect::set(&obj, &"Notification".into(), &value).into_e()?;
+        Ok(obj.into())
+    }
+
     fn cradle_event_to_js(event: &CradleEvent) -> Result<JsValue, types::Error> {
         match event {
             CradleEvent::OutboundMessage(data) => {
@@ -1211,11 +1275,7 @@ mod gaming_wasm {
             CradleEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
-            CradleEvent::Notification(n) => {
-                let val = serde_json::to_value(n)
-                    .unwrap_or_else(|_| serde_json::json!(format!("{n:?}")));
-                json_event_to_js(serde_json::json!({ "Notification": val }))
-            }
+            CradleEvent::Notification(n) => notification_event_to_js(n),
             CradleEvent::Log(line) => {
                 json_event_to_js(serde_json::json!({ "Log": line }))
             }

@@ -4,12 +4,13 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, CoinOfInterestEntry } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
   getSessionId,
+  regenerateSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
@@ -17,8 +18,6 @@ import {
   saveSession,
   clearSession,
   hardReset,
-  getBuildNonce,
-  clearWalletConnectStorage,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -38,7 +37,6 @@ import {
   setTrackerUrl as saveTrackerUrl,
   isLeaseConflict,
   claimLease,
-  clearLease,
   onFenced,
   offFenced,
 } from '../hooks/save';
@@ -46,8 +44,25 @@ import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
+import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
+import { isRestoreBlocked, shouldAdvertiseAvailable } from '../lib/restoreLifecycle';
+import {
+  selectGameDashboardView,
+  selectStatusBarBalances,
+  selectSessionPhase,
+  sessionAmountsFromSave,
+  sessionModelFromSave,
+  DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
+  DEFAULT_UNROLL_TIMEOUT_BLOCKS,
+  type GameDashboardActionKind,
+  type GameDashboardViewModel,
+  type SessionModel,
+  type StatusBarBalanceSegment,
+} from '../lib/session/model';
+import { gameDisplayName } from '../lib/gameRegistry';
 import { log } from '../services/log';
+import { formatMojos } from '../util';
 import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
@@ -63,6 +78,80 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
+function normalizeTrackerOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    if (url.hostname === '127.0.0.1' && url.port === '3003') {
+      url.hostname = 'localhost';
+      return url.origin;
+    }
+  } catch {
+    return origin;
+  }
+  return origin;
+}
+
+function humanHistoryFromSave(save: SessionState): string[] | undefined {
+  return save.humanHistory ?? save.history;
+}
+
+function diagnosticLogFromSave(save: SessionState): string[] | undefined {
+  return save.diagnosticLog ?? save.log;
+}
+
+function reactPropSafeValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const copy = value.map(reactPropSafeValue);
+    value.forEach((item, index) => {
+      if (typeof item === 'bigint') {
+        Object.defineProperty(copy, index, {
+          value: item,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+    });
+    return copy as T;
+  }
+
+  const copy = { ...(value as Record<string, unknown>) };
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === 'bigint') {
+      Object.defineProperty(copy, key, {
+        value: nested,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    } else if (nested !== null && typeof nested === 'object') {
+      copy[key] = reactPropSafeValue(nested);
+    }
+  }
+  return copy as T;
+}
+
+function sessionSaveForReactProps(save: SessionState | null): SessionState | undefined {
+  if (!save) return undefined;
+  const propSafeSave = reactPropSafeValue(save);
+  if (Object.prototype.hasOwnProperty.call(save, 'handState')) {
+    Object.defineProperty(propSafeSave, 'handState', {
+      value: save.handState,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return propSafeSave;
+}
+
+function sessionSaveStartsBusy(save: SessionState | null): boolean {
+  if (!save?.serializedCradle && !save?.pairingToken) return false;
+  const { perGameAmount } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
+  return selectSessionPhase(sessionModelFromSave(save, perGameAmount)) !== 'resolved';
+}
+
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
@@ -74,6 +163,136 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
+
+const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+  inactive: 'Inactive',
+  disconnected: 'Disconnected',
+};
+
+function formatBalanceValue(raw: string): string {
+  try {
+    return formatMojos(BigInt(raw));
+  } catch {
+    // Non-numeric sentinel (e.g. the '?' error convention) — show as-is.
+    return raw;
+  }
+}
+
+function GameDashboard({
+  view,
+  balances,
+  onAction,
+  getProtocolState,
+  getCoins,
+}: {
+  view: GameDashboardViewModel;
+  balances: StatusBarBalanceSegment[] | null;
+  onAction: (kind: GameDashboardActionKind) => void;
+  getProtocolState: () => string | null;
+  getCoins: () => CoinOfInterestEntry[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [protocolText, setProtocolText] = useState<string | null>(null);
+  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
+  const refreshProtocolState = useCallback(() => {
+    setProtocolText(getProtocolState());
+    setCoins(getCoins());
+  }, [getProtocolState, getCoins]);
+  useEffect(() => {
+    if (expanded) refreshProtocolState();
+  }, [expanded, refreshProtocolState]);
+
+  return (
+    <div className='flex-shrink-0 border-b border-canvas-border bg-canvas-bg-subtle px-4 py-2 text-canvas-text sm:px-6 md:px-8'>
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+        <div className='flex min-w-0 items-center gap-2 text-sm'>
+          <button
+            type='button'
+            onClick={() => setExpanded(prev => !prev)}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Hide dashboard details' : 'Show dashboard details'}
+            className='flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-solid'
+          >
+            <span
+              aria-hidden='true'
+              className={`text-sm leading-none transition-transform ${expanded ? 'rotate-90' : ''}`}
+            >
+              ▶
+            </span>
+          </button>
+          <div className='flex min-w-0 flex-col gap-y-0.5'>
+            <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+              <span className='flex min-w-0 flex-wrap gap-x-1'>
+                <span className='text-canvas-solid'>Channel:</span>
+                <span className='font-medium text-canvas-text-contrast'>{view.channelStatusLabel}</span>
+                {view.channelDetail && (
+                  <span className='text-canvas-text'>{view.channelDetail}</span>
+                )}
+              </span>
+              <span className='flex min-w-0 flex-wrap gap-x-1'>
+                <span className='text-canvas-solid'>Hand:</span>
+                <span className='font-medium text-canvas-text-contrast'>{view.handStatusLabel}</span>
+                {view.handDetail && (
+                  <span className='text-canvas-text'>{view.handDetail}</span>
+                )}
+              </span>
+            </div>
+            {balances && (
+              <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+                {balances.map(seg => (
+                  <span key={seg.label} className='flex min-w-0 flex-wrap gap-x-1'>
+                    <span className='text-canvas-solid'>{seg.label}:</span>
+                    <span className='font-medium text-canvas-text-contrast'>
+                      {formatBalanceValue(seg.value)}
+                      {seg.value2 !== undefined ? ` / ${formatBalanceValue(seg.value2)}` : ''}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Button
+            variant='solid'
+            color='primary'
+            size='sm'
+            className='min-w-40'
+            disabled={!view.actionEnabled}
+            onClick={() => onAction(view.actionKind)}
+          >
+            {view.actionLabel}
+          </Button>
+        </div>
+      </div>
+      {expanded && (
+        <div className='mt-2'>
+          {coins.length > 0 && (
+            <div className='mb-2 flex flex-col gap-y-0.5 text-xs'>
+              {coins.map(coin => (
+                <span key={`${coin.label}:${coin.id}`} className='flex min-w-0 flex-wrap gap-x-1'>
+                  <span className='text-canvas-solid'>{coin.label}:</span>
+                  <span className='break-all font-mono text-canvas-text-contrast select-text cursor-text'>{coin.id}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className='mb-1 flex items-center justify-between'>
+            <span className='text-xs text-canvas-solid'>Protocol state</span>
+            <Button variant='ghost' color='neutral' size='sm' onClick={refreshProtocolState}>
+              Refresh
+            </Button>
+          </div>
+          <pre className='max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text'>
+            {protocolText ?? 'No active channel.'}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HistoryPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -178,27 +397,8 @@ function LogPanel({ lines }: { lines: string[] }) {
 }
 
 const Shell = () => {
-  // Wipe stale saves before any useState reads from localStorage, so that
-  // hooks like activeTab don't latch values from an old session.
-  const staleWipeRef = useRef(false);
-  if (!staleWipeRef.current) {
-    staleWipeRef.current = true;
-    const save = peekSession();
-    const currentNonce = getBuildNonce();
-    if (save && save.buildNonce !== currentNonce) {
-      console.log(
-        '[Shell] boot: stale save (build %s != %s), wiping',
-        save.buildNonce ?? 'none',
-        currentNonce ?? 'none',
-      );
-      clearSession();
-      clearLease();
-      clearWalletConnectStorage();
-    }
-  }
-
   const uniqueId = getPlayerId();
-  const sessionId = getSessionId();
+  const [, setSessionId] = useState(() => getSessionId());
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
@@ -212,6 +412,30 @@ const Shell = () => {
   }, []);
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
+  const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
+  const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The dashboard pulls the protocol-state pretty-print on demand (when its
+  // detail view is expanded) rather than having it pushed on every change. The
+  // live session registers a getter here; the dashboard reads through it.
+  const protocolStateGetterRef = useRef<(() => string | null) | null>(null);
+  const handleProtocolStateProviderChange = useCallback(
+    (getter: (() => string | null) | null) => {
+      protocolStateGetterRef.current = getter;
+    },
+    [],
+  );
+  const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
+
+  const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
+  const handleCoinsProviderChange = useCallback(
+    (getter: (() => CoinOfInterestEntry[]) | null) => {
+      coinsGetterRef.current = getter;
+    },
+    [],
+  );
+  const getCoins = useCallback(() => coinsGetterRef.current?.() ?? [], []);
 
   const peerConnTargetRef = useRef<PeerConnectionResult>({
     sendMessage: () => {},
@@ -233,7 +457,10 @@ const Shell = () => {
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
   const [sessionError, setSessionError] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreTrackerReconciled, setRestoreTrackerReconciled] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
   const trackerWsUpRef = useRef(false);
   const lastTrackerActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
@@ -243,10 +470,8 @@ const Shell = () => {
   // to localStorage, which fences any existing tab via the storage event.
   // We must not do that until the user has made a conscious choice.
   //
-  //   1. Save exists with matching nonce → 'resumeDialog'.
-  //   2. Save exists but nonce is stale → clearSession(), then fall through
-  //      to "no save" logic.
-  //   3. No save → if another tab holds the lease, 'tabConflict'
+  //   1. Save exists → 'resumeDialog'.
+  //   2. No save → if another tab holds the lease, 'tabConflict'
   //      (the other tab is live even if we don't have its save locally);
   //      otherwise claim the lease and go 'ready'.
   //
@@ -289,7 +514,9 @@ const Shell = () => {
     const handler = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
-      activeBlockchainRef.current?.disconnect().catch(() => {});
+      if (blockchainTypeRef.current !== 'walletconnect') {
+        activeBlockchainRef.current?.disconnect().catch(() => {});
+      }
       activeBlockchainRef.current = null;
       setBootState(prev => {
         if (prev.kind !== 'ready') return prev;
@@ -305,10 +532,23 @@ const Shell = () => {
   useEffect(() => {
     const cleanup = () => {
       trackerConnRef.current?.disconnect();
-      activeBlockchainRef.current?.disconnect().catch(() => {});
+      // WalletConnect sessions are intentionally durable across reloads.
+      // Calling disconnect() here sends a protocol-level session_delete.
+      if (blockchainTypeRef.current !== 'walletconnect') {
+        activeBlockchainRef.current?.disconnect().catch(() => {});
+      }
     };
     window.addEventListener('beforeunload', cleanup);
     return () => { window.removeEventListener('beforeunload', cleanup); };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cleanShutdownGraceTimerRef.current !== null) {
+        clearTimeout(cleanShutdownGraceTimerRef.current);
+        cleanShutdownGraceTimerRef.current = null;
+      }
+    };
   }, []);
 
   const [history, setHistory] = useState<string[]>([]);
@@ -327,7 +567,12 @@ const Shell = () => {
   const [balance, setBalance] = useState<bigint | undefined>();
 
   const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
+  const blockchainTypeRef = useRef<'simulator' | 'walletconnect' | undefined>(blockchainType);
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
+
+  useEffect(() => {
+    blockchainTypeRef.current = blockchainType;
+  }, [blockchainType]);
 
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
@@ -425,6 +670,7 @@ const Shell = () => {
   const sessionSaveRef = useRef<SessionState | null>(null);
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
+  const sessionPhaseRef = useRef<SessionPhase>('none');
   const activePairingTokenRef = useRef<string | null>(null);
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -438,7 +684,11 @@ const Shell = () => {
 
   const appendHistory = useCallback((line: string) => {
     deferStateUpdate(() => {
-      setHistory(prev => [...prev, line]);
+      setHistory(prev => {
+        const next = [...prev, line];
+        saveSession({ humanHistory: next });
+        return next;
+      });
     });
   }, [deferStateUpdate]);
 
@@ -472,7 +722,11 @@ const Shell = () => {
   useEffect(() => {
     return subscribeLog((line) => {
       deferStateUpdate(() => {
-        setLogLines(prev => [...prev, line]);
+        setLogLines(prev => {
+          const next = [...prev, line];
+          saveSession({ diagnosticLog: next });
+          return next;
+        });
       });
     });
   }, [deferStateUpdate]);
@@ -554,13 +808,18 @@ const Shell = () => {
   const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
 
   // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
-  const connectToTracker = useCallback((origin: string) => {
+  const connectToTracker = useCallback((rawOrigin: string) => {
+    const origin = normalizeTrackerOrigin(rawOrigin);
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
+    const initialSave = peekSession();
+    const hasActiveTrackerSession = !!(initialSave?.serializedCradle || initialSave?.pairingToken);
+    const trackerSessionId = hasActiveTrackerSession ? getSessionId() : regenerateSessionId();
+    setSessionId(trackerSessionId);
 
     setTrackerOrigin(origin);
     saveTrackerUrl(origin);
-    const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
+    const lobbyUrl = `${origin}/?lobby=true&session=${trackerSessionId}&uniqueId=${uniqueId}`;
     setIframeUrl(lobbyUrl);
 
     const startSession = (
@@ -572,11 +831,23 @@ const Shell = () => {
       save: SessionState | null,
       myAlias?: string,
       opponentAlias?: string,
+      channelTimeout?: bigint,
+      unrollTimeout?: bigint,
     ) => {
-      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
+      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s channelTimeout=%s unrollTimeout=%s', iStarted, amount, token, !!save, channelTimeout, unrollTimeout);
       sessionFinishedCleanupRef.current = false;
+      sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
+      conn.setBusy(save ? sessionSaveStartsBusy(save) : true);
       peerConnTargetRef.current = conn.getPeerConnection();
+      if (!save) {
+        setRestoreStatus('idle');
+        setRestoreError(null);
+        setRestoreTrackerReconciled(true);
+        setDashboardSessionModel(null);
+      } else {
+        setDashboardSessionModel(sessionModelFromSave(save, perGame));
+      }
 
       const alreadyHydrated = !!sessionSaveRef.current;
       if (!alreadyHydrated) {
@@ -591,11 +862,15 @@ const Shell = () => {
           pairingToken: token,
           myAlias: resolvedMyAlias,
           opponentAlias: resolvedOpponentAlias,
+          channelTimeout,
+          unrollTimeout,
         });
         setPeerConn(stablePeerConn);
         if (save) {
-          if (save.history) setHistory(save.history);
-          if (save.log) setLogLines(save.log);
+          const savedHistory = humanHistoryFromSave(save);
+          const savedLog = diagnosticLogFromSave(save);
+          if (savedHistory) setHistory(savedHistory);
+          if (savedLog) setLogLines(savedLog);
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
           destroyBlobSingleton();
@@ -614,17 +889,20 @@ const Shell = () => {
 
     let conn: TrackerConnection;
     try {
-      conn = new TrackerConnection(origin, sessionId, {
+      conn = new TrackerConnection(origin, trackerSessionId, {
         onMatched: (matched: MatchedParams) => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          // Treat successful tracker match as immediate peer activity for UX.
           markPeerActive();
           let amount: bigint;
           try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
           const perGame = amount / 10n || 1n;
-          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
+          let channelTimeout: bigint | undefined;
+          let unrollTimeout: bigint | undefined;
+          try { if (matched.channel_timeout) channelTimeout = BigInt(matched.channel_timeout); } catch {}
+          try { if (matched.unroll_timeout) unrollTimeout = BigInt(matched.unroll_timeout); } catch {}
+          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias, channelTimeout, unrollTimeout);
         },
         onConnectionStatus: (status: ConnectionStatus) => {
           console.log('[Shell] onConnectionStatus: has_pairing=%s token=%s peer_connected=%s activeToken=%s',
@@ -632,6 +910,9 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
+          if (sessionSaveRef.current?.serializedCradle) {
+            setRestoreTrackerReconciled(true);
+          }
           if (!status.has_pairing || status.peer_connected === false) {
             markPeerInactive();
           } else if (status.peer_connected === true) {
@@ -653,11 +934,12 @@ const Shell = () => {
           const save = peekSession();
           if (status.has_pairing && status.token) {
             if (save && save.pairingToken === status.token) {
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
-              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
+              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
+              let chTimeout: bigint | undefined;
+              let unTimeout: bigint | undefined;
+              try { if (status.channel_timeout) chTimeout = BigInt(status.channel_timeout); } catch {}
+              try { if (status.unroll_timeout) unTimeout = BigInt(status.unroll_timeout); } catch {}
+              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias, chTimeout, unTimeout);
             } else if (!save) {
               console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
               conn.close();
@@ -665,10 +947,7 @@ const Shell = () => {
             } else if (save.serializedCradle) {
               console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
               conn.close();
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
               sessionSaveRef.current = save;
               setGameParams({
                 iStarted: save.iStarted ?? false,
@@ -680,17 +959,16 @@ const Shell = () => {
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              if (save.history) setHistory(save.history);
-              if (save.log) setLogLines(save.log);
+              const savedHistory = humanHistoryFromSave(save);
+              const savedLog = diagnosticLogFromSave(save);
+              if (savedHistory) setHistory(savedHistory);
+              if (savedLog) setLogLines(savedLog);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           } else {
             if (save && save.serializedCradle) {
-              console.warn('[Shell] connection_status: no pairing but have full save, going on-chain');
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+              console.warn('[Shell] connection_status: no pairing but have full save, restoring session (peer gone; go on-chain manually to resolve)');
+              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
               sessionSaveRef.current = save;
               setGameParams({
                 iStarted: save.iStarted ?? false,
@@ -702,8 +980,10 @@ const Shell = () => {
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              if (save.history) setHistory(save.history);
-              if (save.log) setLogLines(save.log);
+              const savedHistory = humanHistoryFromSave(save);
+              const savedLog = diagnosticLogFromSave(save);
+              if (savedHistory) setHistory(savedHistory);
+              if (savedLog) setLogLines(savedLog);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           }
@@ -712,7 +992,7 @@ const Shell = () => {
           markPeerActive();
           blobSingleton?.resendUnacked();
         },
-        onMessage: (_data: unknown) => { markPeerActive(); },
+        onDataMessage: (_msgno: number, _msg: Uint8Array) => { markPeerActive(); },
         onAck: (_ack: number) => { markPeerActive(); },
         onKeepalive: () => { markPeerActive(); },
         onClosed: () => {
@@ -748,7 +1028,7 @@ const Shell = () => {
             setTrackerAlert(true);
           }
         },
-      });
+      }, { initialBusy: sessionSaveStartsBusy(initialSave) });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
       saveTrackerUrl(undefined);
@@ -767,29 +1047,13 @@ const Shell = () => {
       );
     }
 
-    const initialSave = peekSession();
-    if (initialSave && initialSave.pairingToken) {
-      let amount: bigint;
-      let perGame: bigint;
-      try { amount = BigInt(initialSave.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-      try { perGame = BigInt(initialSave.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
-      startSession(
-        conn,
-        initialSave.iStarted ?? false,
-        amount,
-        perGame,
-        initialSave.pairingToken,
-        initialSave,
-      );
-      markPeerInactive();
-    }
-  }, [uniqueId, sessionId, markPeerActive, markPeerInactive]);
+  }, [uniqueId, markPeerActive, markPeerInactive]);
 
   const requestTrackerConnect = useCallback((origin: string) => {
     if (peerConnected && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
       });
     } else if (peerConnected) {
@@ -859,10 +1123,23 @@ const Shell = () => {
       setConnecting(true);
       const setup = await iface.beginConnect(uniqueId);
       if (wcAbortRef.current) return;
+      const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+      if (needsWalletPairing) {
+        setConnectionSetup(setup);
+        setWalletConnected(false);
+        setConnecting(false);
+        if (silent) {
+          setActiveTabRaw('wallet');
+          return;
+        }
+      }
       if (!setup.skipQr) setConnectionSetup(setup);
       if (setup.fields && !silent) {
         setShowSimModal(true);
         setConnecting(false);
+        return;
+      }
+      if (silent && !setup.skipQr && !setup.fields) {
         return;
       }
       log(`[Shell] handleConnect: calling finalize`);
@@ -874,10 +1151,17 @@ const Shell = () => {
       if (!wcAbortRef.current) {
         console.error(`[Shell] ${bcType} connect failed`, err);
       }
-      setBlockchainType(undefined);
-      clearSession();
-      setConnectionSetup(null);
-      setConnecting(false);
+      if (silent) {
+        // beginConnect may have failed before completeConnection ran.
+        if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+          completeConnection(iface, bcType, pollMs);
+        }
+      } else {
+        setBlockchainType(undefined);
+        clearSession();
+        setConnectionSetup(null);
+        setConnecting(false);
+      }
     }
   }, [uniqueId, completeConnection, setConnecting]);
 
@@ -920,7 +1204,7 @@ const Shell = () => {
     const myAlias = gameParams?.myAlias ?? 'You';
     trackerConnRef.current?.sendChat(text);
     setChatMessages(prev => {
-      const next = [...prev, { text, fromAlias: myAlias, timestamp: Date.now(), isMine: true }];
+      const next = [...prev, { text, fromAlias: myAlias, timestamp: BigInt(Date.now()), isMine: true }];
       if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
       return next;
     });
@@ -935,30 +1219,44 @@ const Shell = () => {
   }, [deferStateUpdate]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
+    const previousPhase = sessionPhaseRef.current;
+    sessionPhaseRef.current = phase;
     setSessionPhase(phase);
     setSessionError(!!hasError);
 
     if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
 
-    console.log('[Shell] session resolved; marking available');
+    console.log('[Shell] session resolved; marking not busy');
     sessionFinishedCleanupRef.current = true;
-    trackerConnRef.current?.setAvailable(true);
+    trackerConnRef.current?.setBusy(false);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
-    setActiveTab('tracker');
+    if (previousPhase !== 'on-chain' && !hasError) {
+      setActiveTab('tracker');
+    }
   }, [setActiveTab]);
 
-  useEffect(() => {
-    trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
-  }, [sessionPhase]);
-
-  // Cascade rule: off-chain session without a peer must immediately go on-chain.
-  useEffect(() => {
-    if (peerConnected === false && sessionPhase === 'off-chain') {
-      console.log('[Shell] peer lost while off-chain, auto going on-chain');
-      blobSingleton?.goOnChain();
+  const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
+    setRestoreStatus(status);
+    setRestoreError(error);
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, restore: { ...prev.restore, status, error } }
+      : prev
+    );
+    if (status === 'failed') {
+      setSessionError(true);
     }
-  }, [peerConnected, sessionPhase]);
+  }, []);
+
+  const handleSessionModelChange = useCallback((model: SessionModel) => {
+    setDashboardSessionModel(model);
+  }, []);
+
+  const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
+
+  useEffect(() => {
+    trackerConnRef.current?.setBusy(!shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
+  }, [sessionPhase, restoreBlocked]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -978,12 +1276,14 @@ const Shell = () => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
+    setRestoreStatus('restoring');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setSessionPhase('none');
+    setSessionError(false);
 
     sessionSaveRef.current = save;
-    let amount: bigint;
-    let perGame: bigint;
-    try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-    try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+    const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
     if (save.pairingToken) {
       setGameParams({
         iStarted: save.iStarted ?? false,
@@ -996,20 +1296,40 @@ const Shell = () => {
       });
       setPeerConn(stablePeerConn);
     }
-    if (save.history) setHistory(save.history);
-    if (save.log) setLogLines(save.log);
+    const savedHistory = humanHistoryFromSave(save);
+    const savedLog = diagnosticLogFromSave(save);
+    if (savedHistory) setHistory(savedHistory);
+    if (savedLog) setLogLines(savedLog);
     if (save.chatMessages) setChatMessages(save.chatMessages);
 
     setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
+
+    // For WalletConnect restores, finalize performs the first wallet RPC
+    // (address lookup).  Keep it ahead of completeConnection so requestBalance
+    // and the poller do not occupy the serialized WalletConnect queue first.
     try {
       const setup = await iface.beginConnect(uniqueId);
-      await setup.finalize();
+      const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+      if (needsWalletPairing) {
+        setConnectionSetup(setup);
+        setWalletConnected(false);
+        setConnecting(false);
+        setActiveTabRaw('wallet');
+        setResuming(false);
+        return;
+      }
+      if (setup.skipQr || setup.fields) {
+        await setup.finalize();
+      }
       completeConnection(iface, bcType, pollMs);
     } catch (err) {
       console.warn('[Shell] performResume connect failed, falling back', err);
-      setUserReady(true);
+      // beginConnect may have failed before completeConnection ran.
+      if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+        completeConnection(iface, bcType, pollMs);
+      }
     }
     console.log('[Shell] performResume: done');
     setResuming(false);
@@ -1116,7 +1436,7 @@ const Shell = () => {
     if (peerConnected && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
       });
     } else if (peerConnected) {
@@ -1132,7 +1452,96 @@ const Shell = () => {
 
   const handleEndPeerConnection = useCallback(() => {
     trackerConnRef.current?.close();
+    markPeerInactive();
+  }, [markPeerInactive]);
+
+  const startCleanShutdownGrace = useCallback(() => {
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+    }
+    setCleanShutdownGraceActive(true);
+    cleanShutdownGraceTimerRef.current = setTimeout(() => {
+      cleanShutdownGraceTimerRef.current = null;
+      setCleanShutdownGraceActive(false);
+    }, 10_000);
   }, []);
+
+  const cancelDashboardSession = useCallback(() => {
+    trackerConnRef.current?.close();
+    markPeerInactive();
+    destroyBlobSingleton();
+    clearSession();
+    sessionSaveRef.current = null;
+    activePairingTokenRef.current = null;
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+    setSessionPhase('none');
+    setSessionError(false);
+    setGameParams(null);
+    setPeerConn(null);
+    setDashboardSessionModel(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setHistory([]);
+    setChatMessages([]);
+    setActiveTab('tracker');
+    trackerConnRef.current?.setBusy(false);
+  }, [markPeerInactive, setActiveTab]);
+
+  const requestDashboardCleanShutdown = useCallback(() => {
+    startCleanShutdownGrace();
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, channel: { ...prev.channel, cleanShutdownStarted: true } }
+      : prev
+    );
+    blobSingleton?.cleanShutdown();
+  }, [startCleanShutdownGrace]);
+
+  const performDashboardGoOnChain = useCallback(() => {
+    blobSingleton?.goOnChain();
+    sessionPhaseRef.current = 'on-chain';
+    setSessionPhase('on-chain');
+    trackerConnRef.current?.close();
+    markPeerInactive();
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
+      : prev
+    );
+  }, [markPeerInactive]);
+
+  const requestDashboardGoOnChain = useCallback(() => {
+    const channelState = dashboardSessionModel?.channel.status.state;
+    const isShutdownEscalation = channelState === 'ShuttingDown';
+    setConfirmDialog({
+      title: isShutdownEscalation ? 'Go on-chain?' : 'Resolve on-chain?',
+      body: isShutdownEscalation
+        ? 'Clean shutdown is waiting for your opponent. Going on-chain abandons the cooperative close and resolves the session on-chain.'
+        : 'You are in the middle of a hand. Going on-chain will force moves to happen but they may be much slower. Do you wish to proceed?',
+      confirmLabel: 'Go On Chain',
+      onConfirm: () => {
+        setConfirmDialog(null);
+        performDashboardGoOnChain();
+      },
+    });
+  }, [dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
+
+  const handleDashboardAction = useCallback((kind: GameDashboardActionKind) => {
+    switch (kind) {
+      case 'cancel':
+        cancelDashboardSession();
+        break;
+      case 'clean-shutdown':
+        requestDashboardCleanShutdown();
+        break;
+      case 'go-on-chain':
+        requestDashboardGoOnChain();
+        break;
+      case 'none':
+        break;
+    }
+  }, [cancelDashboardSession, requestDashboardCleanShutdown, requestDashboardGoOnChain]);
 
   const handleReconnect = useCallback(() => {
     if (!blockchainType) return;
@@ -1264,6 +1673,12 @@ const Shell = () => {
   const keepSession = sessionCanMount && hasActiveBlockchain && sessionStartedRef.current;
   console.log('[Shell] render: gameParams=%s peerConn=%s activeBlockchain=%s walletConnected=%s restoring=%s → keepSession=%s',
     !!gameParams, !!peerConn, hasActiveBlockchain, walletConnected, !!gameParams?.restoring, keepSession);
+
+  const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
+    hasSession: dashboardSessionModel !== null,
+    cleanShutdownGraceActive,
+  });
+  const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
 
   // --- Main tabbed app ---
   return (
@@ -1602,20 +2017,43 @@ const Shell = () => {
 
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
+          <GameDashboard
+            view={dashboardView}
+            balances={statusBarBalances}
+            onAction={handleDashboardAction}
+            getProtocolState={getProtocolState}
+            getCoins={getCoins}
+          />
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-            {keepSession ? (
+            {keepSession && restoreStatus === 'failed' ? (
+              <div className='w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8'>
+                <h2 className='text-lg font-semibold text-alert-text'>Restore failed</h2>
+                <p className='max-w-lg text-sm text-center select-text cursor-text'>
+                  {restoreError ?? 'The saved session could not be restored.'}
+                </p>
+                <button
+                  onClick={handleStartOver}
+                  className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                >
+                  Start over
+                </button>
+              </div>
+            ) : keepSession ? (
               <GameSessionErrorBoundary>
                 <GameSession
                   key={gameParams.pairingToken}
                   params={gameParams}
                   peerConn={peerConn}
-                  trackerLiveness={trackerLiveness}
-                  peerConnected={peerConnected}
                   registerMessageHandler={registerMessageHandler}
                   appendGameLog={appendHistory}
-                  sessionSave={sessionSaveRef.current ?? undefined}
+                  sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
                   onGameActivity={onGameActivity}
                   onSessionPhaseChange={handleSessionPhaseChange}
+                  onRestoreStatusChange={handleRestoreStatusChange}
+                  onSessionModelChange={handleSessionModelChange}
+                  onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                  onCoinsProviderChange={handleCoinsProviderChange}
+                  suppressPhaseReporting={restoreBlocked}
                 />
               </GameSessionErrorBoundary>
             ) : sessionCanMount ? (
@@ -1672,7 +2110,7 @@ const Shell = () => {
               onClick={confirmDialog.onConfirm}
               className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
             >
-              Proceed
+              {confirmDialog.confirmLabel ?? 'Proceed'}
             </button>
             <button
               onClick={() => setConfirmDialog(null)}

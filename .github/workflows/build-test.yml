@@ -106,7 +106,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.13.1
+        run: cargo install wasm-pack --version 0.15.0
 
       - name: Setup Node
         uses: actions/setup-node@v4

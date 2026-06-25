@@ -35,7 +35,7 @@ fn write_int(out: &mut Vec<u8>, v: i128) {
 impl<'a> ser::Serializer for &'a mut BencodexSerializer {
     type Ok = ();
     type Error = Error;
-    type SerializeSeq = SeqSerializer<'a>;
+    type SerializeSeq = ByteSeqSerializer<'a>;
     type SerializeTuple = SeqSerializer<'a>;
     type SerializeTupleStruct = SeqSerializer<'a>;
     type SerializeTupleVariant = TupleVariantSerializer<'a>;
@@ -106,9 +106,16 @@ impl<'a> ser::Serializer for &'a mut BencodexSerializer {
         Ok(())
     }
 
-    fn serialize_seq(self, _len: Option<usize>) -> Result<SeqSerializer<'a>, Error> {
-        self.out.push(b'l');
-        Ok(SeqSerializer { ser: self })
+    fn serialize_seq(self, _len: Option<usize>) -> Result<ByteSeqSerializer<'a>, Error> {
+        // A sequence of `u8` (i.e. `Vec<u8>`/`&[u8]`) is a byte string in
+        // bencodex, not a list of integers. We can't know the element type up
+        // front, so start optimistically in byte mode and fall back to a list
+        // the moment a non-`u8` element appears. (Empty sequences stay lists to
+        // preserve the encoding of empty `Vec<NonByte>`.)
+        Ok(ByteSeqSerializer {
+            ser: self,
+            state: SeqState::Empty,
+        })
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<SeqSerializer<'a>, Error> {
@@ -176,6 +183,131 @@ impl ser::SerializeTupleStruct for SeqSerializer<'_> {
         value.serialize(&mut *self.ser)
     }
     fn end(self) -> Result<(), Error> { self.ser.out.push(b'e'); Ok(()) }
+}
+
+// --- Byte-aware sequence ---
+
+enum SeqState {
+    /// No elements yet.
+    Empty,
+    /// All elements so far were `u8`; accumulate them as raw bytes.
+    Bytes(Vec<u8>),
+    /// A non-`u8` element was seen; the list `l...` has been opened and we are
+    /// writing elements directly.
+    List,
+}
+
+pub(crate) struct ByteSeqSerializer<'a> {
+    ser: &'a mut BencodexSerializer,
+    state: SeqState,
+}
+
+impl ByteSeqSerializer<'_> {
+    /// Open a list, replay any bytes accumulated so far as integers, and switch
+    /// to list mode.
+    fn switch_to_list(&mut self) {
+        let prior = match std::mem::replace(&mut self.state, SeqState::List) {
+            SeqState::Bytes(bytes) => bytes,
+            _ => Vec::new(),
+        };
+        self.ser.out.push(b'l');
+        for b in prior {
+            write_int(&mut self.ser.out, b as i128);
+        }
+    }
+}
+
+impl ser::SerializeSeq for ByteSeqSerializer<'_> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
+        if let SeqState::List = self.state {
+            return value.serialize(&mut *self.ser);
+        }
+        // Still possibly a byte string: probe whether this element is a `u8`.
+        let mut probe = U8Probe(None);
+        let byte = match value.serialize(&mut probe) {
+            Ok(()) => probe.0,
+            Err(_) => None,
+        };
+        match byte {
+            Some(b) => {
+                match &mut self.state {
+                    SeqState::Empty => self.state = SeqState::Bytes(vec![b]),
+                    SeqState::Bytes(bytes) => bytes.push(b),
+                    SeqState::List => unreachable!(),
+                }
+                Ok(())
+            }
+            None => {
+                self.switch_to_list();
+                value.serialize(&mut *self.ser)
+            }
+        }
+    }
+
+    fn end(self) -> Result<(), Error> {
+        match self.state {
+            SeqState::Empty => self.ser.out.extend_from_slice(b"le"),
+            SeqState::Bytes(bytes) => write_bytestring(&mut self.ser.out, &bytes),
+            SeqState::List => self.ser.out.push(b'e'),
+        }
+        Ok(())
+    }
+}
+
+// Probes a single value to determine whether it is a `u8` (and its value),
+// without producing any output. Anything that is not a bare `u8` leaves the
+// captured value as `None` or errors, both of which the caller treats as
+// "not a byte".
+struct U8Probe(Option<u8>);
+
+impl ser::Serializer for &mut U8Probe {
+    type Ok = ();
+    type Error = Error;
+    type SerializeSeq = ser::Impossible<(), Error>;
+    type SerializeTuple = ser::Impossible<(), Error>;
+    type SerializeTupleStruct = ser::Impossible<(), Error>;
+    type SerializeTupleVariant = ser::Impossible<(), Error>;
+    type SerializeMap = ser::Impossible<(), Error>;
+    type SerializeStruct = ser::Impossible<(), Error>;
+    type SerializeStructVariant = ser::Impossible<(), Error>;
+
+    fn serialize_u8(self, v: u8) -> Result<(), Error> {
+        self.0 = Some(v);
+        Ok(())
+    }
+
+    fn serialize_bool(self, _: bool) -> Result<(), Error> { Ok(()) }
+    fn serialize_i8(self, _: i8) -> Result<(), Error> { Ok(()) }
+    fn serialize_i16(self, _: i16) -> Result<(), Error> { Ok(()) }
+    fn serialize_i32(self, _: i32) -> Result<(), Error> { Ok(()) }
+    fn serialize_i64(self, _: i64) -> Result<(), Error> { Ok(()) }
+    fn serialize_i128(self, _: i128) -> Result<(), Error> { Ok(()) }
+    fn serialize_u16(self, _: u16) -> Result<(), Error> { Ok(()) }
+    fn serialize_u32(self, _: u32) -> Result<(), Error> { Ok(()) }
+    fn serialize_u64(self, _: u64) -> Result<(), Error> { Ok(()) }
+    fn serialize_u128(self, _: u128) -> Result<(), Error> { Ok(()) }
+    fn serialize_f32(self, _: f32) -> Result<(), Error> { Err(Error::Message("float".into())) }
+    fn serialize_f64(self, _: f64) -> Result<(), Error> { Err(Error::Message("float".into())) }
+    fn serialize_char(self, _: char) -> Result<(), Error> { Ok(()) }
+    fn serialize_str(self, _: &str) -> Result<(), Error> { Ok(()) }
+    fn serialize_bytes(self, _: &[u8]) -> Result<(), Error> { Ok(()) }
+    fn serialize_none(self) -> Result<(), Error> { Ok(()) }
+    fn serialize_some<T: ?Sized + Serialize>(self, _: &T) -> Result<(), Error> { Ok(()) }
+    fn serialize_unit(self) -> Result<(), Error> { Ok(()) }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<(), Error> { Ok(()) }
+    fn serialize_unit_variant(self, _: &'static str, _: u32, _: &'static str) -> Result<(), Error> { Ok(()) }
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(self, _: &'static str, _: &T) -> Result<(), Error> { Ok(()) }
+    fn serialize_newtype_variant<T: ?Sized + Serialize>(self, _: &'static str, _: u32, _: &'static str, _: &T) -> Result<(), Error> { Ok(()) }
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq, Error> { Err(Error::Message("seq".into())) }
+    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, Error> { Err(Error::Message("tuple".into())) }
+    fn serialize_tuple_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeTupleStruct, Error> { Err(Error::Message("tuple struct".into())) }
+    fn serialize_tuple_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<Self::SerializeTupleVariant, Error> { Err(Error::Message("tuple variant".into())) }
+    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, Error> { Err(Error::Message("map".into())) }
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct, Error> { Err(Error::Message("struct".into())) }
+    fn serialize_struct_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<Self::SerializeStructVariant, Error> { Err(Error::Message("struct variant".into())) }
 }
 
 // --- Tuple variant ---

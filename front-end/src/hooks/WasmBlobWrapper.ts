@@ -6,6 +6,7 @@ import {
   PeerConnectionResult,
   WasmConnection,
   ChiaGame,
+  CoinOfInterestEntry,
   CoinStateRecord,
   WasmResult,
   SpendBundle,
@@ -16,31 +17,33 @@ import {
 import { BlockchainPoller, PollingCradle } from './BlockchainPoller';
 import {
   spend_bundle_to_clvm,
+  coerceToBytes,
 } from '../util';
-import { log } from '../services/log';
+import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
-import type { CalpokerHandState } from './save';
+import { flushSessionState } from './save';
+import type { PersistedGameState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
 export interface WasmFields {
   serializedCradle: Uint8Array;
   pairingToken: string;
-  messageNumber: number;
-  remoteNumber: number;
+  messageNumber: bigint;
+  remoteNumber: bigint;
   channelReady: boolean;
   iStarted: boolean;
   amount: string;
   perGameAmount: string;
-  unackedMessages: Array<{ msgno: number; msg: Uint8Array }>;
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   history: string[];
   log: string[];
   activeGameId: string | null;
-  handState: CalpokerHandState | null;
+  handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
-  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }>;
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -58,7 +61,7 @@ function extractErrorMessage(e: unknown): string {
       if (parsed?.data?.error) return parsed.data.error;
       if (parsed?.data?.structuredError?.message) return parsed.data.structuredError.message;
     } catch { /* not JSON */ }
-    return e.stack || e.message;
+    return e.message || e.name || 'Unknown error';
   }
   if (e && typeof e === 'object') {
     if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
@@ -68,24 +71,31 @@ function extractErrorMessage(e: unknown): string {
   return String(e);
 }
 
+export function isBenignTransactionSubmitError(message: string): boolean {
+  return /spend rejected: status=\[3,9\].*Conflicting transaction/i.test(message)
+    || /spend rejected: status=\[3,5\].*Coin not found/i.test(message);
+}
+
+export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
+
 export class WasmBlobWrapper implements PollingCradle {
   amount: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
-  sendMessage: (msgno: number, msg: Uint8Array) => void;
-  sendAck: (ackMsgno: number) => void;
+  sendMessage: (msgno: bigint, msg: Uint8Array) => void;
+  sendAck: (ackMsgno: bigint) => void;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  messageNumber: number;
-  remoteNumber: number;
+  messageNumber: bigint;
+  remoteNumber: bigint;
   cradle: ChiaGame | undefined;
   uniqueId: string;
   pairingToken: string;
   channelReady: boolean;
   iStarted: boolean;
-  storedMessages: Array<{ msgno: number; msg: Uint8Array }>;
+  storedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
   onChain: boolean;
   reloading: boolean;
@@ -95,27 +105,47 @@ export class WasmBlobWrapper implements PollingCradle {
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
   private drainScheduled = false;
+  private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCoinStates: { peak: bigint; records: CoinStateRecord[] } | null = null;
   launcherProvided: boolean;
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
 
-  unackedMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }> = [];
   history: string[] = [];
   logHistory: string[] = [];
-  private reorderQueue: Map<number, Uint8Array> = new Map();
+  private reorderQueue: Map<bigint, Uint8Array> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
+  private restoreStatus: RestoreStatus = 'idle';
+  private restoreError: string | null = null;
+  private restorePromise: Promise<void> | null = null;
+  private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
+  private transactionSubmitQueue: Promise<void> = Promise.resolve();
   private beforeUnloadHandler: (() => void) | null = null;
+  private durabilityFlushScheduled = false;
+  private durabilityFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private needsImmediateDurability = false;
+  private pendingOutboundSends: Array<{ msgno: bigint; msg: Uint8Array }> = [];
+  private pendingAcks: bigint[] = [];
+  private pendingEffects = new Set<Promise<void>>();
   activeGameId: string | null = null;
-  handState: CalpokerHandState | null = null;
+  private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
-  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }> = [];
   onSaveNeeded: (() => void) | null = null;
   getFee: () => bigint = () => 0n;
+
+  get handState(): PersistedGameState | null {
+    return this._handState;
+  }
+
+  set handState(state: PersistedGameState | null) {
+    this._handState = state;
+  }
 
   constructor(
     blockchain: BlockchainPoller,
@@ -123,13 +153,19 @@ export class WasmBlobWrapper implements PollingCradle {
     amount: bigint,
     peer_conn: PeerConnectionResult,
   ) {
+    Object.defineProperty(this, '_handState', {
+      value: null,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
     const { sendMessage, sendAck } = peer_conn;
     this.uniqueId = uniqueId;
     this.pairingToken = '';
-    this.messageNumber = 1;
-    this.remoteNumber = 0;
-    this.sendMessage = sendMessage;
-    this.sendAck = sendAck;
+    this.messageNumber = 1n;
+    this.remoteNumber = 0n;
+    this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
+    this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
     this.amount = amount;
     this.perGameAmount = 0n;
     this.iStarted = false;
@@ -174,6 +210,17 @@ export class WasmBlobWrapper implements PollingCradle {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    if (this.durabilityFlushTimer) {
+      clearTimeout(this.durabilityFlushTimer);
+      this.durabilityFlushTimer = null;
+    }
+    this.drainScheduled = false;
+    this.flushDurabilityAndSend();
+    this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
@@ -215,6 +262,47 @@ export class WasmBlobWrapper implements PollingCradle {
 
   getObservable() {
     return this.rxjsMessageSingleton;
+  }
+
+  getRestoreStatus(): RestoreStatus {
+    return this.restoreStatus;
+  }
+
+  getRestoreError(): string | null {
+    return this.restoreError;
+  }
+
+  onRestoreStatusChange(listener: (status: RestoreStatus, error: string | null) => void): () => void {
+    this.restoreListeners.add(listener);
+    listener(this.restoreStatus, this.restoreError);
+    return () => {
+      this.restoreListeners.delete(listener);
+    };
+  }
+
+  beginRestore(promise: Promise<void>): Promise<void> {
+    if (this.restoreStatus === 'restoring' && this.restorePromise) {
+      return this.restorePromise;
+    }
+
+    this.setRestoreStatus('restoring', null);
+    this.restorePromise = promise.then(() => {
+      this.setRestoreStatus('restored', null);
+    }).catch((e) => {
+      const msg = extractErrorMessage(e);
+      this.setRestoreStatus('failed', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
+    });
+    return this.restorePromise;
+  }
+
+  private setRestoreStatus(status: RestoreStatus, error: string | null) {
+    this.restoreStatus = status;
+    this.restoreError = error;
+    for (const listener of this.restoreListeners) {
+      listener(status, error);
+    }
   }
 
   spillStoredMessages() {
@@ -282,7 +370,7 @@ export class WasmBlobWrapper implements PollingCradle {
       this.processResult(result);
     } catch (e) {
       this.launcherProvided = false;
-      console.error('[wasm] handleNeedLauncherCoin error:', e);
+      diagStack('handleNeedLauncherCoin error', e);
       log(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
@@ -313,14 +401,17 @@ export class WasmBlobWrapper implements PollingCradle {
       let result;
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
         console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
+        const localSpendBundle = this.wc?.convert_offer_to_coinset_org(bundle);
+        await this.blockchain.rpc.rememberLocalRemovals?.(localSpendBundle);
         result = this.cradle?.provide_offer_bech32(bundle);
       } else {
+        await this.blockchain.rpc.rememberLocalRemovals?.(bundle);
         const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
         result = this.cradle?.provide_coin_spend_bundle(bundleJson);
       }
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] handleNeedCoinSpend error:', e);
+      diagStack('handleNeedCoinSpend error', e);
       log(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
       let msg = extractErrorMessage(e);
       if (/insufficient funds/i.test(msg)) {
@@ -349,17 +440,36 @@ export class WasmBlobWrapper implements PollingCradle {
     this.kickSystem(1);
   }
 
+  private async submitTransactionNow(tx: SpendBundle) {
+    try {
+      // The blob/conversion/fee work used to run before the try, so a throw
+      // here (e.g. from the wasm connection) rejected the submit queue
+      // unhandled.  Keep it inside the try so every failure path is captured.
+      const blob = spend_bundle_to_clvm(tx);
+      const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
+      const fee = this.getFee();
+      log(`[wasm] submitTransaction blobLen=${blob.length}`);
+      await this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined);
+    } catch (e) {
+      const message = extractErrorMessage(e);
+      if (isBenignTransactionSubmitError(message)) {
+        log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
+        return;
+      }
+      diagStack('submitTransaction failed', e);
+      log(`[wasm] submitTransaction failed: ${message}`);
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+    }
+  }
+
   private submitTransaction(tx: SpendBundle) {
     if (this.transactionPublishNerfed) return;
-    const blob = spend_bundle_to_clvm(tx);
-    const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-    const fee = this.getFee();
-    log(`[wasm] submitTransaction blobLen=${blob.length}`);
-    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).catch(e => {
-      console.error('[wasm] submitTransaction failed:', e);
-      log(`[wasm] submitTransaction failed: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
-    });
+    // Guard the chain with a diagnostic catch: an unhandled rejection escaping
+    // this promise is invisible in CI except as a bare empty-message test
+    // failure, which is exactly the symptom we are chasing.
+    this.transactionSubmitQueue = this.transactionSubmitQueue
+      .then(() => this.submitTransactionNow(tx))
+      .catch((e) => { diagStack('transactionSubmitQueue rejected', e); });
   }
 
   /**
@@ -373,7 +483,7 @@ export class WasmBlobWrapper implements PollingCradle {
     try {
       bundles = this.cradle.drain_submissions();
     } catch (e) {
-      console.error('[wasm] drain_submissions failed:', e);
+      diagStack('drain_submissions failed', e);
       log(`[wasm] drain_submissions failed: ${String(e)}`);
       return;
     }
@@ -396,20 +506,59 @@ export class WasmBlobWrapper implements PollingCradle {
   private scheduleDrain(): void {
     if (this.drainScheduled || this.eventQueue.length === 0) return;
     this.drainScheduled = true;
-    setTimeout(() => {
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = null;
       this.drainScheduled = false;
-      const event = this.eventQueue.shift();
-      if (event) {
-        try {
-          this.dispatchEvent(event);
-        } catch (e) {
-          console.error('[wasm] dispatchEvent error:', e);
-          this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
-        }
-        this.scheduleSave();
-      }
+      this.drainOneEvent();
       this.scheduleDrain();
     }, 0);
+  }
+
+  private drainOneEvent(): void {
+    const event = this.eventQueue.shift();
+    if (!event) return;
+    try {
+      this.dispatchEvent(event);
+    } catch (e) {
+      diagStack('dispatchEvent error', e);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+    }
+    this.scheduleSave();
+  }
+
+  flushDeferredWork(): void {
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    this.drainScheduled = false;
+    while (this.eventQueue.length > 0) {
+      this.drainOneEvent();
+    }
+
+    if (this.durabilityFlushTimer) {
+      clearTimeout(this.durabilityFlushTimer);
+      this.durabilityFlushTimer = null;
+    }
+    this.durabilityFlushScheduled = false;
+    this.flushDurabilityAndSend();
+  }
+
+  async flushPendingWork(): Promise<void> {
+    for (let i = 0; i < 100; i += 1) {
+      this.flushDeferredWork();
+      const effects = [...this.pendingEffects];
+      await Promise.allSettled(effects);
+      await this.transactionSubmitQueue;
+      this.flushDeferredWork();
+      if (this.pendingEffects.size === 0
+          && this.eventQueue.length === 0
+          && !this.drainScheduled
+          && !this.durabilityFlushScheduled) {
+        return;
+      }
+    }
+    throw new Error('WasmBlobWrapper pending work did not settle');
   }
 
   private dispatchEvent(event: CradleEvent): void {
@@ -417,14 +566,19 @@ export class WasmBlobWrapper implements PollingCradle {
       if (this.onChain) return;
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
-      this.sendMessage(msgno, event.OutboundMessage);
+      this.pendingOutboundSends.push({ msgno, msg: event.OutboundMessage });
+      this.markNeedsImmediateDurability();
     } else if ('Notification' in event) {
       const n = event.Notification;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
       if (tag === 'ChannelStatus') {
         const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
         if (cs) {
-          this.lastChannelStatus = cs as unknown as ChannelStatusPayload;
+          // The `coin` field is a serialized CoinString (a byte blob). Normalize
+          // it to a Uint8Array so the persisted SessionState carries a typed
+          // array (exempt from the save-time number check, stored losslessly as
+          // $bytes) rather than a degraded plain array/object of numbers.
+          this.lastChannelStatus = { ...cs, coin: coerceToBytes(cs.coin) } as unknown as ChannelStatusPayload;
           if (!this.channelReady && cs.state === 'Active') {
             log('[wasm] channel confirmed on-chain');
             this.channelReady = true;
@@ -445,15 +599,22 @@ export class WasmBlobWrapper implements PollingCradle {
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
-      this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
+      this.trackEffect(this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest));
     } else if ('Log' in event) {
       this.logHistory.push(event.Log);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
     } else if ('NeedLauncherCoin' in event) {
-      this.handleNeedLauncherCoin();
+      this.trackEffect(this.handleNeedLauncherCoin());
     } else if ('NeedCoinSpend' in event) {
-      this.handleNeedCoinSpend(event.NeedCoinSpend);
+      this.trackEffect(this.handleNeedCoinSpend(event.NeedCoinSpend));
     }
+  }
+
+  private trackEffect(effect: Promise<void>): void {
+    const tracked = effect.finally(() => {
+      this.pendingEffects.delete(tracked);
+    });
+    this.pendingEffects.add(tracked);
   }
 
   private async fulfillPuzzleSolutionRequest(coinHex: string) {
@@ -466,7 +627,7 @@ export class WasmBlobWrapper implements PollingCradle {
         this.processResult(result);
       }
     } catch (e) {
-      console.error('[wasm] puzzle/solution fetch failed:', e);
+      diagStack('puzzle/solution fetch failed', e);
       log(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
@@ -474,7 +635,7 @@ export class WasmBlobWrapper implements PollingCradle {
 
   // --- Inbound events ---
 
-  deliverMessage(msgno: number, msg: Uint8Array) {
+  deliverMessage(msgno: bigint, msg: Uint8Array) {
     this.notePeerActivity();
     if (this.onChain) {
       this.sendAck(msgno);
@@ -485,10 +646,15 @@ export class WasmBlobWrapper implements PollingCradle {
       return;
     }
     if (msgno <= this.remoteNumber) {
-      this.sendAck(msgno);
+      if (this.needsImmediateDurability) {
+        this.pendingAcks.push(msgno);
+        this.scheduleDurabilityFlush();
+      } else {
+        this.sendAck(msgno);
+      }
       return;
     }
-    if (msgno > this.remoteNumber + 1) {
+    if (msgno > this.remoteNumber + 1n) {
       this.reorderQueue.set(msgno, msg);
       return;
     }
@@ -497,28 +663,37 @@ export class WasmBlobWrapper implements PollingCradle {
     this.flushReorderQueue();
   }
 
-  private deliverSingleMessage(msgno: number, msg: Uint8Array) {
-    this.remoteNumber = msgno;
+  private deliverSingleMessage(msgno: bigint, msg: Uint8Array) {
     try {
       const result = this.cradle!.deliver_message(msg);
+      this.remoteNumber = msgno;
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] deliver_message failed:', e);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      const errMsg = extractErrorMessage(e);
+      diagStack('deliver_message failed', e);
+      this.rxjsEmitter?.next({ type: 'error', error: errMsg });
+      const state = this.lastChannelStatus?.state;
+      const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
+        || state === 'ResolvedStale' || state === 'Failed';
+      if (!this.onChain && !resolved) {
+        this.goOnChain();
+      }
+      return;
     }
-    this.sendAck(msgno);
+    this.pendingAcks.push(msgno);
+    this.markNeedsImmediateDurability();
   }
 
   private flushReorderQueue() {
-    while (this.reorderQueue.has(this.remoteNumber + 1)) {
-      const nextMsgno = this.remoteNumber + 1;
+    while (!this.onChain && this.reorderQueue.has(this.remoteNumber + 1n)) {
+      const nextMsgno = this.remoteNumber + 1n;
       const msg = this.reorderQueue.get(nextMsgno)!;
       this.reorderQueue.delete(nextMsgno);
       this.deliverSingleMessage(nextMsgno, msg);
     }
   }
 
-  receiveAck(ackMsgno: number) {
+  receiveAck(ackMsgno: bigint) {
     this.notePeerActivity();
     const before = this.unackedMessages.length;
     this.unackedMessages = this.unackedMessages.filter(m => m.msgno > ackMsgno);
@@ -541,7 +716,7 @@ export class WasmBlobWrapper implements PollingCradle {
     try {
       return this.cradle.get_coins_to_poll();
     } catch (e) {
-      console.error('[wasm] get_coins_to_poll failed:', e);
+      diagStack('get_coins_to_poll failed', e);
       return [];
     }
   }
@@ -554,13 +729,27 @@ export class WasmBlobWrapper implements PollingCradle {
     this.deliverCoinStates(peak, records);
   }
 
+  // Deliver a height tick with no coin-state change (empty delta).  Drives the
+  // handshake's new_block(height) immediately, decoupled from the full
+  // coin-records snapshot in reportCoinStates.  When the cradle isn't ready yet
+  // there is nothing to advance; the pending coin-state path delivers once it is.
+  reportNewBlock(peak: bigint) {
+    if (!this.cradle) return;
+    try {
+      const result = this.cradle.new_block(peak);
+      this.processResult(result);
+    } catch (e) {
+      diagStack('new_block failed', e);
+    }
+  }
+
   private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
     log(`[wasm] coin states height=${peak} coins=${records.length}`);
     try {
       const result = this.cradle?.report_coin_states(peak, records);
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] report_coin_states failed:', e);
+      diagStack('report_coin_states failed', e);
       log(`[wasm] report_coin_states failed: ${String(e)}`);
     }
   }
@@ -579,10 +768,57 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   flushPendingSave() {
+    this.flushDurabilityAndSend();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
       this.onSaveNeeded?.();
+      flushSessionState();
+    }
+  }
+
+  private markNeedsImmediateDurability() {
+    this.needsImmediateDurability = true;
+    this.scheduleDurabilityFlush();
+  }
+
+  private scheduleDurabilityFlush() {
+    if (this.durabilityFlushScheduled) return;
+    this.durabilityFlushScheduled = true;
+    const timer = setTimeout(() => {
+      this.durabilityFlushTimer = null;
+      this.durabilityFlushScheduled = false;
+      if (this.drainScheduled || this.eventQueue.length > 0) {
+        this.scheduleDurabilityFlush();
+        return;
+      }
+      this.flushDurabilityAndSend();
+    }, 0);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.durabilityFlushTimer = timer;
+  }
+
+  private flushDurabilityAndSend() {
+    if (!this.needsImmediateDurability && this.pendingOutboundSends.length === 0 && this.pendingAcks.length === 0) {
+      return;
+    }
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (this.needsImmediateDurability) {
+      this.onSaveNeeded?.();
+      flushSessionState();
+      this.needsImmediateDurability = false;
+    }
+
+    const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
+    const acks = this.pendingAcks.splice(0, this.pendingAcks.length);
+    for (const { msgno, msg } of outbound) {
+      this.sendMessage(msgno, msg);
+    }
+    for (const ack of acks) {
+      this.sendAck(ack);
     }
   }
 
@@ -615,7 +851,27 @@ export class WasmBlobWrapper implements PollingCradle {
     }
   }
 
-  setHandState(state: CalpokerHandState | null) {
+  getProtocolStatePretty(): string | null {
+    if (!this.cradle) return null;
+    try {
+      return this.cradle.protocol_state_pretty();
+    } catch (e) {
+      console.error('[wasm] getProtocolStatePretty failed:', e);
+      return null;
+    }
+  }
+
+  getCoinsOfInterest(): CoinOfInterestEntry[] {
+    if (!this.cradle) return [];
+    try {
+      return this.cradle.coins_of_interest();
+    } catch (e) {
+      console.error('[wasm] getCoinsOfInterest failed:', e);
+      return [];
+    }
+  }
+
+  setHandState(state: PersistedGameState | null) {
     this.handState = state;
     this.scheduleSave();
   }
@@ -628,42 +884,79 @@ export class WasmBlobWrapper implements PollingCradle {
 
   proposeGame(params: ProposeGameParams): string[] {
     if (!this.cradle) throw new Error('no cradle');
-    const paramBytes = clvmToBytes(params.parameters);
-    const { parameters: _drop, ...wasmParams } = params;
-    const result = this.cradle.propose_game(wasmParams, paramBytes);
-    this.processResult(result);
-    return result?.ids || [];
+    try {
+      const paramBytes = clvmToBytes(params.parameters);
+      const { parameters: _drop, ...wasmParams } = params;
+      const result = this.cradle.propose_game(wasmParams, paramBytes);
+      this.processResult(result);
+      return result?.ids || [];
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] proposeGame failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      return [];
+    }
   }
 
   acceptProposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.accept_proposal(gameId);
-    this.processResult(result);
+    try {
+      const result = this.cradle.accept_proposal(gameId);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] acceptProposal failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   cancel_proposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.cancel_proposal(gameId);
-    this.processResult(result);
+    try {
+      const result = this.cradle.cancel_proposal(gameId);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] cancel_proposal failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   makeMove(gameId: string, readable: Program | null): void {
     if (!this.cradle) throw new Error('no cradle');
-    const bytes = clvmToBytes(readable);
-    const result = this.cradle.make_move(gameId, bytes);
-    this.processResult(result);
+    try {
+      const bytes = clvmToBytes(readable);
+      const result = this.cradle.make_move(gameId, bytes);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] makeMove failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   acceptTimeout(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.accept(gameId);
-    this.processResult(result);
+    try {
+      const result = this.cradle.accept(gameId);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] acceptTimeout failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
-  cheat(gameId: string, moverShare: number): void {
+  cheat(gameId: string, moverShare: bigint): void {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.cheat(gameId, moverShare);
-    this.processResult(result);
+    try {
+      const result = this.cradle.cheat(gameId, moverShare);
+      this.processResult(result);
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] cheat failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 
   cleanShutdown(): void {

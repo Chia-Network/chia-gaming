@@ -45,8 +45,8 @@ absurdly high nonce.
 - **Amount consistency:** The proposal's `amount` must equal
 `my_contribution + their_contribution`. Prevents the peer from creating games
 where money appears or disappears.
-- **Timeout cap:** The proposal's `timeout` must not exceed `MAX_GAME_TIMEOUT`
-(10000 blocks). Prevents a peer from locking funds in unreasonably long games.
+- **Game timeout:** The proposal's `timeout` must be positive. The UX defaults
+  to 15 blocks, but peers can propose different positive game timeouts.
 - **Proposal count limit:** The total number of outstanding proposals must not
 exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
 exhaust memory or starve resources.
@@ -182,6 +182,12 @@ happens when accept_timeout hasn't been confirmed before going on-chain.
 
 ## AcceptTimeout Lifecycle
 
+`AcceptTimeout` is the protocol action for accepting the current game result.
+Depending on context this is also described as folding or timing out: all three
+settle the current game according to the same `mover_share` value. The
+difference is how the settlement is reached (off-chain agreement, local
+fold/accept, or an on-chain timeout claim after the timelock).
+
 Calling `accept_timeout()` off-chain does **not** immediately finalize the
 game. The full lifecycle is:
 
@@ -236,8 +242,12 @@ When a game is already on-chain and the player calls `AcceptTimeout(game_id)`:
   `accepted` flag. For accepted games:
   - If the spend creates a **reward coin** (matching the player's reward
   puzzle hash): `WeTimedOut` is emitted.
-  - Any other spend is unreachable (opponent cannot move on our accepted
-  coin) and triggers a `GameError`.
+  - If the spend creates another **game coin**, the accepted intent is carried
+  forward and the new coin is tracked. This can happen when the chain coin is
+  the version materialized by the unroll rather than the locally most advanced
+  potato state; redo/forward-alignment must still finish before timeout
+  finality.
+  - Other unrecognized spends are treated as game errors.
 
 **Note:** Off-chain `accept_timeout` does not emit `WeTimedOut` at call time;
 it emits on later resolution (potato round-trip, observed on-chain timeout

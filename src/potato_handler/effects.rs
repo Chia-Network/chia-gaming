@@ -123,7 +123,9 @@ pub enum GameNotification {
         id: GameID,
         my_contribution: Amount,
         their_contribution: Amount,
+        timeout: Timeout,
         initial_validation_program_hash: Hash,
+        initial_state: ProgramRef,
         game_type: GameType,
     },
     ProposalAccepted {
@@ -152,6 +154,31 @@ pub enum GameNotification {
         #[serde(skip_serializing_if = "Option::is_none")]
         have_potato: Option<bool>,
     },
+}
+
+/// A coin id worth surfacing in the dashboard so the user can look it up in a
+/// block explorer. The active phase handler decides which of these apply; in
+/// practice there are 0-2 at any moment (one channel/settlement-level coin and
+/// at most one game-level coin).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoinOfInterest {
+    Channel,
+    Unroll,
+    Change,
+    Game,
+    GameChange,
+}
+
+impl CoinOfInterest {
+    pub fn label(self) -> &'static str {
+        match self {
+            CoinOfInterest::Channel => "Channel coin",
+            CoinOfInterest::Unroll => "Unroll coin",
+            CoinOfInterest::Change => "Change coin",
+            CoinOfInterest::Game => "Game coin",
+            CoinOfInterest::GameChange => "Game change coin",
+        }
+    }
 }
 
 impl GameNotification {

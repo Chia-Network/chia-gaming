@@ -40,19 +40,26 @@ There are two kinds of handlers:
    - entropy: 32-byte random input for this turn
 
 2) Their-turn handler (opponent just moved)
-   (curried_args... amount pre_state state move validation_info_hash mover_share)
+   (curried_args... amount pre_state state move validation_program_hash mover_share)
 
    - amount: total game amount
    - pre_state: on-chain state BEFORE the opponent's move
    - state: on-chain state AFTER the opponent's move
    - move: opponent's move bytes
-   - validation_info_hash: hash of the validation program + state
+   - validation_program_hash: tree hash of the validation program for this move
    - mover_share: opponent's share claim
+
+   `validation_program_hash` is a raw program hash. It is not the validation
+   info hash used in referee coin commitments, which is
+   `sha256(validation_program_hash, shatree(state))`. Some existing handlers may
+   still use the name `validation_info_hash` for this argument; the value passed
+   here is the raw validation program hash because the framework has the
+   validation program available at handler invocation time.
 
 
 ## Return values
 
-My-turn return (success, 10 elements):
+My-turn return (success, 9-10 elements):
   (
     label                          ; string, for UI/debug
     move                           ; bytes, the move to send on-chain
@@ -63,14 +70,14 @@ My-turn return (success, 10 elements):
     max_move_size                  ; int, max bytes the opponent may send
     mover_share                    ; int, our share if opponent times out
     their_turn_handler             ; program, handler for opponent's turn
-    message_parser                 ; program or nil (see Message Parser below)
+    message_parser                 ; optional program or nil (see Message Parser below)
   )
 
   "outgoing" = validates the move we just produced (our move).
   "incoming" = validates the move the opponent will produce next.
   The their_turn_handler receives the opponent's response.
-  message_parser, when non-nil, can parse out-of-band messages from
-  the opponent (see below).
+  message_parser may be absent. When present and non-nil, it can parse
+  out-of-band messages from the opponent (see below).
 
 My-turn return (rejection, 2 elements):
   (error_tag message_bytes)
@@ -84,12 +91,12 @@ My-turn return (error):
   A CLVM raise — the handler crashed. The Rust side raises ClvmErr.
 
 
-Their-turn return (normal move, 3-4 elements):
+Their-turn return (normal move, 2-4 elements):
   (
     readable_move                  ; clvm value, UI-displayable result
     evidence_list                  ; list of fraud proofs (may be empty/nil)
-    next_handler                   ; my-turn handler, or nil if game over
-    message                        ; bytes, optional out-of-band message
+    next_handler                   ; optional my-turn handler, or nil if game over
+    message                        ; optional bytes, out-of-band message
   )
 
   - If next_handler is nil or absent, this is a final move (game over).
@@ -105,8 +112,19 @@ Their-turn return (normal move, 3-4 elements):
     include it. When the handler is certain the move is fraudulent, it
     puts the evidence in the list and can return junk for the other
     fields (they are ignored when a slash succeeds).
-  - message is optional (element may be absent). When present, it is
-    sent out-of-band to the opponent and parsed by their message_parser.
+  - message is optional (element may be absent). When present and non-empty,
+    it is sent out-of-band to the opponent and parsed by their message_parser.
+
+Security rule: their-turn handlers run on adversarial peer moves. If a
+peer-controlled move can make a their-turn handler raise, run expensively, or
+allocate excessively before returning slash evidence, treat that as a security
+bug by default. Referee-envelope violations such as `max_move_size` are checked
+before the handler; game-rule violations that survive that envelope must be
+handled as slashable validator outcomes/evidence, not handler crashes. Terminal
+their-turn handlers get the same nil-evidence precheck as non-terminal handlers:
+if nil evidence successfully slashes, the framework skips the handler. Inputs
+that survive that precheck are still peer-controlled and must be safe for the
+handler to process.
 
 
 ## Message Parser
@@ -140,12 +158,23 @@ A handler returns two validators per move:
 The outgoing_validator_hash must match what the previous incoming_validator
 specified, creating a chain of validated state transitions.
 
-Validator return values: a non-nil payload list for valid moves
-`(next_validation_info_hash new_state max_move_size ...)`, or nil for slash.
-These are consumed both on-chain (referee verifies alignment with the committed
-next-state fields, or emits a reward on slash) and off-chain (Rust parses the
-result as Option — Some(new_state) for valid moves, None for slash — and uses
-None to initiate a slash).
+Validator return values are untagged: a non-nil payload list for valid moves
+`(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.
+Nil means the move is illegal for the supplied evidence. A non-nil result means
+the move is valid only if the returned values match the next-state commitments
+accepted by the move path; mismatched infohash or max-move-size values are
+slashable on-chain. Validator-returned extra conditions are also slashable on
+the slash path and are prepended to the payout conditions; this supports
+conditional slashes, such as requiring an aggregate signature that proves a
+challenged value falls in a committed range. Rust parses the result as Option —
+Some(new_state) for valid moves, None for slash — and uses None to initiate a
+slash.
+
+Validator security rule: malicious moves must be slashable without validator
+exceptions, while invalid slash attempts against valid moves must fail. Check
+move length/shape before `substr` or expensive helpers, return nil for any
+malicious move shape or rule violation, and only then inspect evidence that may
+raise to reject malformed evidence.
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

@@ -104,9 +104,11 @@ function HandDisplay(props: HandDisplayProps) {
     swapHiddenCardIds = [],
     onReorder,
     formatHandDescription,
+    timeoutBadge,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
-  const [draggingCardId, setDraggingCardId] = useState<number | null>(null);
+  const [cardRightEdgeOffset, setCardRightEdgeOffset] = useState(0);
+  const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
@@ -248,6 +250,7 @@ function HandDisplay(props: HandDisplayProps) {
           const offset = cardRightEdge - containerCenter - indicatorWidth / 2;
 
           setWinnerIndicatorOffset(offset);
+          setCardRightEdgeOffset(cardRightEdge - containerCenter);
         }
       }
       measureSlotCenters();
@@ -389,7 +392,7 @@ function HandDisplay(props: HandDisplayProps) {
     isDraggingRef.current = true;
 
     setAnyDragging(true);
-    setDraggingCardId(card.cardId ?? index);
+    setDraggingCardId(card.cardId ?? String(index));
     setHoleSlots(nextHoleSlots);
     setActiveDrag(nextActiveDrag);
     pendingDragRef.current = null;
@@ -609,13 +612,13 @@ function HandDisplay(props: HandDisplayProps) {
 
   const isWinner = winner === winnerType;
 
-  const handleCardClick = (cardId: number) => {
+  const handleCardClick = (cardId: string) => {
     if (isDraggingRef.current) return;
     onCardClick?.(cardId);
   };
 
   const renderCard = (card: CardValueSuit, idx: number, showDragOutline = false) => {
-    const cardId = card.cardId ?? idx;
+    const cardId = card.cardId ?? String(idx);
     const isPostRevealPhase = gameState === GAME_STATES.FINAL && !!bestHand?.cards?.length;
     const isInBestHand =
       isPostRevealPhase &&
@@ -624,8 +627,8 @@ function HandDisplay(props: HandDisplayProps) {
           bestCard.cardId != null &&
           bestCard.cardId === card.cardId,
       );
-    const hasHalo = haloCardIds.includes(card.cardId ?? -1);
-    const hideForSwap = swapHiddenCardIds.includes(card.cardId ?? -1);
+    const hasHalo = haloCardIds.includes(card.cardId ?? '-1');
+    const hideForSwap = swapHiddenCardIds.includes(card.cardId ?? '-1');
 
     return (
       <Card
@@ -673,7 +676,7 @@ function HandDisplay(props: HandDisplayProps) {
       data-area={area}
     >
       <div className='relative'>
-        {gameState === GAME_STATES.FINAL && isWinner && (
+        {gameState === GAME_STATES.FINAL && isWinner && !timeoutBadge && (
           <div
             className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
@@ -684,6 +687,32 @@ function HandDisplay(props: HandDisplayProps) {
             Winner!
           </div>
         )}
+        {timeoutBadge === 'winner' && (
+          <div
+            className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            style={{
+              left: '50%',
+              transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
+            }}
+          >
+            Winner!
+          </div>
+        )}
+        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && (
+          <div
+            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-solid px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            style={{
+              left: '50%',
+              // Right-justify the badge to the last card's right edge. Anchoring
+              // by the right edge (-100%) keeps the wider "Timed Out" / "Forfeit"
+              // text from overflowing past the cards and getting clipped, unlike
+              // the fixed-width center used for the shorter "Winner!" badge.
+              transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
+            }}
+          >
+            {timeoutBadge === 'forfeit' ? 'Forfeit' : 'Timed Out'}
+          </div>
+        )}
 
         <div
           ref={groupRef}
@@ -691,7 +720,7 @@ function HandDisplay(props: HandDisplayProps) {
           style={{ ...groupStyle, pointerEvents: dropAnim ? 'none' : 'auto' }}
         >
           {visibleSlots.map((slotCard, idx) => {
-            const slotCardId = slotCard?.cardId ?? idx;
+            const slotCardId = slotCard?.cardId ?? String(idx);
             const isDragging = draggingCardId === slotCardId;
             const hideForShift =
               !!slotCard &&

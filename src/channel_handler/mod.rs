@@ -499,11 +499,10 @@ impl ChannelHandler {
             ));
         }
 
-        if unroll_advance_timeout.to_u64() != 15 {
-            return Err(Error::Channel(format!(
-                "unroll_advance_timeout must be 15, got {}",
-                unroll_advance_timeout.to_u64(),
-            )));
+        if unroll_advance_timeout.to_u64() == 0 {
+            return Err(Error::Channel(
+                "unroll_advance_timeout must be positive".to_string(),
+            ));
         }
 
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
@@ -963,9 +962,19 @@ impl ChannelHandler {
             )));
         }
 
-        // 4.6: amount must equal the sum of contributions.
-        let expected_amount = start_info.my_contribution_this_game.clone()
-            + start_info.their_contribution_this_game.clone();
+        // 4.6: amount must equal the sum of contributions (checked for overflow).
+        let sum = start_info
+            .my_contribution_this_game
+            .to_u64()
+            .checked_add(start_info.their_contribution_this_game.to_u64())
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "proposal contributions overflow: {} + {}",
+                    start_info.my_contribution_this_game.to_u64(),
+                    start_info.their_contribution_this_game.to_u64(),
+                ))
+            })?;
+        let expected_amount = Amount::new(sum);
         if start_info.amount != expected_amount {
             return Err(Error::StrErr(format!(
                 "proposal amount {} != my_contribution {} + their_contribution {}",
@@ -975,9 +984,9 @@ impl ChannelHandler {
             )));
         }
 
-        if start_info.timeout.to_u64() != 15 {
+        if start_info.timeout.to_u64() == 0 {
             return Err(Error::StrErr(format!(
-                "proposal game_timeout must be 15, got {}",
+                "proposal game_timeout must be positive, got {}",
                 start_info.timeout.to_u64(),
             )));
         }

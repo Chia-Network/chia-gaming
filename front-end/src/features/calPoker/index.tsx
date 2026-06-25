@@ -1,26 +1,31 @@
-import React, { useEffect, useRef } from 'react';
-
-import { CalpokerOutcome } from '../../types/ChiaGaming';
-import { CalpokerDisplaySnapshot } from '../../hooks/save';
+import React from 'react';
 
 import { CaliforniaPoker } from './components';
+import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
+import {
+  CalpokerDisplaySnapshotView,
+  CalpokerOutcomeView,
+} from '../../types/californiaPoker/CaliforniapokerProps';
 
 export interface CalpokerProps {
-  outcome: CalpokerOutcome | undefined;
-  moveNumber: number;
+  outcome: CalpokerOutcomeView | undefined;
+  moveNumber: string;
   playerNumber: number;
-  playerHand: number[];
-  opponentHand: number[];
-  cardSelections: number[];
-  setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
+  playerHand: string[];
+  opponentHand: string[];
+  cardSelections: string[];
+  setCardSelections: (n: string[] | ((prev: string[]) => string[])) => void;
+  setHandOrder: (playerHand: string[], opponentHand?: string[]) => void;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
   onGameLog: (lines: string[]) => void;
-  onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
-  initialSnapshot?: CalpokerDisplaySnapshot;
+  onSnapshotChange: (snapshot: CalpokerDisplaySnapshotView) => void;
+  initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
+  timeoutByUs?: boolean | null;
+  timeoutForfeited?: boolean;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -31,6 +36,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   opponentHand,
   cardSelections,
   setCardSelections,
+  setHandOrder,
   handleMakeMove,
   handleCheat,
   handleNerf,
@@ -39,44 +45,12 @@ const Calpoker: React.FC<CalpokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
+  timeoutByUs,
+  timeoutForfeited,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
-  const cheatBufRef = useRef('');
-  const nerfBufRef = useRef('');
-  useEffect(() => {
-    const CHEAT_SEQ = 'cheat^';
-    const NERF_SEQ = 'nerf^';
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey || e.ctrlKey || e.metaKey) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key.length !== 1) return;
-
-      const cheatBuf = cheatBufRef.current + e.key;
-      if (CHEAT_SEQ.startsWith(cheatBuf)) {
-        cheatBufRef.current = cheatBuf;
-        if (cheatBuf === CHEAT_SEQ) {
-          cheatBufRef.current = '';
-          handleCheat();
-        }
-      } else {
-        cheatBufRef.current = CHEAT_SEQ.startsWith(e.key) ? e.key : '';
-      }
-
-      const nerfBuf = nerfBufRef.current + e.key;
-      if (NERF_SEQ.startsWith(nerfBuf)) {
-        nerfBufRef.current = nerfBuf;
-        if (nerfBuf === NERF_SEQ) {
-          nerfBufRef.current = '';
-          handleNerf();
-        }
-      } else {
-        nerfBufRef.current = NERF_SEQ.startsWith(e.key) ? e.key : '';
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCheat, handleNerf]);
+  useCheatNerfKeys(handleCheat, handleNerf);
 
   return (
     <div className='relative flex h-full w-full min-h-0 flex-col'>
@@ -89,6 +63,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           opponentHand={opponentHand}
           cardSelections={cardSelections}
           setCardSelections={setCardSelections}
+          setHandOrder={setHandOrder}
           handleMakeMove={handleMakeMove}
           outcome={outcome}
           myWinOutcome={myWinOutcome}
@@ -97,6 +72,8 @@ const Calpoker: React.FC<CalpokerProps> = ({
           initialSnapshot={initialSnapshot}
           myName={myName}
           opponentName={opponentName}
+          timeoutByUs={timeoutByUs}
+          timeoutForfeited={timeoutForfeited}
         />
       </div>
     </div>

@@ -62,7 +62,6 @@ pub struct TheirTurnReferee {
 
     pub state: Rc<TheirTurnRefereeGameState>,
     pub state_number: usize,
-    pub parent: Option<Rc<MyTurnReferee>>,
 }
 
 impl TheirTurnReferee {
@@ -113,7 +112,6 @@ impl TheirTurnReferee {
                 message_handler: None,
                 state,
                 state_number,
-                parent: None,
             },
             setup.puzzle_hash,
         ))
@@ -201,16 +199,11 @@ impl TheirTurnReferee {
             move_spend: self.get_move_info(),
         };
 
-        let new_parent = TheirTurnReferee {
-            state_number,
-            ..self.clone()
-        };
         Ok(MyTurnReferee {
             finished: self.finished,
             fixed: self.fixed.clone(),
             state: Rc::new(new_state),
             state_number,
-            parent: Some(Rc::new(new_parent)),
             enable_cheating: None,
         })
     }
@@ -302,7 +295,7 @@ impl TheirTurnReferee {
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let pre_state_nodeptr = state.to_nodeptr(allocator)?;
-        let prev_hash = puzzle_args.game_move.validation_program_hash.clone();
+        let prev_hash = puzzle_args.game_move.validation_info_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.my_identity.public_key.clone(),
             waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
@@ -319,8 +312,25 @@ impl TheirTurnReferee {
             previous_validation_info_hash: prev_hash,
             ..ref_puzzle_args.clone()
         });
-        let is_terminal = details.validation_program_hash == ValidationInfoHash::None;
+        let is_terminal = details.validation_info_hash == ValidationInfoHash::None;
         let new_state: Rc<Program> = if is_terminal {
+            if let Ok(None) = self.run_state_update(
+                allocator,
+                offchain_puzzle_args.clone(),
+                state.clone(),
+                evidence.clone(),
+            ) {
+                return Ok((
+                    None,
+                    TheirTurnMoveResult {
+                        puzzle_hash_for_unroll: None,
+                        readable_move: Program(vec![0x80]).into(),
+                        mover_share: details.basic.mover_share.clone(),
+                        message: vec![],
+                        slash: Some(Evidence::nil()?),
+                    },
+                ));
+            }
             Program(vec![0x80]).into()
         } else {
             let state_update = self.run_state_update(
@@ -360,7 +370,7 @@ impl TheirTurnReferee {
                 last_mover_share: details.basic.mover_share.clone(),
 
                 new_move: GameMoveDetails {
-                    validation_program_hash: ValidationInfoHash::Hash(validation_program_hash),
+                    validation_program_hash: Some(validation_program_hash),
                     ..details.clone()
                 },
             },
@@ -468,7 +478,8 @@ impl TheirTurnReferee {
                 max_move_size_raw,
                 max_move_size,
             },
-            validation_program_hash: validation_info_hash.clone(),
+            validation_info_hash: validation_info_hash.clone(),
+            validation_program_hash: None,
         };
 
         let (new_self, result) =
@@ -524,7 +535,7 @@ impl TheirTurnReferee {
                 nonce: self.fixed.nonce,
                 referee_coin_puzzle_hash: self.fixed.referee_coin_puzzle_hash.clone(),
                 validation_program: slash_validation_program.clone(),
-                previous_validation_info_hash: after_args.game_move.validation_program_hash.clone(),
+                previous_validation_info_hash: after_args.game_move.validation_info_hash.clone(),
             });
             let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
             let new_puzzle_hash =

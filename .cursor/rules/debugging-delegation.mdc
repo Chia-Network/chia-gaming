@@ -48,6 +48,12 @@ If the mental trace does not yield a confident diagnosis, **delegate
 to a sub-agent.** Do not start speculative investigation in the
 parent context.
 
+Debugging sub-agents should be launched in the foreground by default
+(`run_in_background: false`). The goal is context isolation, not
+asynchronous parallelism. Background debugging sub-agents are only
+appropriate when the user explicitly asks for parallel/background work
+or when the parent has a concrete plan to monitor and stop them.
+
 ## What to Provide (parent)
 
 Spawn a `generalPurpose` sub-agent with three things:
@@ -76,6 +82,11 @@ You were spawned to fix a specific bug. You have the debugging
 techniques rule in your context -- follow it. Use structured
 diagnosis, not speculation. The parent gave you context, symptoms,
 and a repro command. Start by reproducing the failure.
+
+Do not leave long-running processes behind silently. If you start a
+watcher, dev server, background test command, or any other process that
+may keep running after your investigation, stop it before reporting back
+or explicitly report the command, purpose, and cleanup status.
 
 After you have a fix, **run the full test suite** before reporting
 back. You need to know whether your fix introduced regressions,

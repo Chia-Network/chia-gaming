@@ -18,7 +18,7 @@ use crate::referee::referee_initial_setup;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
     canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed,
-    ValidationInfoHash,
+    StateUpdateResult, ValidationInfoHash,
 };
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
@@ -166,7 +166,6 @@ pub struct MyTurnReferee {
 
     pub state: Rc<MyTurnRefereeGameState>,
     pub state_number: usize,
-    pub parent: Option<Rc<TheirTurnReferee>>,
 }
 
 impl MyTurnReferee {
@@ -211,7 +210,6 @@ impl MyTurnReferee {
                 finished: false,
                 state,
                 state_number,
-                parent: None,
                 enable_cheating: None,
             },
             setup.puzzle_hash,
@@ -313,17 +311,12 @@ impl MyTurnReferee {
             move_spend: Some(move_spend),
         };
 
-        let new_parent = MyTurnReferee {
-            state_number,
-            ..self.clone()
-        };
         Ok(TheirTurnReferee {
             fixed: self.fixed.clone(),
             finished: self.finished,
             message_handler,
             state: Rc::new(new_state),
             state_number,
-            parent: Some(Rc::new(new_parent)),
         })
     }
 
@@ -341,13 +334,19 @@ impl MyTurnReferee {
             "my_turn_make_move called when not my turn"
         );
 
-        let game_handler = if let Some(gh) = self.get_game_handler() {
-            gh
-        } else {
-            return Err(Error::StrErr(
-                "move made but we passed the final move".to_string(),
-            ));
-        };
+        // A move attempted after a terminal move is a clear error: the prior
+        // move carried a nil validation program, which consumed the game
+        // handler, so there is nothing left to advance. This happens, e.g.,
+        // when the frontend fires a phantom extra move past the terminal one.
+        // Assert-fail loudly in debug/test builds; in release this returns an
+        // error that surfaces to the frontend as a notification pop-up.
+        game_assert!(
+            self.get_game_handler().is_some(),
+            "my_turn_make_move: move attempted after a terminal move (nil validation program); the game is already over"
+        );
+        let game_handler = self
+            .get_game_handler()
+            .ok_or_else(|| Error::StrErr("move made but we passed the final move".to_string()))?;
 
         let args = self.spend_this_coin();
 
@@ -394,16 +393,38 @@ impl MyTurnReferee {
         };
 
         let puzzle_args = self.spend_this_coin();
+        if self.enable_cheating.is_none()
+            && result.move_bytes.len() > args.game_move.basic.max_move_size
+        {
+            return Err(Error::StrErr(format!(
+                "local move exceeds max_move_size: nonce={}, move_len={}, max_move_size={}",
+                args.nonce,
+                result.move_bytes.len(),
+                args.game_move.basic.max_move_size,
+            )));
+        }
+
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let v = ValidationInfo::new_state_update(
             allocator,
             result.outgoing_move_state_update_program.clone(),
             state_to_update.clone(),
         );
-        let validation_program_hash = if result.waiting_handler.is_some() {
+        let validation_info_hash = if result.waiting_handler.is_some() {
             ValidationInfoHash::Hash(v.hash().clone())
         } else {
             ValidationInfoHash::None
+        };
+        let validation_program_hash = if result.waiting_handler.is_some() {
+            Some(
+                result
+                    .outgoing_move_state_update_program
+                    .sha256tree(allocator)
+                    .hash()
+                    .clone(),
+            )
+        } else {
+            None
         };
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
@@ -412,9 +433,10 @@ impl MyTurnReferee {
                 max_move_size_raw: canonical_atom_from_usize(result.max_move_size),
                 max_move_size: result.max_move_size,
             },
+            validation_info_hash,
             validation_program_hash,
         };
-        let prev_hash = ref_puzzle_args.game_move.validation_program_hash.clone();
+        let prev_hash = ref_puzzle_args.game_move.validation_info_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
@@ -431,6 +453,26 @@ impl MyTurnReferee {
                 Evidence::nil()?,
             )?
         } else {
+            // Terminal validators often require real evidence to fully prove a
+            // valid payoff, but nil evidence still catches terminal moves that
+            // are malformed enough to be immediately slashable.
+            match self.run_validator_for_my_move_raw(
+                allocator,
+                offchain_puzzle_args,
+                state_to_update.clone(),
+                Evidence::nil()?,
+            ) {
+                Ok(None) if self.enable_cheating.is_none() => {
+                    return Err(Error::StrErr(format!(
+                        "pre-send terminal validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}",
+                        args.nonce,
+                        result.move_bytes.len(),
+                        result.mover_share,
+                        state_to_update,
+                    )));
+                }
+                _ => {}
+            }
             state_to_update.clone()
         };
 
@@ -508,15 +550,12 @@ impl MyTurnReferee {
         state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<Rc<Program>, Error> {
-        let validator_move_args = InternalStateUpdateArgs {
-            validation_program: referee_args.validation_program.clone(),
-            referee_args: Rc::new(referee_args.swap()),
-            state_update_args: StateUpdateMoveArgs {
-                evidence: evidence.to_program(),
-                state: state.clone(),
-            },
-        };
-        let result = validator_move_args.run(allocator);
+        let result = self.run_validator_for_my_move_raw(
+            allocator,
+            referee_args.clone(),
+            state.clone(),
+            evidence,
+        );
         match result {
             Err(e) => {
                 if self.enable_cheating.is_some() {
@@ -540,5 +579,23 @@ impl MyTurnReferee {
             }
             Ok(Some(new_state)) => Ok(new_state.clone()),
         }
+    }
+
+    fn run_validator_for_my_move_raw(
+        &self,
+        allocator: &mut AllocEncoder,
+        referee_args: Rc<RefereePuzzleArgs>,
+        state: Rc<Program>,
+        evidence: Evidence,
+    ) -> Result<StateUpdateResult, Error> {
+        let validator_move_args = InternalStateUpdateArgs {
+            validation_program: referee_args.validation_program.clone(),
+            referee_args: Rc::new(referee_args.swap()),
+            state_update_args: StateUpdateMoveArgs {
+                evidence: evidence.to_program(),
+                state: state.clone(),
+            },
+        };
+        validator_move_args.run(allocator)
     }
 }

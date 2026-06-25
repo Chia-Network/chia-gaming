@@ -20,8 +20,8 @@ use crate::common::types::{
     Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{
-    apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
-    GameNotification, ResyncInfo,
+    apply_effects, ChannelState, ChannelStatusSnapshot, CoinOfInterest, CradleEvent,
+    CradleEventQueue, Effect, GameNotification, ResyncInfo,
 };
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
@@ -187,6 +187,13 @@ pub trait PeerHandler {
 
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         None
+    }
+
+    /// Coin ids worth surfacing in the dashboard (channel/unroll/change/game/
+    /// game-change), each tagged with its kind. Defaults to none, which is the
+    /// correct answer during handshake before any coin exists.
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        vec![]
     }
 
     fn as_any(&self) -> &dyn std::any::Any;
@@ -683,18 +690,36 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
 }
 
+/// Which half of a coin report to dispatch.  A coin that is first observed
+/// already-spent appears in BOTH `created_watched` and `deleted_watched` (see
+/// `TransactionManager::report_coin_states`).  The two halves must be delivered
+/// separately so that any handler transition triggered by `coin_created` is
+/// applied before the matching `coin_spent` is delivered -- otherwise the spend
+/// would still reach the pre-transition (handshake) handler, which ignores it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoinReportPhase {
+    Created,
+    Spent,
+}
+
 pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
     env: &mut ChannelHandlerEnv<'_>,
     peer: &mut P,
     watch_report: &WatchReport,
+    phase: CoinReportPhase,
 ) -> Result<Vec<Effect>, Error> {
     let mut effects = Vec::new();
-    for d in watch_report.deleted_watched.iter() {
-        effects.extend(peer.coin_spent(env, d)?);
-    }
-
-    for c in watch_report.created_watched.iter() {
-        effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
+    match phase {
+        CoinReportPhase::Created => {
+            for c in watch_report.created_watched.iter() {
+                effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
+            }
+        }
+        CoinReportPhase::Spent => {
+            for d in watch_report.deleted_watched.iter() {
+                effects.extend(peer.coin_spent(env, d)?);
+            }
+        }
     }
 
     Ok(effects)
@@ -755,6 +780,29 @@ impl SynchronousGameCradle {
 
     pub fn amount(&self) -> Amount {
         self.amount.clone()
+    }
+
+    /// Render the current protocol-level peer state as indented text for the
+    /// dashboard. The peer is serialized to bencodex (via typetag, so the
+    /// concrete phase becomes the top-level tag) and re-read into an untyped
+    /// tree so the renderer can apply length- and name-based elision.
+    pub fn protocol_state_pretty(&self) -> Result<String, Error> {
+        let bytes = bencodex::to_vec(&self.peer)
+            .map_err(|e| Error::StrErr(format!("protocol_state_pretty serialize: {e:?}")))?;
+        let value: crate::protocol_pretty::BencodexValue = bencodex::from_slice(&bytes)
+            .map_err(|e| Error::StrErr(format!("protocol_state_pretty parse: {e:?}")))?;
+        Ok(crate::protocol_pretty::pretty_print(&value))
+    }
+
+    /// Labeled coin ids (hex) the dashboard shows above the protocol state so
+    /// the user can look them up in a block explorer. Sourced from the active
+    /// phase handler; 0-2 entries in practice.
+    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
+        self.peer
+            .coins_of_interest()
+            .into_iter()
+            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
+            .collect()
     }
 
     pub fn get_our_current_share(&self) -> Option<Amount> {
@@ -838,15 +886,31 @@ impl SynchronousGameCradle {
                     self.state
                         .events
                         .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                    self.state.peer_disconnected = true;
+                    let go_effects = {
+                        let mut env = ChannelHandlerEnv::new(allocator)?;
+                        self.peer.go_on_chain(&mut env, true)?
+                    };
+                    self.process_effects(go_effects, allocator)?;
+                    break;
                 }
             }
         }
 
-        let effects = {
+        let res = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            self.peer.flush_pending_actions(&mut env)?
+            self.peer.flush_pending_actions(&mut env)
         };
-        self.process_effects(effects, allocator)?;
+        match res {
+            Ok(effects) => self.process_effects(effects, allocator)?,
+            Err(e) => {
+                self.state.events.push_back(CradleEvent::Notification(
+                    GameNotification::ActionFailed {
+                        reason: format!("{e:?}"),
+                    },
+                ));
+            }
+        }
 
         Ok(DrainResult {
             events: std::mem::take(&mut self.state.events),
@@ -956,6 +1020,17 @@ impl SynchronousGameCradle {
         apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
 
+        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain
+        {
+            let go_effects = {
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                self.peer.go_on_chain(&mut env, true)?
+            };
+            if !go_effects.is_empty() {
+                return self.process_effects(go_effects, allocator);
+            }
+        }
+
         if self.peer.channel_handler().is_ok() {
             if let Some(ph) = self.state.channel_puzzle_hash.take() {
                 if !self.create_partial_spend_for_channel_coin(allocator, ph.clone())? {
@@ -987,6 +1062,13 @@ impl SynchronousGameCradle {
                         self.state
                             .events
                             .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                        self.state.peer_disconnected = true;
+                        let go_effects = {
+                            let mut env = ChannelHandlerEnv::new(allocator)?;
+                            self.peer.go_on_chain(&mut env, true)?
+                        };
+                        self.process_effects(go_effects, allocator)?;
+                        break;
                     }
                 }
             }
@@ -1407,11 +1489,31 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         self.state.current_height = height;
         let filtered_report = self.filter_coin_report(report);
-        let reported_effects = {
+        // Process creations first and apply any resulting handler transition via
+        // process_effects, THEN process spends against the (possibly now-swapped)
+        // peer.  A channel coin first seen already-spent arrives as a
+        // created-then-spent pair: coin_created transitions a handshake handler
+        // to PotatoHandler, and the spend must reach that new handler.
+        let created_effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            report_coin_changes_to_peer(&mut env, &mut self.peer, &filtered_report)?
+            report_coin_changes_to_peer(
+                &mut env,
+                &mut self.peer,
+                &filtered_report,
+                CoinReportPhase::Created,
+            )?
         };
-        self.process_effects(reported_effects, allocator)?;
+        self.process_effects(created_effects, allocator)?;
+        let spent_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            report_coin_changes_to_peer(
+                &mut env,
+                &mut self.peer,
+                &filtered_report,
+                CoinReportPhase::Spent,
+            )?
+        };
+        self.process_effects(spent_effects, allocator)?;
         let height_effects = self.peer.new_block(self.state.current_height)?;
         self.process_effects(height_effects, allocator)?;
         Ok(())
@@ -1481,5 +1583,153 @@ impl SynchronousGameCradle {
             return och.get_game_coin(game_id);
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod sequencing_tests {
+    use super::*;
+    use crate::common::types::CoinID;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    struct Recorder {
+        created: Vec<CoinString>,
+        spent: Vec<CoinString>,
+    }
+
+    /// Stand-in for the handler a handshake transitions into (e.g. PotatoHandler):
+    /// records the coin events it receives.
+    struct PostTransitionHandler {
+        rec: Rc<RefCell<Recorder>>,
+    }
+
+    impl SpendWalletReceiver for PostTransitionHandler {
+        fn coin_created(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Option<Vec<Effect>>, Error> {
+            self.rec.borrow_mut().created.push(coin.clone());
+            Ok(None)
+        }
+        fn coin_spent(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Vec<Effect>, Error> {
+            self.rec.borrow_mut().spent.push(coin.clone());
+            Ok(vec![])
+        }
+        fn coin_puzzle_and_solution(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            _coin: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+            Ok((vec![], None))
+        }
+    }
+
+    /// Stand-in for a handshake handler: `coin_created` builds a replacement
+    /// handler (mirroring `try_transition_to_potato`), while `coin_spent` is a
+    /// no-op log -- it records into its own `Recorder` only so the test can
+    /// prove the pre-transition handler never handles the spend.
+    struct HandshakeLikeHandler {
+        own: Rc<RefCell<Recorder>>,
+        replacement_rec: Rc<RefCell<Recorder>>,
+        replacement: Option<PostTransitionHandler>,
+    }
+
+    impl HandshakeLikeHandler {
+        fn take_replacement(&mut self) -> Option<PostTransitionHandler> {
+            self.replacement.take()
+        }
+    }
+
+    impl SpendWalletReceiver for HandshakeLikeHandler {
+        fn coin_created(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Option<Vec<Effect>>, Error> {
+            self.own.borrow_mut().created.push(coin.clone());
+            self.replacement = Some(PostTransitionHandler {
+                rec: self.replacement_rec.clone(),
+            });
+            Ok(Some(vec![]))
+        }
+        fn coin_spent(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Vec<Effect>, Error> {
+            self.own.borrow_mut().spent.push(coin.clone());
+            Ok(vec![])
+        }
+        fn coin_puzzle_and_solution(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            _coin: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+            Ok((vec![], None))
+        }
+    }
+
+    /// A channel coin first observed already-spent is reported in BOTH
+    /// `created_watched` and `deleted_watched`.  The cradle processes the created
+    /// phase, applies the handler transition, then processes the spent phase.
+    /// This guarantees the spend reaches the post-transition handler rather than
+    /// the handshake handler that ignores it.  See
+    /// `SynchronousGameCradle::new_block` for the sequencing this mirrors.
+    #[test]
+    fn first_seen_spent_pair_delivers_spend_to_post_transition_handler() {
+        let mut allocator = AllocEncoder::new();
+        let mut env = ChannelHandlerEnv::new(&mut allocator).expect("env");
+
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([7; 32])),
+            &PuzzleHash::from_bytes([8; 32]),
+            &Amount::new(1),
+        );
+        let mut report = WatchReport::default();
+        report.created_watched.insert(coin.clone());
+        report.deleted_watched.insert(coin.clone());
+
+        let handshake_rec = Rc::new(RefCell::new(Recorder::default()));
+        let replacement_rec = Rc::new(RefCell::new(Recorder::default()));
+        let mut handshake = HandshakeLikeHandler {
+            own: handshake_rec.clone(),
+            replacement_rec: replacement_rec.clone(),
+            replacement: None,
+        };
+
+        // Created phase: the handshake handler builds its replacement.
+        report_coin_changes_to_peer(&mut env, &mut handshake, &report, CoinReportPhase::Created)
+            .expect("created phase");
+        // Transition checkpoint (what detect_phase_transition does inside
+        // process_effects between the two phases).
+        let mut replacement = handshake
+            .take_replacement()
+            .expect("coin_created must trigger the transition");
+        // Spent phase: delivered to the post-transition handler.
+        report_coin_changes_to_peer(&mut env, &mut replacement, &report, CoinReportPhase::Spent)
+            .expect("spent phase");
+
+        assert!(
+            handshake_rec.borrow().spent.is_empty(),
+            "the pre-transition handshake handler must not receive the spend"
+        );
+        assert_eq!(
+            replacement_rec.borrow().spent,
+            vec![coin.clone()],
+            "the post-transition handler must receive the spend"
+        );
+        assert!(
+            replacement_rec.borrow().created.is_empty(),
+            "coin_created went to the handshake handler, not the replacement"
+        );
     }
 }

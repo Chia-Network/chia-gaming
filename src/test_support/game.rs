@@ -180,6 +180,8 @@ mod sim_tests {
         Move(usize, GameID, ReadableMove, bool),
         /// Fake move (player, game_id, readable, sabotage bytes).
         FakeMove(usize, GameID, ReadableMove, Vec<u8>),
+        /// Make a normal move, but tamper the outbound batch signatures.
+        BadSignatureMove(usize, GameID, ReadableMove),
         /// Cheat (player, game_id, mover_share).
         Cheat(usize, GameID, Amount),
         /// Force-destroy a game coin (player, game_id).
@@ -196,6 +198,8 @@ mod sim_tests {
         /// Propose a new game from the specified player.
         /// The trigger specifies what event to wait for before proposing.
         ProposeNewGame(usize, ProposeTrigger),
+        /// Propose a new game from the specified player with a custom game timeout.
+        ProposeNewGameWithTimeout(usize, ProposeTrigger, u64),
         /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
         ProposeNewGameTheirTurn(usize, ProposeTrigger),
         /// Go on chain
@@ -213,6 +217,11 @@ mod sim_tests {
         /// handshake state checks.  Simulates a malicious peer who submits
         /// an old-state unroll even after agreeing to clean shutdown.
         ForceUnroll(usize),
+        /// Stop nerfing transactions for a single player, leaving any other
+        /// nerfed players (and the shared backlog) untouched.  Used to let one
+        /// side win an on-chain race while the other stays nerfed, since
+        /// `UnNerfTransactions` clears the nerf for everyone at once.
+        UnNerfTransactionsFor(usize),
         /// Nerf (silently drop) all outbound messages for a player.
         NerfMessages(usize),
         /// Stop nerfing messages.
@@ -234,6 +243,11 @@ mod sim_tests {
         /// Propose a game but tamper the outbound message to use a game_id
         /// with the wrong parity. Tests receiver-side parity rejection.
         WrongParityProposal(usize),
+        /// Propose a game but tamper the outbound proposal parameters to nil.
+        /// Tests game-specific parser rejection of invalid peer terms.
+        InvalidProposalParameters(usize),
+        /// Propose a game but tamper the outbound proposal timeout to zero.
+        InvalidProposalTimeout(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -244,16 +258,25 @@ mod sim_tests {
                 GameAction::FakeMove(p, g, n, v) => {
                     write!(formatter, "FakeMove({p},{g:?},{n:?},{v:?})")
                 }
+                GameAction::BadSignatureMove(p, g, n) => {
+                    write!(formatter, "BadSignatureMove({p},{g:?},{n:?})")
+                }
                 GameAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
                 GameAction::ForceDestroyCoin(p, g) => {
                     write!(formatter, "ForceDestroyCoin({p},{g:?})")
                 }
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
+                GameAction::UnNerfTransactionsFor(p) => {
+                    write!(formatter, "UnNerfTransactionsFor({p})")
+                }
                 GameAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
                 GameAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
                 GameAction::ProposeNewGame(p, t) => {
                     write!(formatter, "ProposeNewGame({p},{t:?})")
+                }
+                GameAction::ProposeNewGameWithTimeout(p, t, timeout) => {
+                    write!(formatter, "ProposeNewGameWithTimeout({p},{t:?},{timeout})")
                 }
                 GameAction::ProposeNewGameTheirTurn(p, t) => {
                     write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
@@ -286,6 +309,12 @@ mod sim_tests {
                 }
                 GameAction::WrongParityProposal(p) => {
                     write!(formatter, "WrongParityProposal({p})")
+                }
+                GameAction::InvalidProposalParameters(p) => {
+                    write!(formatter, "InvalidProposalParameters({p})")
+                }
+                GameAction::InvalidProposalTimeout(p) => {
+                    write!(formatter, "InvalidProposalTimeout({p})")
                 }
             }
         }

@@ -36,6 +36,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 - [WASM Event FIFO and Async Drain](#wasm-event-fifo-and-async-drain)
 - [Channel Lifecycle Notifications](#channel-lifecycle-notifications)
+- [Dashboard Status Labels](#dashboard-status-labels)
 - [Gameplay Notifications](#gameplay-notifications)
 - [Proposal Notifications](#proposal-notifications)
 - [Game Outcome Notifications (Terminal)](#game-outcome-notifications-terminal)
@@ -46,17 +47,26 @@ Those are conceptual progression models; the concrete emitted values are still
 
 ## WASM Event FIFO and Async Drain
 
-Every communication from the WASM cradle to the JS frontend is a `CradleEvent`
-delivered through a single FIFO queue. There are no side-channel flags or polled
-getters — wallet requests (`NeedCoinSpend`, `NeedLauncherCoin`), outbound
-messages, transactions, notifications, and puzzle/solution requests all flow
-through the same event stream.
+Every communication produced by the Rust cradle starts as a `CradleEvent` in
+the cradle's FIFO event queue. The `TransactionManager` drains that queue and
+intercepts blockchain bookkeeping events before they reach JavaScript:
+`OutboundTransaction` entries are captured for `drain_submissions()`, and
+`WatchCoin` entries update the manager's watched-coin set exposed through
+`get_coins_to_poll()`. The remaining events — wallet requests
+(`NeedCoinSpend`, `NeedLauncherCoin`), outbound peer messages, notifications,
+logs, receive errors, and puzzle/solution requests — are returned to JS as
+`result.events`.
 
 Flow:
 
-1. `processResult()` appends `result.events` to `eventQueue` and calls
-   `scheduleDrain()`.
-2. `scheduleDrain()` is a no-op if a drain is already scheduled or the queue
+1. Rust handlers push all `CradleEvent`s onto the cradle queue.
+2. `TransactionManager::flush_and_collect` drains that queue, intercepting
+   `OutboundTransaction` and `WatchCoin` while preserving order for the events
+   still delivered to JS.
+3. `processResult()` appends `result.events` to the JS `eventQueue`, calls
+   `drain_submissions()` / `get_coins_to_poll()` for intercepted blockchain
+   work, and calls `scheduleDrain()`.
+4. `scheduleDrain()` is a no-op if a drain is already scheduled or the queue
    is empty. Otherwise it schedules a `setTimeout(0)` callback that dispatches
    **one** event, saves state, and calls `scheduleDrain()` again for the next.
 
@@ -64,14 +74,17 @@ Each event is dispatched exactly once by `dispatchEvent()`, in a separate
 macrotask. Event types and their handlers:
 
 - `OutboundMessage` — send to peer via tracker
-- `OutboundTransaction` — submit spend bundle to blockchain
 - `Notification` — surface game/channel state to the UI
 - `ReceiveError` — peer message decode failure
 - `CoinSolutionRequest` — fetch puzzle/solution from blockchain
 - `Log` — diagnostic output
 - `NeedLauncherCoin` — request the wallet to provide the launcher coin
 - `NeedCoinSpend` — request the wallet to create and sign a spend bundle
-- `WatchCoin` — register a coin for wallet/watch tracking
+
+`OutboundTransaction` and `WatchCoin` are intentionally absent from the JS event
+list because they are intercepted during manager drain. They still originate as
+queued Rust events; they just become manager state/submission buffers before JS
+dispatch.
 
 Why async (one event per macrotask):
 
@@ -104,6 +117,11 @@ All channel lifecycle events are delivered as a single `ChannelStatus`
 notification containing the current `ChannelState`, balance information, and
 an optional `advisory` string for context (e.g. error reason). The
 `ChannelState` values are:
+
+`ChannelState` is the notification-level state model exposed to the UI and
+tests. It is distinct from peer handler ownership and from the on-chain coin
+lifecycle; see [Peer Handlers vs States](OVERVIEW.md#peer-handlers-vs-states)
+for how those lenses relate.
 
 | `ChannelState`        | When                                           | Meaning                                                                                                                                       |
 | --------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -150,6 +168,49 @@ Monotonicity applies across all three lenses:
 
 ---
 
+## Dashboard Status Labels
+
+The Game tab dashboard is the persistent user-facing summary. Its collapsed bar
+is intentionally calmer than the raw notification stream:
+
+`Channel: <channel status> <channel advisory> Hand: <hand status> <hand detail>`
+
+The channel half summarizes the channel lifecycle. `Unrolling` and
+`ResolvedUnrolled` are not separate pop-up-worthy events; the bar is the source
+of truth for those states. `Failed` and `ResolvedStale` can still produce
+error-style attention because they indicate adverse channel-level outcomes.
+
+The hand half summarizes one accepted hand. It deliberately hides off-chain turn
+noise and only becomes turn-specific once a game coin is actually on-chain:
+
+| Hand label | Meaning |
+| --- | --- |
+| `No hand` | No accepted hand is currently active or being displayed. |
+| `Active` | A hand is live off-chain, or the channel is going on-chain/unrolling before a concrete game coin is being tracked. Off-chain `my turn` vs `their turn` is not important enough for the collapsed bar. |
+| `Your turn` | A game coin is on-chain and the protocol says our side is the mover. |
+| `Their turn` | A game coin is on-chain and the protocol says the opponent is the mover. |
+| `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
+| `Ended` | A terminal `GameStatusKind` has been observed. The collapsed bar may add a short hand detail after `Ended`. |
+
+Terminal hand details are high-level user labels derived from terminal
+`GameStatus` metadata. Full raw details remain available in the expanded
+dashboard rows.
+
+| Detail | Meaning |
+| --- | --- |
+| `Forfeited` | The protocol explicitly marked the terminal as `forfeited`. This is a distinct adverse hand outcome, shown in the bar as `Hand: Ended Forfeited`, but it should not also create a pop-up. |
+| `Move too late` | Our move or replay did not land before the opponent claimed the timeout. This is not a forfeit; it means the move missed the on-chain timing window. |
+| `Timed out` | We timed out in a non-forfeit, non-late-move path. |
+| `Opponent timed out` | The opponent timed out in a normal terminal path. This is considered a normal game end and is usually omitted from the collapsed bar detail. |
+| `Ended cleanly` | The game result was accepted through normal protocol completion. This is also usually omitted from the collapsed bar detail. |
+| Slash / cheat / error labels | Adverse terminal outcomes such as `Slashed opponent`, `Opponent slashed us`, `Opponent cheated`, or `Error`. |
+
+Forfeits, move-too-late, slash, cheat, and game-error details belong to the hand
+half of the dashboard, not the channel advisory. Channel advisories are reserved
+for channel-level failures or context.
+
+---
+
 ## Gameplay Notifications
 
 These fire during active gameplay (after a game proposal has been accepted).
@@ -184,7 +245,7 @@ user is notified.
 | `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale. | **Local/silent.** Terms stashed in `pendingRetryTermsRef` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
 | `PeerProposalPending` | JS called `propose_game` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect. | **Local/silent.** Same retry stash as `SupersededByIncoming`. |
 | `GameActive` | Reserved for future use. The JS-side guard prevents this from occurring in practice. | **Local/silent.** Clears retry state. |
-| `CancelledByPeer` | The peer explicitly sent `BatchAction::CancelProposal` for our proposal. | **User-facing popup:** "Your proposal was rejected by the other side." |
+| `CancelledByPeer` | The peer sent `BatchAction::CancelProposal` for our proposal. This usually means the peer rejected it, but the same protocol message is also used as the peer-side follow-up for failed accept attempts such as insufficient balance (see [Race Conditions in Proposal Lifecycle](GAME_LIFECYCLE.md#race-conditions-in-proposal-lifecycle)). | **User-facing notice:** the proposal did not proceed on the peer side. |
 | `CancelledByUs` | We explicitly cancelled the peer's proposal (via `cancel_proposal`). | **Silent.** We initiated the cancellation; nothing to tell the user. |
 | `CleanShutdown` | The channel is shutting down cooperatively. All outstanding proposals are cancelled. | **Silent.** The shutdown UI handles this. |
 | `WentOnChain` | The channel transitioned to on-chain resolution. Proposals not reflected in the unroll are cancelled. | **Silent.** The on-chain UI handles this. |
@@ -193,7 +254,9 @@ user is notified.
 The `is_local()` method on `CancelReason` returns `true` for
 `SupersededByIncoming`, `PeerProposalPending`, and `GameActive`. The frontend
 uses this to decide whether to stash terms for retry (local + terms available)
-or show a user-facing notification (only `CancelledByPeer`).
+or show a user-facing notification (only `CancelledByPeer`). `CancelledByPeer`
+should be interpreted as a peer-side protocol cancellation, not necessarily as
+a deliberate human rejection.
 
 ---
 
@@ -205,7 +268,7 @@ The frontend should treat any of these as the "game ended" signal.
 
 | Conceptual UX label | Actual wire shape | When | Meaning |
 | --- | --- | --- | --- |
-| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | Preceded by `ProposalAccepted`; the game is immediately terminated. The peer sees `ProposalCancelled`. |
+| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | Preceded by `ProposalAccepted`; the game is immediately terminated. The peer sees `ProposalCancelled { reason: CancelledByPeer }` as the Rule A follow-up for their proposal. |
 | WeTimedOut | `GameStatus { status: EndedWeTimedOut, my_reward, coin_id }` | Game resolved in our favor | Off-chain accept-timeout completion or on-chain timeout/slash resolution path |
 | OpponentTimedOut | `GameStatus { status: EndedOpponentTimedOut, my_reward, coin_id }` | Game resolved in opponent's favor | Includes receiving opponent accept-timeout and on-chain opponent-favor outcomes |
 | EndedCancelled | `GameStatus { status: EndedCancelled, ... }` | In-flight accept lost during stale unroll | The game was accepted but no moves were made; the unroll predates the acceptance |
@@ -213,6 +276,37 @@ The frontend should treat any of these as the "game ended" signal.
 | OpponentSlashedUs | `GameStatus { status: EndedOpponentSlashedUs, ... }` | Opponent slashed us | Our move was proven illegal on-chain |
 | OpponentSuccessfullyCheated | `GameStatus { status: EndedOpponentSuccessfullyCheated, my_reward, coin_id }` | Illegal move timed out before slash | Opponent kept timeout path before we slashed |
 | GameError | `GameStatus { status: EndedError, reason }` | Unrecoverable game-level issue | One game reached an error terminal condition |
+
+### Terminal Taxonomy (On-Chain)
+
+On-chain game endings fall into five distinct cases. Each has a different
+trigger condition in the Rust backend and a different frontend label:
+
+| Case | Trigger condition | Backend behavior | `GameStatusOtherParams` | Frontend label |
+|---|---|---|---|---|
+| **Forfeit** | Our turn; our computed move would give `mover_share == game_amount` to the opponent (our post-move share is 0%) | Move not submitted; `EndedWeTimedOut` emitted immediately with `my_reward: 0` | `game_finished: true, forfeited: true` | `Forfeited` (no pop-up) |
+| **Claim** | Our turn; `our_share == game_amount` before any move (we already get 100%) | Auto-accept fires; `AcceptTimeout` queued; timeout claim built and submitted | `game_finished: true` | `Ended cleanly` |
+| **Terminal** | Our turn; `is_game_over()` and `our_share > 0` | Auto-accept fires; `AcceptTimeout` queued; timeout claim built and submitted | `game_finished: true` | `Ended cleanly` |
+| **Fold** | Our turn; frontend explicitly calls `accept_timeout`; our share > 0 | `AcceptTimeout` handler builds timeout claim and registers it for submission at maturity | `game_finished: true` | `Ended cleanly` |
+| **Move too late** | We submitted a move on-chain but the opponent's timeout claim landed first | Detected when the pending-move coin's spend pays the opponent's reward puzzle hash | `game_finished: None` | `Move too late` |
+
+When both **Claim** and **Terminal** conditions are true simultaneously
+(game is over AND `our_share == game_amount`), the case is treated as
+**Terminal** — both auto-accept identically.
+
+**`game_finished: true`** in `GameStatusOtherParams` is the unified "clean
+end" signal. The frontend maps it to `cleanEnd: true`, which renders as
+"Ended cleanly" in the dashboard. Claim, Terminal, and Fold all produce this
+signal.
+
+**`forfeited: true`** is the "adverse but intentional" signal. The frontend
+maps it to `type: 'forfeit'`, which renders as "Forfeited" in the dashboard
+without a pop-up notification (forfeits are routine, not surprising).
+
+**Move too late** is the only case that uses the `reason` string — and only
+when the game was not already in a finished state. If a pending move is
+overtaken on a game that was already `game_finished`, the notification omits
+the reason string and the frontend treats it as a clean end.
 
 `EndedError` covers situations that "should never happen" under normal
 operation but *can* happen if, for example, a trusted full node sends
@@ -276,14 +370,16 @@ assertion.
    `OnChainMyTurn`, `OnChainTheirTurn`, `Replaying`, `EndedCancelled`,
    `EndedError`, or `EndedWeTimedOut`. This ensures every live game is
    immediately classified into a valid unroll-resolution bucket.
-5. **Channel state monotonicity.** `ChannelState` ordinals must never
-   decrease: `Handshaking/WaitingForHeightToOffer/WaitingForHeightToAccept(0) <
-   OfferSent(1) < TransactionPending(2) < Active(3) <
-   ShuttingDown/GoingOnChain(4) < ShutdownTransactionPending/Unrolling(5) <
-   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(6)`. `Active` may
-   repeat at the same ordinal (balance changes from potato firings), and
-   terminal states (ordinal 6) may repeat (e.g. advisory changes).
-   Enforced by the simulation loop's post-test assertion.
+5. **Channel state monotonicity.** `ChannelState` values are serialized to the
+   frontend by name; the numeric ordinals here are an internal test ordering,
+   not wire codes. They must never decrease:
+   `Handshaking/WaitingForHeightToOffer/WaitingForHeightToAccept(0) <
+   WaitingForOffer(1) < OfferSent(2) < TransactionPending(3) < Active(4) <
+   ShuttingDown/GoingOnChain(5) < ShutdownTransactionPending/Unrolling(6) <
+   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(7)`. `Active` may repeat
+   at the same ordinal for balance updates, and winding-down states at ordinals
+   5 and 6 may repeat as shutdown/on-chain details are refined. Enforced by the
+   simulation loop's post-test assertion.
 
 ---
 
@@ -314,15 +410,15 @@ events.
 
 | `kind` | Source | Behavior |
 |---|---|---|
-| `game-terminal` | `GameStatus` ended during on-chain flow | Shows reward amount and coin info. |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Cleared when a `ProposalAccepted` arrives. |
+| `game-terminal` | Adverse `GameStatus` terminal during on-chain flow, except bar-only outcomes such as forfeits | Shows reward amount and coin info. |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Peer-side cancellation notice; cleared when a `ProposalAccepted` arrives. |
 | `insufficient-bal` | `InsufficientBalance` notification | Game could not start due to balance. |
 
 ### Data Model
 
 Each notification carries an `id` (unique integer), `kind`, `title`, `message`,
 and an optional `payload` (typed for `channel-state` and `game-terminal`
-entries). Queues are persisted to `SessionSave` (without non-serializable
+entries). Queues are persisted to `SessionState` (without non-serializable
 payloads) and restored on reload.
 
 ### Overlay Behavior
@@ -369,3 +465,38 @@ matched to live games and generating spurious terminal notifications.
 
 **Key code:** `src/potato_handler/effects.rs`,
 `src/potato_handler/handler_base.rs` (`emit_failure_cleanup`)
+
+---
+
+## GameplayEvent Mapping
+
+The `useGameSession` hook translates raw `WasmNotification` terminal events
+into game-agnostic `GameplayEvent` variants before forwarding them to
+game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`). Game hooks
+never see raw notifications; they receive one of:
+
+| Variant | Shape | When |
+|---------|-------|------|
+| `Timeout` | `{ byUs: boolean, forfeited: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout. `forfeited: true` marks the case where the losing side intentionally skipped its final move (no point paying for an on-chain move that wins nothing), so games can label it "Forfeit" instead of the misleading "Timed Out". `byUs` gives the direction. |
+| `GameError` | `{ reason: string }` | Slashes, cheats, cancellations, errors, insufficient balance |
+
+The mapping from `GameTerminalType` (produced by `parseGameStatusTerminalInfo`)
+to `GameplayEvent`:
+
+| Terminal type | GameplayEvent |
+|---------------|---------------|
+| `forfeit` | `Timeout { byUs, forfeited: true }` -- direction from the original `GameStatusKind` |
+| `we-timed-out` | `Timeout { byUs: true, forfeited: false }` |
+| `opponent-timed-out` | `Timeout { byUs: false, forfeited: false }` |
+| `we-slashed-opponent` | `GameError` |
+| `opponent-slashed-us` | `GameError` |
+| `opponent-successfully-cheated` | `GameError` |
+| `ended-cancelled` | `GameError` |
+| `game-error` | `GameError` |
+| `insufficient-balance` | `GameError` |
+
+Non-terminal events (`OpponentMoved`, `GameMessage`, `ProposalAccepted`) are
+unchanged and forwarded directly.
+
+**Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalEventForInfo`,
+`gameplayEventsForGameStatus`)

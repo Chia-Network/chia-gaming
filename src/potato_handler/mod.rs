@@ -20,8 +20,8 @@ use crate::common::types::{
     ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
-    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
+    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::utils::proper_list;
@@ -153,7 +153,7 @@ fn format_batch_action(action: &BatchAction) -> String {
                 "Move id={id} mover_share={} max_move_size={} validation_info_hash={:?}",
                 details.basic.mover_share,
                 details.basic.max_move_size,
-                details.validation_program_hash,
+                details.validation_info_hash,
             )
         }
         BatchAction::AcceptTimeout(id, amount) => {
@@ -500,6 +500,7 @@ impl PotatoHandler {
                 clean_shutdown,
             } => {
                 let ch_snapshot = self.channel_handler.clone();
+                let queue_snapshot = self.game_action_queue.clone();
                 match self.process_received_batch(
                     env,
                     &timeout,
@@ -512,6 +513,7 @@ impl PotatoHandler {
                     }
                     Err(e) => {
                         self.channel_handler = ch_snapshot;
+                        self.game_action_queue = queue_snapshot;
                         return Err(e);
                     }
                 }
@@ -614,11 +616,14 @@ impl PotatoHandler {
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
                     let ivp_hash = gsi.initial_validation_program.hash().clone();
+                    let initial_state = gsi.initial_state.clone();
                     effects.push(Effect::Notify(GameNotification::ProposalMade {
                         id: game_id,
                         my_contribution,
                         their_contribution,
+                        timeout: gsi.timeout.clone(),
                         initial_validation_program_hash: ivp_hash,
+                        initial_state,
                         game_type: resolved_game_type,
                     }));
                 }
@@ -1037,7 +1042,10 @@ impl PotatoHandler {
                     pending_shutdown = Some((state_channel_coin.clone(), spend.solution.clone()));
                 }
                 GameAction::SendPotato => {
-                    unreachable!("SendPotato should not be queued");
+                    // Legacy/restored state may still contain this marker action.
+                    // Draining a queue should never trap the WASM runtime; the
+                    // current potato state already determines whether we can send.
+                    continue;
                 }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {
@@ -1108,6 +1116,7 @@ impl PotatoHandler {
                 starter.program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
+                &game_start.parameters,
             )?;
             let alice_result: Vec<Rc<GameStartInfo>> = alice_game
                 .starts
@@ -1129,6 +1138,7 @@ impl PotatoHandler {
                 starter.program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
+                &game_start.parameters,
             )?;
             let bob_result: Vec<Rc<GameStartInfo>> = bob_game
                 .starts
@@ -1507,7 +1517,8 @@ impl FromLocalUI for PotatoHandler {
         }
 
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
-        Ok((game_id_list, effect.into_iter().collect()))
+        let effects: Vec<Effect> = effect.into_iter().collect();
+        Ok((game_id_list, effects))
     }
 
     fn accept_proposal(
@@ -1711,10 +1722,11 @@ impl PeerHandler for PotatoHandler {
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let ch = self.channel_handler.as_ref()?;
-        let shutting_down = self
-            .game_action_queue
-            .iter()
-            .any(|a| matches!(a, GameAction::CleanShutdown));
+        let shutting_down = self.pending_clean_shutdown.is_some()
+            || self
+                .game_action_queue
+                .iter()
+                .any(|a| matches!(a, GameAction::CleanShutdown));
         Some(ChannelStatusSnapshot {
             state: if shutting_down {
                 ChannelState::ShuttingDown
@@ -1728,6 +1740,12 @@ impl PeerHandler for PotatoHandler {
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
         })
+    }
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        match self.channel_handler.as_ref() {
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            None => vec![],
+        }
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         PotatoHandler::channel_handler(self)

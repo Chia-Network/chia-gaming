@@ -370,6 +370,30 @@ fn make_initial(allocator: &mut AllocEncoder, lib: &ValidatorLibrary) -> MoveRes
     }
 }
 
+fn make_end_state(
+    allocator: &mut AllocEncoder,
+    lib: &ValidatorLibrary,
+    half_pot: i64,
+    mover_preimage: &[u8],
+    waiter_preimage: &[u8],
+) -> MoveResult {
+    let mover_image = sha256_bytes(mover_preimage);
+    let half_pot_node = half_pot.to_clvm(allocator).unwrap();
+    let mover_image_node = allocator.allocator().new_atom(&mover_image).unwrap();
+    let waiter_preimage_node = allocator.allocator().new_atom(waiter_preimage).unwrap();
+    let a = allocator.allocator();
+    let tail = a.new_pair(waiter_preimage_node, NodePtr::NIL).unwrap();
+    let tail = a.new_pair(mover_image_node, tail).unwrap();
+    let state = a.new_pair(half_pot_node, tail).unwrap();
+
+    MoveResult {
+        move_code: MoveCode::MakeMove,
+        next_validator_hash: Some(lib.hashes[4]),
+        state,
+        next_max_move_size: 17,
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 fn test_spacepoker_validator_hashes() {
@@ -866,6 +890,114 @@ fn test_spacepoker_begin_round_pong_then_check_is_open() {
     );
 }
 
+fn test_spacepoker_end_slash_too_short() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(
+            &mover_preimage,
+            AMOUNT / 2,
+            None,
+            MoveCode::Slash,
+            false,
+            "end",
+        ),
+    );
+}
+
+fn test_spacepoker_end_slash_bad_preimage() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    let mut move_bytes = [0xC3; 16].to_vec();
+    move_bytes.push(0x1F);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(&move_bytes, AMOUNT / 2, None, MoveCode::Slash, false, "end"),
+    );
+}
+
+fn test_spacepoker_end_slash_bad_selection_popcount() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    let mut move_bytes = mover_preimage.to_vec();
+    move_bytes.push(0x0F);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(&move_bytes, AMOUNT / 2, None, MoveCode::Slash, false, "end"),
+    );
+}
+
+fn test_spacepoker_end_valid_move_nil_evidence_exception() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    let mut move_bytes = mover_preimage.to_vec();
+    move_bytes.push(0x1F);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2,
+            None,
+            MoveCode::ClvmException,
+            false,
+            "end",
+        ),
+    );
+}
+
+fn test_spacepoker_end_valid_move_bad_evidence_exception() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    let mut move_bytes = mover_preimage.to_vec();
+    move_bytes.push(0x1F);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2,
+            Some(&[0x0F]),
+            MoveCode::ClvmException,
+            false,
+            "end",
+        ),
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         (
@@ -927,6 +1059,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_begin_round_pong_then_check_is_open",
             &test_spacepoker_begin_round_pong_then_check_is_open,
+        ),
+        (
+            "test_spacepoker_end_slash_too_short",
+            &test_spacepoker_end_slash_too_short,
+        ),
+        (
+            "test_spacepoker_end_slash_bad_preimage",
+            &test_spacepoker_end_slash_bad_preimage,
+        ),
+        (
+            "test_spacepoker_end_slash_bad_selection_popcount",
+            &test_spacepoker_end_slash_bad_selection_popcount,
+        ),
+        (
+            "test_spacepoker_end_valid_move_nil_evidence_exception",
+            &test_spacepoker_end_valid_move_nil_evidence_exception,
+        ),
+        (
+            "test_spacepoker_end_valid_move_bad_evidence_exception",
+            &test_spacepoker_end_valid_move_bad_evidence_exception,
         ),
     ]
 }

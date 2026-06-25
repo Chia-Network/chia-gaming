@@ -3,7 +3,6 @@ export type PlayerStatus = 'waiting' | 'playing' | 'busy';
 export interface Player {
   id: string;
   alias: string;
-  session_id: string;
   walletAddress?: string;
   status: PlayerStatus;
   opponent_alias?: string;
@@ -15,6 +14,8 @@ export interface Challenge {
   from_id: string;
   target_id: string;
   amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 export interface Pairing {
@@ -22,4 +23,6 @@ export interface Pairing {
   playerB_id: string;
   token: string;
   amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }

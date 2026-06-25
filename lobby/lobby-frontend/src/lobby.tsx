@@ -30,6 +30,7 @@ const LobbyScreen = () => {
     declineChallenge,
     cancelChallenge,
     setLobbyAlias,
+    publicId,
   } = useLobbySocket(
     window.location.origin,
     uniqueId,
@@ -75,11 +76,13 @@ const LobbyScreen = () => {
     const value = e.target.value;
     setEditingAlias(false);
     setMyAlias(value);
-    setLobbyAlias(uniqueId, value);
+    setLobbyAlias(publicId ?? '', value);
   }
 
   const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(null);
   const [challengeAmount, setChallengeAmount] = useState('100');
+  const [challengeChannelTimeout, setChallengeChannelTimeout] = useState('15');
+  const [challengeUnrollTimeout, setChallengeUnrollTimeout] = useState('15');
 
   function openChallengeDialog(targetId: string, targetAlias: string) {
     setChallengeTarget({ id: targetId, alias: targetAlias });
@@ -87,7 +90,7 @@ const LobbyScreen = () => {
 
   function submitChallenge() {
     if (!challengeTarget) return;
-    sendChallenge(challengeTarget.id, challengeAmount);
+    sendChallenge(challengeTarget.id, challengeAmount, challengeChannelTimeout, challengeUnrollTimeout);
     setChallengeTarget(null);
   }
 
@@ -131,7 +134,7 @@ const LobbyScreen = () => {
     );
   }
 
-  const myStatus = players.find((p) => p.id === uniqueId)?.status;
+  const myStatus = players.find((p) => p.id === publicId)?.status;
   const iAmUnavailable = myStatus === 'playing' || myStatus === 'busy';
 
   return (
@@ -209,6 +212,26 @@ const LobbyScreen = () => {
                 className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
               />
             </label>
+            <label className="block text-sm text-canvas-text">
+              Channel timeout (blocks)
+              <input
+                type="number"
+                min="1"
+                value={challengeChannelTimeout}
+                onChange={(e) => setChallengeChannelTimeout(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+              />
+            </label>
+            <label className="block text-sm text-canvas-text">
+              Unroll timeout (blocks)
+              <input
+                type="number"
+                min="1"
+                value={challengeUnrollTimeout}
+                onChange={(e) => setChallengeUnrollTimeout(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+              />
+            </label>
           </div>
           <div className="flex gap-2">
             <Button variant="solid" color="primary" size="sm" onClick={submitChallenge}>
@@ -268,7 +291,7 @@ const LobbyScreen = () => {
       ) : (
         <div className="space-y-2">
           {players.map((player) => {
-            const isMe = player.id === uniqueId;
+            const isMe = player.id === publicId;
             const isUnavailable = player.status === 'playing' || player.status === 'busy';
 
             return (
@@ -328,6 +351,8 @@ function IncomingChallengeDialog({
       </p>
       <p className="text-sm text-canvas-text mb-3">
         Buy-in: {challenge.amount} mojos
+        {challenge.channel_timeout && <><br />Channel timeout: {challenge.channel_timeout} blocks</>}
+        {challenge.unroll_timeout && <><br />Unroll timeout: {challenge.unroll_timeout} blocks</>}
       </p>
       <div className="flex gap-2">
         <Button variant="solid" color="primary" size="sm" onClick={onAccept}>

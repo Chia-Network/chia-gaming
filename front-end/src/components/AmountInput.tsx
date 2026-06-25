@@ -112,8 +112,8 @@ export function AmountInput({
   }, [maxMojos, unit, onChange, onUseMax]);
 
   return (
-    <div className='flex flex-col gap-1'>
-      <div className='flex items-center gap-2'>
+    <div className='flex flex-col items-center gap-1 text-center'>
+      <div className='flex flex-wrap items-center justify-center gap-2'>
         <span className='text-xs text-canvas-text'>{label}</span>
         <div className='flex rounded-md border border-canvas-border overflow-hidden text-xs'>
           <button
@@ -139,12 +139,12 @@ export function AmountInput({
         onChange={(e) => handleChange(e.target.value)}
         onKeyDown={onKeyDown}
         disabled={disabled}
-        className={`w-full rounded border px-2 py-1 text-sm bg-canvas-bg-subtle text-canvas-text-contrast outline-none ${
+        className={`w-full rounded border px-2 py-1 text-center text-sm bg-canvas-bg-subtle text-canvas-text-contrast outline-none ${
           !isValid && rawInput.trim() !== '' ? 'border-alert-solid' : 'border-canvas-line'
         }`}
       />
       {exceeds && (
-        <div className='flex items-center gap-2 text-xs text-alert-text'>
+        <div className='flex flex-wrap items-center justify-center gap-2 text-xs text-alert-text'>
           <span>{exceedsLabel}</span>
           {onUseMax !== undefined && (
             <button

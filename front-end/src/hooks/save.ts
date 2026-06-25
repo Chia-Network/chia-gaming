@@ -1,5 +1,5 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
-import { jsonParse, jsonStringify } from '../util/jsonSafe';
+import { jsonParseLossless, jsonStringifyLossless } from '../util/jsonSafe';
 
 export function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -104,36 +104,38 @@ interface SavedGame {
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
-  playerCardIds: number[];
-  opponentCardIds: number[];
-  cardSelections: number[];
   winner: string | null;
-  playerBestHandCardIds: number[];
-  opponentBestHandCardIds: number[];
-  playerHaloCardIds: number[];
-  opponentHaloCardIds: number[];
+  playerBestHandCardIds: bigint[];
+  opponentBestHandCardIds: bigint[];
+  playerHaloCardIds: bigint[];
+  opponentHaloCardIds: bigint[];
   playerDisplayText: string;
   opponentDisplayText: string;
 }
 
 export interface CalpokerHandState {
-  playerHand: number[];
-  opponentHand: number[];
-  moveNumber: number;
+  playerHand: bigint[];
+  opponentHand: bigint[];
+  moveNumber: bigint;
   isPlayerTurn: boolean;
-  cardSelections?: number[];
+  cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+}
+
+export interface PersistedGameState<T = unknown> {
+  gameType: string;
+  version: bigint;
+  state: T;
 }
 
 type BlockchainType = 'simulator' | 'walletconnect';
 
 /**
- * Single flat state object stored in localStorage. Stale nonce = wipe
+ * Single flat state object stored in localStorage. Stale version = wipe
  * everything. No nesting, no migration — alpha-mode simplicity.
  */
 export interface SessionState {
-  version: number;
-  buildNonce?: string;
+  version: bigint;
 
   // Identity (regenerated on wipe)
   playerId: string;
@@ -158,41 +160,49 @@ export interface SessionState {
   blockchainType?: BlockchainType;
   serializedCradle?: string;
   pairingToken?: string;
-  messageNumber?: number;
-  remoteNumber?: number;
+  messageNumber?: bigint;
+  remoteNumber?: bigint;
   channelReady?: boolean;
   iStarted?: boolean;
   amount?: string;
   perGameAmount?: string;
-  unackedMessages?: Array<{ msgno: number; msg: string }>;
+  unackedMessages?: Array<{ msgno: bigint; msg: string }>;
   history?: string[];
   log?: string[];
+  humanHistory?: string[];
+  wasmNotificationHistory?: string[];
+  diagnosticLog?: string[];
   activeGameId?: string | null;
   activeGameType?: string;
-  handState?: CalpokerHandState | null;
+  handState?: PersistedGameState | null;
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
-  chatMessages?: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
+  chatMessages?: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }>;
   gameCoinHex?: string | null;
   gameTurnState?: string;
+  gameHandStatus?: string;
   gameTerminalType?: string;
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
   gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
-  channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
-  gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
+  channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
+  gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   dismissedChannelState?: string;
+  goOnChainPressed?: boolean;
+  cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
+  betweenHandComposeGameTimeout?: string;
   betweenHandComposeGameType?: string;
-  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
+  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
@@ -200,7 +210,7 @@ export type SessionSave = SessionState;
 
 const STATE_KEY = 'appState';
 const RESET_KEY = 'appState_hardReset';
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 3n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
@@ -386,6 +396,29 @@ export function isFenced(): boolean {
   return fenced;
 }
 
+function assertNoNumbers(obj: unknown, path: string): void {
+  if (obj === null || obj === undefined) return;
+  if (typeof obj === 'number') {
+    const msg = `[save] BUG: found number where bigint expected at "${path}" (value=${obj})`;
+    console.error(msg);
+    if (typeof window !== 'undefined' && window.alert) {
+      window.alert(msg);
+    }
+    throw new Error(msg);
+  }
+  if (ArrayBuffer.isView(obj)) return;
+  if (typeof obj !== 'object') return;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      assertNoNumbers(obj[i], `${path}[${i}]`);
+    }
+  } else {
+    for (const key of Object.keys(obj as Record<string, unknown>)) {
+      assertNoNumbers((obj as Record<string, unknown>)[key], `${path}.${key}`);
+    }
+  }
+}
+
 function flushToLocalStorage(): void {
   if (!cached || fenced) return;
   if (persistTimer) {
@@ -393,10 +426,15 @@ function flushToLocalStorage(): void {
     persistTimer = null;
   }
   try {
-    localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(cached)));
+    assertNoNumbers(cached, 'SessionState');
+    localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(cached)));
   } catch (e) {
     console.error('[save] failed to persist state:', e);
   }
+}
+
+export function flushSessionState(): void {
+  flushToLocalStorage();
 }
 
 function schedulePersist(): void {
@@ -437,7 +475,7 @@ if (typeof window !== 'undefined') {
 
 /** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
 export function _writeRawState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(obj)));
+  localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(obj)));
 }
 
 /** @internal — reset module state between test cases */
@@ -460,7 +498,7 @@ export function loadState(): SessionState {
     const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
       const json = deobfuscate(raw);
-      const parsed = jsonParse(json);
+      const parsed = jsonParseLossless(json);
       if (parsed.version == CURRENT_VERSION) {
         cached = parsed as SessionState;
         return cached;
@@ -498,20 +536,20 @@ export function getSessionId(): string {
   return state.sessionId;
 }
 
-export function getBlockchainType(): BlockchainType | undefined {
-  return loadState().blockchainType;
+export function regenerateSessionId(): string {
+  const state = loadState();
+  state.sessionId = randomHex();
+  schedulePersist();
+  return state.sessionId;
 }
 
-export function getBuildNonce(): string | undefined {
-  if (typeof window !== 'undefined') return window.__buildNonce;
-  if (typeof globalThis !== 'undefined') return (globalThis as any).__buildNonce;
-  return undefined;
+export function getBlockchainType(): BlockchainType | undefined {
+  return loadState().blockchainType;
 }
 
 export function saveSession(fields: Partial<SessionState>): void {
   mutate(s => {
     Object.assign(s, fields);
-    s.buildNonce = getBuildNonce();
   });
 }
 
@@ -529,7 +567,7 @@ function hasWalletConnectStorage(): boolean {
  * Returns the current state if there's anything worth resuming — a
  * serialized cradle or leftover WalletConnect storage from a partial
  * connection. `blockchainType` alone (preserved across session clears)
- * does not count as resumable. Callers check buildNonce themselves.
+ * does not count as resumable.
  */
 export function peekSession(): SessionState | null {
   const state = loadState();
@@ -542,7 +580,6 @@ export function clearSession(): void {
   const prev = loadState();
   cached = {
     version: prev.version,
-    buildNonce: prev.buildNonce,
     playerId: prev.playerId,
     sessionId: prev.sessionId,
     alias: prev.alias,

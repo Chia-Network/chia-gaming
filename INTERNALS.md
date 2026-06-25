@@ -7,6 +7,8 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 
 - [Timeouts](#timeouts)
 - [Peer Disconnect Invariant](#peer-disconnect-invariant)
+- [Peer Error Escalation](#peer-error-escalation)
+- [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
 - [cached_last_actions and the Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
@@ -24,8 +26,8 @@ There are three distinct timeouts in the system:
 | Timeout           | Purpose                                                                                                                                                                                    | Typical test value |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
 | `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock.                                                                                                    | 100 blocks         |
-| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Passed to `ChannelHandler::new`.                     | 5 blocks           |
-| `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. | 10 blocks          |
+| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Fixed at 15 blocks in the current protocol.            | 15 blocks          |
+| `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals may choose any positive value; the UX defaults to 15 blocks. | 15 blocks          |
 
 
 **Important:** Game coins are registered with the watcher using their specific
@@ -39,6 +41,12 @@ allows (i.e., at the exact block height where the coin's creation height +
 timeout = current height). The simulator enforces this by panicking if a
 transaction with an unsatisfied `ASSERT_HEIGHT_RELATIVE` is submitted to the
 mempool.
+
+The fixed 15-block unroll timeout gives honest users enough time to preempt
+stale unrolls without making mainnet dispute resolution overly slow. At mainnet
+block cadence it is roughly five minutes; in the simulator it is roughly 150
+seconds. Timeout negotiation may be reintroduced later, but it is non-trivial
+protocol work and is not part of the current invariant.
 
 ### Eager Timeout Submission and Confirmation-Driven Notifications
 
@@ -70,6 +78,99 @@ every block the manager submits a stored claim once the coin reaches
 A reorg that rolls back or shifts the coin's birthday re-arms `claim_submitted`,
 so the claim is resubmitted. This replaced the old lazy "build and submit at the
 moment the timeout fires" logic in the handlers.
+
+**Reorg boundary: leaf logic pretends reorgs do not happen.** Protocol handlers
+are intentionally written against a simplified lifecycle: they register coins,
+hand the transaction manager any timeout/safety spend that should be submitted
+when mature, and then react to the semantic lifecycle events they observe. They
+do not own maturity polling, reorg replay, or repeated resubmission decisions.
+
+The transaction manager is the boundary that absorbs chain churn. It tracks
+creation and spend heights, detects rollback, re-arms stored timeout claims when
+a watched coin's birthday changes, retains submitted transactions across
+restore, and resubmits transactions whose output coins vanished because their
+creation was rolled back. Handler-level logic should not receive repeated
+semantic events merely because a reorg made the same transaction need replaying.
+
+**Retained transaction replay.** When the manager drains a transaction for
+submission, it keeps a retained copy for reload/reorg recovery and derives the
+output coins that transaction should create from its `CREATE_COIN` conditions.
+Those expected outputs are included in `get_coins_to_poll()`.
+
+The replay rule is deliberately narrow:
+
+- If one of the retained transaction's expected outputs is observed on-chain,
+  that transaction is considered to have won. It remains retained so a later
+  reload or reorg can replay it if its output vanishes.
+- If an input coin is observed spent but the retained transaction's expected
+  output does not appear, a conflicting transaction won. The retained local
+  intent is forgotten immediately and must not be replayed after reload or
+  reorg.
+
+This prevents stale local intentions from being resurrected after the protocol
+has already accepted a different chain path. For example, if we were trying to
+clean-shutdown but an unroll spend wins the channel coin, the clean-shutdown
+transaction is no longer a replay candidate.
+
+**Reorg strategy: replay, not general conflict resolution.** The manager's job is
+still not to solve every possible reorg/conflict rabbit hole. It handles
+retained transaction replay, output-vanish replay, timeout-claim re-arming, and
+the narrow "conflicting spend won, forget our obsolete local intent" cache
+pruning above. There is not yet a general recovery mechanism for deeper
+**true invalidation** cases where handler state would need to be rebuilt from an
+earlier point or a new chain path needs protocol-specific interpretation beyond
+the observed coin lifecycle. Those paths are future protocol/error-handling work
+rather than part of the current transaction manager replay model.
+
+Coverage for this replay model lives in `src/transaction_manager.rs`: creator
+transactions are resubmitted when output coins vanish
+(`reorged_out_output_resubmits_creating_transaction`), timeout claims are
+re-armed when a watched coin's birthday rolls back
+(`eager_timeout_spend_resubmitted_after_birthday_rollback`), conflicting
+retained submissions are pruned when their input is spent by another transaction
+(`conflicting_spend_prunes_retained_submission_immediately`), winning submissions
+remain replayable after their expected output appears
+(`winning_spend_retains_submission_for_replay`), and re-mined coins clear stale
+vanished flags before later genuine spends are forwarded
+(`reorg_remine_in_same_report_clears_vanished_and_allows_later_spend`).
+
+**Per-block rebroadcast for dropped broadcasts.** Reorg-driven replay (above)
+only re-submits a transaction when one of its outputs is observed and then
+vanishes. That does not cover a broadcast that simply never reached the network
+in the first place — e.g. an unroll *preempt*, which has no relative timelock and
+no other resubmission path, and would otherwise strand the protocol waiting for a
+coin spend that never comes. So on every block `resubmit_pending` rebroadcasts
+each retained submission that is
+
+- flagged `auto_resubmit` — it creates an observable output coin (so we can tell
+  when it lands) **and** carries no relative timelock (so rebroadcasting it at a
+  later height stays valid even after a reorg; `bundle_has_relative_timelock`
+  decides this, treating an unanalyzable bundle as timelocked);
+- not yet observed to land; and
+- still has at least one input coin present (unspent).
+
+The **input-present gate** is what keeps this safe against abandoned intents:
+once a transaction's input is spent — whether because our own spend landed or a
+conflicting spend won — it is never rebroadcast again. Rebroadcasting an
+*identical* bundle is harmless (the mempool de-duplicates by fingerprint), and a
+cross-party conflict (the opponent spending the same coin with a *different*
+bundle) is expected on a real chain and resolves naturally, since only one spend
+of a coin can confirm. Eager timeout claims are deliberately excluded from this
+path (they carry a relative timelock) because the ripeness logic above already
+resubmits them in a reorg-aware way. Coverage:
+`auto_resubmits_dropped_output_bearing_spend_until_it_lands`,
+`auto_resubmit_stops_when_input_spent_by_conflict`,
+`auto_resubmit_skips_timelocked_spend`,
+`auto_resubmit_skips_when_input_not_present`.
+
+**Spends first observed as already-spent are still forwarded.** A watched coin
+whose very first observation already carries a spend height (an opponent's coin
+that was published and spent before our first poll of it) never enters the live
+set, so the present→absent diff cannot surface it. The manager captures these
+`first_seen_spent` coins and merges them into the spend report anyway; without
+this a handler waiting on such a coin — e.g. an opponent-published unroll coin —
+never receives `coin_spent` and stalls forever
+(`coin_first_seen_already_spent_is_forwarded_as_spend`).
 
 **Notifications ride the observed spend.** Terminal notifications are emitted
 from `handle_game_coin_spent` (via the `coin_spent` → `coin_puzzle_and_solution`
@@ -115,51 +216,94 @@ rather than by checking `initiated_on_chain` at runtime.
 `emit_channel_status_if_changed`, `send_message`, `deliver_message`;
 `src/potato_handler/mod.rs` — `go_on_chain`, `take_channel_spend_replacement`
 
+### Peer Error Escalation
+
+Any error processing a peer message — during handshake or active play — is
+treated as a protocol violation. The cradle sets `peer_disconnected = true`,
+emits a `ReceiveError` event for diagnostic purposes, and calls
+`go_on_chain(true)` on the active handler. The specific behavior depends on
+the channel lifecycle stage:
+
+**Before funding transaction is submitted** (early handshake — steps A through
+C/D): No money is on-chain. The handshake handler sets an internal `failed`
+flag, `channel_status_snapshot()` returns `ChannelState::Failed`, and the
+session is terminally dead. No dispute is needed because no funds are at risk.
+
+**After funding transaction is submitted but before channel coin confirms**
+(steps E/F onward): The funding `SpendBundle` is in the mempool or pending
+inclusion. Two outcomes are possible:
+
+1. The funding transaction **times out** (its `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
+   expires without inclusion). The `TransactionManager` detects this and
+   independently emits a `Failed` channel status. Funds return to the wallets.
+
+2. The channel coin **appears on-chain** despite the peer being hostile.
+   `coin_created` fires, the handshake handler transitions to `PotatoHandler`
+   via `take_replacement()`. After the swap, `process_effects` sees
+   `peer_disconnected && handshake_finished() && !is_on_chain` and immediately
+   calls `go_on_chain(true)` on the new `PotatoHandler`, submitting the unroll
+   transaction. From this point forward, the normal dispute resolution path
+   applies.
+
+**After channel coin is confirmed** (active play in `PotatoHandler`): The
+normal `go_on_chain` path runs immediately — cancel proposals, build the
+channel-to-unroll spend bundle, submit it, and transition through
+`SpendChannelCoinHandler` into `OnChainGameHandler`.
+
+This means a hostile peer cannot cause silent data loss regardless of when the
+attack occurs. Pre-funding errors are cheap (just abort). Post-funding errors
+either resolve through timeout (funds return) or through dispute (unroll +
+on-chain resolution).
+
+### Local Action Errors
+
+Local actions (moves, proposals, shutdown) queued in `game_action_queue` are
+drained by `flush_pending_actions`. Unlike peer errors, local action failures
+indicate programming bugs — the queue was populated by our own UI/logic.
+
+Rather than implementing transactional rollback (expensive and masks the bug),
+the cradle catches `flush_pending_actions` errors and emits them as
+`ActionFailed` notifications shown to the user with the full error string.
+The JS-side game action methods (`proposeGame`, `acceptProposal`,
+`cancel_proposal`, `makeMove`, `acceptTimeout`, `cheat`) also catch WASM
+throws and surface them through the UI error dialog. This makes local bugs
+immediately visible and diagnosable without adding rollback complexity.
+
 ---
 
 ## Batch Rollback Scope
 
 When a `PeerMessage::Batch` is received, `pass_on_channel_handler_message`
-snapshots `channel_handler` before calling `process_received_batch` and
-restores it on error. This makes the peer's batch actions atomic with respect
-to channel state: if any action in the batch fails validation or signature
-verification fails, `channel_handler` reverts to the pre-batch state.
+snapshots both `channel_handler` and `game_action_queue` before calling
+`process_received_batch` and restores them on error. This makes the peer's batch
+actions atomic across the state that matters for later dispute recovery: if any
+action in the batch fails validation or signature verification fails, channel
+state and queued local actions both revert to the pre-batch state.
 
-Two fields — `have_potato` and `last_channel_coin_spend_info` — are set in
-`update_channel_coin_after_receive`, which runs *after* signature verification
-succeeds. They are outside the `channel_handler` snapshot scope. If
-`drain_queue_into_batch` (called at the end of `update_channel_coin_after_receive`)
-returns an error, `channel_handler` is restored but these two fields retain
-their post-batch values.
+The queue snapshot matters even though the peer cannot directly enqueue local
+actions. A valid prefix of a malicious peer batch can make our pre-existing
+queued local actions stale before a later action or signature check fails. If
+that stale queue leaked into `go_on_chain`, the on-chain handler could attempt
+local responses that were only stale because the failed peer batch partially ran.
+The invariant is therefore:
 
-This is safe for several reasons:
+- **Peer batch failure is atomic.** No `ChannelHandler` mutations and no
+  peer-induced `game_action_queue` changes survive a failed received batch.
+- **Bad peer data escalates.** Ordinary `PotatoHandler::received_message` errors
+  call `go_on_chain(..., true)` after rollback. That is the protocol response to
+  invalid peer data.
+- **Local queue drain errors are internal/local problems.**
+  `drain_queue_into_batch` processes user/UI actions queued through local APIs.
+  Those errors are not a normal peer-message recovery path.
 
-- **`drain_queue_into_batch` processes our own local action queue, not peer
-  data.** The `game_action_queue` is populated only by local API calls (user
-  actions queued while we didn't have the potato). The peer cannot inject
-  entries or trigger failures in it. The only way the drain errors is if our
-  own queued action became stale — e.g., the peer's batch removed a game for
-  which we had queued an `AcceptTimeout`.
-
-- **The error abandons the channel.** The error propagates as a
-  `CradleEvent::ReceiveError`, which puts the channel into a failed state and
-  triggers on-chain resolution. The leaked `have_potato` and
-  `last_channel_coin_spend_info` values are never consulted after channel
-  failure — no further off-chain protocol messages are processed.
-
-- **No effects escape on error.** Effects are accumulated in local `Vec`s
-  inside `process_received_batch` and `update_channel_coin_after_receive`.
-  On `Err`, these vecs are dropped — no notifications, peer messages, or
-  transactions are delivered to the JS/UX layer.
-
-- **Single-threaded execution.** The WASM runtime runs synchronously on the
-  JS thread. The event queue cannot be read by JavaScript until the Rust call
-  returns, so intermediate states are never observable even if effects were
-  being pushed during processing.
+Fields updated after successful signature verification, such as `have_potato`
+and `last_channel_coin_spend_info`, are outside the rollback problem because
+they are only advanced after the received batch is valid.
 
 **Key code:** `src/potato_handler/mod.rs` — `pass_on_channel_handler_message`
 (snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
-`drain_queue_into_batch`
+`drain_queue_into_batch`; regression:
+`failed_final_move_bad_signature_does_not_queue_accept_timeout`
 
 ---
 
@@ -358,6 +502,21 @@ there is a bug.
 | **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
 
 
+**Conflicting mempool spends are the one exception to "this can only be a bug."**
+Two *different* transactions spending the same coin is perfectly normal on a real
+chain: it happens whenever both parties go on chain at once, a peer misbehaves, or
+the two sides are temporarily disconnected, and the chain resolves it for free
+(only one spend of a coin can confirm). Strict mode still fails fast on it because
+an *unexpected* conflict is usually a symptom worth investigating, and failing at
+the point of conflict is far easier to debug than a divergent outcome many blocks
+later. (Resubmitting an *identical* bundle is not a conflict — the mempool
+de-duplicates by fingerprint.) The genuine bug this guards against is a single
+party putting two different competing transactions on chain itself (e.g. holding a
+good clean-shutdown and *also* unrolling). When a test legitimately drives both
+sides to spend the same coin, it must designate a winner by nerfing the loser; see
+[Strict Mode](SIMULATOR_TESTING.md#strict-mode-why-double-submission-fails-tests)
+in the simulator testing reference.
+
 **Key code:** `src/simulator/mod.rs` — `push_transactions`
 
 ---
@@ -367,71 +526,33 @@ there is a bug.
 ### Debug Game
 
 The debug game (`b"debug"`) is a minimal game used for tests that need precise
-control over `mover_share`. Its core handler/curry wiring lives in
-`src/test_support/debug_game.rs`, while `DebugGameTestMove::new(mover_share, slash)`
-is defined in `src/simulator/tests/potato_handler_sim.rs`. It creates a single-move game where
-Alice moves and Bob must accept_timeout. The `mover_share` value is what Bob
-(the new mover after Alice's move) receives on timeout; Alice receives
-`amount - mover_share`. This avoids the complexity of Calpoker's commit-reveal
-protocol when testing channel/on-chain mechanics.
+control over `mover_share`. It is registered in the Rust game table for test
+infrastructure only, not as a user-facing game. Its core handler/curry wiring
+lives in `src/test_support/debug_game.rs`, while `DebugGameTestMove::new(mover_share, slash)`
+is defined in `src/simulator/tests/potato_handler_sim.rs`.
 
 ### Simulation Test Actions
 
-Tests drive the simulation loop with a sequence of `GameAction` values (defined
-in `src/test_support/game.rs`):
-
-
-| Action                              | Effect                                                                                                                                                              |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProposeNewGame(player, trigger)`   | Player proposes a new game when `trigger` fires (`Channel` or `AfterGame(game_id)`)                                                                               |
-| `ProposeNewGameTheirTurn(player, trigger)` | Same as `ProposeNewGame`, but proposed with receiver moving first                                                                                           |
-| `GoOnChain(player)`                 | Player initiates on-chain transition                                                                                                                                |
-| `GoOnChainThenMove(player)`         | Player goes on-chain, then immediately queues the next move action for replay testing                                                                              |
-| `Timeout(player)`                   | Trigger timeout processing for the player's pending state                                                                                                           |
-| `AcceptTimeout(player)`             | Player accepts the current game result                                                                                                                              |
-| `WaitBlocks(n, players_bitmask)`    | Advance `n` blocks; `players_bitmask` controls whose coin reports are backlogged (0 = nobody blocked, 1 = player 0 blocked, 2 = player 1 blocked, 3 = both blocked) |
-| `NerfTransactions(player)`          | Silently drop all outbound transactions for `player`                                                                                                                |
-| `UnNerfTransactions(replay)`        | Stop dropping transactions; if `replay` is true, replay the backlog to the simulator; if false, discard it                                                          |
-| `Cheat(player, mover_share)`        | Queue a move with illegal data; `mover_share` is the victim's share on timeout (see [Cheat Support](#cheat-support))                                                |
-| `Move(player, game_id, readable, was_received)` | Submit a normal move with explicit game ID and move payload                                                                                                 |
-| `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path testing                                                                               |
-| `ForceDestroyCoin(player)`          | Inject a fake coin deletion to test error handling                                                                                                                  |
-| `CleanShutdown(player)`             | Initiate clean channel shutdown                                                                                                                                     |
-| `ForceUnroll(player)`               | Submit a unroll transaction using the player's cached spend info, bypassing state checks. Simulates a malicious peer unrolling after agreeing to clean shutdown.    |
-| `AcceptProposal(player)`            | Player accepts a pending game proposal                                                                                                                              |
-| `CancelProposal(player, game_id)`   | Player cancels a pending proposal for a specific game                                                                                                               |
-| `SaveUnrollSnapshot(player)`        | Save the player's current `ChannelCoinSpendInfo` for later use by `ForceStaleUnroll`                                                                                |
-| `ForceStaleUnroll(player)`          | Submit an unroll using a previously saved snapshot (from `SaveUnrollSnapshot`), creating an outdated unroll on-chain                                                |
-| `NerfMessages(player)`              | Silently drop all outbound peer messages for `player`                                                                                                               |
-| `UnNerfMessages`                    | Stop dropping peer messages                                                                                                                                         |
-| `CorruptStateNumber(player, new_sn)` | Corrupt local state number for edge-case testing                                                                                                                   |
-| `InjectRawMessage(player, bytes)`   | Inject raw inbound bytes to test message validation/error handling                                                                                                   |
-
-
-`NerfTransactions` is particularly useful for testing asymmetric scenarios —
-e.g., one player's unroll transaction gets dropped (simulating network issues)
-while the other player proceeds normally.
-
-**Important:** `NerfTransactions` only drops a player's *outbound transactions*.
-It does not prevent coins from being created for that player's puzzle hash by
-another player's transaction. In particular, the referee timeout creates reward
-coins for **both** mover and waiter in a single spend, so a nerfed player still
-receives their reward coin when the non-nerfed player submits the timeout.
-
-`NerfMessages` similarly drops a player's *outbound peer messages*, preventing
-potato exchanges. Combined with `NerfTransactions`, this can fully isolate a
-player to set up stale unroll scenarios where the opponent's state advances
-without the nerfed player's knowledge.
+Tests drive the simulation loop with a sequence of `GameAction` values defined
+in `src/test_support/game.rs`. The current action catalog, trigger semantics,
+two-phase `AcceptProposal` behavior, and stall-detection notes live in
+`SIMULATOR_TESTING.md`.
 
 **Key code:**
 
 - `src/test_support/debug_game.rs` — `DebugGameHandler` and debug game registration
 - `src/simulator/tests/potato_handler_sim.rs` — `DebugGameTestMove` and integration scenarios
 - `src/test_support/game.rs` — `GameAction` enum (sim-tests variant)
+- `SIMULATOR_TESTING.md` — simulator testing reference
 
 ---
 
 ## Invariant Assertions: `game_assert!` / `game_assert_eq!`
+
+These macros are the primary tool for the codebase's
+[fail-fast philosophy](OVERVIEW.md#design-philosophy-fail-fast): when an internal
+invariant is violated, surface it immediately instead of adding a
+belt-and-suspenders backstop that tolerates the broken state.
 
 Production code must never crash on bad data from peers or the blockchain.
 At the same time, internal invariant violations are bugs that should be caught

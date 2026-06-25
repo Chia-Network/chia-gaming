@@ -7,6 +7,8 @@ export interface MatchedParams {
   i_am_initiator: boolean;
   my_alias?: string;
   peer_alias?: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 export interface ConnectionStatus {
@@ -17,13 +19,15 @@ export interface ConnectionStatus {
   peer_connected?: boolean;
   my_alias?: string;
   peer_alias?: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 export interface TrackerConnectionCallbacks {
   onMatched: (params: MatchedParams) => void;
   onConnectionStatus: (status: ConnectionStatus) => void;
   onPeerReconnected: () => void;
-  onMessage: (data: MessagePayload) => void;
+  onDataMessage: (msgno: number, msg: Uint8Array) => void;
   onAck: (ack: number) => void;
   onKeepalive: () => void;
   onClosed: () => void;
@@ -34,15 +38,18 @@ export interface TrackerConnectionCallbacks {
   onLobbyAttention: () => void;
 }
 
-export type MessagePayload =
-  | { msgno: number; msg: Uint8Array }
-  | { ack: number }
-  | { keepalive: true };
+export interface TrackerConnectionOptions {
+  initialBusy?: boolean;
+}
+
+// Binary frame type tags for peer-to-peer relay (opaque to the tracker).
+const FRAME_DATA = 0x01;
+const FRAME_ACK = 0x02;
+const FRAME_KEEPALIVE = 0x03;
 
 type TrackerEnvelope =
-  | { type: 'connection_status'; has_pairing: boolean; token?: string; amount?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string }
-  | { type: 'matched'; token: string; amount: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string }
-  | { type: 'message'; data?: unknown }
+  | { type: 'connection_status'; has_pairing: boolean; token?: string; amount?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'matched'; token: string; amount: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'chat'; text: string; from_alias: string; timestamp: number }
   | { type: 'peer_reconnected' }
   | { type: 'keepalive' }
@@ -50,37 +57,12 @@ type TrackerEnvelope =
   | { type: 'error'; error?: string }
   | { type: 'lobby_attention' };
 
-function isMessagePayload(data: unknown): data is MessagePayload {
-  if (!data || typeof data !== 'object') return false;
-  if ('keepalive' in data) return (data as { keepalive?: unknown }).keepalive === true;
-  if ('ack' in data) return typeof (data as { ack?: unknown }).ack === 'number';
-  if ('msgno' in data || 'msg' in data) {
-    return (
-      typeof (data as { msgno?: unknown }).msgno === 'number' &&
-      (data as { msg?: unknown }).msg instanceof Uint8Array
-    );
-  }
-  return false;
-}
-
-function isKeepalivePayload(data: MessagePayload): data is { keepalive: true } {
-  return 'keepalive' in data && data.keepalive === true;
-}
-
-function isAckPayload(data: MessagePayload): data is { ack: number } {
-  return 'ack' in data;
-}
-
-function isDataPayload(data: MessagePayload): data is { msgno: number; msg: Uint8Array } {
-  return 'msgno' in data && 'msg' in data;
-}
-
 export class TrackerConnection {
   private trackerUrl: string;
   private sessionId: string;
   private callbacks: TrackerConnectionCallbacks;
   private ws: WebSocket | null = null;
-  private messageBuffer: MessagePayload[] = [];
+  private binaryBuffer: ArrayBuffer[] = [];
   private handlerRegistered = false;
   private closed = false;
   private closePending = false;
@@ -90,12 +72,13 @@ export class TrackerConnection {
   private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
-  private available = true;
+  private busy = false;
 
-  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
+  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, options: TrackerConnectionOptions = {}) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
+    this.busy = options.initialBusy ?? false;
     this.connectWs();
   }
 
@@ -132,12 +115,16 @@ export class TrackerConnection {
       log('[tracker] connection timeout, closing attempt');
       try { ws.close(); } catch { /* ignore */ }
     }, 10_000);
+    if (typeof connectTimeout === 'object' && 'unref' in connectTimeout) connectTimeout.unref();
 
     ws.onopen = () => {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      this.sendWs({ type: 'identify', session_id: this.sessionId, available: this.available });
+      this.sendWs({ type: 'identify', session_id: this.sessionId, busy: this.busy });
+      if (this.closePending) {
+        this.sendCloseRequest();
+      }
       if (this.wasDisconnected) {
         log('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
@@ -158,20 +145,11 @@ export class TrackerConnection {
 
       if (evt.data instanceof ArrayBuffer) {
         if (this.closed || this.closePending) return;
-        if (evt.data.byteLength < 4) {
-          log('[tracker] recv binary frame too short');
-          return;
-        }
-        const view = new DataView(evt.data);
-        const msgno = view.getUint32(0, false);
-        const msgBytes = new Uint8Array(evt.data, 4);
-        const payload: MessagePayload = { msgno, msg: msgBytes };
-        log(`[tracker] recv msgno=${msgno} len=${msgBytes.byteLength}`);
         if (!this.handlerRegistered) {
-          this.messageBuffer.push(payload);
+          this.binaryBuffer.push(evt.data);
           return;
         }
-        this.callbacks.onMessage(payload);
+        this.dispatchBinaryFrame(evt.data);
         return;
       }
 
@@ -197,6 +175,8 @@ export class TrackerConnection {
             peer_connected: msg.peer_connected,
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
+            channel_timeout: msg.channel_timeout,
+            unroll_timeout: msg.unroll_timeout,
           };
           log(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
           this.callbacks.onConnectionStatus(status);
@@ -209,32 +189,15 @@ export class TrackerConnection {
             i_am_initiator: msg.i_am_initiator,
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
+            channel_timeout: msg.channel_timeout,
+            unroll_timeout: msg.unroll_timeout,
           };
           log(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
           this.callbacks.onMatched(params);
           break;
         }
-        case 'message': {
-          if (this.closed || this.closePending) return;
-          if (!isMessagePayload(msg.data)) {
-            log('[tracker] recv malformed envelope');
-            return;
-          }
-          const payload: MessagePayload = msg.data;
-          if (isKeepalivePayload(payload)) {
-            this.callbacks.onKeepalive();
-            return;
-          }
-          if (isAckPayload(payload)) {
-            log(`[tracker] recv ack=${payload.ack}`);
-            this.callbacks.onAck(payload.ack);
-            return;
-          }
-          log('[tracker] recv unexpected text-frame data message');
-          break;
-        }
         case 'chat':
-          this.callbacks.onChat({ text: msg.text, fromAlias: msg.from_alias, timestamp: msg.timestamp, isMine: false });
+          this.callbacks.onChat({ text: msg.text, fromAlias: msg.from_alias, timestamp: BigInt(msg.timestamp), isMine: false });
           break;
         case 'peer_reconnected':
           log('[tracker] peer_reconnected');
@@ -294,6 +257,7 @@ export class TrackerConnection {
           this.reconnectTimer = null;
           this.connectWs();
         }, jitter);
+        if (typeof this.reconnectTimer === 'object' && 'unref' in this.reconnectTimer) this.reconnectTimer.unref();
       }
     };
   }
@@ -302,22 +266,29 @@ export class TrackerConnection {
     log(`[tracker] send msgno=${msgno} len=${input.byteLength}`);
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const frame = new Uint8Array(4 + input.byteLength);
+    const frame = new Uint8Array(1 + 4 + input.byteLength);
     const view = new DataView(frame.buffer);
-    view.setUint32(0, msgno, false);
-    frame.set(input, 4);
+    frame[0] = FRAME_DATA;
+    view.setUint32(1, msgno, false);
+    frame.set(input, 5);
     ws.send(frame);
   }
 
   sendAck(ackMsgno: number) {
-    const payload: MessagePayload = { ack: ackMsgno };
     log(`[tracker] send ack=${ackMsgno}`);
-    this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const frame = new Uint8Array(1 + 4);
+    const view = new DataView(frame.buffer);
+    frame[0] = FRAME_ACK;
+    view.setUint32(1, ackMsgno, false);
+    ws.send(frame);
   }
 
   sendKeepalive() {
-    const payload: MessagePayload = { keepalive: true };
-    this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(new Uint8Array([FRAME_KEEPALIVE]));
   }
 
   hostLog(_msg: string) {
@@ -330,8 +301,16 @@ export class TrackerConnection {
 
   close() {
     if (this.closed) return;
+    if (this.closePending) {
+      this.sendCloseRequest();
+      return;
+    }
     this.closePending = true;
     log('[tracker] requesting close');
+    this.sendCloseRequest();
+  }
+
+  private sendCloseRequest() {
     this.sendWs({ type: 'close', session_id: this.sessionId });
   }
 
@@ -359,37 +338,60 @@ export class TrackerConnection {
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
   ) {
-    this.callbacks.onMessage = (data: MessagePayload) => {
-      try {
-        if (isKeepalivePayload(data)) {
-          keepaliveHandler();
-          return;
-        }
-        if (isAckPayload(data)) {
-          ackHandler(data.ack);
-          return;
-        }
-        if (!isDataPayload(data)) {
-          throw new Error('unknown message payload');
-        }
-        handler(data.msgno, data.msg);
-      } catch {
-        console.error('[TrackerConnection] failed to handle message payload:', data);
-      }
-    };
+    this.callbacks.onDataMessage = handler;
     this.callbacks.onAck = ackHandler;
     this.callbacks.onKeepalive = keepaliveHandler;
     this.handlerRegistered = true;
-    const buffered = this.messageBuffer;
-    this.messageBuffer = [];
-    for (const payload of buffered) {
-      this.callbacks.onMessage(payload);
+    const buffered = this.binaryBuffer;
+    this.binaryBuffer = [];
+    for (const frame of buffered) {
+      this.dispatchBinaryFrame(frame);
     }
   }
 
-  setAvailable(available: boolean) {
-    this.available = available;
-    this.sendWs({ type: 'set_status', session_id: this.sessionId, available });
+  private dispatchBinaryFrame(buf: ArrayBuffer): void {
+    if (buf.byteLength < 1) {
+      log('[tracker] recv binary frame empty');
+      return;
+    }
+    const bytes = new Uint8Array(buf);
+    const tag = bytes[0];
+    switch (tag) {
+      case FRAME_DATA: {
+        if (buf.byteLength < 5) {
+          log('[tracker] recv data frame too short');
+          return;
+        }
+        const view = new DataView(buf);
+        const msgno = view.getUint32(1, false);
+        const msg = new Uint8Array(buf, 5);
+        log(`[tracker] recv msgno=${msgno} len=${msg.byteLength}`);
+        this.callbacks.onDataMessage(msgno, msg);
+        break;
+      }
+      case FRAME_ACK: {
+        if (buf.byteLength < 5) {
+          log('[tracker] recv ack frame too short');
+          return;
+        }
+        const view = new DataView(buf);
+        const ackMsgno = view.getUint32(1, false);
+        log(`[tracker] recv ack=${ackMsgno}`);
+        this.callbacks.onAck(ackMsgno);
+        break;
+      }
+      case FRAME_KEEPALIVE:
+        this.callbacks.onKeepalive();
+        break;
+      default:
+        log(`[tracker] recv unknown binary frame tag=${tag}`);
+        break;
+    }
+  }
+
+  setBusy(busy: boolean) {
+    this.busy = busy;
+    this.sendWs({ type: 'set_busy', session_id: this.sessionId, busy });
   }
 
   disconnect() {
@@ -408,6 +410,7 @@ export class TrackerConnection {
     this.keepaliveTimer = setInterval(() => {
       this.sendWs({ type: 'keepalive' });
     }, 15_000);
+    if (typeof this.keepaliveTimer === 'object' && 'unref' in this.keepaliveTimer) this.keepaliveTimer.unref();
   }
 
   private stopKeepaliveTimer() {

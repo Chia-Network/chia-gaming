@@ -9,7 +9,7 @@ import {
   ConnectionSetup,
 } from '../types/ChiaGaming';
 
-import { log } from '../services/log';
+import { log, diagStack, diagNote } from '../services/log';
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -21,6 +21,19 @@ function getWebSocketClass(): any {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   try { return require('ws'); } catch { /* not available */ }
   throw new Error('No WebSocket implementation available');
+}
+
+function encodeU64AsClvmHex(val: bigint): string {
+  if (val === 0n) return '';
+  const bytes: number[] = [];
+  let h = val;
+  while (h > 0n) {
+    bytes.push(Number(h & 0xffn));
+    h >>= 8n;
+  }
+  bytes.reverse();
+  if (bytes[0] & 0x80) bytes.unshift(0);
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
@@ -40,6 +53,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000, 60000];
   private reconnectAttempt = 0;
   private connectLoopPromise: Promise<void> | null = null;
+  private blockWaiters = new Set<() => void>();
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -85,26 +99,36 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         if (this.ws !== ws) return;
         this.ws = null;
         this.fireConnectionChange(false);
+        if (this.pending.size > 0) {
+          diagNote(`FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`);
+        }
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
         }
         this.pending.clear();
-        this.startConnectLoop();
+        // Fire-and-forget reconnect.  A deliberate shutdown makes runConnectLoop
+        // return cleanly (it no longer throws on abort), so this can reject only
+        // on a genuine unexpected bug -- which we intentionally let surface as an
+        // unhandled rejection rather than swallow.
+        void this.startConnectLoop();
       };
       ws.onmessage = (evt: any) => {
         if (this.ws !== ws) return;
         const raw = typeof evt === 'string' ? evt : evt.data;
         let data: any;
-        try { data = jsonParse(raw); } catch { return; }
+        try { data = jsonParse(raw); } catch (e) { diagStack('FakeBlockchain onmessage JSON parse failed', e); return; }
 
         if (data.event === 'block') {
+          for (const resolve of this.blockWaiters) resolve();
+          this.blockWaiters.clear();
           return;
         }
 
         if (data.id !== undefined) {
-          const p = this.pending.get(Number(data.id));
+          const id = Number(data.id);
+          const p = this.pending.get(id);
           if (p) {
-            this.pending.delete(data.id);
+            this.pending.delete(id);
             if (data.error) {
               p.reject(new Error(data.error));
             } else {
@@ -149,11 +173,18 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           ];
           const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
           this.reconnectAttempt++;
+          // Expected transient while reconnecting (e.g. sim not up yet); a plain
+          // log is enough -- no stack dump, which would bury real signal.
           log(`[sim-blockchain] connect failed: ${err}, backoff ${jitter}ms (attempt ${this.reconnectAttempt})`);
           await sleepMs(jitter);
         }
       }
-      throw new Error('connection aborted');
+      // The loop exited because we were told to shut down (`deleted` set during
+      // teardown/disconnect).  That is a normal, expected termination -- not an
+      // error.  Returning cleanly (instead of throwing 'connection aborted')
+      // means a fire-and-forget reconnect during teardown no longer rejects,
+      // which is what was producing the opaque late unhandled rejection in CI.
+      log('[sim-blockchain] reconnect loop stopped (shutting down)');
     } finally {
       this.connectLoopPromise = null;
     }
@@ -216,15 +247,34 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.sendRequest('get_peak');
   }
 
+  waitForNextBlock(timeoutMs = 15_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.blockWaiters.delete(finish);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.blockWaiters.delete(finish);
+        reject(new Error(`simulator did not emit a block within ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.blockWaiters.add(finish);
+    });
+  }
+
   async createOfferForIds(
     uniqueId: string,
     offer: { [walletId: string]: bigint },
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
-    _maxHeight?: bigint,
+    maxHeight?: bigint,
   ): Promise<any | null> {
     const params: any = { who: uniqueId, offer };
-    if (extraConditions) params.extraConditions = extraConditions;
+    const conditions = [...(extraConditions ?? [])];
+    if (maxHeight !== undefined) {
+      conditions.push({ opcode: 87n, args: [encodeU64AsClvmHex(maxHeight)] });
+    }
+    if (conditions.length > 0) params.extraConditions = conditions;
     if (coinIds) params.coinIds = coinIds;
     const raw = await this.sendRequest('create_offer_for_ids', params);
     if (!raw) return null;
@@ -259,6 +309,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.ws = null;
     }
     this.fireConnectionChange(false);
+    if (this.pending.size > 0) {
+      diagNote(`FakeBlockchain close(): rejecting ${this.pending.size} pending request(s) with "closed" (ids=${[...this.pending.keys()].join(',')})`);
+    }
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));
     }

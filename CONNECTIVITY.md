@@ -43,6 +43,12 @@ other connection depends on the wallet being up. The wallet affects only
 whether blockchain operations (signing transactions, reading balances) can
 make progress.
 
+WalletConnect is an external protocol. The player app can adapt around its
+quirks at the edges (for example BigInt serialization handling), but it does
+not control WalletConnect's wire format. This is different from the peer/tracker
+protocol, which is project-owned and can move further toward binary framing over
+time.
+
 ### Tracker
 
 A tracker is a specific server with its own lobby and relay infrastructure.
@@ -179,14 +185,14 @@ Specific rules:
 
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
-| Hard disconnect (`close()`) | Always | If session off-chain: "This will force your game on-chain." | Pairing removed. Peer notified. Both go to `'waiting'`. Off-chain session transitions to on-chain. |
+| Hard disconnect (`close()`) | Always | None currently. | Pairing removed. Peer notified. Both go to `'waiting'`. Off-chain session transitions to on-chain via the peer-loss cascade. |
 | Reconnect | Not a user action | — | Handled by tracker auto-reconnect and `peer_reconnected` events. |
 
 ### Session
 
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
-| Go on-chain | When session = off-chain | "Are you sure? Your game will be resolved on the blockchain." | Session transitions to on-chain. Game messages stop. Chat continues. |
+| Go on-chain | When session = off-chain | None currently. | Session transitions to on-chain. Game messages stop. Chat continues. |
 | Clean shutdown | Between hands only, requires peer cooperation | None (it's the graceful path) | Cooperative close. Channel resolves cleanly. |
 
 ---
@@ -197,14 +203,18 @@ Specific rules:
 
 | State | Derived from | Meaning |
 |-------|-------------|---------|
-| `none` | `gameParams === null` | No session. Available for matchmaking. |
+| `none` | `gameParams === null` | No session. Not busy and available for matchmaking. |
 | `off-chain` | Session exists, not yet resolving on-chain | Playing through the peer relay. `cleanShutdown()` stays off-chain until the shutdown transaction is formed. |
-| `on-chain` | `goOnChain()` initiated, or clean shutdown transaction submitted | Resolving on the blockchain. May or may not have peer. |
+| `on-chain` | `goOnChain()` initiated, clean shutdown transaction submitted, or channel resolved while game outcomes are still pending | Resolving on the blockchain or waiting for remaining hand outcomes. May or may not have peer. |
 
-The on-chain state persists until the WASM cradle reports a terminal channel
-status: `ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`.
-At that point the session is **done** — the save can be wiped, the player is
-available for new matches.
+The on-chain state persists until the broader session phase is terminal. A raw
+channel status of `ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or
+`Failed` is terminal for the channel itself, but `ResolvedUnrolled` and
+`ResolvedStale` can still be followed by per-game outcomes. If any hand remains
+unresolved, the broader session phase stays `on-chain`. Once the last hand is
+finished, the broader phase becomes `resolved`: the save can be wiped and the
+player is not busy for new matches. `Failed` is also terminal; it maps to
+broader `resolved` plus the separate `sessionError` advisory bit.
 
 ### What "on-chain" means for peer communication
 
@@ -222,62 +232,87 @@ When a session transitions to on-chain:
 
 ### Terminal detection
 
-When the WASM cradle emits a `ChannelStatus` notification with a terminal
-state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`):
+When the broader session phase becomes `resolved` after a terminal channel
+state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`) and
+any pending hand obligations have finished:
 
 1. The session is done.
 2. Shell is notified (via callback from `useGameSession`).
-3. Internal cleanup runs automatically: session save is cleared, WASM cradle
-   is destroyed, `sessionStartedRef` and `activePairingTokenRef` are reset.
-4. Shell tells the tracker/lobby that the player is available.
-5. The player can accept new challenges.
-6. The game UI remains visible showing the resolved state until a new match
-   replaces it. There is no manual "Close Session" button.
-7. The peer connection is not forcibly closed — chat can continue until a
+3. Live protocol interaction stops: the WASM cradle is no longer used for new
+   game actions, `sessionStartedRef` and `activePairingTokenRef` are reset, and
+   the finished session is treated as a read-only display.
+4. The resolved display is intentionally preserved so the user can see what just
+   happened. A reload may restore this finished view, but it should not resume
+   live protocol behavior.
+5. Shell tells the tracker/lobby that the player is not busy.
+6. The player can accept new challenges. This is intentional: terminal sessions
+   no longer impose a protocol obligation, so the UI should encourage continued
+   play instead of making the user manually clear the finished game.
+7. A new match replaces the old resolved display. There is no manual "Close
+   Session" button.
+8. The peer connection is not forcibly closed — chat can continue until a
    new match replaces the pairing or either side disconnects.
-8. Chat messages persist across session boundaries and are only cleared
+9. Chat messages persist across session boundaries and are only cleared
    when a new pairing starts (new match).
 
 ---
 
-## Tracker Availability Protocol
+## Tracker Busy Protocol
 
 ### The problem
 
 A tracker only knows about pairings it created. If a player connects to a new
-tracker while mid-session (on-chain resolution in progress), that tracker has
-no idea the player is busy. Other players will see them as available and can
-send challenges.
+tracker while mid-session (or while on-chain resolution is in progress), that
+tracker has no idea the player is busy. Other players will see them as waiting
+and can send challenges.
 
 ### The solution
 
-The player app tells the tracker whether it's available for matching over the
+The player app tells the tracker whether it is busy over the
 **game channel WebSocket** (`TrackerConnection` → `/ws/game`). The tracker
 is not trusted either (it's third-party code anyone can run), but the
 WebSocket is a TCP connection with known coherent semantics — clear ordering,
 connection state, and a single stream. The lobby iframe's `postMessage`
 boundary is a broadcast mechanism with no delivery guarantees, no ordering,
-and a much harder surface to guard against. Availability signaling goes over
+and a much harder surface to guard against. Busy signaling goes over
 the WebSocket because it's the more defensible transport, not because the
 tracker is trusted.
+
+Busy is session-obligation state, not just pairing state. A player can be busy
+because an old session is still unresolved even if the tracker no longer has a
+pairing for that player (for example, after disconnecting from the tracker while
+resolving on-chain). Conversely, after a session finishes, the player can become
+not busy and available for new matches while a previous pairing/chat is still
+visible until a new session replaces it.
+
+The app is not busy if and only if the broader session phase is `none` or
+`resolved`. Raw `ChannelState` is more detailed than this (`Handshaking`,
+funding/offer states, `Active`, shutdown states, on-chain transition states,
+resolved channel states, `Failed`, etc.) and must not be treated as the lobby
+availability state directly. The broader session phase folds in pending hand
+state: a raw channel status can be resolved while the session remains `on-chain`
+because a hand is still being settled.
 
 **Player app → Tracker (game channel):**
 
 ```json
-{ "type": "set_status", "session_id": "...", "available": false }
+{ "type": "set_busy", "session_id": "...", "busy": true }
 ```
 
-Sent whenever the session phase changes. Also included in the `identify`
-message on reconnect so the tracker has correct status after a game channel
-drop/restore.
+Sent whenever the broader session phase changes. The same `busy` bit is also
+included in the initial `identify` message so the tracker has correct status
+immediately after a game channel opens, reconnects, or restores. This avoids a
+brief `waiting` flicker for unresolved restored sessions.
 
-The tracker updates the player's lobby status to `'busy'` (unavailable) or
-`'waiting'` (available) and broadcasts a lobby update. Challenges to/from
-busy players are rejected.
+The tracker updates the player's lobby status to `'busy'` or `'playing'` while
+busy, or `'waiting'` when not busy, and broadcasts a lobby update. When a player
+becomes busy, the tracker cancels all pending challenges involving that player.
+Challenges to/from non-waiting players are rejected.
 
-**When the session ends** (terminal channel status detected), the player app
-sends `set_status` with `available: true`. The tracker sets the player back
-to `'waiting'` and broadcasts the update.
+**When the session ends** (broader session phase becomes `resolved`, including
+any pending hands having finished), the player app sends `set_busy` with
+`busy: false`. The tracker sets the player back to `'waiting'` and broadcasts
+the update.
 
 The lobby iframe receives the updated `Player.status` via the normal
 `lobby_update` broadcast and renders busy players as unavailable. No
@@ -321,30 +356,35 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   the `onSessionPhaseChange` callback. Shell tracks this as `sessionPhase`
   and `sessionError` state. (`GameSession.tsx`, `Shell.tsx`)
 
-- **Terminal session detection and auto-cleanup**: When `sessionPhase`
-  becomes `'resolved'` (derived from terminal channel states `ResolvedClean`,
-  `ResolvedUnrolled`, `ResolvedStale`, or `Failed`), Shell automatically
-  clears the session save, destroys the WASM cradle, resets internal refs
-  (`sessionStartedRef`, `activePairingTokenRef`), and marks the player as
-  available. The game UI stays visible showing the resolved state until a
-  new match replaces it. Chat persists across session boundaries and is
-  only cleared when a new pairing starts.
+- **Terminal session detection and resolved display preservation**: When `sessionPhase`
+  becomes `'resolved'` (derived from terminal channel states plus the absence of
+  pending hand obligations), Shell stops live protocol interaction, resets
+  internal refs (`sessionStartedRef`, `activePairingTokenRef`), and marks the
+  player as not busy. The game UI stays visible as a read-only resolved display
+  until a new match replaces it, and a reload may restore that finished view.
+  Chat persists across session boundaries and is only cleared when a new pairing
+  starts. Terminal error or suspect outcomes are carried separately via
+  `sessionError`.
 
 - **Game message filtering on-chain**: `WasmBlobWrapper` has an `onChain`
   flag. When set, `deliverMessage()` acks but does not deliver inbound game
   messages to the WASM cradle, and `dispatchEvent()` suppresses outbound
   `OutboundMessage` events.
 
-- **Tracker availability signaling**: `TrackerConnection.setAvailable()`
-  sends `{ type: "set_status", available }` over the game WebSocket.
-  The `identify` message on reconnect includes the current availability.
-  Shell calls `setAvailable(sessionPhase === 'none')` whenever the session
-  phase changes.
+- **Tracker busy signaling**: `TrackerConnection.setBusy()`
+  sends `{ type: "set_busy", busy }` over the game WebSocket.
+  The `identify` message includes the current busy bit. Shell calls
+  `setBusy(!(sessionPhase === 'none' || sessionPhase === 'resolved'))` whenever
+  the broader session phase changes, while restore blocking keeps unresolved
+  restores busy until reconciliation completes. A resolved session no longer has
+  an active game obligation, so the player can be available for a new match even
+  if the existing relay/chat is still visible.
 
-- **Tracker-side `set_status` handler**: The tracker server accepts
-  `set_status` messages on the game channel. It updates the player's lobby
-  status to `'busy'` or `'waiting'` and broadcasts a lobby update.
-  Challenges to/from busy players are rejected. (`lobby-service/src/index.ts`)
+- **Tracker-side `set_busy` handler**: The tracker server accepts
+  `set_busy` messages on the game channel. It updates the player's lobby
+  status to `'playing'`, `'busy'`, or `'waiting'` and broadcasts a lobby update.
+  When busy becomes true, pending challenges involving that player are cancelled;
+  challenges to/from non-waiting players are rejected. (`lobby-service/src/index.ts`)
 
 - **Tracker retry budget**: `TrackerConnection` now has a
   `MAX_RECONNECT_ATTEMPTS` budget. After the budget is exhausted, the
@@ -354,7 +394,7 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   tracker tab header allows explicit tracker disconnect. Gated by a cascade
   warning if peer/session would be affected.
 
-- **User-initiated peer disconnect**: An "End Peer" button in the Chat tab
+- **User-initiated peer disconnect**: A "Disconnect" button in the Chat tab
   sends `close()` via the tracker, ending the pairing. If the session is
   off-chain, losing the peer automatically cascades to on-chain.
 
@@ -363,9 +403,9 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   Shell automatically calls `goOnChain()` on the WASM cradle. No user
   prompt — this is the cascade rule: off-chain + no peer = on-chain.
 
-- **Cascade warning dialogs**: Confirmation dialogs warn before actions
-  that would cascade (e.g., disconnecting tracker while peer is up and
-  session is off-chain). Implemented via `confirmDialog` state in Shell.
+- **Cascade warning dialogs**: Confirmation dialogs currently warn before
+  disconnecting or switching trackers when a peer/session would be affected.
+  Peer disconnect and the explicit "Go On-Chain" button do not currently prompt.
 
 ---
 

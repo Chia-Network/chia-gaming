@@ -24,17 +24,20 @@
 ;   initial_mover_share)]) [initial_handler inital_validator])
 ; The first return value creates the data sent over the wire, the send has data which correlates 1:1 with
 ; items in the first list and contains info necessary locally to play and display the game
-(defun calpoker_make_proposal (bet_size)
-    (li
+(defun calpoker_make_proposal (per_player_stake)
+    (assert
+        (> per_player_stake 0)
         (li
-            bet_size
-            bet_size
             (li
-                (li (* 2 bet_size) 1 pokera_hash 0 32 0 0)
+                per_player_stake
+                per_player_stake
+                (li
+                    (li (* 2 per_player_stake) 1 pokera_hash 0 32 0 0)
+                )
             )
-        )
-        (li
-            (li calpoker_alice_handler_a pokera)
+            (li
+                (li calpoker_alice_handler_a pokera)
+            )
         )
     )
 )
@@ -43,9 +46,9 @@
 ;   initial_max_move_size initial_state initial_mover_share)])
 ;   returns (readable [(initial_validator initial_handler)]) or error
 ; The return value readable goes to the presentation layer and the other value is to enable gameplay
-(defun calpoker_parser (@ args (bet_size))
-    (assert (deep= args (f (calpoker_make_proposal bet_size)))
-        (li bet_size (li (li pokera calpoker_bob_handler_a)))
+(defun calpoker_parser (@ args (per_player_stake))
+    (assert (deep= args (f (calpoker_make_proposal per_player_stake)))
+        (li per_player_stake (li (li pokera calpoker_bob_handler_a)))
     )
 )
 
@@ -180,21 +183,17 @@
         ;; split is captured in a their turn handler below so it's the opposite of what
         ;; this turn would specify.
         split (* (- 1 win_result) (/ amount 2))
-        (assert
-            (= (popcount MY_PICKS) 4)
-            (= (popcount my_selects_bitfield) 5)
+        (list
             (list
-                (list
-                    move
-                    my_selects_bitfield
-                    bob_selects_bitfield
-                    my_hand_value
-                    bob_hand_value
-                    win_result
-                )
-                0
-                (curry calpoker_alice_handler_e (concat MY_SALT MY_PICKS (single-byte my_selects_bitfield)) split)
+                move
+                my_selects_bitfield
+                bob_selects_bitfield
+                my_hand_value
+                bob_hand_value
+                win_result
             )
+            0
+            (curry calpoker_alice_handler_e (concat MY_SALT MY_PICKS (single-byte my_selects_bitfield)) split)
         )
     )
 )
@@ -308,22 +307,17 @@
             alice_cards alice_discards bob_cards bob_discards)
         alice_hand_value (onehandcalc (pull_out_cards alice_selects alice_final_cards))
         (bob_hand_value bob_selects) (handcalc bob_final_cards)
-        (assert
-            (= (strlen move) 18)
-            (= (popcount alice_discards) 4)
-            (= (popcount alice_selects) 5)
+        (list
             (list
-                (list
-                    alice_discards
-                    alice_selects
-                    (indices_to_bitfield bob_selects)
-                    alice_hand_value
-                    bob_hand_value
-                    (deep_compare split (/ amount 2))
-                )
-                (list (indices_to_bitfield bob_selects))
-                0
+                alice_discards
+                alice_selects
+                (indices_to_bitfield bob_selects)
+                alice_hand_value
+                bob_hand_value
+                (deep_compare split (/ amount 2))
             )
+            (list (indices_to_bitfield bob_selects))
+            0
         )
     )
 )
