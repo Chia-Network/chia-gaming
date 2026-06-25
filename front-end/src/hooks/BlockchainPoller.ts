@@ -1,7 +1,7 @@
 import { InternalBlockchainInterface, CoinStateRecord } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { coinRecordToName } from '../util/coinWatch';
-import { log, diagStack, diagNote } from '../services/log';
+import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 
 /**
@@ -84,10 +84,7 @@ export class BlockchainPoller {
       await this.rpc.registerCoins(newNames);
       for (const n of newNames) this.registeredNames.add(n);
     } catch (e) {
-      // Leave unregistered so the next tick retries.  This is an EXPECTED
-      // transient (and a unit test deliberately triggers it), so log a concise
-      // note -- no stack dump, which would bury real signal.
-      diagNote(`blockchain-poller registerCoins failed (will retry): ${String(e)}`);
+      // Leave unregistered so the next tick retries.
       log(`[blockchain-poller] registerCoins failed, will retry: ${String(e)}`);
     }
   }
@@ -129,13 +126,20 @@ export class BlockchainPoller {
 
     const records = namesToQuery.length > 0 ? await this.rpc.getCoinRecordsByNames(namesToQuery) : [];
     const recordByName = new Map<string, CoinRecord>();
+    let hasUnmappedRecord = false;
     for (const rec of records) {
       const name = await coinRecordToName(rec);
-      if (name) recordByName.set(name, rec);
+      if (name) {
+        recordByName.set(name, rec);
+      } else {
+        hasUnmappedRecord = true;
+      }
     }
     for (const name of recordByName.keys()) this.observedNames.add(name);
 
-    this.reportToCradles(perCradle, recordByName, height, previousPeak);
+    if (!hasUnmappedRecord) {
+      this.reportToCradles(perCradle, recordByName, height, previousPeak);
+    }
 
     if (this.firstTick) {
       this.firstTick = false;

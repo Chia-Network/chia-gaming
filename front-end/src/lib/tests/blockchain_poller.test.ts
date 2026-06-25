@@ -208,6 +208,49 @@ describe('BlockchainPoller', () => {
     }
   });
 
+  it('skips snapshots when returned records cannot be mapped to coin names', async () => {
+    const recordA = makeCoinRecord(1);
+    const nameA = await coinRecordToName(recordA);
+    if (!nameA) {
+      throw new Error(`coinRecordToName returned undefined; env=${envDiag()}`);
+    }
+
+    const malformedRecord = {
+      ...recordA,
+      coin: {
+        ...recordA.coin,
+        parentCoinInfo: '0x0',
+      },
+    };
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.resolve([malformedRecord]),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const cradle: PollingCradle = {
+      getCoinsToPoll: () => [{ coin_name: nameA, coin_string: 'coin-a' }],
+      reportCoinStates: (peak, records) => {
+        reports.push({ peak, records });
+      },
+      reportNewBlock: () => {},
+    };
+
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachCradle(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(reports).toEqual([]);
+  });
+
   it('reports a coin spent via spentBlockIndex even when the spent flag is false', async () => {
     // The WalletConnect bridge can return a spent coin with `spent:false` but a
     // real spentBlockIndex.  Spend detection must honor spentBlockIndex, or
