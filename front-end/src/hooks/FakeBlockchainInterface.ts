@@ -201,6 +201,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.sendRequest('get_balance', { user: this.token });
   }
 
+  async getFullNodePeerCount(): Promise<bigint> {
+    return 1n;
+  }
+
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     return this.sendRequest('get_puzzle_and_solution', { coin });
   }

@@ -39,6 +39,10 @@ import {
   SelectCoinsRequest,
   SelectCoinsResponse,
 } from '../types/rpc/SelectCoins';
+import {
+  GetFullNodePeerCountRequest,
+  GetFullNodePeerCountResponse,
+} from '../types/rpc/GetFullNodePeerCount';
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 
@@ -258,6 +262,13 @@ async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
   );
 }
 
+async function getFullNodePeerCount(data: GetFullNodePeerCountRequest) {
+  return await request<GetFullNodePeerCountResponse>(
+    ChiaMethod.GetFullNodePeerCount,
+    data,
+  );
+}
+
 export const rpc = {
   getWallets,
   getWalletBalance,
@@ -270,4 +281,5 @@ export const rpc = {
   registerRemoteCoins,
   getCoinRecordsByNames,
   getPuzzleAndSolution,
+  getFullNodePeerCount,
 };

@@ -220,6 +220,20 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return (result as any)?.confirmedWalletBalance ?? 0n;
   }
 
+  async getFullNodePeerCount(): Promise<bigint> {
+    console.log('[wc-blockchain] >>> getFullNodePeerCount');
+    try {
+      const peerCount = await rpc.getFullNodePeerCount({});
+      console.log('[wc-blockchain] <<< getFullNodePeerCount', { peerCount });
+      log(`[wc-blockchain] getFullNodePeerCount peerCount=${peerCount}`);
+      return peerCount;
+    } catch (e) {
+      console.error('[wc-blockchain] getFullNodePeerCount error', e);
+      log(`[wc-blockchain] getFullNodePeerCount error: ${String(e)}`);
+      throw e;
+    }
+  }
+
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     try {
       const coinBytes = toUint8(coin);

@@ -229,6 +229,8 @@ const Shell = () => {
   }), []);
 
   const [walletConnected, setWalletConnected] = useState(false);
+  const [hasFullNodePeer, setHasFullNodePeer] = useState(false);
+  const [peerGateActive, setPeerGateActive] = useState(false);
   const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
@@ -558,6 +560,11 @@ const Shell = () => {
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
 
+    const resuming = !!peekSession()?.serializedCradle;     // skip on resume
+    const gate = getBlockchainType() === 'walletconnect' && !resuming;  // skip on simulator
+    setPeerGateActive(gate);
+    setHasFullNodePeer(!gate);   // simulator/resume => immediately "ready"
+
     setTrackerOrigin(origin);
     saveTrackerUrl(origin);
     const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
@@ -748,7 +755,7 @@ const Shell = () => {
             setTrackerAlert(true);
           }
         },
-      });
+      }, !gate);
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
       saveTrackerUrl(undefined);
@@ -949,8 +956,31 @@ const Shell = () => {
   }, [setActiveTab]);
 
   useEffect(() => {
-    trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
-  }, [sessionPhase]);
+    const sessionAllows = sessionPhase === 'none' || sessionPhase === 'resolved';
+    trackerConnRef.current?.setAvailable(hasFullNodePeer && sessionAllows);
+  }, [sessionPhase, hasFullNodePeer]);
+
+  // While the peer gate is active, poll the wallet for a full node peer every 5s
+  // and only mark ready (visible in the lobby) once one is present.
+  useEffect(() => {
+    if (!peerGateActive || !trackerOrigin || !walletConnected) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const count = await getActiveBlockchain().rpc.getFullNodePeerCount();
+        if (cancelled) return;
+        if (count > 0n) { setHasFullNodePeer(true); return; }
+      } catch (e) {
+        log(`[Shell] full node peer check failed: ${String(e)}`);
+      }
+      if (cancelled) return;
+      setHasFullNodePeer(false);
+      timer = setTimeout(check, 5000);
+    };
+    check();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [peerGateActive, trackerOrigin, walletConnected]);
 
   // Cascade rule: off-chain session without a peer must immediately go on-chain.
   useEffect(() => {
@@ -1578,23 +1608,30 @@ const Shell = () => {
         {/* Tracker tab */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'flex' : 'none', flexDirection: 'column' }}>
           {trackerOrigin ? (
-            <>
-              <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
-                <span>Connected to {trackerOrigin}</span>
-                <button
-                  onClick={handleDisconnectTracker}
-                  className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
-                >
-                  Disconnect
-                </button>
+            peerGateActive && !hasFullNodePeer ? (
+              <div className='flex flex-col items-center justify-center w-full h-full gap-4 p-6'>
+                <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
+                <p className='text-sm text-canvas-text animate-pulse'>Waiting for full node peer</p>
               </div>
-              <iframe
-                id='tracker-iframe'
-                className='bg-canvas-bg-subtle'
-                style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
-                src={iframeUrl}
-              />
-            </>
+            ) : (
+              <>
+                <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
+                  <span>Connected to {trackerOrigin}</span>
+                  <button
+                    onClick={handleDisconnectTracker}
+                    className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+                  >
+                    Disconnect
+                  </button>
+                </div>
+                <iframe
+                  id='tracker-iframe'
+                  className='bg-canvas-bg-subtle'
+                  style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                  src={iframeUrl}
+                />
+              </>
+            )
           ) : (
             <TrackerPicker onConnect={requestTrackerConnect} />
           )}

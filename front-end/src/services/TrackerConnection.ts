@@ -92,10 +92,11 @@ export class TrackerConnection {
   private reconnectAttempt = 0;
   private available = true;
 
-  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
+  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, initialAvailable = true) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
+    this.available = initialAvailable;
     this.connectWs();
   }
 
