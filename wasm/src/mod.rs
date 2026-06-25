@@ -78,6 +78,7 @@ mod gaming_wasm {
     };
 
     export type SpendBundle = {
+        "name"?: string,
         "spends": Array<CoinSpend>
     };
 
@@ -1166,6 +1167,8 @@ mod gaming_wasm {
 
     #[derive(Serialize)]
     struct JsSpendBundle {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         spends: Vec<JsCoinSpend>,
     }
 
@@ -1217,6 +1220,7 @@ mod gaming_wasm {
 
     fn spend_bundle_to_js(spend_bundle: &SpendBundle) -> JsSpendBundle {
         JsSpendBundle {
+            name: spend_bundle.name.clone(),
             spends: spend_bundle.spends.iter().map(coin_spend_to_js).collect(),
         }
     }
