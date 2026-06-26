@@ -10,7 +10,7 @@ import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
   getSessionId,
-  regenerateSessionId,
+  clearSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
@@ -808,13 +808,15 @@ const Shell = () => {
   const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
 
   // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
-  const connectToTracker = useCallback((rawOrigin: string) => {
+  const connectToTracker = useCallback((rawOrigin: string, options: { resetSession?: boolean } = {}) => {
     const origin = normalizeTrackerOrigin(rawOrigin);
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
+    if (options.resetSession) {
+      clearSessionId();
+    }
     const initialSave = peekSession();
-    const hasActiveTrackerSession = !!(initialSave?.serializedCradle || initialSave?.pairingToken);
-    const trackerSessionId = hasActiveTrackerSession ? getSessionId() : regenerateSessionId();
+    const trackerSessionId = getSessionId();
     setSessionId(trackerSessionId);
 
     setTrackerOrigin(origin);
@@ -1054,48 +1056,45 @@ const Shell = () => {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
-        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
+        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
       });
     } else if (peerConnected) {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'This will end your peer connection.',
-        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
+        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
       });
     } else {
-      connectToTracker(origin);
+      connectToTracker(origin, { resetSession: true });
     }
   }, [peerConnected, sessionPhase, connectToTracker]);
 
-  // Auto-connect to saved tracker on reload; otherwise wait for user selection
+  // Auto-connect to saved tracker once this tab owns the app lease. Tracker
+  // identity is independent of wallet restore, so do not gate this on userReady.
   useEffect(() => {
-    if (!userReady) { console.log('[Shell] tracker-reconnect effect: userReady=false, skipping'); return; }
+    if (bootState.kind !== 'ready') {
+      trackerConnRef.current?.disconnect();
+      trackerConnRef.current = null;
+      return;
+    }
     const url = getTrackerUrl();
-    console.log('[Shell] tracker-reconnect effect: userReady=true trackerUrl=%s', url ?? 'none');
-    if (url) {
+    console.log('[Shell] tracker-reconnect effect: ready trackerUrl=%s', url ?? 'none');
+    if (url && !trackerConnRef.current) {
       connectToTracker(url);
     }
     return () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
     };
-  }, [userReady, connectToTracker]);
-
-  // Disconnect tracker when we're not in the 'ready' state; reconnect when we become ready again.
-  useEffect(() => {
-    if (bootState.kind !== 'ready') {
-      trackerConnRef.current?.disconnect();
-      trackerConnRef.current = null;
-    } else if (userReady) {
-      const url = getTrackerUrl();
-      if (url && !trackerConnRef.current) {
-        connectToTracker(url);
-      }
-    }
-  }, [bootState.kind, userReady, connectToTracker]);
+  }, [bootState.kind, connectToTracker]);
 
   // Shared connection completion
-  const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
+  const completeConnection = useCallback((
+    iface: InternalBlockchainInterface,
+    bcType: 'simulator' | 'walletconnect',
+    pollMs: number,
+    options: { switchToTracker?: boolean } = {},
+  ) => {
     console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
     activate(iface, pollMs);
@@ -1106,10 +1105,12 @@ const Shell = () => {
     setConnecting(false);
     setConnectionSetup(null);
     setUserReady(true);
-    setActiveTabRaw(prev => prev === 'wallet' ? 'tracker' : prev);
+    if (options.switchToTracker) {
+      setActiveTab('tracker');
+    }
     requestBalance();
     log(`${bcType} wallet connected`);
-  }, [requestBalance, setConnecting]);
+  }, [requestBalance, setConnecting, setActiveTab]);
 
   // --- Unified connection flow ---
   // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
@@ -1129,7 +1130,7 @@ const Shell = () => {
         setWalletConnected(false);
         setConnecting(false);
         if (silent) {
-          setActiveTabRaw('wallet');
+          setWalletAlert(true);
           return;
         }
       }
@@ -1146,7 +1147,7 @@ const Shell = () => {
       await setup.finalize();
       if (wcAbortRef.current) return;
       log(`[Shell] handleConnect: finalize complete`);
-      completeConnection(iface, bcType, pollMs);
+      completeConnection(iface, bcType, pollMs, { switchToTracker: !silent });
     } catch (err) {
       if (!wcAbortRef.current) {
         console.error(`[Shell] ${bcType} connect failed`, err);
@@ -1174,7 +1175,7 @@ const Shell = () => {
       await connectionSetup.finalize();
       log(`[Shell] handleFinalize: finalize complete`);
       setShowSimModal(false);
-      completeConnection(iface, blockchainType, pollMs);
+      completeConnection(iface, blockchainType, pollMs, { switchToTracker: true });
     } catch (err) {
       console.error(`[Shell] ${blockchainType} finalize failed`, err);
     } finally {
@@ -1275,6 +1276,7 @@ const Shell = () => {
   const performResume = useCallback(async (save: SessionState) => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
+    setActiveTab('game');
     setResuming(true);
     setRestoreStatus('restoring');
     setRestoreError(null);
@@ -1316,7 +1318,7 @@ const Shell = () => {
         setConnectionSetup(setup);
         setWalletConnected(false);
         setConnecting(false);
-        setActiveTabRaw('wallet');
+        setWalletAlert(true);
         setResuming(false);
         return;
       }
@@ -1333,7 +1335,7 @@ const Shell = () => {
     }
     console.log('[Shell] performResume: done');
     setResuming(false);
-  }, [uniqueId, completeConnection, stablePeerConn]);
+  }, [uniqueId, completeConnection, stablePeerConn, setActiveTab]);
 
   // User clicked "Resume Session" in the resumeDialog.
   // If another tab holds the lease, ask to take over first; otherwise proceed.
@@ -1425,6 +1427,8 @@ const Shell = () => {
   const doDisconnectTracker = useCallback(() => {
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
+    clearSessionId();
+    setSessionId('');
     saveTrackerUrl(undefined);
     setTrackerOrigin(null);
     setIframeUrl('about:blank');
