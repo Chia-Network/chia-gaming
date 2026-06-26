@@ -51,6 +51,19 @@ configured, with at least 1000 mojos in your wallet.
 automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
 to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
 fail with clang errors.
+- **Windows only** — run the `tools/*.sh` scripts from **Git Bash** (ships
+with [Git for Windows](https://gitforwindows.org/)); they are not PowerShell
+scripts. Two extra tools are needed (both preinstalled on GitHub's Windows
+runners):
+  - **LLVM** (`winget install LLVM.LLVM`) — MSVC's `cl.exe` cannot target
+  wasm32, so C dependencies (blst) need clang. `build-deploy.sh` finds the
+  default `C:\Program Files\LLVM` install automatically if `clang` is not
+  on the PATH.
+  - **7-Zip** (`winget install 7zip.7zip`) — Git Bash has no `zip`;
+  `build-deploy.sh` falls back to `7z` for creating zip archives. Make sure
+  `7z` is on the PATH (e.g. `export PATH="$PATH:/c/Program Files/7-Zip"`).
+  Archive extraction needs nothing extra (the verify script uses Windows'
+  built-in bsdtar).
 
 ## Building & Testing
 
@@ -112,13 +125,14 @@ With a platform-tagged build (as in CI):
 
 ```bash
 ./tools/test-deploy-archives.sh --platform=linux
+# or --platform=macos, --platform=windows
 ```
 
 The test extracts each archive, runs `verify-stage.mjs`, floor-checks required
 bundle files (WASM, clsp hex, images, service.js, etc.), compares tgz vs zip
 trees for parity, and smoke-tests HTTP serving via `static-server.js` (player)
 and `service.js` (lobby). CI runs this automatically after `build-deploy.sh` in
-the Linux and macOS release jobs.
+the Linux, macOS, and Windows release jobs.
 
 # Build Details
 
