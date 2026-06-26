@@ -543,6 +543,10 @@ export function regenerateSessionId(): string {
   return state.sessionId;
 }
 
+export function clearSessionId(): void {
+  mutate(s => { s.sessionId = undefined; });
+}
+
 export function getBlockchainType(): BlockchainType | undefined {
   return loadState().blockchainType;
 }

@@ -124,15 +124,6 @@ function ensureSession(sessionId: string): string {
   return playerId;
 }
 
-function forgetSession(sessionId: string): void {
-  const playerId = sessionToPlayer.get(sessionId);
-  if (!playerId) return;
-  sessionToPlayer.delete(sessionId);
-  playerToSession.delete(playerId);
-  knownAliases.delete(sessionId);
-  logTracker('session_forgotten', { player_id: playerId, session_id: sessionId });
-}
-
 app.use(
   cors({
     origin: '*',
@@ -929,28 +920,6 @@ function sweepGameConnections(now: number): void {
       try { ws.close(4002, 'idle_timeout'); } catch {}
     }
     gameConnections.delete(sessionId);
-    if (playerId) {
-      const pairing = lobby.getPairingForPlayer(playerId);
-      if (pairing) {
-        const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
-        sendGameEvent(peerId, 'closed', {});
-        lobby.setPlayerStatus(pairing.playerA_id, 'waiting');
-        lobby.setPlayerStatus(pairing.playerB_id, 'waiting');
-        lobby.removePairing(pairing.token);
-        broadcastLobbyUpdate();
-        logTracker('pairing_removed_on_sweep', { token: pairing.token, swept_player: playerId, peer_id: peerId });
-      }
-    }
-  }
-}
-
-function sweepSessionMaps(): void {
-  for (const [sessionId, playerId] of sessionToPlayer) {
-    const hasLobby = lobbyConnections.has(playerId);
-    const hasGame = gameConnections.has(sessionId);
-    if (!hasLobby && !hasGame) {
-      forgetSession(sessionId);
-    }
   }
 }
 
@@ -958,7 +927,6 @@ setInterval(() => {
   const now = Date.now();
   const lobbyChanged = sweepLobbyConnections(now);
   sweepGameConnections(now);
-  sweepSessionMaps();
   if (lobbyChanged) {
     broadcastLobbyUpdate();
   }
