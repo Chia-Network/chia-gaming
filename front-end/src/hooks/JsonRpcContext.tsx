@@ -66,6 +66,17 @@ const WC_LONG_TIMEOUT_METHODS = new Set<ChiaMethod>([
 const WC_RETRY_DELAY_MS = 1000;
 const WC_INTER_REQUEST_MS = 50;
 
+/** Passed to wallet RPCs that support `allowUnsynced` (wait for sync when false). */
+export const WALLET_RPC_ALLOW_UNSYNCED = false;
+
+const ALLOW_UNSYNCED_METHODS = new Set<ChiaMethod>([
+  ChiaMethod.SelectCoins,
+  ChiaMethod.PushTransactions,
+  ChiaMethod.CreateOfferForIds,
+  ChiaMethod.CreateNewRemoteWallet,
+  ChiaMethod.GetCoinRecordsByNames,
+]);
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -196,6 +207,9 @@ async function request<T, D extends object = object>(
     ...data,
     fingerprint,
   };
+  if (ALLOW_UNSYNCED_METHODS.has(method)) {
+    params.allowUnsynced = WALLET_RPC_ALLOW_UNSYNCED;
+  }
 
   const startedAt = Date.now();
   const timeoutMs = WC_LONG_TIMEOUT_METHODS.has(method)
