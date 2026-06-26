@@ -23,6 +23,8 @@ import {
   gameplayEventsForGameStatus,
   nextGameTurnAfterLocalTurn,
   isActivelyPlayingOnChain,
+  parseGameStatusTerminalInfo,
+  terminalEventForInfo,
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
@@ -232,7 +234,7 @@ describe('session model selectors', () => {
           type: 'opponent-timed-out',
           label: 'Opponent took too long to move',
           myReward: '20',
-          rewardCoinHex: null,
+          rewardCoinHex: 'abcd',
         },
       },
     }));
@@ -276,6 +278,43 @@ describe('session model selectors', () => {
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Move too late');
+  });
+
+  it('labels off-chain non-terminal accepts as folds instead of timeouts', () => {
+    expect(parseGameStatusTerminalInfo({
+      id: '7',
+      status: 'ended-we-timed-out',
+      my_reward: { amt: 0n },
+      coin_id: null,
+      reason: null,
+      other_params: null,
+    }, null, 'my-turn')).toMatchObject({
+      label: 'Folded',
+    });
+
+    expect(parseGameStatusTerminalInfo({
+      id: '7',
+      status: 'ended-opponent-timed-out',
+      my_reward: { amt: 20n },
+      coin_id: null,
+      reason: null,
+      other_params: null,
+    }, null, 'their-turn')).toMatchObject({
+      label: 'Opponent folded',
+    });
+  });
+
+  it('keeps explicit on-chain move-too-late labels', () => {
+    expect(parseGameStatusTerminalInfo({
+      id: '7',
+      status: 'ended-we-timed-out',
+      my_reward: { amt: 0n },
+      coin_id: null,
+      reason: 'move too late',
+      other_params: null,
+    }, null, 'their-turn')).toMatchObject({
+      label: 'Move too late',
+    });
   });
 
   it('prefers terminal hand state over stale on-chain turn state', () => {
@@ -670,5 +709,15 @@ describe('session model selectors', () => {
       { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]) } },
       { Timeout: { byUs: false, forfeited: true } },
     ]);
+  });
+
+  it('does not emit gameplay timeout events for clean terminal accepts', () => {
+    expect(terminalEventForInfo({
+      type: 'opponent-timed-out',
+      label: 'Ended cleanly',
+      myReward: '20',
+      rewardCoinHex: null,
+      cleanEnd: true,
+    }, 'ended-opponent-timed-out')).toBeNull();
   });
 });
