@@ -191,15 +191,8 @@ export function useCalpokerHand(
         } else if ('Timeout' in evt) {
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
-            // A clean end (game_finished) is the normal off-chain endgame: the
-            // first mover already computed the outcome at the reveal, and the
-            // responder simply gives up the unnecessary final move. Nobody
-            // actually timed out, so leave timeoutByUs null and let the outcome
-            // drive the winner display. Only real timeouts/forfeits show a badge.
-            if (!evt.Timeout.cleanEnd) {
-              setTimeoutByUs(evt.Timeout.byUs);
-              setTimeoutForfeited(evt.Timeout.forfeited);
-            }
+            setTimeoutByUs(evt.Timeout.byUs);
+            setTimeoutForfeited(evt.Timeout.forfeited);
           }
         } else if ('GameError' in evt) {
           handFinishedRef.current = true;
