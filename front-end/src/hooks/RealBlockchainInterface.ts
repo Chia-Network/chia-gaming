@@ -1,4 +1,4 @@
-import { rpc } from '../hooks/JsonRpcContext';
+import { rpc, WC_INTER_REQUEST_MS } from '../hooks/WalletConnectRpc';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
@@ -103,7 +103,10 @@ function collectErrorText(err: unknown): string {
     }
   }
 
-  return parts.join(' ');
+  const unique = [...new Set(parts)];
+  return unique
+    .filter((part, idx) => !unique.some((other, otherIdx) => otherIdx !== idx && other.length > part.length && other.includes(part)))
+    .join(' ');
 }
 
 function isCoinRecordMiss(err: unknown): boolean {
@@ -141,6 +144,7 @@ async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Prom
 }
 
 export class RealBlockchainInterface implements InternalBlockchainInterface {
+  readonly requestGapMs = WC_INTER_REQUEST_MS;
   blockchainAddressData: BlockchainInboundAddressResult;
 
   private remoteWalletId: bigint | undefined;
@@ -168,6 +172,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       this.blockchainAddressData = { puzzleHash };
       log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
       this.ensureRemoteWallet();
+      await this.waitForRemoteWallet();
     } catch (err) {
       const e = err as any;
       console.error('[wc-blockchain] startMonitoring failed:', err);
@@ -440,8 +445,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
+    const uniqueNames = [...new Set(names)];
     const records: CoinRecord[] = [];
-    for (const name of names) {
+    for (const name of uniqueNames) {
       try {
         const resp = await rpc.getCoinRecordsByNames({
           names: [name],
@@ -597,6 +603,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.connectionListeners.add(cb);
     this.subscribeToWcEvents();
     return () => { this.connectionListeners.delete(cb); };
+  }
+
+  getRegistrationScopeKey(): string | undefined {
+    return this.remoteWalletId === undefined ? undefined : String(this.remoteWalletId);
   }
 }
 

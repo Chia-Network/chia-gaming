@@ -51,8 +51,8 @@ Every communication produced by the Rust cradle starts as a `CradleEvent` in
 the cradle's FIFO event queue. The `TransactionManager` drains that queue and
 intercepts blockchain bookkeeping events before they reach JavaScript:
 `OutboundTransaction` entries are captured for `drain_submissions()`, and
-`WatchCoin` entries update the manager's watched-coin set exposed through
-`get_coins_to_poll()`. The remaining events — wallet requests
+`WatchCoin` entries update the manager's watched-coin set and are returned as
+`result.watchCoins` polling deltas. The remaining events — wallet requests
 (`NeedCoinSpend`, `NeedLauncherCoin`), outbound peer messages, notifications,
 logs, receive errors, and puzzle/solution requests — are returned to JS as
 `result.events`.
@@ -63,9 +63,9 @@ Flow:
 2. `TransactionManager::flush_and_collect` drains that queue, intercepting
    `OutboundTransaction` and `WatchCoin` while preserving order for the events
    still delivered to JS.
-3. `processResult()` appends `result.events` to the JS `eventQueue`, calls
-   `drain_submissions()` / `get_coins_to_poll()` for intercepted blockchain
-   work, and calls `scheduleDrain()`.
+3. `processResult()` applies `result.watchCoins` to the poller, appends
+   `result.events` to the JS `eventQueue`, calls `drain_submissions()` for
+   intercepted transaction submissions, and calls `scheduleDrain()`.
 4. `scheduleDrain()` is a no-op if a drain is already scheduled or the queue
    is empty. Otherwise it schedules a `setTimeout(0)` callback that dispatches
    **one** event, saves state, and calls `scheduleDrain()` again for the next.
@@ -83,8 +83,8 @@ macrotask. Event types and their handlers:
 
 `OutboundTransaction` and `WatchCoin` are intentionally absent from the JS event
 list because they are intercepted during manager drain. They still originate as
-queued Rust events; they just become manager state/submission buffers before JS
-dispatch.
+queued Rust events; they just become manager state/submission buffers and
+polling deltas before JS dispatch.
 
 Why async (one event per macrotask):
 

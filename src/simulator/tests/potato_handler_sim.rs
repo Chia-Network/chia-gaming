@@ -2851,6 +2851,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 outcome.local_uis[i].clean_shutdown_complete,
                 "player {i} should reach ResolvedClean"
             );
+            assert!(
+                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
+                "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
+                outcome.cradles[i].snapshot_watched_coins(),
+            );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
                     n,
@@ -2881,6 +2886,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert!(
                 outcome.local_uis[i].clean_shutdown_complete,
                 "player {i} should reach ResolvedClean"
+            );
+            assert!(
+                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
+                "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
+                outcome.cradles[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(

@@ -104,11 +104,11 @@ mod gaming_wasm {
             "coin_id"?: string,
             "max_height"?: bigint,
           } }
-        | { NeedLauncherCoin: boolean }
-        | { WatchCoin: { coin_name: string, coin_string: string } };
+        | { NeedLauncherCoin: boolean };
 
     export type DrainResult = {
         "events": Array<CradleEvent>,
+        "watchCoins": Array<{ coin_name: string, coin_string: string }>,
     };
 
     export type GameCradleConfig = {
@@ -449,9 +449,11 @@ mod gaming_wasm {
     }
 
     fn watch_coin_entries(cradle: &JsCradle) -> Vec<JsWatchCoinEntry> {
-        cradle
-            .cradle
-            .get_coins_to_poll()
+        watch_coin_entries_from_coins(&cradle.cradle.snapshot_watched_coins())
+    }
+
+    fn watch_coin_entries_from_coins(coins: &[CoinString]) -> Vec<JsWatchCoinEntry> {
+        coins
             .iter()
             .map(|cs| JsWatchCoinEntry {
                 coin_name: hex::encode(cs.to_coin_id().bytes()),
@@ -466,10 +468,11 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Coins the hosting layer should poll for on-chain state.  Same shape as
-    /// [`get_watching_coins`]; both now delegate to the manager.
+    /// Durable watched-coin snapshot for seeding host polling after attach or
+    /// restore. Same shape as [`get_watching_coins`]; both delegate to the
+    /// manager.
     #[wasm_bindgen]
-    pub fn get_coins_to_poll(cid: i32) -> Result<JsValue, JsValue> {
+    pub fn snapshot_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsCradle| Ok(watch_coin_entries(cradle)))?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -1295,19 +1298,9 @@ mod gaming_wasm {
             CradleEvent::NeedLauncherCoin => {
                 json_event_to_js(serde_json::json!({ "NeedLauncherCoin": true }))
             }
-            CradleEvent::WatchCoin {
-                coin_name,
-                coin_string,
-                timeout: _,
-                spend: _,
-            } => {
-                json_event_to_js(serde_json::json!({
-                    "WatchCoin": {
-                        "coin_name": hex::encode(coin_name.bytes()),
-                        "coin_string": coin_string_to_hex(coin_string),
-                    }
-                }))
-            }
+            CradleEvent::WatchCoin { .. } => Err(types::Error::StrErr(
+                "WatchCoin should be intercepted before JS event serialization".to_string(),
+            )),
         }
     }
 
@@ -1315,9 +1308,9 @@ mod gaming_wasm {
     ///
     /// The [`TransactionManager`] intercepts `OutboundTransaction` and
     /// `WatchCoin` events; the hosting layer retrieves those via
-    /// [`drain_submissions`] and [`get_coins_to_poll`] respectively.  Only the
-    /// remaining events (notifications, messages, coin-solution requests, etc.)
-    /// are surfaced here.
+    /// [`drain_submissions`] and `watchCoins` respectively. Only the remaining
+    /// events (notifications, messages, coin-solution requests, etc.) are
+    /// surfaced in `events`.
     fn collect_drain_events(drain: &ManagerDrain) -> Result<js_sys::Array, types::Error> {
         let events = js_sys::Array::new();
         for event in &drain.events {
@@ -1328,8 +1321,11 @@ mod gaming_wasm {
 
     fn manager_drain_to_js(drain: &ManagerDrain) -> Result<JsValue, types::Error> {
         let events = collect_drain_events(drain)?;
+        let watch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.watch_coins))
+            .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
+        let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
         Ok(obj.into())
     }
 

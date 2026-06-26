@@ -112,7 +112,8 @@ export async function restoreSession(
   gameObject.setGameCradle(cradle);
 
   // The transaction manager (in the deserialized cradle) already knows which
-  // coins to watch; the poller will pick them up via get_coins_to_poll.
+  // coins to watch; attaching the restored wrapper refreshes the poller's
+  // bootstrap coin-interest snapshot from that durable state.
 
   log('[restore] session restored');
 }

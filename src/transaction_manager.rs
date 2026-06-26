@@ -9,7 +9,7 @@
 //!   (`report_coin_states`) instead of receiving a pre-computed `WatchReport`.
 //! - It captures outbound transactions the cradle wants submitted
 //!   (`drain_submissions`) so the hosting layer becomes a thin RPC proxy.
-//! - It tracks which coins to poll (`get_coins_to_poll`).
+//! - It tracks watched coins (`snapshot_watched_coins` exposes a durable snapshot).
 //!
 //! Reorg boundary: protocol handlers are deliberately written as if reorgs do
 //! not happen. They register watched coins and hand this manager any
@@ -54,8 +54,9 @@ struct SubmittedTx {
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
     /// Output coins this transaction should create, derived from its
-    /// `CREATE_COIN` conditions.  These let us distinguish the transaction
-    /// winning from a conflicting spend of the same input winning.
+    /// `CREATE_COIN` conditions.  These are replay/conflict metadata only:
+    /// they do not become poll targets unless a protocol handler separately
+    /// registers the coin as watched.
     #[serde(default)]
     expected_output_coins: Vec<CoinString>,
     /// Set once any expected output is observed on-chain.
@@ -170,12 +171,13 @@ impl WatchedCoin {
 
 /// Result of draining the manager: the events the hosting layer still needs to
 /// act on (notifications, outbound messages, coin-solution requests, launcher
-/// and coin-spend requests), plus any resync signal.  Outbound transactions and
-/// watch-coin registrations are intercepted by the manager and are not present
-/// here.
+/// and coin-spend requests), the watch registrations intercepted during this
+/// drain, plus any resync signal. Outbound transactions are intercepted by the
+/// manager and are not present here.
 #[derive(Default)]
 pub struct ManagerDrain {
     pub events: CradleEventQueue,
+    pub watch_coins: Vec<CoinString>,
     pub resync: Option<(usize, bool)>,
 }
 
@@ -229,6 +231,10 @@ pub struct TransactionManager<C> {
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
     pending_events: CradleEventQueue,
+    /// Watch registrations intercepted during draining.  Runtime hosts consume
+    /// these as deltas; restore still seeds from the durable watched set.
+    #[serde(skip)]
+    pending_watch_coins: Vec<CoinString>,
     /// Resync signal observed during draining, surfaced to the hosting layer.
     #[serde(skip)]
     pending_resync: Option<(usize, bool)>,
@@ -240,8 +246,9 @@ pub struct TransactionManager<C> {
     /// reorged out before their creating transaction re-confirmed).  Surfaced to
     /// the resubmission layer so the creating transaction can be replayed.
     vanished_coins: std::collections::HashSet<CoinString>,
-    /// Transactions handed out for submission, kept so a reorged-out output can
-    /// be replayed by resubmitting the transaction that created it.
+    /// Transactions handed out for submission, kept so a reorged-out watched
+    /// protocol output can be replayed by resubmitting the transaction that
+    /// created it.
     submitted: Vec<SubmittedTx>,
     /// Coins observed live on-chain in the previous report.  Used to compute
     /// the created/deleted set difference, exactly mirroring the previous
@@ -301,6 +308,7 @@ impl<C> TransactionManager<C> {
             watched_coins: HashMap::new(),
             pending_submissions: Vec::new(),
             pending_events: CradleEventQueue::default(),
+            pending_watch_coins: Vec::new(),
             pending_resync: None,
             confirmation_depth: DEFAULT_CONFIRMATION_DEPTH,
             last_height: 0,
@@ -328,14 +336,14 @@ impl<C> TransactionManager<C> {
         self.confirmation_depth
     }
 
-    /// Coin strings the hosting layer should poll for on-chain state.
-    pub fn get_coins_to_poll(&self) -> Vec<CoinString> {
-        let mut coins: std::collections::BTreeSet<CoinString> =
-            self.watched_coins.keys().cloned().collect();
-        for tx in &self.submitted {
-            coins.extend(tx.expected_output_coins.iter().cloned());
-        }
-        coins.into_iter().collect()
+    /// Durable watched-coin snapshot for seeding the host poller.
+    pub fn snapshot_watched_coins(&self) -> Vec<CoinString> {
+        self.watched_coins
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// Coin string for a watched coin, if tracked.
@@ -362,9 +370,10 @@ impl<C> TransactionManager<C> {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
             } else {
                 let outputs = expected_output_coins(bundle);
-                // Eligible for blind rebroadcast only when we can observe it
-                // land (it creates a coin) and rebroadcasting it at any later
-                // height stays valid (no relative timelock).
+                // Eligible for blind rebroadcast only when it creates an output
+                // and rebroadcasting it at any later height stays valid (no
+                // relative timelock). Outputs are not polled from here; the
+                // input-spent path stops resubmission once any spend wins.
                 let auto_resubmit = !outputs.is_empty() && !bundle_has_relative_timelock(bundle);
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
@@ -425,6 +434,7 @@ impl<C> TransactionManager<C> {
                     spend,
                     ..
                 } => {
+                    self.pending_watch_coins.push(coin_string.clone());
                     self.register_watch(coin_string, timeout, spend);
                 }
                 other => {
@@ -730,12 +740,13 @@ impl<C: ManagedCradle> TransactionManager<C> {
         }
     }
 
-    /// Rebroadcast resubmit-eligible transactions that have not yet landed, once
-    /// per block, so a single dropped broadcast cannot strand the protocol while
-    /// waiting for a coin spend that never comes.  Only transactions that
+    /// Rebroadcast resubmit-eligible transactions that have not yet been proven
+    /// landed by an independently-watched protocol output, once per block, so a
+    /// single dropped broadcast cannot strand the protocol while waiting for a
+    /// coin spend that never comes.  Only transactions that
     ///
-    ///   * are flagged `auto_resubmit` (create an observable output and carry no
-    ///     relative timelock, so rebroadcasting at this height stays valid),
+    ///   * are flagged `auto_resubmit` (create an output and carry no relative
+    ///     timelock, so rebroadcasting at this height stays valid),
     ///   * have not been observed to land, and
     ///   * still have at least one input coin present (unspent)
     ///
@@ -867,6 +878,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
         self.absorb_events(result.events);
         Ok(ManagerDrain {
             events: std::mem::take(&mut self.pending_events),
+            watch_coins: std::mem::take(&mut self.pending_watch_coins),
             resync: self.pending_resync.take(),
         })
     }
@@ -1027,10 +1039,11 @@ mod tests {
 
         // WatchCoin is intercepted, not forwarded.
         assert!(drain.events.is_empty());
+        assert_eq!(drain.watch_coins, vec![coin.clone()]);
         let watched = mgr.watched_coin(&coin).expect("tracked");
         assert_eq!(watched.timeout_blocks, Timeout::new(100));
         assert_eq!(watched.birthday, None);
-        assert_eq!(mgr.get_coins_to_poll(), vec![coin]);
+        assert_eq!(mgr.snapshot_watched_coins(), vec![coin]);
     }
 
     #[test]
@@ -1293,6 +1306,40 @@ mod tests {
         let resubmitted = mgr.drain_submissions();
         assert_eq!(resubmitted.len(), 1);
         assert_eq!(resubmitted[0].name.as_deref(), Some("create-child"));
+    }
+
+    #[test]
+    fn submitted_outputs_are_not_poll_targets_unless_registered() {
+        let mut allocator = AllocEncoder::new();
+        let parent = test_coin(22);
+        let protocol_child = CoinString::from_parts(
+            &parent.to_coin_id(),
+            &PuzzleHash::from_bytes([23; 32]),
+            &Amount::new(1),
+        );
+        let untracked_child = CoinString::from_parts(
+            &parent.to_coin_id(),
+            &PuzzleHash::from_bytes([24; 32]),
+            &Amount::new(1),
+        );
+        let creating_tx =
+            test_bundle_spending_creating("create-untracked-child", &parent, &untracked_child);
+
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&protocol_child, 50),
+            CradleEvent::OutboundTransaction(creating_tx, None),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // Retained transaction outputs are replay/conflict metadata. They do
+        // not become host poll targets unless a protocol handler explicitly
+        // registers them as watched coins.
+        let poll_set = mgr.snapshot_watched_coins();
+        assert!(poll_set.contains(&protocol_child));
+        assert!(!poll_set.contains(&untracked_child));
     }
 
     /// Build a funding transaction spending `parent` and the channel coin it
@@ -1750,7 +1797,7 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 100 + depth, &[])
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
-        assert!(mgr.get_coins_to_poll().is_empty());
+        assert!(mgr.snapshot_watched_coins().is_empty());
     }
 
     #[test]
@@ -1811,7 +1858,7 @@ mod tests {
 
         // Host submits the spend; the manager retains it.
         assert_eq!(mgr.drain_submissions().len(), 1);
-        assert!(mgr.get_coins_to_poll().contains(&child));
+        assert!(!mgr.snapshot_watched_coins().contains(&child));
 
         // The input is spent, but the retained tx's expected child did not
         // appear.  A conflicting transaction won, so this local intent must be

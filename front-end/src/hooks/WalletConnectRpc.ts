@@ -47,37 +47,8 @@ import { walletConnectState } from './useWalletConnect';
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
-const WC_REQUEST_TIMEOUT_MS = 60000;
 const WC_RELAY_CONNECT_TIMEOUT_MS = 15000;
-// Quick read-only lookups normally return in 1-6s. WalletConnect requests are
-// serialized (see `serialized` below), so a lookup that hangs for the full long
-// timeout monopolizes the channel and blocks height delivery -- which is all the
-// handshake's new_block needs -- for that whole duration. Cap the quick methods
-// far lower so a stuck lookup is skipped fast and the poll keeps advancing.
-const WC_QUICK_REQUEST_TIMEOUT_MS = 15000;
-// State-changing operations can legitimately take the better part of a minute
-// (e.g. createOfferForIds builds and compresses an offer); keep the long cap.
-const WC_LONG_TIMEOUT_METHODS = new Set<ChiaMethod>([
-  ChiaMethod.GetNextAddress,
-  ChiaMethod.CreateOfferForIds,
-  ChiaMethod.PushTransactions,
-  ChiaMethod.CreateNewRemoteWallet,
-]);
-const WC_RETRY_DELAY_MS = 1000;
-const WC_INTER_REQUEST_MS = 50;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-let queueTail: Promise<unknown> = Promise.resolve();
-
-function serialized<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = queueTail;
-  const result = prev.then(() => delay(WC_INTER_REQUEST_MS)).then(fn);
-  queueTail = result.catch(() => {});
-  return result;
-}
+export const WC_INTER_REQUEST_MS = 50;
 
 function getErrorText(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -127,18 +98,6 @@ function deepNumbersToBigInt(value: unknown): unknown {
   return value;
 }
 
-function isTransientWalletConnectError(err: unknown): boolean {
-  const message = getErrorText(err).toLowerCase();
-  return (
-    message.includes('socket stalled') ||
-    message.includes('failed to fetch') ||
-    message.includes('networkerror') ||
-    message.includes('connection') ||
-    message.includes('websocket') ||
-    message.includes('timed out')
-  );
-}
-
 async function waitForRelayerConnected(): Promise<void> {
   const client = walletConnectState.getClient();
   if (!client) throw new Error('WalletConnect is not initialized');
@@ -174,95 +133,118 @@ async function waitForRelayerConnected(): Promise<void> {
   });
 }
 
+type PreparedRpc<T> = {
+  method: ChiaMethod;
+  params: Record<string, unknown>;
+  data: object;
+  paramKeys: string;
+  enqueuedAt: number;
+};
+
+class WalletConnectRpcClient {
+  request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
+    let prepared: PreparedRpc<T>;
+    try {
+      prepared = this.prepareRpc(method, data);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+    return this.runPreparedRpc(prepared).catch((e) => {
+      this.logRpcError(prepared, e);
+      throw walletConnectError(method, getErrorText(e), e);
+    });
+  }
+
+  private prepareRpc<T, D extends object>(
+    method: ChiaMethod,
+    data: D,
+  ): PreparedRpc<T> {
+    if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
+    if (!walletConnectState.getSession()) throw new Error('Session is not connected');
+
+    const address = walletConnectState.getAddress();
+    if (!address) {
+      throw new Error('no fingerprint set in walletconnect');
+    }
+    const fingerprint = Number.parseInt(address, 10);
+    if (!Number.isFinite(fingerprint)) {
+      throw new Error('walletconnect fingerprint is not a valid integer');
+    }
+
+    const params: Record<string, unknown> = {
+      ...data,
+      fingerprint,
+    };
+    const paramKeys = Object.keys(params).join(',');
+    const enqueuedAt = Date.now();
+
+    return {
+      method,
+      params,
+      data,
+      paramKeys,
+      enqueuedAt,
+    };
+  }
+
+  private async runPreparedRpc<T>(prepared: PreparedRpc<T>): Promise<T> {
+    const session = walletConnectState.getSession();
+    const client = walletConnectState.getClient();
+    if (!session) throw new Error('Session is not connected');
+    if (!client) throw new Error('WalletConnect is not initialized');
+
+    await waitForRelayerConnected();
+
+    try {
+      const raw = await client.request({
+        topic: session.topic,
+        chainId: walletConnectState.getChainId(),
+        request: { method: prepared.method, params: prepared.params },
+      });
+      return this.normalizeResult(prepared, raw);
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  private normalizeResult<T>(prepared: PreparedRpc<T>, raw: unknown): T {
+    const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
+    if (result?.error) {
+      const errorText = toDebugJson(result.error);
+      const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
+      if (shouldLogRpcError(prepared.method)) {
+        console.error(`[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}]\n  error: ${errorText}\n${trace}`);
+        log(`[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}] error=${errorText}`);
+      }
+      throw walletConnectError(prepared.method, errorText, result.error);
+    }
+
+    if (result?.data !== undefined) return result.data as T;
+    return result as T;
+  }
+
+  private logRpcError(prepared: PreparedRpc<unknown>, e: unknown): void {
+    const elapsed = Date.now() - prepared.enqueuedAt;
+    const errText = getErrorText(e);
+    if (shouldLogRpcError(prepared.method)) {
+      const knownTopics = walletConnectState.getClient()?.session?.keys ?? [];
+      const activeTopicNow = walletConnectState.getSession()?.topic ?? 'none';
+      log(
+        `[WC RPC error] ${prepared.method} after ${elapsed}ms: ${errText} paramKeys=[${prepared.paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
+      );
+      console.error(`[WC RPC error] ${prepared.method} paramKeys=[${prepared.paramKeys}]`, e);
+    }
+  }
+
+}
+
+export const walletConnectRpcClient = new WalletConnectRpcClient();
+
 async function request<T, D extends object = object>(
   method: ChiaMethod,
   data: D,
 ): Promise<T> {
-  if (!walletConnectState.getClient())
-    throw new Error('WalletConnect is not initialized');
-  if (!walletConnectState.getSession())
-    throw new Error('Session is not connected');
-
-  const address = walletConnectState.getAddress();
-  if (!address) {
-    throw new Error('no fingerprint set in walletconnect');
-  }
-  const fingerprint = Number.parseInt(address, 10);
-  if (!Number.isFinite(fingerprint)) {
-    throw new Error('walletconnect fingerprint is not a valid integer');
-  }
-
-  const params: Record<string, unknown> = {
-    ...data,
-    fingerprint,
-  };
-
-  const startedAt = Date.now();
-  const timeoutMs = WC_LONG_TIMEOUT_METHODS.has(method)
-    ? WC_REQUEST_TIMEOUT_MS
-    : WC_QUICK_REQUEST_TIMEOUT_MS;
-
-  let raw: unknown;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      const session = walletConnectState.getSession()!;
-      raw = await serialized(async () => {
-        await waitForRelayerConnected();
-        return Promise.race([
-          walletConnectState.getClient()!.request({
-            topic: session.topic,
-            chainId: walletConnectState.getChainId(),
-            request: { method, params },
-          }),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              reject(new Error(`WalletConnect RPC ${method} timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
-          }),
-        ]);
-      });
-      break;
-    } catch (e) {
-      const elapsed = Date.now() - startedAt;
-      const errText = getErrorText(e);
-      const knownTopics = walletConnectState.getClient()?.session?.keys ?? [];
-      const activeTopicNow = walletConnectState.getSession()?.topic ?? 'none';
-      const retryBlockedByMethod =
-        method === ChiaMethod.CreateOfferForIds
-        || method === ChiaMethod.CreateNewRemoteWallet;
-      const isRetryable = false
-        && attempt < 2
-        && !retryBlockedByMethod
-        && isTransientWalletConnectError(e);
-      const paramKeys = Object.keys(params).join(',');
-      if (shouldLogRpcError(method)) {
-        log(
-          `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} paramKeys=[${paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
-        );
-        console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}]`, e);
-      }
-      if (!isRetryable) {
-        throw walletConnectError(method, errText, e);
-      }
-      console.warn(`[WC] ${method} transient failure, retrying once...`, e);
-      await delay(WC_RETRY_DELAY_MS);
-    }
-  }
-
-  const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
-  if (result?.error) {
-    const errorText = toDebugJson(result.error);
-    const paramKeys = Object.keys(params).join(',');
-    const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
-    if (shouldLogRpcError(method)) {
-      console.error(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}]\n  error: ${errorText}\n${trace}`);
-      log(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}] error=${errorText}`);
-    }
-    throw walletConnectError(method, errorText, result.error);
-  }
-
-  if (result?.data !== undefined) return result.data as T;
-  return result as T;
+  return walletConnectRpcClient.request<T, D>(method, data);
 }
 
 async function getWallets(data: GetWalletsRequest) {
