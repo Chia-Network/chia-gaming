@@ -43,6 +43,20 @@ function makeRpc(heights: bigint[]): InternalBlockchainInterface {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function advanceLane(ms = 50): Promise<void> {
+  await jest.advanceTimersByTimeAsync(ms);
+}
+
 function hexByte(byte: number): string {
   return byte.toString(16).padStart(2, '0').repeat(32);
 }
@@ -69,11 +83,11 @@ describe('BlockchainPoller', () => {
     const rpc = makeRpc([100n, 90n]);
     const reportedPeaks: bigint[] = [];
     const cradle: PollingCradle = {
-      getCoinsToPoll: () => [],
-      reportCoinStates: (peak) => {
+      snapshotWatchedCoins: () => [],
+      reportCoinStates: () => {},
+      reportNewBlock: (peak) => {
         reportedPeaks.push(peak);
       },
-      reportNewBlock: () => {},
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
@@ -107,7 +121,7 @@ describe('BlockchainPoller', () => {
     );
     const reportedPeaks: bigint[] = [];
     const cradle: PollingCradle = {
-      getCoinsToPoll: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
+      snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
       reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
       },
@@ -125,6 +139,267 @@ describe('BlockchainPoller', () => {
     registerOk = true;
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(reportedPeaks).toEqual([100n]);
+  });
+
+  it('uses attach-time snapshots and runtime watch deltas instead of resampling every sweep', async () => {
+    let interests = [{ coin_name: 'aa', coin_string: 'coin-a' }];
+    let snapshotCalls = 0;
+    const queriedNames: string[][] = [];
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: (names: string[]) => {
+          queriedNames.push(names);
+          return Promise.resolve([]);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const cradle: PollingCradle = {
+      snapshotWatchedCoins: () => {
+        snapshotCalls++;
+        return interests;
+      },
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachCradle(cradle);
+    expect(snapshotCalls).toBe(1);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    interests = [{ coin_name: 'bb', coin_string: 'coin-b' }];
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    expect(snapshotCalls).toBe(1);
+    expect(queriedNames).toEqual([['aa'], ['aa']]);
+
+    poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
+    expect(snapshotCalls).toBe(1);
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    expect(queriedNames).toEqual([['aa'], ['aa'], ['aa', 'bb']]);
+  });
+
+  it('serializes public RPC calls through the coordinator lane', async () => {
+    jest.useFakeTimers();
+    const first = deferred<bigint>();
+    const second = deferred<bigint>();
+    const calls: string[] = [];
+    const rpc = new Proxy(
+      {
+        requestGapMs: 50,
+        getHeightInfo: () => {
+          calls.push('height');
+          return first.promise;
+        },
+        getBalance: () => {
+          calls.push('balance');
+          return second.promise;
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+
+    const p1 = poller.rpc.getHeightInfo();
+    const p2 = poller.rpc.getBalance();
+
+    await advanceLane();
+    expect(calls).toEqual(['height']);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(calls).toEqual(['height']);
+
+    first.resolve(7n);
+    await advanceLane();
+    expect(calls).toEqual(['height', 'balance']);
+
+    second.resolve(11n);
+    await expect(p1).resolves.toBe(7n);
+    await expect(p2).resolves.toBe(11n);
+    jest.useRealTimers();
+  });
+
+  it('prioritizes foreground wallet actions ahead of queued background RPCs', async () => {
+    jest.useFakeTimers();
+    const first = deferred<bigint>();
+    const createOffer = deferred<unknown>();
+    const selectCoins = deferred<string | null>();
+    const spend = deferred<string>();
+    const balance = deferred<bigint>();
+    const calls: string[] = [];
+    const rpc = new Proxy(
+      {
+        requestGapMs: 50,
+        getHeightInfo: () => {
+          calls.push('height');
+          return first.promise;
+        },
+        getBalance: () => {
+          calls.push('balance');
+          return balance.promise;
+        },
+        createOfferForIds: () => {
+          calls.push('createOfferForIds');
+          return createOffer.promise;
+        },
+        selectCoins: () => {
+          calls.push('selectCoins');
+          return selectCoins.promise;
+        },
+        spend: () => {
+          calls.push('spend');
+          return spend.promise;
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+
+    const p1 = poller.rpc.getHeightInfo();
+    await advanceLane();
+    const p2 = poller.rpc.getBalance();
+    const p3 = poller.rpc.createOfferForIds('u', {});
+    const p4 = poller.rpc.selectCoins('u', 1n);
+    const p5 = poller.rpc.spend('blob', {});
+
+    first.resolve(7n);
+    await advanceLane();
+    expect(calls).toEqual(['height', 'createOfferForIds']);
+    createOffer.resolve({});
+    await advanceLane();
+    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins']);
+    selectCoins.resolve(null);
+    await advanceLane();
+    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend']);
+    spend.resolve('');
+    await advanceLane();
+    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend', 'balance']);
+
+    balance.resolve(11n);
+    await expect(p1).resolves.toBe(7n);
+    await expect(p2).resolves.toBe(11n);
+    await expect(p3).resolves.toEqual({});
+    await expect(p4).resolves.toBeNull();
+    await expect(p5).resolves.toBe('');
+    jest.useRealTimers();
+  });
+
+  it('polls balance through the common coordinator loop', async () => {
+    jest.useFakeTimers();
+    const balance = deferred<bigint>();
+    const balances: bigint[] = [];
+    const rpc = new Proxy(
+      {
+        getBalance: jest.fn(() => balance.promise),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.startBalanceInterest(1000, { onBalance: (value) => balances.push(value) });
+    poller.startBalanceInterest(1000, { onBalance: (value) => balances.push(value) });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(1);
+    balance.resolve(23n);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(balances).toEqual([23n]);
+    jest.useRealTimers();
+  });
+
+  it('clears registered coin cache when the adapter registration scope changes', async () => {
+    let scope = '99';
+    const registered: string[][] = [];
+    const rpc = new Proxy(
+      {
+        getRegistrationScopeKey: () => scope,
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: (names: string[]) => {
+          registered.push(names);
+          return Promise.resolve();
+        },
+        getCoinRecordsByNames: () => Promise.resolve([]),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const cradle: PollingCradle = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachCradle(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    scope = '100';
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(registered).toEqual([['aa'], ['aa']]);
+  });
+
+  it('reports a spent-and-buried coin before removing it from later sweeps', async () => {
+    const record = makeCoinRecord(9);
+    record.spent = true;
+    record.spentBlockIndex = 10n;
+    const name = await coinRecordToName(record);
+    if (!name) {
+      throw new Error(`coinRecordToName returned undefined; env=${envDiag()}`);
+    }
+    const queriedNames: string[][] = [];
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: (names: string[]) => {
+          queriedNames.push(names);
+          return Promise.resolve([record]);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const cradle: PollingCradle = {
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-buried' }],
+      reportCoinStates: (peak, records) => {
+        reports.push({ peak, records });
+      },
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachCradle(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(reports).toEqual([{
+      peak: 100n,
+      records: [{ coin: 'coin-buried', created_height: 10n, spent_height: 10n }],
+    }]);
+    expect(queriedNames).toEqual([[name]]);
   });
 
   it('skips transient partial snapshots for coins that were previously observed', async () => {
@@ -164,7 +439,7 @@ describe('BlockchainPoller', () => {
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
     const cradle: PollingCradle = {
-      getCoinsToPoll: () => [
+      snapshotWatchedCoins: () => [
         { coin_name: nameA!, coin_string: 'coin-a' },
         { coin_name: nameB!, coin_string: 'coin-b' },
       ],
@@ -236,7 +511,7 @@ describe('BlockchainPoller', () => {
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
     const cradle: PollingCradle = {
-      getCoinsToPoll: () => [{ coin_name: nameA, coin_string: 'coin-a' }],
+      snapshotWatchedCoins: () => [{ coin_name: nameA, coin_string: 'coin-a' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
       },
@@ -278,7 +553,7 @@ describe('BlockchainPoller', () => {
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
     const cradle: PollingCradle = {
-      getCoinsToPoll: () => [{ coin_name: name, coin_string: 'coin-spent' }],
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-spent' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
       },

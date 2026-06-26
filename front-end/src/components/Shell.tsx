@@ -45,10 +45,9 @@ import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import {
-  walletConnectScheduler,
-  WC_BALANCE_POLL_INTERVAL_MS,
-  WC_CHAIN_POLL_INTERVAL_MS,
-} from '../hooks/JsonRpcContext';
+  BALANCE_POLL_INTERVAL_MS,
+  CHAIN_POLL_INTERVAL_MS,
+} from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldAdvertiseAvailable } from '../lib/restoreLifecycle';
@@ -79,7 +78,7 @@ const MOJOS_PER_XCH = 1_000_000_000_000;
 
 function getInterface(bcType: 'simulator' | 'walletconnect') {
   return bcType === 'walletconnect'
-    ? { iface: realBlockchainInfo, pollMs: WC_CHAIN_POLL_INTERVAL_MS }
+    ? { iface: realBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS }
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
@@ -677,7 +676,6 @@ const Shell = () => {
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
   const activePairingTokenRef = useRef<string | null>(null);
-  const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -755,49 +753,26 @@ const Shell = () => {
 
   // Balance polling
   const stopBalancePolling = useCallback(() => {
-    walletConnectScheduler.stopBalanceInterest();
-    if (balanceTimerRef.current) {
-      clearTimeout(balanceTimerRef.current);
-      balanceTimerRef.current = null;
-    }
-  }, []);
-
-  const requestBalance = useCallback(() => {
-    if (balanceTimerRef.current) {
-      clearTimeout(balanceTimerRef.current);
-      balanceTimerRef.current = null;
-    }
     try {
-      getActiveBlockchain().rpc.getBalance()
-        .then((bal) => {
-          setBalance(bal);
-          if (blockchainTypeRef.current !== 'walletconnect') {
-            balanceTimerRef.current = setTimeout(requestBalance, WC_BALANCE_POLL_INTERVAL_MS);
-          }
-        })
-        .catch(() => {
-          if (blockchainTypeRef.current !== 'walletconnect') {
-            balanceTimerRef.current = setTimeout(requestBalance, WC_BALANCE_POLL_INTERVAL_MS);
-          }
-        });
+      getActiveBlockchain().stopBalanceInterest();
     } catch {
       // blockchain not set yet
     }
   }, []);
 
-  const startBalancePolling = useCallback((bcType: 'simulator' | 'walletconnect') => {
+  const startBalancePolling = useCallback((_bcType: 'simulator' | 'walletconnect') => {
     stopBalancePolling();
-    if (bcType === 'walletconnect') {
-      walletConnectScheduler.startBalanceInterest(WC_BALANCE_POLL_INTERVAL_MS, {
+    try {
+      getActiveBlockchain().startBalanceInterest(BALANCE_POLL_INTERVAL_MS, {
         onBalance: (bal) => setBalance(bal),
         onError: () => {
-          // Keep balance polling best-effort; the scheduler will schedule the next attempt.
+          // Keep balance polling best-effort; the coordinator schedules the next attempt.
         },
       });
-      return;
+    } catch {
+      // blockchain not set yet
     }
-    requestBalance();
-  }, [requestBalance, stopBalancePolling]);
+  }, [stopBalancePolling]);
 
   useEffect(() => {
     return () => {

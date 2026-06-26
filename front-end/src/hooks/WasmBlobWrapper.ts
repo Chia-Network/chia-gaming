@@ -495,6 +495,9 @@ export class WasmBlobWrapper implements PollingCradle {
   processResult(result: WasmResult | undefined): void {
     if (!result) return;
 
+    for (const coin of result.watchCoins || []) {
+      this.blockchain.watchCoin(this, coin);
+    }
     for (const event of result.events || []) {
       this.eventQueue.push(event);
     }
@@ -711,12 +714,12 @@ export class WasmBlobWrapper implements PollingCradle {
 
   // --- PollingCradle: driven by the BlockchainPoller ---
 
-  getCoinsToPoll(): Array<{ coin_name: string; coin_string: string }> {
+  snapshotWatchedCoins(): Array<{ coin_name: string; coin_string: string }> {
     if (!this.cradle) return [];
     try {
-      return this.cradle.get_coins_to_poll();
+      return this.cradle.snapshot_watched_coins();
     } catch (e) {
-      diagStack('get_coins_to_poll failed', e);
+      diagStack('snapshot_watched_coins failed', e);
       return [];
     }
   }

@@ -1,4 +1,4 @@
-import { rpc, walletConnectScheduler } from '../hooks/JsonRpcContext';
+import { rpc, WC_INTER_REQUEST_MS } from '../hooks/WalletConnectRpc';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
@@ -144,7 +144,7 @@ async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Prom
 }
 
 export class RealBlockchainInterface implements InternalBlockchainInterface {
-  readonly usesWalletConnectScheduler = true;
+  readonly requestGapMs = WC_INTER_REQUEST_MS;
   blockchainAddressData: BlockchainInboundAddressResult;
 
   private remoteWalletId: bigint | undefined;
@@ -173,7 +173,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
       this.ensureRemoteWallet();
       await this.waitForRemoteWallet();
-      walletConnectScheduler.setRemoteWalletId(this.remoteWalletId);
     } catch (err) {
       const e = err as any;
       console.error('[wc-blockchain] startMonitoring failed:', err);
@@ -487,7 +486,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async registerCoins(names: string[]): Promise<void> {
     await this.waitForRemoteWallet();
-    walletConnectScheduler.setRemoteWalletId(this.remoteWalletId);
     await rpc.registerRemoteCoins({
       walletId: this.remoteWalletId!,
       coinIds: names,
@@ -594,7 +592,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       this.wcSubscription = null;
     }
     await walletConnectState.disconnect();
-    walletConnectScheduler.setRemoteWalletId(undefined);
     this.fireConnectionChange(false);
   }
 
@@ -606,6 +603,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.connectionListeners.add(cb);
     this.subscribeToWcEvents();
     return () => { this.connectionListeners.delete(cb); };
+  }
+
+  getRegistrationScopeKey(): string | undefined {
+    return this.remoteWalletId === undefined ? undefined : String(this.remoteWalletId);
   }
 }
 

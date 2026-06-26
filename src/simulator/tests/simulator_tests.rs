@@ -842,7 +842,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
         s.farm_block(&identity.puzzle_hash);
 
-        let poll = mgr.get_coins_to_poll();
+        let poll = mgr.snapshot_watched_coins();
         mgr.report_coin_states(&mut allocator, 2, &s.get_coin_states(&poll))
             .expect("report");
         mgr.flush_and_collect(&mut allocator).expect("flush");

@@ -2852,9 +2852,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {i} should reach ResolvedClean"
             );
             assert!(
-                outcome.cradles[i].get_coins_to_poll().len() <= 1,
+                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
                 "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
-                outcome.cradles[i].get_coins_to_poll(),
+                outcome.cradles[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
@@ -2888,9 +2888,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {i} should reach ResolvedClean"
             );
             assert!(
-                outcome.cradles[i].get_coins_to_poll().len() <= 1,
+                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
                 "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
-                outcome.cradles[i].get_coins_to_poll(),
+                outcome.cradles[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(

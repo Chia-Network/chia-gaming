@@ -60,8 +60,9 @@ is registered, the handler pre-builds the claim `SpendBundle` and attaches it to
 the registration. The plumbing carries it end to end:
 `Effect::RegisterCoin { spend: Option<SpendBundle>, .. }` →
 `CradleEvent::WatchCoin { spend, .. }` →
-`WalletSpendInterface::register_coin(.., spend)`. There are three eager-claim
-sites:
+`TransactionManager::register_watch(.., spend)`. The manager also returns the
+watch registration to the host as a `watchCoins` polling delta. There are three
+eager-claim sites:
 
 - the unroll-via-timeout claim, built at `WaitForTimeout` registration
 (`build_unroll_timeout_spend`);
@@ -95,7 +96,8 @@ semantic events merely because a reorg made the same transaction need replaying.
 **Retained transaction replay.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
-Those expected outputs are included in `get_coins_to_poll()`.
+Those expected outputs are replay/conflict metadata only. They do not become host
+poll targets unless a protocol handler separately registers the coin as watched.
 
 The replay rule is deliberately narrow:
 
@@ -171,6 +173,16 @@ set, so the present→absent diff cannot surface it. The manager captures these
 this a handler waiting on such a coin — e.g. an opponent-published unroll coin —
 never receives `coin_spent` and stalls forever
 (`coin_first_seen_already_spent_is_forwarded_as_spend`).
+
+**Host polling vs semantic coin ownership.** The browser-side poller owns the
+active transport queue of coin names to query. It reports raw coin-state
+observations to the WASM transaction manager, and it may stop polling a coin
+after it has reported a sufficiently buried spend. The transaction manager still
+owns the semantic lifecycle: it decides which observed states become
+`coin_created`/`coin_spent`, handles first-seen-spent coins, detects reorgs,
+re-arms timeout submissions, and prunes retained transactions. In other words,
+the poller may forget how to query a terminal coin, but it does not interpret
+what that terminal coin means for the channel or game.
 
 **Notifications ride the observed spend.** Terminal notifications are emitted
 from `handle_game_coin_spent` (via the `coin_spent` → `coin_puzzle_and_solution`

@@ -9,7 +9,7 @@
 //!   (`report_coin_states`) instead of receiving a pre-computed `WatchReport`.
 //! - It captures outbound transactions the cradle wants submitted
 //!   (`drain_submissions`) so the hosting layer becomes a thin RPC proxy.
-//! - It tracks which coins to poll (`get_coins_to_poll`).
+//! - It tracks watched coins (`snapshot_watched_coins` exposes a durable snapshot).
 //!
 //! Reorg boundary: protocol handlers are deliberately written as if reorgs do
 //! not happen. They register watched coins and hand this manager any
@@ -171,12 +171,13 @@ impl WatchedCoin {
 
 /// Result of draining the manager: the events the hosting layer still needs to
 /// act on (notifications, outbound messages, coin-solution requests, launcher
-/// and coin-spend requests), plus any resync signal.  Outbound transactions and
-/// watch-coin registrations are intercepted by the manager and are not present
-/// here.
+/// and coin-spend requests), the watch registrations intercepted during this
+/// drain, plus any resync signal. Outbound transactions are intercepted by the
+/// manager and are not present here.
 #[derive(Default)]
 pub struct ManagerDrain {
     pub events: CradleEventQueue,
+    pub watch_coins: Vec<CoinString>,
     pub resync: Option<(usize, bool)>,
 }
 
@@ -230,6 +231,10 @@ pub struct TransactionManager<C> {
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
     pending_events: CradleEventQueue,
+    /// Watch registrations intercepted during draining.  Runtime hosts consume
+    /// these as deltas; restore still seeds from the durable watched set.
+    #[serde(skip)]
+    pending_watch_coins: Vec<CoinString>,
     /// Resync signal observed during draining, surfaced to the hosting layer.
     #[serde(skip)]
     pending_resync: Option<(usize, bool)>,
@@ -303,6 +308,7 @@ impl<C> TransactionManager<C> {
             watched_coins: HashMap::new(),
             pending_submissions: Vec::new(),
             pending_events: CradleEventQueue::default(),
+            pending_watch_coins: Vec::new(),
             pending_resync: None,
             confirmation_depth: DEFAULT_CONFIRMATION_DEPTH,
             last_height: 0,
@@ -330,8 +336,8 @@ impl<C> TransactionManager<C> {
         self.confirmation_depth
     }
 
-    /// Coin strings the hosting layer should poll for on-chain state.
-    pub fn get_coins_to_poll(&self) -> Vec<CoinString> {
+    /// Durable watched-coin snapshot for seeding the host poller.
+    pub fn snapshot_watched_coins(&self) -> Vec<CoinString> {
         self.watched_coins
             .keys()
             .cloned()
@@ -428,6 +434,7 @@ impl<C> TransactionManager<C> {
                     spend,
                     ..
                 } => {
+                    self.pending_watch_coins.push(coin_string.clone());
                     self.register_watch(coin_string, timeout, spend);
                 }
                 other => {
@@ -871,6 +878,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
         self.absorb_events(result.events);
         Ok(ManagerDrain {
             events: std::mem::take(&mut self.pending_events),
+            watch_coins: std::mem::take(&mut self.pending_watch_coins),
             resync: self.pending_resync.take(),
         })
     }
@@ -1031,10 +1039,11 @@ mod tests {
 
         // WatchCoin is intercepted, not forwarded.
         assert!(drain.events.is_empty());
+        assert_eq!(drain.watch_coins, vec![coin.clone()]);
         let watched = mgr.watched_coin(&coin).expect("tracked");
         assert_eq!(watched.timeout_blocks, Timeout::new(100));
         assert_eq!(watched.birthday, None);
-        assert_eq!(mgr.get_coins_to_poll(), vec![coin]);
+        assert_eq!(mgr.snapshot_watched_coins(), vec![coin]);
     }
 
     #[test]
@@ -1328,7 +1337,7 @@ mod tests {
         // Retained transaction outputs are replay/conflict metadata. They do
         // not become host poll targets unless a protocol handler explicitly
         // registers them as watched coins.
-        let poll_set = mgr.get_coins_to_poll();
+        let poll_set = mgr.snapshot_watched_coins();
         assert!(poll_set.contains(&protocol_child));
         assert!(!poll_set.contains(&untracked_child));
     }
@@ -1788,7 +1797,7 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 100 + depth, &[])
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
-        assert!(mgr.get_coins_to_poll().is_empty());
+        assert!(mgr.snapshot_watched_coins().is_empty());
     }
 
     #[test]
@@ -1849,7 +1858,7 @@ mod tests {
 
         // Host submits the spend; the manager retains it.
         assert_eq!(mgr.drain_submissions().len(), 1);
-        assert!(!mgr.get_coins_to_poll().contains(&child));
+        assert!(!mgr.snapshot_watched_coins().contains(&child));
 
         // The input is spent, but the retained tx's expected child did not
         // appear.  A conflicting transaction won, so this local intent must be

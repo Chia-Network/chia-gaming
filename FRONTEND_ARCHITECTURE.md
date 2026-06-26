@@ -827,6 +827,41 @@ because there is no external wallet to scan the QR code. This triggers the
 `SimulatorSetupModal` overlay — the only place where Shell's UI differs between
 backends. All other connection logic is shared.
 
+### Blockchain Polling Architecture
+
+After a wallet backend is active, the player app uses `BlockchainPoller` as the
+host-side coordinator for chain observations. It separates three concerns:
+
+1. **Polling interest** — `WasmBlobWrapper`/`TransactionManager` know the
+   semantic meaning of watched coins. The frontend poller only receives the
+   transport-level projection: coin name plus full coin string. Runtime
+   additions arrive as `watchCoins` deltas from WASM drain results.
+   `snapshot_watched_coins()` is only the restore/attach snapshot of the durable
+   WASM interest set, not the per-sweep source of truth.
+2. **Scheduling** — `BlockchainPoller` owns one `AsyncJobQueue` per active
+   backend. That queue serializes both background polling and foreground wallet
+   actions exposed through `blockchain.rpc`, applying the backend's requested
+   inter-request gap. `AsyncPollingScheduler` runs the repeating height,
+   balance, and coin-sweep jobs by enqueueing them onto that same lane.
+3. **Connection adapters** — `FakeBlockchainInterface` and
+   `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
+   still handles fingerprint injection, relayer readiness, and remote-wallet
+   registration shape, but it does not own scheduling or coin lifecycle
+   semantics.
+
+Coin polling reports raw coin-state observations upward every successful sweep.
+The transaction manager computes semantic create/spend/reorg transitions from
+those observations. The scheduler may stop querying a coin after it has reported
+the coin spent and the spend is buried by the confirmation depth; this is generic
+poll-retention cleanup, not game/channel interpretation.
+
+When WASM processing registers new watched coins, `WasmBlobWrapper` applies the
+`watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
+`TransactionManager` already contains the semantic watch set, so
+`BlockchainPoller.attachCradle()` seeds itself once from `snapshot_watched_coins()`
+without replaying old events. Future explicit unwatch/abandon events should flow
+as deltas too.
+
 ### WalletConnect BigInt Serialization
 
 WalletConnect's internal JSON handling (`@walletconnect/safe-json`) uses a
@@ -1119,8 +1154,11 @@ protocol violations, not to limit concurrency.
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
 | `front-end/src/hooks/save.ts` | `SessionState` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
+| `front-end/src/hooks/BlockchainPoller.ts` | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots |
+| `front-end/src/lib/AsyncScheduler.ts` | Generic serialized async queue and repeating polling loop |
 | `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
 | `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
+| `front-end/src/hooks/WalletConnectRpc.ts` | WalletConnect RPC formatting/normalization helpers |
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |
