@@ -153,6 +153,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private lastConnectedState = false;
   private wcSubscription: { unsubscribe: () => void } | null = null;
   private pendingLocalRemovalsForNextPush: CoinsetCoin[] = [];
+  private monitoringReady = false;
+  private monitoringPromise: Promise<void> | null = null;
+  private monitoringEpoch = 0;
 
   constructor() {
     this.blockchainAddressData = { puzzleHash: '' };
@@ -163,6 +166,17 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async startMonitoring() {
+    if (this.monitoringPromise) {
+      return this.monitoringPromise;
+    }
+    const epoch = this.monitoringEpoch;
+    this.monitoringPromise = this.doStartMonitoring(epoch).finally(() => {
+      this.monitoringPromise = null;
+    });
+    return this.monitoringPromise;
+  }
+
+  private async doStartMonitoring(epoch: number) {
     try {
       const addr = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
       const puzzleHash = decodeBech32mPuzzleHash(addr);
@@ -173,11 +187,25 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
       this.ensureRemoteWallet();
       await this.waitForRemoteWallet();
+      if (epoch !== this.monitoringEpoch || !walletConnectState.getSession()) {
+        return;
+      }
+      this.monitoringReady = true;
+      this.fireConnectionChange(true);
     } catch (err) {
       const e = err as any;
       console.error('[wc-blockchain] startMonitoring failed:', err);
       throw err;
     }
+  }
+
+  private markDisconnected() {
+    this.monitoringEpoch++;
+    this.monitoringReady = false;
+    this.monitoringPromise = null;
+    this.remoteWalletId = undefined;
+    this.remoteWalletPending = false;
+    this.fireConnectionChange(false);
   }
 
   private spendSeq = 0;
@@ -555,7 +583,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     if (this.wcSubscription) return;
     this.wcSubscription = walletConnectState.getObservable().subscribe({
       next: (evt) => {
-        this.fireConnectionChange(evt.stateName === 'connected');
+        if (evt.stateName === 'connected') {
+          void this.startMonitoring().catch((err) => {
+            console.warn('[wc-blockchain] monitoring setup after WalletConnect event failed', err);
+            log(`[wc-blockchain] monitoring setup after WalletConnect event failed: ${String(err)}`);
+            this.markDisconnected();
+          });
+        } else if (evt.connected === false || (evt.stateName === 'initialized' && evt.sessions === 0)) {
+          this.markDisconnected();
+        }
       },
     });
   }
@@ -570,7 +606,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         skipQr: true,
         finalize: async () => {
           await this.startMonitoring();
-          this.fireConnectionChange(true);
         },
       };
     }
@@ -581,7 +616,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       finalize: async () => {
         await walletConnectState.connect(approval);
         await this.startMonitoring();
-        this.fireConnectionChange(true);
       },
     };
   }
@@ -592,7 +626,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       this.wcSubscription = null;
     }
     await walletConnectState.disconnect();
-    this.fireConnectionChange(false);
+    this.markDisconnected();
   }
 
   isConnected(): boolean {

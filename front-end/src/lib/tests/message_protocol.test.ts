@@ -374,7 +374,7 @@ describe('restore ordering', () => {
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);
     expect(statuses).toEqual(['idle', 'restoring', 'restored']);
@@ -489,7 +489,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameCradle(cradle);
-    blockchain.attachCradle(blob);
+    blob.attachBlockchain(blockchain);
     (cradle.snapshot_watched_coins as jest.Mock).mockClear();
 
     blob.processResult({
@@ -500,10 +500,10 @@ describe('transaction submission', () => {
 
     expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
-    blockchain.detachCradle(blob);
+    blob.detachBlockchain(blockchain);
   });
 
-  it('refreshes watched coins when a restored cradle is installed after poller attach', async () => {
+  it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
     const queriedNames: string[][] = [];
     const blockchain = new BlockchainPoller(new Proxy(
       {
@@ -522,7 +522,7 @@ describe('transaction submission', () => {
     ), 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new WasmBlobWrapper(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -530,12 +530,53 @@ describe('transaction submission', () => {
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blockchain.attachCradle(blob);
     blob.setGameCradle(cradle);
+    expect(queriedNames).toEqual([]);
+
+    blob.attachBlockchain(blockchain);
     await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
     expect(queriedNames).toEqual([['bb']]);
-    blockchain.detachCradle(blob);
+
+    blob.attachBlockchain(blockchain);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
+    blob.detachBlockchain(blockchain);
+  });
+
+  it('hydrates without blockchain and replays retained submissions on later attach', async () => {
+    const spend = jest.fn().mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+      getHeightInfo: () => Promise.resolve(1n),
+      registerCoins: () => Promise.resolve(),
+      getCoinRecordsByNames: () => Promise.resolve([]),
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
+      drain_submissions: jest.fn(() => [testSpendBundle('05')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.processResult({ events: [] });
+
+    expect(cradle.drain_submissions).not.toHaveBeenCalled();
+    expect(spend).not.toHaveBeenCalled();
+
+    blob.attachBlockchain(blockchain);
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    blob.detachBlockchain(blockchain);
   });
 
   it('submits drained transactions sequentially', async () => {

@@ -1,6 +1,7 @@
 import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
+  shouldMountGameSession,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
@@ -19,5 +20,20 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('none', false)).toBe(true);
     expect(shouldAdvertiseAvailable('resolved', false)).toBe(true);
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
+  });
+
+  it('mounts a saved session without requiring a live blockchain connection', () => {
+    expect(shouldMountGameSession(true, false, true, false)).toEqual({
+      startSession: true,
+      keepSession: true,
+    });
+    expect(shouldMountGameSession(true, false, false, false)).toEqual({
+      startSession: false,
+      keepSession: false,
+    });
+    expect(shouldMountGameSession(true, false, false, true)).toEqual({
+      startSession: false,
+      keepSession: true,
+    });
   });
 });
