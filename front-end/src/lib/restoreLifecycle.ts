@@ -42,3 +42,10 @@ export function shouldMountGameSession(
     keepSession: sessionCanMount && (sessionStarted || startSession),
   };
 }
+
+export function shouldSwitchToTrackerOnResolved(
+  previousPhase: SessionPhase,
+  hasError: boolean,
+): boolean {
+  return previousPhase !== 'none' && previousPhase !== 'on-chain' && !hasError;
+}

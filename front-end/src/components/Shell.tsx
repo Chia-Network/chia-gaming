@@ -51,7 +51,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldAdvertiseAvailable, shouldMountGameSession } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, shouldAdvertiseAvailable, shouldMountGameSession, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   selectGameDashboardView,
   selectStatusBarBalances,
@@ -1254,7 +1254,7 @@ const Shell = () => {
     trackerConnRef.current?.setBusy(false);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
-    if (previousPhase !== 'on-chain' && !hasError) {
+    if (shouldSwitchToTrackerOnResolved(previousPhase, !!hasError)) {
       setActiveTab('tracker');
     }
   }, [setActiveTab]);

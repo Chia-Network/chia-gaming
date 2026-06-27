@@ -2,6 +2,7 @@ import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
   shouldMountGameSession,
+  shouldSwitchToTrackerOnResolved,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
@@ -35,5 +36,12 @@ describe('restore lifecycle gates', () => {
       startSession: false,
       keepSession: true,
     });
+  });
+
+  it('only switches to tracker for a live clean-resolution transition', () => {
+    expect(shouldSwitchToTrackerOnResolved('none', false)).toBe(false);
+    expect(shouldSwitchToTrackerOnResolved('on-chain', false)).toBe(false);
+    expect(shouldSwitchToTrackerOnResolved('off-chain', true)).toBe(false);
+    expect(shouldSwitchToTrackerOnResolved('off-chain', false)).toBe(true);
   });
 });
