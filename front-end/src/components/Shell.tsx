@@ -416,6 +416,8 @@ const Shell = () => {
     saveActiveTab(tab);
   }, []);
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
+  const gameParamsRef = useRef<GameSessionParams | null>(null);
+  gameParamsRef.current = gameParams;
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
@@ -859,7 +861,8 @@ const Shell = () => {
       sessionFinishedCleanupRef.current = false;
       sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
-      conn.setBusy(save ? sessionSaveStartsBusy(save) : true);
+      const resolvedMyAlias = myAlias ?? save?.myAlias ?? save?.alias;
+      conn.setBusy(save ? sessionSaveStartsBusy(save) : true, resolvedMyAlias);
       peerConnTargetRef.current = conn.getPeerConnection();
       if (!save) {
         setRestoreStatus('idle');
@@ -873,7 +876,6 @@ const Shell = () => {
       const alreadyHydrated = !!sessionSaveRef.current;
       if (!alreadyHydrated) {
         sessionSaveRef.current = save;
-        const resolvedMyAlias = myAlias ?? save?.myAlias;
         const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
         setGameParams({
           iStarted,
@@ -1030,6 +1032,7 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
+          conn.refreshPresence(gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias);
         },
         onTrackerActivity: () => {
           lastTrackerActivityRef.current = Date.now();
@@ -1049,7 +1052,10 @@ const Shell = () => {
             setTrackerAlert(true);
           }
         },
-      }, { initialBusy: sessionSaveStartsBusy(initialSave) });
+      }, {
+        initialBusy: sessionSaveStartsBusy(initialSave),
+        initialAlias: initialSave?.myAlias ?? initialSave?.alias,
+      });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
       saveTrackerUrl(undefined);
@@ -1251,7 +1257,7 @@ const Shell = () => {
 
     console.log('[Shell] session resolved; marking not busy');
     sessionFinishedCleanupRef.current = true;
-    trackerConnRef.current?.setBusy(false);
+    trackerConnRef.current?.setBusy(false, gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
     if (shouldSwitchToTrackerOnResolved(previousPhase, !!hasError)) {
@@ -1278,8 +1284,11 @@ const Shell = () => {
   const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
 
   useEffect(() => {
-    trackerConnRef.current?.setBusy(!shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
-  }, [sessionPhase, restoreBlocked]);
+    trackerConnRef.current?.setBusy(
+      !shouldAdvertiseAvailable(sessionPhase, restoreBlocked),
+      gameParams?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
+    );
+  }, [sessionPhase, restoreBlocked, gameParams?.myAlias]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -1501,6 +1510,7 @@ const Shell = () => {
   }, []);
 
   const cancelDashboardSession = useCallback(() => {
+    const alias = gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
     trackerConnRef.current?.close();
     markPeerInactive();
     destroyBlobSingleton();
@@ -1521,7 +1531,7 @@ const Shell = () => {
     setHistory([]);
     setChatMessages([]);
     setActiveTab('tracker');
-    trackerConnRef.current?.setBusy(false);
+    trackerConnRef.current?.setBusy(false, alias);
   }, [markPeerInactive, setActiveTab]);
 
   const requestDashboardCleanShutdown = useCallback(() => {

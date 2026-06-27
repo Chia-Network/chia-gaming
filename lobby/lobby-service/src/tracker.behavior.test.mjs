@@ -211,3 +211,48 @@ test('challenge authority and availability come from bound sessions', async () =
     await tracker.stop();
   }
 });
+
+test('playing status uses cached opponent alias after lobby disconnect', async () => {
+  const tracker = await startTracker();
+  try {
+    const aliceSession = 'secret-alice-alias-cache';
+    const bobSession = 'secret-bob-alias-cache';
+    const alice = await joinLobby(tracker.origin, aliceSession, 'Alice');
+    const bob = await joinLobby(tracker.origin, bobSession, 'Bob');
+    const aliceGame = await identifyGame(tracker.origin, aliceSession);
+    const bobGame = await identifyGame(tracker.origin, bobSession);
+
+    sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, amount: '100' });
+    const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
+    const aliceMatched = nextJson(aliceGame, (msg) => msg.type === 'matched');
+    const bobMatched = nextJson(bobGame, (msg) => msg.type === 'matched');
+    sendJson(bob.lobby, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    sendJson(alice.lobby, { type: 'leave' });
+    await nextJson(bob.lobby, (msg) =>
+      msg.type === 'lobby_update' && !msg.players.some((player) => player.id === alice.id),
+    );
+
+    sendJson(bobGame, { type: 'set_busy', session_id: bobSession, busy: false, alias: 'Bob' });
+    await nextJson(bob.lobby, (msg) =>
+      msg.type === 'lobby_update' &&
+      msg.players.some((player) => player.id === bob.id && player.status === 'waiting'),
+    );
+
+    sendJson(bobGame, { type: 'set_busy', session_id: bobSession, busy: true, alias: 'Bob' });
+    const update = await nextJson(bob.lobby, (msg) =>
+      msg.type === 'lobby_update' &&
+      msg.players.some((player) => player.id === bob.id && player.status === 'playing'),
+    );
+    const bobPlayer = update.players.find((player) => player.id === bob.id);
+    assert.equal(bobPlayer.opponent_alias, 'Alice');
+
+    await closeWs(alice.lobby);
+    await closeWs(bob.lobby);
+    await closeWs(aliceGame);
+    await closeWs(bobGame);
+  } finally {
+    await tracker.stop();
+  }
+});
