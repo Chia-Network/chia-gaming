@@ -328,6 +328,7 @@ export class WasmBlobWrapper implements PollingCradle {
 
   setGameCradle(cradle: ChiaGame) {
     this.cradle = cradle;
+    this.blockchain.snapshotCradleCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
