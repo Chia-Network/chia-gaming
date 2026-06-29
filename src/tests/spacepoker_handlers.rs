@@ -680,6 +680,7 @@ fn find_bob_seed_for_outcome(
     panic!("could not find seeds for coin toss outcome");
 }
 
+#[test]
 fn test_spacepoker_setup_game() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -723,6 +724,7 @@ fn parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
     .is_ok()
 }
 
+#[test]
 fn test_spacepoker_make_proposal_requires_explicit_valid_bet_unit() {
     let mut allocator = AllocEncoder::new();
 
@@ -751,6 +753,7 @@ fn test_spacepoker_make_proposal_requires_explicit_valid_bet_unit() {
     );
 }
 
+#[test]
 fn test_spacepoker_parser_rejects_invalid_peer_bet_unit() {
     let mut allocator = AllocEncoder::new();
 
@@ -777,6 +780,7 @@ fn test_spacepoker_parser_rejects_invalid_peer_bet_unit() {
     );
 }
 
+#[test]
 fn test_spacepoker_happy_path_all_calls() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -835,6 +839,7 @@ fn test_spacepoker_happy_path_all_calls() {
 // Coin toss says Alice opens: 2 nil moves (commitA, commitB), then Alice
 // opens directly. Standard alternation, Alice ends. Uses seeds picked so
 // that mover_opens is true for Alice.
+#[test]
 fn test_spacepoker_happy_path_alice_opens() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -886,6 +891,7 @@ fn test_spacepoker_happy_path_alice_opens() {
 // Coin toss says Alice must pong: 3 nil-style moves (commitA, commitB,
 // Alice pong), then Bob opens. Bob and Alice's roles in the betting
 // alternation are swapped from the alice-opens case, and Bob ends.
+#[test]
 fn test_spacepoker_happy_path_alice_pongs() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -945,6 +951,7 @@ fn test_spacepoker_happy_path_alice_pongs() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
 fn test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -996,6 +1003,7 @@ fn test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move()
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
 fn test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1069,6 +1077,7 @@ fn run_hand_eval(allocator: &mut AllocEncoder, cards: &[i64], boost: i64) -> Vec
     items.iter().map(|n| int_from_node(allocator, *n)).collect()
 }
 
+#[test]
 fn test_hand_eval_high_card() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[14, 10, 7, 5, 3], 0);
@@ -1079,12 +1088,14 @@ fn test_hand_eval_high_card() {
     );
 }
 
+#[test]
 fn test_hand_eval_pair() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 7, 5, 3], 0);
     assert_eq!(result[0], 2, "pair should have leading count 2");
 }
 
+#[test]
 fn test_hand_eval_two_pair() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 7, 7, 3], 0);
@@ -1092,6 +1103,7 @@ fn test_hand_eval_two_pair() {
     assert_eq!(result[1], 2, "two pair second count = 2");
 }
 
+#[test]
 fn test_hand_eval_set() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 7, 3], 0);
@@ -1100,6 +1112,7 @@ fn test_hand_eval_set() {
     assert_eq!(result[2], 1, "set third count = 1");
 }
 
+#[test]
 fn test_hand_eval_straight() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 9, 8, 7, 6], 0);
@@ -1107,6 +1120,7 @@ fn test_hand_eval_straight() {
     assert_eq!(result[1], 3, "straight second = 3");
 }
 
+#[test]
 fn test_hand_eval_full_house() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 7, 7], 0);
@@ -1114,18 +1128,21 @@ fn test_hand_eval_full_house() {
     assert_eq!(result[1], 2, "full house second count = 2");
 }
 
+#[test]
 fn test_hand_eval_four_of_a_kind() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 10, 7], 0);
     assert_eq!(result[0], 4, "four of a kind first count = 4");
 }
 
+#[test]
 fn test_hand_eval_five_of_a_kind() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 10, 10], 0);
     assert_eq!(result[0], 5, "five of a kind first count = 5");
 }
 
+#[test]
 fn test_straight_beats_full_house() {
     let mut a = AllocEncoder::new();
     let straight = run_hand_eval(&mut a, &[10, 9, 8, 7, 6], 0);
@@ -1141,6 +1158,7 @@ fn test_straight_beats_full_house() {
     );
 }
 
+#[test]
 fn test_boosted_set_does_not_beat_unboosted_full_house() {
     let mut a = AllocEncoder::new();
     let boosted_set = run_hand_eval(&mut a, &[10, 10, 10, 7, 3], 1);
@@ -1153,6 +1171,7 @@ fn test_boosted_set_does_not_beat_unboosted_full_house() {
     );
 }
 
+#[test]
 fn test_boost_wins_within_same_hand_type() {
     let mut a = AllocEncoder::new();
     let boosted_pair = run_hand_eval(&mut a, &[10, 10, 7, 5, 3], 1);
@@ -1165,6 +1184,7 @@ fn test_boost_wins_within_same_hand_type() {
     );
 }
 
+#[test]
 fn test_evil_path_wrong_mover_share() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1257,6 +1277,7 @@ fn run_end_validator_with_evidence(
     code
 }
 
+#[test]
 fn test_generous_mover_share_allowed() {
     let mut allocator = AllocEncoder::new();
 
@@ -1290,6 +1311,7 @@ fn test_generous_mover_share_allowed() {
     );
 }
 
+#[test]
 fn test_greedy_mover_share_slashed() {
     let mut allocator = AllocEncoder::new();
 
@@ -1367,6 +1389,7 @@ fn readable_tag(allocator: &mut AllocEncoder, readable: NodePtr) -> String {
 //
 // Uses run_handler_game for the setup phase, then manually inspects the
 // key steps.
+#[test]
 fn test_spacepoker_open_readable_has_cards_and_message_parser() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1709,6 +1732,7 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
 // Alice opens with a raise, Bob calls. Exercises the raise path which
 // requires mover_share to remain unchanged on the initial open (the bet
 // only commits once the opponent responds).
+#[test]
 fn test_spacepoker_raise_and_call() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1779,6 +1803,7 @@ fn test_spacepoker_raise_and_call() {
 // Alice raises, Bob re-raises, Alice calls. Exercises the mid_round
 // re-raise path and subsequent call. On re-raise the prior raise commits
 // to the pot for both players (half_pot += last_raise).
+#[test]
 fn test_spacepoker_reraise_and_call() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1862,6 +1887,7 @@ fn test_spacepoker_reraise_and_call() {
 
 // Alice raises, Bob calls on street 1. Then Alice raises again on street 2,
 // Bob calls again. Exercises repeated raise+call across multiple streets.
+#[test]
 fn test_spacepoker_raise_call_multiple_streets() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);

@@ -314,9 +314,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
     this.setupComplete = false;
     this.fireConnectionChange(false);
-    if (this.pending.size > 0) {
-      diagNote(`FakeBlockchain close(): rejecting ${this.pending.size} pending request(s) with "closed" (ids=${[...this.pending.keys()].join(',')})`);
-    }
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));
     }

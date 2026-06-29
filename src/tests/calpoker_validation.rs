@@ -618,6 +618,7 @@ fn e_move(td: &TestData) -> Vec<u8> {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
+#[test]
 fn test_calpoker_validator_hashes() {
     let mut allocator = AllocEncoder::new();
     let lib = load_validators(&mut allocator);
@@ -628,6 +629,7 @@ fn test_calpoker_validator_hashes() {
     }
 }
 
+#[test]
 fn test_calpoker_a_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -641,6 +643,7 @@ fn test_calpoker_a_slash_too_short() {
     );
 }
 
+#[test]
 fn test_calpoker_a_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -656,6 +659,7 @@ fn test_calpoker_a_slash_too_long() {
     );
 }
 
+#[test]
 fn test_calpoker_b_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -683,6 +687,7 @@ fn test_calpoker_b_slash_too_short() {
     );
 }
 
+#[test]
 fn test_calpoker_b_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -712,6 +717,7 @@ fn test_calpoker_b_slash_too_long() {
     );
 }
 
+#[test]
 fn test_calpoker_c_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -735,6 +741,7 @@ fn test_calpoker_c_slash_too_short() {
     );
 }
 
+#[test]
 fn test_calpoker_c_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -760,6 +767,7 @@ fn test_calpoker_c_slash_too_long() {
     );
 }
 
+#[test]
 fn test_calpoker_c_slash_bad_alice_reveal() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -787,6 +795,7 @@ fn test_calpoker_c_slash_bad_alice_reveal() {
     );
 }
 
+#[test]
 fn test_calpoker_d_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -811,6 +820,7 @@ fn test_calpoker_d_slash_too_short() {
     );
 }
 
+#[test]
 fn test_calpoker_d_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -835,6 +845,7 @@ fn test_calpoker_d_slash_too_long() {
     );
 }
 
+#[test]
 fn test_calpoker_d_slash_too_few_bits() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -859,6 +870,7 @@ fn test_calpoker_d_slash_too_few_bits() {
     );
 }
 
+#[test]
 fn test_calpoker_d_slash_too_many_bits() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -883,6 +895,7 @@ fn test_calpoker_d_slash_too_many_bits() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -905,6 +918,7 @@ fn test_calpoker_e_slash_too_short() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -928,6 +942,7 @@ fn test_calpoker_e_slash_too_long() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_bad_reveal() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -952,6 +967,7 @@ fn test_calpoker_e_slash_bad_reveal() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_too_few_discards() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -976,6 +992,7 @@ fn test_calpoker_e_slash_too_few_discards() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_too_many_discards() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1000,6 +1017,7 @@ fn test_calpoker_e_slash_too_many_discards() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_too_few_selections() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1024,6 +1042,7 @@ fn test_calpoker_e_slash_too_few_selections() {
     );
 }
 
+#[test]
 fn test_calpoker_e_slash_too_many_selections() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1048,6 +1067,7 @@ fn test_calpoker_e_slash_too_many_selections() {
     );
 }
 
+#[test]
 fn test_calpoker_happy_path() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1068,6 +1088,7 @@ fn test_calpoker_happy_path() {
     );
 }
 
+#[test]
 fn test_calpoker_e_mover_share_zero_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1089,6 +1110,7 @@ fn test_calpoker_e_mover_share_zero_slash() {
     );
 }
 
+#[test]
 fn test_calpoker_e_alice_loss_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1113,6 +1135,7 @@ fn test_calpoker_e_alice_loss_slash() {
     );
 }
 
+#[test]
 fn test_calpoker_e_alice_loss_mover_share_100_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1137,6 +1160,7 @@ fn test_calpoker_e_alice_loss_mover_share_100_slash() {
     );
 }
 
+#[test]
 fn test_calpoker_e_bob_loss_make_move() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1158,6 +1182,7 @@ fn test_calpoker_e_bob_loss_make_move() {
     );
 }
 
+#[test]
 fn test_calpoker_e_bob_loss_zero_make_move() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1179,6 +1204,7 @@ fn test_calpoker_e_bob_loss_zero_make_move() {
     );
 }
 
+#[test]
 fn test_calpoker_e_nil_evidence_exception() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1194,6 +1220,7 @@ fn test_calpoker_e_nil_evidence_exception() {
     );
 }
 
+#[test]
 fn test_calpoker_e_bad_evidence_exception() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1230,6 +1257,7 @@ fn expected_infohash_b_for_valid_a_move(
     sha256_concat(&[&b_hash, &move_state_hash])
 }
 
+#[test]
 fn test_slash_succeeds_on_explicit_validator_slash() {
     let mut allocator = AllocEncoder::new();
     let invalid_move = vec![0xAA; 31];
@@ -1240,6 +1268,7 @@ fn test_slash_succeeds_on_explicit_validator_slash() {
     );
 }
 
+#[test]
 fn test_slash_succeeds_on_infohash_misalignment() {
     let mut allocator = AllocEncoder::new();
     let valid_move = vec![0xAB; 32];
@@ -1250,6 +1279,7 @@ fn test_slash_succeeds_on_infohash_misalignment() {
     );
 }
 
+#[test]
 fn test_slash_succeeds_on_max_move_size_misalignment() {
     let mut allocator = AllocEncoder::new();
     let valid_move = vec![0xAC; 32];
@@ -1261,6 +1291,7 @@ fn test_slash_succeeds_on_max_move_size_misalignment() {
     );
 }
 
+#[test]
 fn test_slash_fails_on_aligned_valid_move() {
     let mut allocator = AllocEncoder::new();
     let valid_move = vec![0xAD; 32];
@@ -1272,6 +1303,7 @@ fn test_slash_fails_on_aligned_valid_move() {
     );
 }
 
+#[test]
 fn test_move_rejects_when_new_move_exceeds_max_move_size() {
     let mut allocator = AllocEncoder::new();
     let too_large_move = vec![0xEF; 9];
@@ -1424,6 +1456,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 /// coin has INFOHASH_B = nil. Slashing this coin should fail because the game
 /// is over and the move was valid. This test confirms whether the referee
 /// puzzle correctly rejects slash on a terminal coin.
+#[test]
 fn test_terminal_coin_nil_infohash_b_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -1535,6 +1568,7 @@ fn test_terminal_coin_nil_infohash_b_slash() {
 /// Same setup as the valid-move terminal test, but the mover cheated by
 /// claiming mover_share = 0 when they should get more. The validator returns
 /// nil (invalid move), so slash must succeed even on a terminal coin.
+#[test]
 fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
