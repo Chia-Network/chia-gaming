@@ -128,7 +128,7 @@ function CardColumn({
   );
 }
 
-type HoleCardsBannerKind = 'fold' | 'win' | 'tie' | null;
+type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | null;
 
 function HoleCardsGroup({
   boosted,
@@ -155,7 +155,7 @@ function HoleCardsGroup({
               : 'bg-canvas-solid text-canvas-on-solid'
           }`}
         >
-          {banner === 'win' ? 'Winner!' : banner === 'tie' ? 'Tie' : 'Fold'}
+          {banner === 'win' ? 'Winner!' : banner === 'tie' ? 'Tie' : banner === 'concede' ? 'Concede' : 'Fold'}
         </span>
       )}
     </div>
@@ -174,6 +174,7 @@ function entrySymbol(entry: SpHandEntry, formatBet: (units: bigint) => string): 
   if (entry.action === 'check') return entry.endsStreet ? '\u270B' : '\u2705';
   if (entry.action === 'call') return '\u270B';
   if (entry.action === 'fold') return '\u274C';
+  if (entry.action === 'concede') return '\u{1F3F3}\uFE0F';
   if (entry.action === 'reveal') return '\u{1F440}';
   return formatBet(entry.units ?? 0n);
 }
@@ -397,9 +398,9 @@ export default function SpacePoker({
     hasShowdownOutcome
       ? ''
       : sp.terminalState === 'conceded-by-opponent'
-        ? 'Opponent accepted the result after the final call. You won without seeing their hole cards.'
+        ? 'You revealed first and the opponent conceded.'
         : sp.terminalState === 'conceded-by-you'
-          ? 'You accepted the result after the final call.'
+          ? 'The opponent revealed first and you conceded.'
           : '';
 
   // Calpoker-style pill banners shown immediately to the right of each player's
@@ -415,9 +416,13 @@ export default function SpacePoker({
       playerBanner = 'tie';
       oppBanner = 'tie';
     }
-  } else if (sp.terminalState === 'folded-by-you' || sp.terminalState === 'conceded-by-you') {
+  } else if (sp.terminalState === 'conceded-by-you') {
+    playerBanner = 'concede';
+  } else if (sp.terminalState === 'conceded-by-opponent') {
+    oppBanner = 'concede';
+  } else if (sp.terminalState === 'folded-by-you') {
     playerBanner = 'fold';
-  } else if (sp.terminalState === 'folded-by-opponent' || sp.terminalState === 'conceded-by-opponent') {
+  } else if (sp.terminalState === 'folded-by-opponent') {
     oppBanner = 'fold';
   }
 
