@@ -44,14 +44,16 @@ export type GameplayEvent =
   | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: Uint8Array | number[] } }
   | { GameMessage: { readable: Uint8Array | number[] } }
-  | { Timeout: { byUs: boolean; forfeited: boolean; cleanEnd?: boolean } }
+  | { Timeout: { byUs: boolean; forfeited: boolean } }
   | { GameError: { reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
   return coerceToBytes(value);
 }
 
-function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): GameplayEvent {
+export function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): GameplayEvent | null {
+  if (info.cleanEnd) return null;
+
   switch (info.type) {
     case 'forfeit':
       // A forfeit is a timeout-based terminal where the loser intentionally
@@ -62,11 +64,9 @@ function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): 
       // ended-opponent-timed-out.
       return { Timeout: { byUs: status === 'ended-we-timed-out', forfeited: true } };
     case 'we-timed-out':
-      // cleanEnd (game_finished) means the game completed normally and the
-      // "timeout" is just the off-chain endgame give-up, not a real timeout.
-      return { Timeout: { byUs: true, forfeited: false, cleanEnd: info.cleanEnd } };
+      return { Timeout: { byUs: true, forfeited: false } };
     case 'opponent-timed-out':
-      return { Timeout: { byUs: false, forfeited: false, cleanEnd: info.cleanEnd } };
+      return { Timeout: { byUs: false, forfeited: false } };
     default:
       return { GameError: { reason: info.label ?? info.type } };
   }
@@ -299,10 +299,11 @@ function parseTimeoutBlocks(v: unknown): bigint | null {
   }
 }
 
-function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
+export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
     const clean = !!gs.other_params?.game_finished;
     const forfeited = !!gs.other_params?.forfeited;
+    const offChainAccept = !clean && !gs.coin_id && gs.reason !== 'move too late';
     if (forfeited) {
       return {
         type: 'forfeit',
@@ -314,6 +315,8 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
     let label: string;
     if (clean) {
       label = 'Ended cleanly';
+    } else if (offChainAccept) {
+      label = 'Folded';
     } else if (turnState === 'replaying' || turnState === 'their-turn') {
       label = 'Move too late';
     } else {
@@ -331,6 +334,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
   if (gs.status === 'ended-opponent-timed-out') {
     const clean = !!gs.other_params?.game_finished;
     const forfeited = !!gs.other_params?.forfeited;
+    const offChainAccept = !clean && !gs.coin_id;
     if (forfeited) {
       return {
         type: 'forfeit',
@@ -341,7 +345,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
     }
     return {
       type: 'opponent-timed-out',
-      label: clean ? 'Ended cleanly' : 'Opponent took too long to move',
+      label: clean ? 'Ended cleanly' : offChainAccept ? 'Opponent folded' : 'Opponent took too long to move',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
       cleanEnd: clean,
@@ -1201,7 +1205,10 @@ export function useGameSession(
           // Routine end-of-hand transitions no longer pop up; the result is
           // shown in the status-bar balances and (for Space Poker) on the table.
         }
-        gameplayEventSubject.next(terminalEventForInfo(terminalInfo, status));
+        const terminalEvent = terminalEventForInfo(terminalInfo, status);
+        if (terminalEvent) {
+          gameplayEventSubject.next(terminalEvent);
+        }
         return;
       }
 

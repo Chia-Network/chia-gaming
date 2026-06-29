@@ -128,7 +128,7 @@ function CardColumn({
   );
 }
 
-type HoleCardsBannerKind = 'fold' | 'win' | null;
+type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | null;
 
 function HoleCardsGroup({
   boosted,
@@ -155,7 +155,7 @@ function HoleCardsGroup({
               : 'bg-canvas-solid text-canvas-on-solid'
           }`}
         >
-          {banner === 'win' ? 'Winner!' : 'Fold'}
+          {banner === 'win' ? 'Winner!' : banner === 'tie' ? 'Tie' : banner === 'concede' ? 'Concede' : 'Fold'}
         </span>
       )}
     </div>
@@ -174,6 +174,7 @@ function entrySymbol(entry: SpHandEntry, formatBet: (units: bigint) => string): 
   if (entry.action === 'check') return entry.endsStreet ? '\u270B' : '\u2705';
   if (entry.action === 'call') return '\u270B';
   if (entry.action === 'fold') return '\u274C';
+  if (entry.action === 'concede') return '\u{1F3F3}\uFE0F';
   if (entry.action === 'reveal') return '\u{1F440}';
   return formatBet(entry.units ?? 0n);
 }
@@ -358,10 +359,11 @@ export default function SpacePoker({
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
   const maxRaise = sp.playerStack - (sp.lastRaise > 0n ? sp.lastRaise : 0n);
   const historyRows = buildHistoryRows(sp.handHistory, sp.formatBet);
+  const showdownOutcome = sp.outcome;
+  const hasShowdownOutcome = !!showdownOutcome;
   const showPrivateShowdown =
     sp.terminalState === 'revealed' ||
-    sp.terminalState === 'conceded-by-you' ||
-    (handler === SpHandler.End && myTurn && !!sp.outcome);
+    hasShowdownOutcome;
 
   const oppHandDesc =
     showPrivateShowdown && sp.outcome?.opponentHandEval && sp.outcome.opponentHandEval.length > 0
@@ -375,7 +377,10 @@ export default function SpacePoker({
   const finished = handler === SpHandler.Showdown || handler === SpHandler.Folded;
   let playerIndicator = '';
   let oppIndicator = '';
-  if (sp.terminalState === 'conceded-by-opponent') {
+  if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
+    playerIndicator = showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
+    oppIndicator = showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
+  } else if (sp.terminalState === 'conceded-by-opponent') {
     playerIndicator = ' \u2705';
     oppIndicator = ' \u274C';
   } else if (sp.terminalState === 'conceded-by-you') {
@@ -387,33 +392,38 @@ export default function SpacePoker({
   } else if (sp.terminalState === 'folded-by-opponent') {
     playerIndicator = ' \u2705';
     oppIndicator = ' \u274C';
-  } else if (finished && sp.outcome) {
-    playerIndicator = sp.outcome.result > 0n ? ' \u2705' : sp.outcome.result < 0n ? ' \u274C' : '';
-    oppIndicator = sp.outcome.result < 0n ? ' \u2705' : sp.outcome.result > 0n ? ' \u274C' : '';
   }
 
   const settlementNote =
-    sp.terminalState === 'conceded-by-opponent'
-      ? 'Opponent accepted the result after the final call. You won without seeing their hole cards.'
-      : sp.terminalState === 'conceded-by-you'
-        ? 'You accepted the result after the final call.'
-        : '';
+    hasShowdownOutcome
+      ? ''
+      : sp.terminalState === 'conceded-by-opponent'
+        ? 'You revealed first and the opponent conceded.'
+        : sp.terminalState === 'conceded-by-you'
+          ? 'The opponent revealed first and you conceded.'
+          : '';
 
   // Calpoker-style pill banners shown immediately to the right of each player's
-  // hole cards: "Fold" (canvas-colored) on whoever folded/conceded, and a
-  // winner-colored "Winner!" on the winning side at a showdown.
+  // hole cards.
   let playerBanner: HoleCardsBannerKind = null;
   let oppBanner: HoleCardsBannerKind = null;
-  if (sp.terminalState === 'folded-by-you' || sp.terminalState === 'conceded-by-you') {
-    playerBanner = 'fold';
-  } else if (sp.terminalState === 'folded-by-opponent' || sp.terminalState === 'conceded-by-opponent') {
-    oppBanner = 'fold';
-  } else if (sp.terminalState === 'revealed' && sp.outcome) {
-    if (sp.outcome.result > 0n) {
+  if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
+    if (showdownOutcome.result > 0n) {
       playerBanner = 'win';
-    } else if (sp.outcome.result < 0n) {
+    } else if (showdownOutcome.result < 0n) {
       oppBanner = 'win';
+    } else {
+      playerBanner = 'tie';
+      oppBanner = 'tie';
     }
+  } else if (sp.terminalState === 'conceded-by-you') {
+    playerBanner = 'concede';
+  } else if (sp.terminalState === 'conceded-by-opponent') {
+    oppBanner = 'concede';
+  } else if (sp.terminalState === 'folded-by-you') {
+    playerBanner = 'fold';
+  } else if (sp.terminalState === 'folded-by-opponent') {
+    oppBanner = 'fold';
   }
 
   let turnLine = '';
