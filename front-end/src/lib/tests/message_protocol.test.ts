@@ -63,8 +63,9 @@ function makeMockCradle(
 ): ChiaGame {
   return {
     deliver_message: jest.fn((msg: Uint8Array) => onDeliver(msg)),
+    new_block: jest.fn(() => ({ events: [] } as WasmResult)),
     report_coin_states: jest.fn(() => ({ events: [] } as WasmResult)),
-    get_coins_to_poll: jest.fn(() => []),
+    snapshot_watched_coins: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
@@ -463,6 +464,45 @@ describe('cleanShutdown calls shut_down on cradle', () => {
 });
 
 describe('transaction submission', () => {
+  it('applies watchCoins deltas without resampling the cradle snapshot', async () => {
+    const queriedNames: string[][] = [];
+    const blockchain = new BlockchainPoller(new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(1n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: (names: string[]) => {
+          queriedNames.push(names);
+          return Promise.resolve([]);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    ), 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = makeMockCradle();
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blockchain.attachCradle(blob);
+    (cradle.snapshot_watched_coins as jest.Mock).mockClear();
+
+    blob.processResult({
+      events: [],
+      watchCoins: [{ coin_name: 'aa', coin_string: 'coin-a' }],
+    });
+    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
+    expect(queriedNames).toEqual([['aa']]);
+    blockchain.detachCradle(blob);
+  });
+
   it('submits drained transactions sequentially', async () => {
     let resolveFirst: (() => void) | null = null;
     const spend = jest.fn()

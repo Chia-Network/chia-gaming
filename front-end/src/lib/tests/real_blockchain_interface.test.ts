@@ -1,4 +1,4 @@
-jest.mock('../../hooks/JsonRpcContext', () => ({
+jest.mock('../../hooks/WalletConnectRpc', () => ({
   rpc: {
     createOfferForIds: jest.fn(),
     getCoinRecordsByNames: jest.fn(),
@@ -7,7 +7,7 @@ jest.mock('../../hooks/JsonRpcContext', () => ({
   },
 }));
 
-import { rpc } from '../../hooks/JsonRpcContext';
+import { rpc } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';

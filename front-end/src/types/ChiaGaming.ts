@@ -46,11 +46,11 @@ export type CradleEvent =
       coin_id?: string;
       max_height?: bigint;
     } }
-  | { NeedLauncherCoin: boolean }
-  | { WatchCoin: { coin_name: string; coin_string: string } };
+  | { NeedLauncherCoin: boolean };
 
 export interface WasmResult {
   events?: CradleEvent[];
+  watchCoins?: Array<{ coin_name: string; coin_string: string }>;
   ids?: string[];
 }
 
@@ -213,7 +213,7 @@ export interface WasmConnection {
     removals: string[],
   ) => WasmResult | undefined;
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult | undefined;
-  get_coins_to_poll: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
+  snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
   resubmit_submitted: (cid: number) => void;
   convert_coinset_org_block_spend_to_watch_report: (
@@ -425,9 +425,9 @@ export class ChiaGame {
     return this.wasm.new_block(this.cradle, height, [], []);
   }
 
-  /** Coins the host should poll for on-chain state. */
-  get_coins_to_poll(): Array<{ coin_name: string; coin_string: string }> {
-    return this.wasm.get_coins_to_poll(this.cradle);
+  /** Durable watched-coin snapshot used to seed host polling after attach/restore. */
+  snapshot_watched_coins(): Array<{ coin_name: string; coin_string: string }> {
+    return this.wasm.snapshot_watched_coins(this.cradle);
   }
 
   /** Spend bundles the manager captured and the host should submit. */
@@ -616,6 +616,8 @@ export interface ConnectionSetup {
 }
 
 export interface InternalBlockchainInterface {
+  requestGapMs?: number;
+  getRegistrationScopeKey?(): string | undefined;
   spend(blob: string, spendBundle: unknown, source?: string, fee?: bigint): Promise<string>;
   rememberLocalRemovals?(spendBundle: unknown): void | Promise<void>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
