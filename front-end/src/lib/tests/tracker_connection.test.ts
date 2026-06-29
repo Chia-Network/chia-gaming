@@ -486,7 +486,7 @@ describe('setBusy', () => {
     ]);
   });
 
-  it('includes busy=true in identify on reconnect', async () => {
+  it('preserves busy presence in identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
@@ -517,7 +517,8 @@ describe('setBusy', () => {
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
-    jest.advanceTimersByTime(1000);
+    jest.advanceTimersByTime(5000);
+    await Promise.resolve();
 
     const ws2 = MockWebSocket.instance!;
     expect(ws2).not.toBe(ws1);
