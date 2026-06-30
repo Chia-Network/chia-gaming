@@ -160,6 +160,7 @@ export interface SessionState {
   blockchainType?: BlockchainType;
   serializedCradle?: string;
   pairingToken?: string;
+  sessionPeerId?: string;
   messageNumber?: bigint;
   remoteNumber?: bigint;
   channelReady?: boolean;

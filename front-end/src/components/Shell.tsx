@@ -838,6 +838,7 @@ const Shell = () => {
     pendingMsgHandlerRef2.current = null;
     peerMsgBufferRef.current = [];
     peerConnTargetRef.current = idlePeerConnection();
+    saveSession({ sessionPeerId: undefined });
     markPeerInactive();
   }, [markPeerInactive]);
 
@@ -883,6 +884,7 @@ const Shell = () => {
     }
     sessionPeerIdRef.current = request.peerId;
     peerConnTargetRef.current = buildTrackerPeerConnection(conn, request.peerId);
+    saveSession({ sessionPeerId: request.peerId });
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
@@ -1076,92 +1078,6 @@ const Shell = () => {
     const lobbyUrl = `${origin}/?lobby=true&session=${trackerSessionId}&uniqueId=${uniqueId}`;
     setIframeUrl(lobbyUrl);
 
-    const startSession = (
-      conn: TrackerConnection,
-      iStarted: boolean,
-      amount: bigint,
-      perGame: bigint,
-      token: string,
-      save: SessionState | null,
-      myAlias?: string,
-      opponentAlias?: string,
-      channelTimeout?: bigint,
-      unrollTimeout?: bigint,
-    ) => {
-      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s channelTimeout=%s unrollTimeout=%s', iStarted, amount, token, !!save, channelTimeout, unrollTimeout);
-      sessionFinishedCleanupRef.current = false;
-      sessionPhaseRef.current = 'none';
-      activePairingTokenRef.current = token;
-      conn.setBusy(save ? sessionSaveStartsBusy(save) : true);
-
-      // Build PeerConnectionResult that sends addressed, reliability-framed messages
-      const peerId = sessionPeerIdRef.current!;
-      const buildFrame = (tag: number, msgno: number, data?: Uint8Array): Uint8Array => {
-        const len = 1 + 4 + (data?.byteLength ?? 0);
-        const frame = new Uint8Array(len);
-        const view = new DataView(frame.buffer);
-        frame[0] = tag;
-        view.setUint32(1, msgno, false);
-        if (data) frame.set(data, 5);
-        return frame;
-      };
-      peerConnTargetRef.current = {
-        sendMessage: (msgno: number, input: Uint8Array) => {
-          conn.sendToPeer(peerId, buildFrame(0x01, msgno, input));
-        },
-        sendAck: (ackMsgno: number) => {
-          conn.sendToPeer(peerId, buildFrame(0x02, ackMsgno));
-        },
-        sendKeepalive: () => {
-          conn.sendToPeer(peerId, new Uint8Array([0x03]));
-        },
-        hostLog: (_msg: string) => {},
-        close: () => {},
-      };
-      if (!save) {
-        setRestoreStatus('idle');
-        setRestoreError(null);
-        setRestoreTrackerReconciled(true);
-        setDashboardSessionModel(null);
-      } else {
-        setDashboardSessionModel(sessionModelFromSave(save, perGame));
-      }
-
-      const alreadyHydrated = !!sessionSaveRef.current;
-      if (!alreadyHydrated) {
-        sessionSaveRef.current = save;
-        const resolvedMyAlias = myAlias ?? save?.myAlias;
-        const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
-        setGameParams({
-          iStarted,
-          amount,
-          perGameAmount: perGame,
-          restoring: save !== null,
-          pairingToken: token,
-          myAlias: resolvedMyAlias,
-          opponentAlias: resolvedOpponentAlias,
-          channelTimeout,
-          unrollTimeout,
-        });
-        setPeerConn(stablePeerConn);
-        if (save) {
-          const savedHistory = humanHistoryFromSave(save);
-          const savedLog = diagnosticLogFromSave(save);
-          if (savedHistory) setHistory(savedHistory);
-          if (savedLog) setLogLines(savedLog);
-          if (save.chatMessages) setChatMessages(save.chatMessages);
-        } else {
-          destroyBlobSingleton();
-          clearSessionPreservingHistory();
-          setChatMessages([]);
-          setActiveTab('game');
-        }
-      } else {
-        console.log('[Shell] startSession: state already hydrated by handleResume, upgrading peer connection only');
-        setPeerConn(stablePeerConn);
-      }
-    };
-
     setTrackerLiveness('reconnecting');
 
     let conn: TrackerConnection;
@@ -1215,6 +1131,7 @@ const Shell = () => {
               return;
             }
             sessionPeerIdRef.current = fromId;
+            saveSession({ sessionPeerId: fromId });
             peerMsgBufferRef.current = [];
             setPendingProposalState({
               from_id: fromId,
@@ -1256,6 +1173,13 @@ const Shell = () => {
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
           console.log('[Shell] registered as player_id=%s', playerId);
+          // Restore peer relay for a resumed session
+          const save = sessionSaveRef.current;
+          if (!sessionPeerIdRef.current && save?.sessionPeerId && conn) {
+            sessionPeerIdRef.current = save.sessionPeerId;
+            peerConnTargetRef.current = buildTrackerPeerConnection(conn, save.sessionPeerId);
+            setRestoreTrackerReconciled(true);
+          }
           // On reconnect with an active session, re-send un-acked messages
           if (sessionPeerIdRef.current && blobSingleton) {
             blobSingleton.resendUnacked();
