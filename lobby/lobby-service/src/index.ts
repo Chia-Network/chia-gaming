@@ -611,6 +611,7 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   }
   wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
   gameConnections.set(msg.session_id, ws);
+  rememberGameAlias(msg.session_id, playerId, msg.alias);
 
   // Apply busy status if lobby player exists
   if (msg.busy !== undefined && lobby.players[playerId]) {
@@ -707,6 +708,7 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
     return;
   }
   const playerId = meta.playerId;
+  rememberGameAlias(meta.sessionId, playerId, msg.alias);
   meta.busy = msg.busy;
   logTracker('set_busy', { player_id: playerId, busy: msg.busy });
   applyPlayerBusy(playerId, msg.busy);
