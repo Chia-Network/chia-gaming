@@ -800,6 +800,7 @@ const Shell = () => {
   }, []);
 
   const markPeerInactive = useCallback(() => {
+    if (peerLivenessRef.current === 'dead') return;
     lastPeerActivityRef.current = 0;
     peerLivenessRef.current = null;
     setPeerLiveness(null);
