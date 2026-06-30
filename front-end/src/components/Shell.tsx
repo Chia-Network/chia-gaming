@@ -790,10 +790,12 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
+    const peerId = sessionPeerIdRef.current;
     clearSession();
-    if (humanHistory.length > 0) {
-      saveSession({ humanHistory });
-    }
+    const preserved: Record<string, unknown> = {};
+    if (humanHistory.length > 0) preserved.humanHistory = humanHistory;
+    if (peerId) preserved.sessionPeerId = peerId;
+    if (Object.keys(preserved).length > 0) saveSession(preserved as any);
   }, []);
 
 
