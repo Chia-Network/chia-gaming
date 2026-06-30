@@ -754,6 +754,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
           type,
           session_id: requireText(decoded, 'session_id'),
           busy: getBoolean(decoded, 'busy'),
+          alias: optionalText(decoded, 'alias'),
         };
       case 'send':
         return { type, to: requireText(decoded, 'to') };
@@ -764,8 +765,11 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
           type,
           session_id: requireText(decoded, 'session_id'),
           busy,
+          alias: optionalText(decoded, 'alias'),
         };
       }
+      case 'close':
+        return { type, session_id: requireText(decoded, 'session_id') };
       case 'keepalive':
         return { type };
       default:
