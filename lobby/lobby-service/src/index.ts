@@ -37,10 +37,10 @@ type LobbyInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; busy?: boolean }
+  | { type: 'identify'; session_id: string; busy?: boolean; alias?: string }
   | { type: 'chat'; session_id: string; text: string }
   | { type: 'close'; session_id: string }
-  | { type: 'set_busy'; session_id: string; busy: boolean }
+  | { type: 'set_busy'; session_id: string; busy: boolean; alias?: string }
   | { type: 'keepalive' };
 
 interface LobbyConnMeta {
@@ -166,7 +166,19 @@ function sendLobbyEvent(playerId: string, type: string, payload: unknown): void 
 }
 
 function aliasForPlayer(playerId: string): string {
-  return lobby.players[playerId]?.alias ?? playerId;
+  const liveAlias = lobby.players[playerId]?.alias;
+  if (liveAlias) return liveAlias;
+  const sessionId = playerToSession.get(playerId);
+  return sessionId ? knownAliases.get(sessionId) ?? playerId : playerId;
+}
+
+function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
+  if (!alias) return;
+  knownAliases.set(sessionId, alias);
+  const player = lobby.players[playerId];
+  if (player) {
+    player.alias = alias;
+  }
 }
 
 function replayPendingChallengesToPlayer(playerId: string): void {
@@ -603,6 +615,7 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
     logTracker('game_connection_replaced', { ws_id: wsId(previousGameConn), session_id: msg.session_id });
     try { previousGameConn.close(4001, 'replaced_by_new_connection'); } catch {}
   }
+  rememberGameAlias(msg.session_id, playerId, msg.alias);
   wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
   gameConnections.set(msg.session_id, ws);
   logTracker('identify_complete_registration', { ws_id: wsId(ws), session_id: msg.session_id, player_id: playerId });
@@ -658,6 +671,7 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
     return;
   }
   const playerId = meta.playerId;
+  rememberGameAlias(meta.sessionId, playerId, msg.alias);
   meta.busy = msg.busy;
   logTracker('set_busy', { player_id: playerId, busy: msg.busy });
   applyPlayerBusy(playerId, msg.busy);

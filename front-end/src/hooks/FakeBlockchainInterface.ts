@@ -54,6 +54,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private reconnectAttempt = 0;
   private connectLoopPromise: Promise<void> | null = null;
   private blockWaiters = new Set<() => void>();
+  private setupComplete = false;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -84,7 +85,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         clearTimeout(connectTimeout);
         log(`[sim-blockchain] connect: connected (${Math.round(performance.now() - t0)}ms)`);
         this.ws = ws;
-        this.fireConnectionChange(true);
         resolve();
       };
       ws.onerror = () => {
@@ -98,6 +98,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       ws.onclose = () => {
         if (this.ws !== ws) return;
         this.ws = null;
+        this.setupComplete = false;
         this.fireConnectionChange(false);
         if (this.pending.size > 0) {
           diagNote(`FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`);
@@ -158,6 +159,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           this.token = token;
           this.blockchainAddressData = { puzzleHash: token };
           await this.sendRequest('get_peak');
+          this.setupComplete = true;
+          this.fireConnectionChange(true);
           this.reconnectAttempt = 0;
           log('[sim-blockchain] connected and setup complete');
           return;
@@ -167,6 +170,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
             try { this.ws.close(); } catch { /* ignore */ }
             this.ws = null;
           }
+          this.setupComplete = false;
           this.fireConnectionChange(false);
           const base = FakeBlockchainInterface.RECONNECT_DELAYS[
             Math.min(this.reconnectAttempt, FakeBlockchainInterface.RECONNECT_DELAYS.length - 1)
@@ -308,10 +312,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
     }
+    this.setupComplete = false;
     this.fireConnectionChange(false);
-    if (this.pending.size > 0) {
-      diagNote(`FakeBlockchain close(): rejecting ${this.pending.size} pending request(s) with "closed" (ids=${[...this.pending.keys()].join(',')})`);
-    }
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));
     }
@@ -351,7 +353,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === 1;
+    return this.ws !== null && this.ws.readyState === 1 && this.setupComplete;
   }
 
   onConnectionChange(cb: (connected: boolean) => void): () => void {

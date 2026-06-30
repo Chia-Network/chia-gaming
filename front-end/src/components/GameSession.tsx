@@ -7,6 +7,7 @@ import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
 import { WasmBlobWrapper, RestoreStatus } from '../hooks/WasmBlobWrapper';
+import type { BlockchainPoller } from '../hooks/BlockchainPoller';
 import Calpoker from '../features/calPoker';
 import {
   CalpokerDisplaySnapshotView,
@@ -662,12 +663,13 @@ export interface GameSessionProps {
   onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
   onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
+  blockchain: BlockchainPoller | null;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain }) => {
   const uniqueId = getPlayerId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
+  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain);
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);

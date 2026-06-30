@@ -1,6 +1,8 @@
 import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
+  shouldMountGameSession,
+  shouldSwitchToTrackerOnResolved,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
@@ -19,5 +21,27 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('none', false)).toBe(true);
     expect(shouldAdvertiseAvailable('resolved', false)).toBe(true);
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
+  });
+
+  it('mounts a saved session without requiring a live blockchain connection', () => {
+    expect(shouldMountGameSession(true, false, true, false)).toEqual({
+      startSession: true,
+      keepSession: true,
+    });
+    expect(shouldMountGameSession(true, false, false, false)).toEqual({
+      startSession: false,
+      keepSession: false,
+    });
+    expect(shouldMountGameSession(true, false, false, true)).toEqual({
+      startSession: false,
+      keepSession: true,
+    });
+  });
+
+  it('only switches to tracker for a live clean-resolution transition', () => {
+    expect(shouldSwitchToTrackerOnResolved('none', false)).toBe(false);
+    expect(shouldSwitchToTrackerOnResolved('on-chain', false)).toBe(false);
+    expect(shouldSwitchToTrackerOnResolved('off-chain', true)).toBe(false);
+    expect(shouldSwitchToTrackerOnResolved('off-chain', false)).toBe(true);
   });
 });

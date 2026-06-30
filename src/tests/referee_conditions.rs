@@ -136,6 +136,7 @@ fn run_referee_slash_with_mock(
 }
 
 /// Validator returns nil → unconditional slash, output = payout_conditions only
+#[test]
 fn test_slash_succeeds_nil() {
     let mut allocator = AllocEncoder::new();
     let result = run_referee_slash_with_mock(&mut allocator, NodePtr::NIL, &[0x00; 32], 5);
@@ -145,6 +146,7 @@ fn test_slash_succeeds_nil() {
 }
 
 /// Validator returns (wrong_vh state mms) — values misaligned → unconditional slash
+#[test]
 fn test_slash_succeeds_misaligned_no_conditions() {
     let mut allocator = AllocEncoder::new();
 
@@ -164,6 +166,7 @@ fn test_slash_succeeds_misaligned_no_conditions() {
 }
 
 /// Validator returns (correct_vh state mms (AGG_SIG_UNSAFE key msg)) — aligned with conditions → conditional slash
+#[test]
 fn test_slash_succeeds_aligned_with_conditions() {
     let mut allocator = AllocEncoder::new();
 
@@ -214,6 +217,7 @@ fn test_slash_succeeds_aligned_with_conditions() {
 }
 
 /// Validator returns (correct_vh state mms) — aligned, no conditions → move valid, slash fails
+#[test]
 fn test_slash_fails_aligned_no_conditions() {
     let mut allocator = AllocEncoder::new();
 

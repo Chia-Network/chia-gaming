@@ -286,6 +286,7 @@ export class BlockchainPoller {
       }
       this.consecutiveFailures = 0;
     } catch (e) {
+      if (!this.running) return;
       this.consecutiveFailures++;
       diagStack('blockchain-poller height failed', e);
       log(`[blockchain-poller] height failed: ${String(e)}`);
@@ -316,6 +317,7 @@ export class BlockchainPoller {
       }
       this.consecutiveFailures = 0;
     } catch (e) {
+      if (!this.running) return;
       this.consecutiveFailures++;
       diagStack('blockchain-poller coin poll failed', e);
       log(`[blockchain-poller] coin poll failed: ${String(e)}`);

@@ -29,3 +29,23 @@ export function shouldAdvertiseAvailable(
     },
   }), sessionPhase);
 }
+
+export function shouldMountGameSession(
+  sessionCanMount: boolean,
+  walletConnected: boolean,
+  restoring: boolean,
+  sessionStarted: boolean,
+): { startSession: boolean; keepSession: boolean } {
+  const startSession = sessionCanMount && (walletConnected || restoring);
+  return {
+    startSession,
+    keepSession: sessionCanMount && (sessionStarted || startSession),
+  };
+}
+
+export function shouldSwitchToTrackerOnResolved(
+  previousPhase: SessionPhase,
+  hasError: boolean,
+): boolean {
+  return previousPhase !== 'none' && previousPhase !== 'on-chain' && !hasError;
+}

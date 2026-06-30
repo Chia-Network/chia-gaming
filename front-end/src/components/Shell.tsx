@@ -47,10 +47,11 @@ import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockc
 import {
   BALANCE_POLL_INTERVAL_MS,
   CHAIN_POLL_INTERVAL_MS,
+  type BlockchainPoller,
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldAdvertiseAvailable } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, shouldAdvertiseAvailable, shouldMountGameSession, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   selectGameDashboardView,
   selectStatusBarBalances,
@@ -415,6 +416,8 @@ const Shell = () => {
     saveActiveTab(tab);
   }, []);
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
+  const gameParamsRef = useRef<GameSessionParams | null>(null);
+  gameParamsRef.current = gameParams;
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
@@ -521,7 +524,9 @@ const Shell = () => {
       if (blockchainTypeRef.current !== 'walletconnect') {
         activeBlockchainRef.current?.disconnect().catch(() => {});
       }
+      deactivate();
       activeBlockchainRef.current = null;
+      setActiveBlockchainPoller(null);
       setBootState(prev => {
         if (prev.kind !== 'ready') return prev;
         return { kind: 'tabConflict', save: peekSession(), midSession: true };
@@ -573,6 +578,7 @@ const Shell = () => {
   const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
   const blockchainTypeRef = useRef<'simulator' | 'walletconnect' | undefined>(blockchainType);
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
+  const [activeBlockchainPoller, setActiveBlockchainPoller] = useState<BlockchainPoller | null>(null);
 
   useEffect(() => {
     blockchainTypeRef.current = blockchainType;
@@ -807,11 +813,18 @@ const Shell = () => {
       if (connected) {
         setWalletAlert(false);
         setWalletConnected(true);
+        const poller = activeBlockchainPoller;
+        if (poller && blobSingleton) {
+          blobSingleton.attachBlockchain(poller);
+        }
+        if (blockchainTypeRef.current) {
+          startBalancePolling(blockchainTypeRef.current);
+        }
       } else {
         setWalletConnected(false);
       }
     });
-  }, [blockchainType]);
+  }, [activeBlockchainPoller, blockchainType, startBalancePolling]);
 
   const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
 
@@ -848,7 +861,8 @@ const Shell = () => {
       sessionFinishedCleanupRef.current = false;
       sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
-      conn.setBusy(save ? sessionSaveStartsBusy(save) : true);
+      const resolvedMyAlias = myAlias ?? save?.myAlias ?? save?.alias;
+      conn.setBusy(save ? sessionSaveStartsBusy(save) : true, resolvedMyAlias);
       peerConnTargetRef.current = conn.getPeerConnection();
       if (!save) {
         setRestoreStatus('idle');
@@ -862,7 +876,6 @@ const Shell = () => {
       const alreadyHydrated = !!sessionSaveRef.current;
       if (!alreadyHydrated) {
         sessionSaveRef.current = save;
-        const resolvedMyAlias = myAlias ?? save?.myAlias;
         const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
         setGameParams({
           iStarted,
@@ -1019,6 +1032,7 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
+          conn.refreshPresence(gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias);
         },
         onTrackerActivity: () => {
           lastTrackerActivityRef.current = Date.now();
@@ -1038,7 +1052,10 @@ const Shell = () => {
             setTrackerAlert(true);
           }
         },
-      }, { initialBusy: sessionSaveStartsBusy(initialSave) });
+      }, {
+        initialBusy: sessionSaveStartsBusy(initialSave),
+        initialAlias: initialSave?.myAlias ?? initialSave?.alias,
+      });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
       saveTrackerUrl(undefined);
@@ -1105,9 +1122,10 @@ const Shell = () => {
   ) => {
     console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
-    activate(iface, pollMs);
+    const poller = activate(iface, pollMs);
     saveSession({ blockchainType: bcType });
     activeBlockchainRef.current = iface;
+    setActiveBlockchainPoller(poller);
     setBlockchainType(bcType);
     setWalletConnected(true);
     setConnecting(false);
@@ -1162,7 +1180,7 @@ const Shell = () => {
       }
       if (silent) {
         // beginConnect may have failed before completeConnection ran.
-        if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+        if (bcType !== 'walletconnect') {
           completeConnection(iface, bcType, pollMs);
         }
       } else {
@@ -1202,6 +1220,7 @@ const Shell = () => {
     }
     deactivate();
     activeBlockchainRef.current = null;
+    setActiveBlockchainPoller(null);
     setConnectionSetup(null);
     setBlockchainType(undefined);
     clearSession();
@@ -1238,10 +1257,10 @@ const Shell = () => {
 
     console.log('[Shell] session resolved; marking not busy');
     sessionFinishedCleanupRef.current = true;
-    trackerConnRef.current?.setBusy(false);
+    trackerConnRef.current?.setBusy(false, gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias);
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
-    if (previousPhase !== 'on-chain' && !hasError) {
+    if (shouldSwitchToTrackerOnResolved(previousPhase, !!hasError)) {
       setActiveTab('tracker');
     }
   }, [setActiveTab]);
@@ -1265,8 +1284,11 @@ const Shell = () => {
   const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
 
   useEffect(() => {
-    trackerConnRef.current?.setBusy(!shouldAdvertiseAvailable(sessionPhase, restoreBlocked));
-  }, [sessionPhase, restoreBlocked]);
+    trackerConnRef.current?.setBusy(
+      !shouldAdvertiseAvailable(sessionPhase, restoreBlocked),
+      gameParams?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
+    );
+  }, [sessionPhase, restoreBlocked, gameParams?.myAlias]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -1282,7 +1304,7 @@ const Shell = () => {
 
   // Hydrate local UI state from a SessionState and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
-  const performResume = useCallback(async (save: SessionState) => {
+  const performResume = useCallback((save: SessionState) => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setActiveTab('game');
@@ -1316,34 +1338,37 @@ const Shell = () => {
     setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
+    activeBlockchainRef.current = iface;
+    setWalletConnected(iface.isConnected());
+    setResuming(false);
 
     // For WalletConnect restores, finalize performs the first wallet RPC
-    // (address lookup).  Keep it ahead of completeConnection so requestBalance
-    // and the poller do not occupy the serialized WalletConnect queue first.
-    try {
-      const setup = await iface.beginConnect(uniqueId);
-      const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
-      if (needsWalletPairing) {
-        setConnectionSetup(setup);
-        setWalletConnected(false);
-        setConnecting(false);
-        setWalletAlert(true);
-        setResuming(false);
-        return;
-      }
-      if (setup.skipQr || setup.fields) {
-        await setup.finalize();
-      }
-      completeConnection(iface, bcType, pollMs);
-    } catch (err) {
-      console.warn('[Shell] performResume connect failed, falling back', err);
-      // beginConnect may have failed before completeConnection ran.
-      if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+    // (address lookup). Keep it in the background so local restore can render
+    // while the simulator/wallet is unavailable.
+    void (async () => {
+      try {
+        const setup = await iface.beginConnect(uniqueId);
+        const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+        if (needsWalletPairing) {
+          setConnectionSetup(setup);
+          setWalletConnected(false);
+          setConnecting(false);
+          setWalletAlert(true);
+          return;
+        }
+        if (setup.skipQr || setup.fields) {
+          await setup.finalize();
+        }
         completeConnection(iface, bcType, pollMs);
+      } catch (err) {
+        console.warn('[Shell] performResume connect failed, falling back', err);
+        // beginConnect may have failed before completeConnection ran.
+        if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+          completeConnection(iface, bcType, pollMs);
+        }
       }
-    }
-    console.log('[Shell] performResume: done');
-    setResuming(false);
+      console.log('[Shell] performResume: blockchain connect task done');
+    })();
   }, [uniqueId, completeConnection, stablePeerConn, setActiveTab]);
 
   // User clicked "Resume Session" in the resumeDialog.
@@ -1398,6 +1423,8 @@ const Shell = () => {
     trackerConnRef.current = null;
     activeBlockchainRef.current?.disconnect().catch(() => {});
     activeBlockchainRef.current = null;
+    setActiveBlockchainPoller(null);
+    deactivate();
     setBootState({ kind: 'tabDead' });
   }, [stopBalancePolling]);
 
@@ -1418,6 +1445,7 @@ const Shell = () => {
     }
     deactivate();
     activeBlockchainRef.current = null;
+    setActiveBlockchainPoller(null);
     setWalletConnected(false);
     setBlockchainType(undefined);
     setBalance(undefined);
@@ -1482,6 +1510,7 @@ const Shell = () => {
   }, []);
 
   const cancelDashboardSession = useCallback(() => {
+    const alias = gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
     trackerConnRef.current?.close();
     markPeerInactive();
     destroyBlobSingleton();
@@ -1502,7 +1531,7 @@ const Shell = () => {
     setHistory([]);
     setChatMessages([]);
     setActiveTab('tracker');
-    trackerConnRef.current?.setBusy(false);
+    trackerConnRef.current?.setBusy(false, alias);
   }, [markPeerInactive, setActiveTab]);
 
   const requestDashboardCleanShutdown = useCallback(() => {
@@ -1679,19 +1708,20 @@ const Shell = () => {
   }
 
   const sessionCanMount = gameParams !== null && peerConn !== null;
-  const hasActiveBlockchain = activeBlockchainRef.current !== null;
-  const sessionReadyToStart =
-    sessionCanMount &&
-    hasActiveBlockchain &&
-    (walletConnected || !!gameParams?.restoring);
+  const { startSession: sessionReadyToStart, keepSession } = shouldMountGameSession(
+    sessionCanMount,
+    walletConnected,
+    !!gameParams?.restoring,
+    sessionStartedRef.current,
+  );
   if (sessionReadyToStart) sessionStartedRef.current = true;
-  const keepSession = sessionCanMount && hasActiveBlockchain && sessionStartedRef.current;
-  console.log('[Shell] render: gameParams=%s peerConn=%s activeBlockchain=%s walletConnected=%s restoring=%s → keepSession=%s',
-    !!gameParams, !!peerConn, hasActiveBlockchain, walletConnected, !!gameParams?.restoring, keepSession);
+  console.log('[Shell] render: gameParams=%s peerConn=%s poller=%s walletConnected=%s restoring=%s → keepSession=%s',
+    !!gameParams, !!peerConn, !!activeBlockchainPoller, walletConnected, !!gameParams?.restoring, keepSession);
 
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     cleanShutdownGraceActive,
+    chainAvailable: walletConnected,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
 
@@ -2056,12 +2086,13 @@ const Shell = () => {
             ) : keepSession ? (
               <GameSessionErrorBoundary>
                 <GameSession
-                  key={gameParams.pairingToken}
-                  params={gameParams}
-                  peerConn={peerConn}
+                  key={gameParams!.pairingToken}
+                  params={gameParams!}
+                  peerConn={peerConn!}
                   registerMessageHandler={registerMessageHandler}
                   appendGameLog={appendHistory}
                   sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
+                  blockchain={activeBlockchainPoller}
                   onGameActivity={onGameActivity}
                   onSessionPhaseChange={handleSessionPhaseChange}
                   onRestoreStatusChange={handleRestoreStatusChange}

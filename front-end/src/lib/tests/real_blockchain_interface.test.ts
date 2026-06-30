@@ -1,20 +1,52 @@
 jest.mock('../../hooks/WalletConnectRpc', () => ({
   rpc: {
     createOfferForIds: jest.fn(),
+    createNewRemoteWallet: jest.fn(),
+    getNextAddress: jest.fn(),
     getCoinRecordsByNames: jest.fn(),
+    getWallets: jest.fn(),
     pushTransactions: jest.fn(),
+    registerRemoteCoins: jest.fn(),
     selectCoins: jest.fn(),
   },
+}));
+
+const mockWalletListeners = new Set<(evt: any) => void>();
+let mockWalletSession: unknown;
+const mockWalletConnectState = {
+  getObservable: () => ({
+    subscribe: ({ next }: { next: (evt: any) => void }) => {
+      mockWalletListeners.add(next);
+      return { unsubscribe: () => { mockWalletListeners.delete(next); } };
+    },
+  }),
+  init: jest.fn(async () => {}),
+  getSession: jest.fn(() => mockWalletSession),
+  disconnect: jest.fn(async () => {
+    mockWalletSession = undefined;
+    for (const next of mockWalletListeners) {
+      next({ stateName: 'initialized', connected: false, sessions: 0 });
+    }
+  }),
+};
+
+jest.mock('../../hooks/useWalletConnect', () => ({
+  walletConnectState: mockWalletConnectState,
 }));
 
 import { rpc } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
+import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 
 const mockCreateOfferForIds = rpc.createOfferForIds as jest.Mock;
+const mockCreateNewRemoteWallet = rpc.createNewRemoteWallet as jest.Mock;
+const mockGetNextAddress = rpc.getNextAddress as jest.Mock;
 const mockGetCoinRecordsByNames = rpc.getCoinRecordsByNames as jest.Mock;
+const mockGetWallets = rpc.getWallets as jest.Mock;
 const mockPushTransactions = rpc.pushTransactions as jest.Mock;
+const mockRegisterRemoteCoins = rpc.registerRemoteCoins as jest.Mock;
 const mockSelectCoins = rpc.selectCoins as jest.Mock;
 
 function encodedWalletConnectError(payload: unknown): string {
@@ -25,9 +57,62 @@ function encodedWalletConnectError(payload: unknown): string {
 describe('RealBlockchainInterface', () => {
   beforeEach(() => {
     mockCreateOfferForIds.mockReset();
+    mockCreateNewRemoteWallet.mockReset();
+    mockGetNextAddress.mockReset();
     mockGetCoinRecordsByNames.mockReset();
+    mockGetWallets.mockReset();
     mockPushTransactions.mockReset();
+    mockRegisterRemoteCoins.mockReset();
     mockSelectCoins.mockReset();
+    mockWalletListeners.clear();
+    mockWalletSession = undefined;
+    mockWalletConnectState.init.mockClear();
+    mockWalletConnectState.getSession.mockClear();
+    mockWalletConnectState.disconnect.mockClear();
+  });
+
+  it('notifies blockchain readiness after WalletConnect reconnect events', async () => {
+    jest.useFakeTimers();
+    try {
+      const address = encodePuzzleHashToBech32m('11'.repeat(32));
+      mockGetNextAddress.mockResolvedValue(address);
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      const blockchain = new RealBlockchainInterface();
+      const events: boolean[] = [];
+      blockchain.onConnectionChange((connected) => events.push(connected));
+
+      mockWalletSession = { topic: 'wallet-1' };
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'connected', connected: true, sessions: 1 });
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      jest.advanceTimersByTime(500);
+      await Promise.resolve();
+
+      expect(events).toEqual([true]);
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+
+      mockWalletSession = undefined;
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'initialized', connected: false, sessions: 0 });
+      }
+      expect(events).toEqual([true, false]);
+
+      mockWalletSession = { topic: 'wallet-2' };
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'connected', connected: true, sessions: 1 });
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      jest.advanceTimersByTime(500);
+      await Promise.resolve();
+
+      expect(events).toEqual([true, false, true]);
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('treats encoded WalletConnect coin record misses as absent coins', async () => {

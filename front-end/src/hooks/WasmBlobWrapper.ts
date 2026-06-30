@@ -100,7 +100,8 @@ export class WasmBlobWrapper implements PollingCradle {
   onChain: boolean;
   reloading: boolean;
   qualifyingEvents: number;
-  blockchain: BlockchainPoller;
+  blockchain: BlockchainPoller | null;
+  private blockchainAttached = false;
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
@@ -148,7 +149,7 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   constructor(
-    blockchain: BlockchainPoller,
+    blockchain: BlockchainPoller | null,
     uniqueId: string,
     amount: bigint,
     peer_conn: PeerConnectionResult,
@@ -197,6 +198,31 @@ export class WasmBlobWrapper implements PollingCradle {
 
   setReloading() { this.reloading = true; }
 
+  attachBlockchain(blockchain: BlockchainPoller) {
+    if (this.blockchain && this.blockchain !== blockchain) {
+      this.blockchain.detachCradle(this);
+      this.blockchainAttached = false;
+    }
+    const alreadyAttached = this.blockchain === blockchain && this.blockchainAttached;
+    this.blockchain = blockchain;
+    if (alreadyAttached) {
+      blockchain.snapshotCradleCoinInterest(this);
+    } else {
+      blockchain.attachCradle(this);
+      this.blockchainAttached = true;
+    }
+    this.flushPendingCoinStates();
+    this.cradle?.resubmit_submitted();
+    this.drainAndSubmitTransactions();
+  }
+
+  detachBlockchain(blockchain: BlockchainPoller) {
+    if (this.blockchain !== blockchain) return;
+    blockchain.detachCradle(this);
+    this.blockchainAttached = false;
+    this.blockchain = null;
+  }
+
   setPeerKeepalive(sendKeepalive: () => void) {
     this.peerSendKeepalive = sendKeepalive;
     this.startKeepaliveTimer();
@@ -206,6 +232,9 @@ export class WasmBlobWrapper implements PollingCradle {
     this.cleanShutdownCalled = true;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
+    this.blockchain?.detachCradle(this);
+    this.blockchainAttached = false;
+    this.blockchain = null;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -318,16 +347,12 @@ export class WasmBlobWrapper implements PollingCradle {
     if (this.restoredSession) {
       this.restoredSession = false;
       this.resendUnacked();
-      // A transaction drained to the host before the reload may not have
-      // reached the network.  Re-queue the manager's retained submission set,
-      // then drain and submit so any in-flight transaction is resent.
-      this.cradle?.resubmit_submitted();
-      this.drainAndSubmitTransactions();
     }
   }
 
   setGameCradle(cradle: ChiaGame) {
     this.cradle = cradle;
+    this.blockchain?.snapshotCradleCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
@@ -354,10 +379,15 @@ export class WasmBlobWrapper implements PollingCradle {
 
   private async handleNeedLauncherCoin() {
     if (this.launcherProvided) return;
+    const blockchain = this.blockchain;
+    if (!blockchain) {
+      this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
+      return;
+    }
     this.launcherProvided = true;
 
     try {
-      const coin = await this.blockchain.rpc.selectCoins(this.uniqueId, this.amount);
+      const coin = await blockchain.rpc.selectCoins(this.uniqueId, this.amount);
       if (!coin) {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
@@ -377,6 +407,11 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   private async handleNeedCoinSpend(request: any) {
+    const blockchain = this.blockchain;
+    if (!blockchain) {
+      this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
+      return;
+    }
     try {
       const offerAmount = -BigInt(request.amount);
       const extraConditions = (request.conditions || []).map((c: any) => ({
@@ -386,7 +421,7 @@ export class WasmBlobWrapper implements PollingCradle {
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
       const maxHeight = request.max_height != null ? BigInt(request.max_height) : undefined;
 
-      const bundle = await this.blockchain.rpc.createOfferForIds(
+      const bundle = await blockchain.rpc.createOfferForIds(
         this.uniqueId,
         { '1': offerAmount },
         extraConditions,
@@ -402,10 +437,10 @@ export class WasmBlobWrapper implements PollingCradle {
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
         console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         const localSpendBundle = this.wc?.convert_offer_to_coinset_org(bundle);
-        await this.blockchain.rpc.rememberLocalRemovals?.(localSpendBundle);
+        await blockchain.rpc.rememberLocalRemovals?.(localSpendBundle);
         result = this.cradle?.provide_offer_bech32(bundle);
       } else {
-        await this.blockchain.rpc.rememberLocalRemovals?.(bundle);
+        await blockchain.rpc.rememberLocalRemovals?.(bundle);
         const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
         result = this.cradle?.provide_coin_spend_bundle(bundleJson);
       }
@@ -441,6 +476,8 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   private async submitTransactionNow(tx: SpendBundle) {
+    const blockchain = this.blockchain;
+    if (!blockchain) return;
     try {
       // The blob/conversion/fee work used to run before the try, so a throw
       // here (e.g. from the wasm connection) rejected the submit queue
@@ -449,7 +486,7 @@ export class WasmBlobWrapper implements PollingCradle {
       const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
       const fee = this.getFee();
       log(`[wasm] submitTransaction blobLen=${blob.length}`);
-      await this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined);
+      await blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined);
     } catch (e) {
       const message = extractErrorMessage(e);
       if (isBenignTransactionSubmitError(message)) {
@@ -478,7 +515,7 @@ export class WasmBlobWrapper implements PollingCradle {
    * action that drains the cradle.
    */
   private drainAndSubmitTransactions() {
-    if (!this.cradle) return;
+    if (!this.cradle || !this.blockchain) return;
     let bundles: SpendBundle[];
     try {
       bundles = this.cradle.drain_submissions();
@@ -495,8 +532,9 @@ export class WasmBlobWrapper implements PollingCradle {
   processResult(result: WasmResult | undefined): void {
     if (!result) return;
 
+    const blockchain = this.blockchain;
     for (const coin of result.watchCoins || []) {
-      this.blockchain.watchCoin(this, coin);
+      blockchain?.watchCoin(this, coin);
     }
     for (const event of result.events || []) {
       this.eventQueue.push(event);
@@ -621,8 +659,13 @@ export class WasmBlobWrapper implements PollingCradle {
   }
 
   private async fulfillPuzzleSolutionRequest(coinHex: string) {
+    const blockchain = this.blockchain;
+    if (!blockchain) {
+      this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
+      return;
+    }
     try {
-      const ps = await this.blockchain.rpc.getPuzzleAndSolution(coinHex);
+      const ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
       if (this.cradle) {
         const result = ps
           ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])

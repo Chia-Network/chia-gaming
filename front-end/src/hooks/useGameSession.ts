@@ -14,13 +14,13 @@ import {
   GameStatusState,
   SessionPhase,
 } from '../types/ChiaGaming';
-import { getActiveBlockchain } from './activeBlockchain';
 import {
   getBlobSingleton,
   initStarted,
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper, RestoreStatus } from './WasmBlobWrapper';
+import type { BlockchainPoller } from './BlockchainPoller';
 import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBase64 } from './save';
 import { coinIdFromBytes, coerceToBytes } from '../util';
 import { log } from '../services/log';
@@ -582,11 +582,10 @@ export function useGameSession(
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
   sessionSave?: SessionState,
+  blockchain: BlockchainPoller | null = null,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
-
-  const blockchain = getActiveBlockchain();
 
   const { gameObject } = getBlobSingleton(
     blockchain,
@@ -1377,10 +1376,10 @@ export function useGameSession(
   // Drive the cradle's coin polling: the poller asks the cradle which coins to
   // watch and feeds raw chain state back via report_coin_states.
   useEffect(() => {
-    if (!gameObject) return;
-    blockchain.attachCradle(gameObject);
+    if (!gameObject || !blockchain) return;
+    gameObject.attachBlockchain(blockchain);
     return () => {
-      blockchain.detachCradle(gameObject);
+      gameObject.detachBlockchain(blockchain);
     };
   }, [gameObject, blockchain]);
 

@@ -40,6 +40,7 @@ export interface TrackerConnectionCallbacks {
 
 export interface TrackerConnectionOptions {
   initialBusy?: boolean;
+  initialAlias?: string | null;
 }
 
 // Binary frame type tags for peer-to-peer relay (opaque to the tracker).
@@ -73,12 +74,14 @@ export class TrackerConnection {
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
   private busy = false;
+  private alias: string | undefined;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, options: TrackerConnectionOptions = {}) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
     this.busy = options.initialBusy ?? false;
+    this.alias = options.initialAlias ?? undefined;
     this.connectWs();
   }
 
@@ -95,6 +98,15 @@ export class TrackerConnection {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
+  }
+
+  private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
+    return {
+      type,
+      session_id: this.sessionId,
+      busy: this.busy,
+      ...(this.alias ? { alias: this.alias } : {}),
+    };
   }
 
   private connectWs(): void {
@@ -121,7 +133,7 @@ export class TrackerConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      this.sendWs({ type: 'identify', session_id: this.sessionId, busy: this.busy });
+      this.sendWs(this.presencePayload('identify'));
       if (this.closePending) {
         this.sendCloseRequest();
       }
@@ -389,9 +401,19 @@ export class TrackerConnection {
     }
   }
 
-  setBusy(busy: boolean) {
+  setBusy(busy: boolean, alias?: string | null) {
     this.busy = busy;
-    this.sendWs({ type: 'set_busy', session_id: this.sessionId, busy });
+    if (alias !== undefined) {
+      this.alias = alias || undefined;
+    }
+    this.sendWs(this.presencePayload('set_busy'));
+  }
+
+  refreshPresence(alias?: string | null) {
+    if (alias !== undefined) {
+      this.alias = alias || undefined;
+    }
+    this.sendWs(this.presencePayload('set_busy'));
   }
 
   disconnect() {
