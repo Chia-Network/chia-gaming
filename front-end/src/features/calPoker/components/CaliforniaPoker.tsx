@@ -226,6 +226,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
     return `${label} ${verb}`;
   };
+  const possessive = (label: string) => label === 'You' ? 'Your' : `${label}'s`;
 
   const doHandleMakeMove = () => {
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
@@ -621,7 +622,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     ? resultLabel(opponentLabel, 'wins')
                     : timeoutByUs === false
                       ? `${opponentLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
-                      : `${opponentLabel}'s Hand`}
+                      : `${possessive(opponentLabel)} Hand`}
               </span>
             </div>
             <div className='flex items-center justify-center p-2'>
@@ -655,7 +656,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     ? `${myLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
                     : timeoutByUs === false
                       ? resultLabel(myLabel, 'wins')
-                      : `${myLabel}'s Hand`}
+                      : `${possessive(myLabel)} Hand`}
               </span>
             </div>
             <div className='flex items-center justify-center p-2'>
