@@ -1,8 +1,32 @@
+import {
+  decode as decodeBencodex,
+  encode as encodeBencodex,
+  isDictionary,
+  type BencodexValue,
+} from 'chia-gaming-bencodex';
+
 // ---------------------------------------------------------------------------
 // Mock WebSocket
 // ---------------------------------------------------------------------------
 
 type WSHandler = ((ev: any) => void) | null;
+
+function arrayBufferOf(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function toPlainObject(value: BencodexValue): unknown {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) return value.map(toPlainObject);
+  if (isDictionary(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of value.entries()) {
+      out[typeof key === 'string' ? key : new TextDecoder().decode(key as Uint8Array)] = toPlainObject(item);
+    }
+    return out;
+  }
+  return value;
+}
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -20,6 +44,7 @@ class MockWebSocket {
   onerror: WSHandler = null;
   onclose: WSHandler = null;
   sentJson: unknown[] = [];
+  sentControl: unknown[] = [];
   sentBinary: Uint8Array[] = [];
   closed = false;
 
@@ -37,9 +62,12 @@ class MockWebSocket {
     if (typeof data === 'string') {
       this.sentJson.push(JSON.parse(data));
     } else if (data instanceof Uint8Array) {
-      this.sentBinary.push(data);
+      if (data[0] === 0x64) this.sentControl.push(toPlainObject(decodeBencodex(data) as BencodexValue));
+      else this.sentBinary.push(data);
     } else if (data instanceof ArrayBuffer) {
-      this.sentBinary.push(new Uint8Array(data));
+      const bytes = new Uint8Array(data);
+      if (bytes[0] === 0x64) this.sentControl.push(toPlainObject(decodeBencodex(bytes) as BencodexValue));
+      else this.sentBinary.push(bytes);
     }
   }
 
@@ -49,31 +77,23 @@ class MockWebSocket {
   }
 
   _fire(data: unknown) {
-    this.onmessage?.({ data: JSON.stringify(data) });
+    const bytes = encodeBencodex(data as BencodexValue);
+    this.onmessage?.({ data: arrayBufferOf(bytes) });
   }
 
-  _fireBinary(msgno: number, payload: Uint8Array) {
-    const frame = new ArrayBuffer(1 + 4 + payload.byteLength);
-    const bytes = new Uint8Array(frame);
+  _fireBinaryInbound(fromId: string, payload: Uint8Array, fromAlias?: string) {
+    // Inbound binary format: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
+    const fromIdBuf = new TextEncoder().encode(fromId);
+    const aliasBuf = new TextEncoder().encode(fromAlias ?? fromId);
+    const frame = new ArrayBuffer(4 + fromIdBuf.byteLength + 4 + aliasBuf.byteLength + payload.byteLength);
     const view = new DataView(frame);
-    bytes[0] = 0x01;
-    view.setUint32(1, msgno, false);
-    bytes.set(payload, 5);
-    this.onmessage?.({ data: frame });
-  }
-
-  _fireAck(ackMsgno: number) {
-    const frame = new ArrayBuffer(1 + 4);
     const bytes = new Uint8Array(frame);
-    const view = new DataView(frame);
-    bytes[0] = 0x02;
-    view.setUint32(1, ackMsgno, false);
-    this.onmessage?.({ data: frame });
-  }
-
-  _fireKeepaliveBinary() {
-    const frame = new ArrayBuffer(1);
-    new Uint8Array(frame)[0] = 0x03;
+    let offset = 0;
+    view.setUint32(offset, fromIdBuf.byteLength, false); offset += 4;
+    bytes.set(fromIdBuf, offset); offset += fromIdBuf.byteLength;
+    view.setUint32(offset, aliasBuf.byteLength, false); offset += 4;
+    bytes.set(aliasBuf, offset); offset += aliasBuf.byteLength;
+    bytes.set(payload, offset);
     this.onmessage?.({ data: frame });
   }
 
@@ -97,8 +117,6 @@ const originalWebSocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 
 import {
   TrackerConnection,
   TrackerConnectionCallbacks,
-  MatchedParams,
-  ConnectionStatus,
 } from '../../services/TrackerConnection';
 
 let trackerDisconnectCount = 0;
@@ -121,20 +139,17 @@ afterAll(() => {
   }
 });
 
-function makeCallbacks(): TrackerConnectionCallbacks {
+function makeCallbacks(): TrackerConnectionCallbacks & Record<string, jest.Mock> {
   return {
-    onMatched: jest.fn(),
-    onConnectionStatus: jest.fn(),
-    onPeerReconnected: jest.fn(),
-    onDataMessage: jest.fn(),
-    onAck: jest.fn(),
-    onKeepalive: jest.fn(),
-    onClosed: jest.fn(),
+    onAdvisoryStart: jest.fn(),
+    onPeerMessage: jest.fn(),
+    onPeerAppMessage: jest.fn(),
+    onDeliveryFailure: jest.fn(),
+    onRegistered: jest.fn(),
+    onLobbyAttention: jest.fn(),
     onTrackerDisconnected: jest.fn(() => { trackerDisconnectCount++; }),
     onTrackerReconnected: jest.fn(),
     onTrackerActivity: jest.fn(),
-    onChat: jest.fn(),
-    onLobbyAttention: jest.fn(),
   };
 }
 
@@ -171,20 +186,20 @@ describe('connection setup', () => {
   it('sends identify with busy=false over ws on open', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
-    await Promise.resolve(); // flush microtasks
+    await Promise.resolve();
 
     const ws = MockWebSocket.instance!;
     expect(ws.url).toBe('ws://t/ws/game');
-    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', busy: false }]);
+    expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: false }]);
   });
 
   it('sends identify with initial busy=true over ws on open', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb, { initialBusy: true });
-    await Promise.resolve(); // flush microtasks
+    await Promise.resolve();
 
     const ws = MockWebSocket.instance!;
-    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', busy: true }]);
+    expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true }]);
   });
 
   it('sends identify with initial alias over ws on open', async () => {
@@ -193,7 +208,7 @@ describe('connection setup', () => {
     await Promise.resolve(); // flush microtasks
 
     const ws = MockWebSocket.instance!;
-    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' }]);
+    expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' }]);
   });
 });
 
@@ -202,69 +217,42 @@ describe('connection setup', () => {
 // ---------------------------------------------------------------------------
 
 describe('event routing', () => {
-  it('routes matched to onMatched', async () => {
+  it('routes advisory_start to onAdvisoryStart', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    const params: MatchedParams = {
-      token: 'tok',
+    MockWebSocket.instance!._fire({
+      type: 'advisory_start',
+      peer_id: 'p2',
+      peer_alias: 'Bob',
       amount: '100',
-      i_am_initiator: true,
-    };
-    MockWebSocket.instance!._fire({ type: 'matched', ...params });
-    expect(cb.onMatched).toHaveBeenCalledWith(params);
+    });
+    expect(cb.onAdvisoryStart).toHaveBeenCalledWith({
+      peer_id: 'p2',
+      peer_alias: 'Bob',
+      amount: '100',
+      channel_timeout: undefined,
+      unroll_timeout: undefined,
+    });
   });
 
-  it('routes connection_status to onConnectionStatus', async () => {
+  it('routes registered to onRegistered', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    const status: ConnectionStatus = { has_pairing: true, token: 'tok', peer_connected: true };
-    MockWebSocket.instance!._fire({ type: 'connection_status', ...status });
-    expect(cb.onConnectionStatus).toHaveBeenCalledWith(status);
+    MockWebSocket.instance!._fire({ type: 'registered', player_id: 'p_abc' });
+    expect(cb.onRegistered).toHaveBeenCalledWith('p_abc');
   });
 
-  it('routes peer_reconnected to onPeerReconnected', async () => {
+  it('routes delivery_failure to onDeliveryFailure', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    MockWebSocket.instance!._fire({ type: 'peer_reconnected' });
-    expect(cb.onPeerReconnected).toHaveBeenCalled();
-  });
-
-  it('routes closed to onClosed', async () => {
-    const cb = makeCallbacks();
-    makeConnection('http://t', 's1', cb);
-    await Promise.resolve();
-
-    MockWebSocket.instance!._fire({ type: 'closed' });
-    expect(cb.onClosed).toHaveBeenCalled();
-  });
-
-  it('sends close immediately when the websocket is open', async () => {
-    const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
-    await Promise.resolve();
-
-    conn.close();
-
-    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'close', session_id: 's1' });
-  });
-
-  it('sends a pending close after the websocket opens', async () => {
-    const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
-
-    conn.close();
-    expect(MockWebSocket.instance!.sentJson).toEqual([]);
-
-    await Promise.resolve();
-
-    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'identify', session_id: 's1', busy: false });
-    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'close', session_id: 's1' });
+    MockWebSocket.instance!._fire({ type: 'delivery_failure', to: 'p_target' });
+    expect(cb.onDeliveryFailure).toHaveBeenCalledWith('p_target');
   });
 
   it('fires onTrackerDisconnected on ws error', async () => {
@@ -290,96 +278,39 @@ describe('event routing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Message discrimination (keepalive vs ack vs data)
+// Binary message relay
 // ---------------------------------------------------------------------------
 
-describe('binary frame discrimination', () => {
-  it('routes keepalive binary frames to onKeepalive', async () => {
+describe('binary message relay', () => {
+  it('dispatches binary peer messages to onPeerMessage', async () => {
     const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
-
-    conn.registerMessageHandler(jest.fn(), jest.fn(), jest.fn());
-    MockWebSocket.instance!._fireKeepaliveBinary();
-    expect(cb.onKeepalive).toHaveBeenCalled();
-    expect(cb.onDataMessage).not.toHaveBeenCalled();
-  });
-
-  it('routes ack binary frames to onAck', async () => {
-    const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
-    await Promise.resolve();
-
-    conn.registerMessageHandler(jest.fn(), jest.fn(), jest.fn());
-    MockWebSocket.instance!._fireAck(5);
-    expect((cb.onAck as jest.Mock)).toHaveBeenCalledWith(5);
-    expect(cb.onDataMessage).not.toHaveBeenCalled();
-  });
-
-  it('routes data binary frames to handler after registerMessageHandler', async () => {
-    const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
-    await Promise.resolve();
-
-    const handler = jest.fn();
-    conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
     const payload = new TextEncoder().encode('hello');
-    MockWebSocket.instance!._fireBinary(1, payload);
-    expect(handler).toHaveBeenCalledWith(1, payload);
+    MockWebSocket.instance!._fireBinaryInbound('p_sender', payload);
+    expect(cb.onPeerMessage).toHaveBeenCalledWith('p_sender', 'p_sender', payload);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Message buffering before registerMessageHandler
-// ---------------------------------------------------------------------------
-
-describe('message buffering before registerMessageHandler', () => {
-  it('buffers data messages then delivers them on registration', async () => {
+  it('dispatches bencodex peer app messages to onPeerAppMessage', async () => {
     const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    const first = new TextEncoder().encode('first');
-    const second = new TextEncoder().encode('second');
-    MockWebSocket.instance!._fireBinary(1, first);
-    MockWebSocket.instance!._fireBinary(2, second);
-    expect(cb.onDataMessage).not.toHaveBeenCalled();
-
-    const handler = jest.fn();
-    conn.registerMessageHandler(handler, jest.fn(), jest.fn());
-
-    expect(handler).toHaveBeenCalledTimes(2);
-    expect(handler).toHaveBeenCalledWith(1, first);
-    expect(handler).toHaveBeenCalledWith(2, second);
+    const appMessage = { type: 'session_proposal', amount: '500' };
+    const payload = encodeBencodex(appMessage);
+    MockWebSocket.instance!._fireBinaryInbound('p_sender', payload);
+    expect(cb.onPeerAppMessage).toHaveBeenCalledWith('p_sender', 'p_sender', appMessage);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Close-pending suppresses messages
-// ---------------------------------------------------------------------------
-
-describe('close-pending suppresses messages', () => {
-  it('suppresses messages while close is pending, resumes after closed event', async () => {
+  it('passes distinct alias from binary frame header', async () => {
     const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    const handler = jest.fn();
-    conn.registerMessageHandler(handler, jest.fn(), jest.fn());
-
-    conn.close();
-    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'close', session_id: 's1' });
-
-    MockWebSocket.instance!._fireBinary(1, new TextEncoder().encode('suppressed'));
-    expect(handler).not.toHaveBeenCalled();
-
-    MockWebSocket.instance!._fire({ type: 'closed' });
-    expect(cb.onClosed).toHaveBeenCalled();
-
-    const delivered = new TextEncoder().encode('delivered');
-    MockWebSocket.instance!._fireBinary(2, delivered);
-    expect(handler).toHaveBeenCalledWith(2, delivered);
+    const payload = new TextEncoder().encode('data');
+    MockWebSocket.instance!._fireBinaryInbound('p_sender', payload, 'Alice');
+    expect(cb.onPeerMessage).toHaveBeenCalledWith('p_sender', 'Alice', payload);
   });
 });
 
@@ -388,59 +319,58 @@ describe('close-pending suppresses messages', () => {
 // ---------------------------------------------------------------------------
 
 describe('outbound message format', () => {
-  it('sendMessage posts type-tagged binary frame', async () => {
+  it('sendToPeer posts addressed binary frame', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
+
     const payload = new TextEncoder().encode('payload');
-    conn.sendMessage(3, payload);
+    conn.sendToPeer('p_target', payload);
     expect(ws.sentBinary).toHaveLength(1);
+
     const frame = ws.sentBinary[0];
-    expect(frame[0]).toBe(0x01);
     const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
-    expect(view.getUint32(1, false)).toBe(3);
-    expect(new Uint8Array(frame.buffer, frame.byteOffset + 5)).toEqual(payload);
+    const targetIdLen = view.getUint32(0, false);
+    expect(targetIdLen).toBe(8); // 'p_target'.length
+    const targetId = new TextDecoder().decode(frame.slice(4, 4 + targetIdLen));
+    expect(targetId).toBe('p_target');
+    const data = frame.slice(4 + targetIdLen);
+    expect(data).toEqual(payload);
   });
 
-  it('sendAck posts ack as binary frame', async () => {
+  it('sendPeerAppMessage encodes bencodex as binary frame', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
-    conn.sendAck(5);
-    expect(ws.sentBinary).toHaveLength(1);
-    const frame = ws.sentBinary[0];
-    expect(frame[0]).toBe(0x02);
-    const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
-    expect(view.getUint32(1, false)).toBe(5);
-  });
 
-  it('sendKeepalive posts keepalive as binary frame', async () => {
-    const cb = makeCallbacks();
-    const conn = makeConnection('http://t', 's1', cb);
-    await Promise.resolve();
-    const ws = MockWebSocket.instance!;
-    ws.sentBinary = [];
-    conn.sendKeepalive();
+    conn.sendPeerAppMessage('p_target', { type: 'session_proposal', amount: '100' });
     expect(ws.sentBinary).toHaveLength(1);
-    expect(ws.sentBinary[0]).toEqual(new Uint8Array([0x03]));
+
+    const frame = ws.sentBinary[0];
+    const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+    const targetIdLen = view.getUint32(0, false);
+    const targetId = new TextDecoder().decode(frame.slice(4, 4 + targetIdLen));
+    expect(targetId).toBe('p_target');
+    const payloadBytes = frame.slice(4 + targetIdLen);
+    const parsed = toPlainObject(decodeBencodex(payloadBytes) as BencodexValue);
+    expect(parsed).toEqual({ type: 'session_proposal', amount: '100' });
   });
 });
 
 // ---------------------------------------------------------------------------
-// forceDisconnect does not post close
+// forceDisconnect lifecycle
 // ---------------------------------------------------------------------------
 
 describe('forceDisconnect lifecycle', () => {
-  it('forceDisconnect does not post close', async () => {
+  it('forceDisconnect closes underlying ws', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     conn.forceDisconnect();
-    expect(MockWebSocket.instance!.sentJson.some((m) => (m as any).type === 'close')).toBe(false);
     expect(MockWebSocket.instance!.closed).toBe(true);
   });
 });
@@ -455,9 +385,9 @@ describe('setBusy', () => {
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sentJson = [];
+    ws.sentControl = [];
     conn.setBusy(false);
-    expect(ws.sentJson).toEqual([{ type: 'set_busy', session_id: 's1', busy: false }]);
+    expect(ws.sentControl).toEqual([{ type: 'set_busy', session_id: 's1', busy: false }]);
   });
 
   it('sends set_busy with busy=true', async () => {
@@ -465,9 +395,9 @@ describe('setBusy', () => {
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sentJson = [];
+    ws.sentControl = [];
     conn.setBusy(true);
-    expect(ws.sentJson).toEqual([{ type: 'set_busy', session_id: 's1', busy: true }]);
+    expect(ws.sentControl).toEqual([{ type: 'set_busy', session_id: 's1', busy: true }]);
   });
 
   it('sends set_busy with alias and keeps it for later refreshes', async () => {
@@ -475,12 +405,12 @@ describe('setBusy', () => {
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sentJson = [];
+    ws.sentControl = [];
 
     conn.setBusy(true, 'Alice');
     conn.refreshPresence();
 
-    expect(ws.sentJson).toEqual([
+    expect(ws.sentControl).toEqual([
       { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
       { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
     ]);
@@ -501,7 +431,7 @@ describe('setBusy', () => {
 
     const ws2 = MockWebSocket.instance!;
     expect(ws2).not.toBe(ws1);
-    const identifyMsg = ws2.sentJson.find((m: any) => m.type === 'identify') as any;
+    const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
     expect(identifyMsg).toBeDefined();
     expect(identifyMsg.busy).toBe(true);
     jest.useRealTimers();
@@ -522,7 +452,7 @@ describe('setBusy', () => {
 
     const ws2 = MockWebSocket.instance!;
     expect(ws2).not.toBe(ws1);
-    const identifyMsg = ws2.sentJson.find((m: any) => m.type === 'identify') as any;
+    const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
     expect(identifyMsg).toMatchObject({ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' });
     jest.useRealTimers();
   });
@@ -535,14 +465,5 @@ describe('setBusy', () => {
 describe('retry budget', () => {
   it('MAX_RECONNECT_ATTEMPTS is a positive number', () => {
     expect(TrackerConnection.MAX_RECONNECT_ATTEMPTS).toBeGreaterThan(0);
-  });
-
-  it('does not fire onClosed on a normal single close', async () => {
-    const cb = makeCallbacks();
-    expectedTrackerDisconnects = 1;
-    makeConnection('http://t', 's1', cb);
-    await Promise.resolve();
-    MockWebSocket.instance!._fireClose();
-    expect(cb.onClosed).not.toHaveBeenCalled();
   });
 });

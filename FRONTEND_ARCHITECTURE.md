@@ -70,10 +70,11 @@ configuration.
 The tracker has two communication channels per player:
 
 1. **Lobby/control channel** — a bespoke tracker protocol used by the lobby
-   iframe for alias, presence, challenge, and matchmaking messages.
+   iframe for alias, presence, challenge, and matchmaking messages. This
+   channel remains JSON over `/ws/lobby`.
 2. **Game relay channel** — the player app's `TrackerConnection` WebSocket. Its
-   JSON control frames establish/monitor the tracker session and its binary
-   frames carry game-specific peer messages unchanged.
+   tracker-control envelopes are bencodex binary dictionaries over `/ws/game`;
+   addressed binary frames carry peer payloads through the tracker relay.
 
 Each channel uses a dedicated WebSocket endpoint: the lobby channel connects to
 `/ws/lobby` and the game channel connects to `/ws/game`. The player app provides
@@ -108,38 +109,42 @@ updates never include the secret nonce.
 | `challenge_received` | `{ challenge_id, from_id, from_alias, amount }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
-When a challenge is accepted, the tracker creates a **pairing** (two player IDs
-linked by a random token) and emits `matched` to both players' game channels.
-Both players' status is set to `'playing'` with the opponent's alias, and any
-pending challenges involving either player are cancelled. Separately, the player
-app self-declares whether it is `busy`. Busy means the app has an unresolved
-session obligation and should not receive challenges. When the app later reports
-that it is not busy, the tracker sets the player back to `'waiting'`; an old
-pairing/chat may still exist until a new session replaces it.
+When a challenge is accepted, the tracker removes that challenge, cancels stale
+pending challenges involving either player, and sends an **advisory_start**
+message to the accepter's game channel only. That advisory is not authority to
+start a session by itself; it asks the accepter's player app whether to initiate.
+The player app self-declares whether it is `busy` over the game channel. Busy
+means the app has an unresolved session obligation or is already showing a
+session-consent prompt and should not receive challenges. When the app later
+reports that it is not busy, the tracker sets the player back to `'waiting'`.
 
 #### Game channel events
+
+The tables below describe logical dictionary fields. On `/ws/game`, tracker
+control envelopes (`identify`, `set_busy`, `registered`, `advisory_start`,
+`delivery_failure`, `lobby_attention`, `keepalive`, and `error`) are bencodex
+binary dictionary frames. The addressed peer-relay envelope is still a
+length-prefixed binary frame; peer app messages inside that envelope
+(`session_proposal`, `session_reject`, and `chat`) are bencodex dictionaries,
+while WASM protocol frames remain raw bytes with the existing reliability tags.
 
 **Player App → Tracker:**
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `identify` | `{ session_id, busy }` | Sent immediately after the game channel opens. Links this channel to the player's lobby session and reports whether the player app currently has an unresolved session obligation. |
-| binary frame | `uint32be msgno || bytes` | Send an authoritative game-protocol byte blob to the paired peer. The tracker relays the binary frame verbatim. |
-| `message` | `{ session_id, data }` | Send JSON relay-control payloads such as `{ ack }` and `{ keepalive: true }` to the paired peer. |
-| `chat` | `{ session_id, text }` | Send chat text to the paired peer. |
-| `close` | `{ session_id }` | Request to end the relay session. |
-| `set_busy` | `{ session_id, busy }` | Update lobby availability as the local broader session phase changes. `busy: true` maps to lobby `busy` or `playing` and cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
+| `identify` | `{ session_id, busy }` | Sent immediately after the game channel opens. Links this channel to the player's lobby session and reports whether the player app currently considers itself unavailable. |
+| binary frame | `[4-byte target_id_len BE][target_id UTF-8][payload]` | Send a peer payload addressed to a specific peer through the tracker relay pipe. |
+| `set_busy` | `{ session_id, busy }` | Update lobby availability from the client-authoritative state. `busy: true` maps to lobby `busy` or `playing` and cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
 
 **Tracker → Player App:**
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `matched` | `{ token, amount, i_am_initiator, my_alias?, peer_alias? }` | A fresh match has been made (challenge accepted for the first time). `amount` is the channel buy-in. |
-| `connection_status` | `{ has_pairing, token?, amount?, i_am_initiator?, peer_connected?, my_alias?, peer_alias? }` | Definitive status report sent on `identify`. The player app uses this to reconcile tracker state against its local save (see [Reconnect Reconciliation](#reconnect-reconciliation)). |
-| `peer_reconnected` | `{}` | The other player's game channel just re-registered. Tells this side to re-send un-acked messages. |
-| binary frame | `uint32be msgno || bytes` | An authoritative game-protocol byte blob from the paired peer, relayed verbatim. |
-| `message` | `{ data }` | A JSON relay-control payload from the paired peer, currently ack or keepalive data (see [Peer Message Reliability](#peer-message-reliability)). |
-| `closed` | `{}` | The relay session is over. Sent to the peer when the other side sends `close`, AND echoed back to the sender of `close` as confirmation. |
+| `registered` | `{ player_id }` | Confirmation of identity. Sent in response to `identify`. |
+| `advisory_start` | `{ peer_id, peer_alias, amount, channel_timeout?, unroll_timeout? }` | The tracker suggests starting a session with this peer (triggered by challenge acceptance in the lobby). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. |
+| binary frame | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]` | A peer payload from another peer, relayed through the tracker pipe with the sender's public id and alias. |
+| `delivery_failure` | `{ to }` | The target peer is not connected; the message could not be delivered. |
+| `lobby_attention` | `{}` | Signals that something happened in the lobby that the user should look at. |
 
 **Connection lifecycle:**
 
@@ -149,26 +154,31 @@ pairing/chat may still exist until a new session replaces it.
 3. The tracker associates this game channel with the lobby session. If a
    previous game channel exists for this player, the tracker closes it and
    replaces it.
-4. The tracker always responds with `connection_status`, reporting whether a
-   pairing exists, its channel buy-in amount, and whether the peer is currently
-   connected.
-5. If a pairing exists and the peer is connected, the tracker also sends
-   `peer_reconnected` to the peer's game channel.
-6. When a challenge is accepted in the lobby, the tracker sends `matched` to
-   both players' game channels. The player app starts the WASM cradle and game
-   session.
-7. Both players exchange binary game frames and JSON relay-control messages
-   through the tracker relay.
-8. Either player can send `close` to end the session. The tracker sends `closed`
-   to the other player **and** echoes `closed` back to the sender as
-   confirmation. The client sets a `closePending` flag and ignores incoming
-   `message` events until the `closed` echo arrives.
+4. The tracker responds with `registered`, confirming the player's public ID.
+5. When a challenge is accepted in the lobby, the tracker sends `advisory_start`
+   to the accepter's game channel only. The app first checks its local
+   availability. If it is already in a session, restoring, handshaking, or
+   showing another consent prompt, it declines by sending `session_reject` to
+   the peer through the pipe.
+6. If the accepter consents, that app becomes the channel initiator. It marks
+   itself busy, sends a bencodex `session_proposal` app message to the peer,
+   starts the WASM session as initiator, and then sends the binary handshake
+   frames through the same addressed pipe.
+7. The peer receives the `session_proposal`, reserves that peer id so early
+   handshake bytes can buffer, marks itself busy while the prompt is open, and
+   shows its own consent prompt. If unavailable or declined, it sends
+   `session_reject` and discards any buffered handshake bytes. If accepted, it
+   starts the WASM session as receiver and drains the buffered handshake bytes.
+8. Both players exchange binary game frames through the addressed tracker pipe.
+   The reliability layer (msgno/ack/keepalive) is encoded inside the binary
+   payload, peer-to-peer — the tracker never interprets it.
 
-**What the tracker holds per paired session:** Just the two channels and the
-pairing metadata (player IDs, token, aliases, and channel buy-in amount). No
-message log, no delivery receipts, no game state. When a channel drops, messages
-to that peer are silently discarded. When a new game channel claims the slot
-(step 3), the tracker resumes routing. Lobby channel disconnects do NOT
+**What the tracker holds per game channel:** just the mapping from session ID to
+player ID and the WebSocket reference. The tracker has no authoritative session
+pairing, message log, delivery receipts, or game state. Message routing is
+purely addressed. When a channel drops, messages to that peer are silently
+discarded. When a new game channel claims the slot (step 3), the tracker resumes
+routing. Lobby channel disconnects do NOT
 immediately remove the player from the lobby — the tracker service applies a
 short TTL sweep to clean up truly departed players. The lobby iframe re-`join`s
 on reconnect, refreshing `lastActive`.
@@ -179,26 +189,29 @@ TCP closes are not always reliable (half-open connections, NAT timeouts, proxy
 buffering). The tracker and clients maintain bidirectional application-level
 keepalives at two separate layers:
 
-1. **Tracker-level keepalives** — `{ type: 'keepalive' }` envelope frames sent
-   directly between the tracker server and each client, every 15 seconds in both
-   directions. These prove the WebSocket connection itself is alive.
-2. **Peer-level keepalives** — `{ keepalive: true }` relay payloads sent inside
-   `message` events, relayed through the tracker to the paired peer. These prove
+1. **Tracker-level keepalives** — `{ type: 'keepalive' }` logical envelope
+   frames sent directly between the tracker server and each client, every 15
+   seconds in both directions. `/ws/lobby` serializes these as JSON; `/ws/game`
+   serializes them as bencodex dictionaries. These prove the WebSocket
+   connection itself is alive.
+2. **Peer-level keepalives** — relay payloads with the peer reliability
+   keepalive tag, relayed through the tracker to the paired peer. These prove
    the peer is alive end-to-end (see [Peer Liveness](#peer-liveness)).
 
 **Server side (`index.ts`):**
 
 - Maintains WebSocket clients for lobby and game channels.
-- Starts a 15-second keepalive interval per connection (`{ type: 'keepalive' }`).
-  The interval is cleared on `ws.close`.
-- Handles inbound `{ type: 'keepalive' }` as a no-op (the frame arriving is
+- Starts a 15-second keepalive interval per connection. Lobby keepalives are
+  JSON; game keepalives are bencodex. The interval is cleared on `ws.close`.
+- Handles inbound keepalive envelopes as no-ops (the frame arriving is
   sufficient proof of life).
 
 **Game channel client (`TrackerConnection`):**
 
 - Uses a WebSocket connection to `/ws/game` and re-sends `identify` on reconnect.
 - Starts a 15-second keepalive interval on `ws.onopen` that sends
-  `{ type: 'keepalive' }` to the tracker. Cleared on close/error/disconnect.
+  a bencodex `{ type: 'keepalive' }` dictionary to the tracker. Cleared on
+  close/error/disconnect.
 - Fires `onTrackerActivity()` on every incoming `ws.onmessage` (any message
   type proves the tracker is alive).
 
@@ -555,22 +568,19 @@ acks.
 
 #### Wire format
 
-Authoritative game messages are binary WebSocket frames, not JSON. The frame is:
+Authoritative WASM game messages remain raw bytes inside addressed peer-relay
+payloads, not JSON and not bencodex. The player app wraps them in a tiny
+peer-to-peer reliability tag before handing the payload to `TrackerConnection`:
 
-- **Data frame:** 4-byte big-endian `msgno`, followed by the opaque WASM peer
-  message bytes.
+- **Data payload:** tag `0x01`, 4-byte big-endian `msgno`, followed by the
+  opaque WASM peer message bytes.
+- **Ack payload:** tag `0x02`, 4-byte big-endian `msgno`.
+- **Keepalive payload:** tag `0x03`.
 
-Relay-control messages remain JSON today:
-
-- **Ack message:** `{ "type": "message", "session_id": "...", "data": { "ack": <number> } }`
-- **Keepalive message:** `{ "type": "message", "session_id": "...", "data": { "keepalive": true } }`
-
-This split keeps the authoritative game protocol in an efficient byte-oriented
-format. JSON is natively Unicode and is a poor fit for packing opaque protocol
-blobs without extra encoding. The current JSON control-plane pieces are a
-description of today's implementation, not a promise that future tracker formats
-will stay JSON; formats controlled by this project can move further toward
-binary over time.
+Peer app messages that are not WASM protocol bytes (`session_proposal`,
+`session_reject`, and `chat`) are bencodex dictionaries inside the same
+addressed peer-relay envelope. The tracker does not interpret either form; it
+only forwards the addressed payload.
 
 #### Outbound
 
@@ -628,66 +638,37 @@ keepalive freshness into four states:
 Transitions: `onTrackerDisconnected` → Reconnecting, `onTrackerReconnected` →
 Connected, keepalive timeout while WS is up → Inactive.
 
-**Peer indicator** is a boolean: any peer activity (data, ack, or keepalive)
-within the last 60 seconds (`PEER_LIVENESS_MS`) means Active, otherwise
-Inactive. The activity ref is updated by wrapped handlers in
-`registerMessageHandler`, ensuring it stays current even after
-`TrackerConnection.registerMessageHandler` replaces the initial callbacks.
+**Peer indicator** (`PeerLiveness`) has four states:
+
+| State | Meaning | Dot color |
+|-------|---------|-----------|
+| `connected` | Peer traffic received within the last 30 seconds | Green |
+| `degraded` | Delivery failure reported by tracker, or no peer traffic for 30+ seconds | Yellow |
+| `dead` | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Red |
+| `null` | No active peer session | Grey |
+
+`dead` is sticky: incoming messages from that peer are ignored. Only a new session start resets to `null`.
 
 **Action buttons**: Controls live with the state axis they affect. The tracker
 disconnect button lives in the Tracker tab header strip (right-aligned next to
-"Connected to {origin}"). The peer/pairing disconnect button lives in the Chat
-tab header. Go On-Chain lives in the Game tab session header. Disruptive
-tracker actions are gated by cascade confirmation dialogs; peer disconnect and
-explicit Go On-Chain currently do not prompt. See `CONNECTIVITY.md` for the full
-connectivity model.
+"Connected to {origin}"). Go On-Chain lives in the Game tab session header.
+Disruptive tracker actions are gated by cascade confirmation dialogs. See
+`CONNECTIVITY.md` for the full connectivity model.
 
 #### Reconnect
 
-When a player reconnects (`connection_status` received), and the peer is
-connected, the tracker sends `peer_reconnected` to the peer. Both sides call
-`resendUnacked()` to replay their un-acked messages. The ordering and
-deduplication logic on the receiving side handles any duplicates caused by the
-replay.
+When a player reconnects (receives `registered` from the tracker), and has an
+active session peer, it calls `resendUnacked()` to replay un-acked messages.
+The ordering and deduplication logic on the receiving side handles any
+duplicates caused by the replay.
 
 ### Reconnect Reconciliation
 
-The `onConnectionStatus` handler fires on every `identify` response from the
+The `onRegistered` handler fires on every `identify` response from the
 tracker — both on initial page load and on mid-session game channel reconnects.
-`Shell.tsx` uses an `activePairingTokenRef` to distinguish the two cases.
-
-#### Initial page load (`activePairingTokenRef` is null)
-
-On page reload, the client receives `connection_status` from the tracker and
-compares it against the local `SessionState`. There are five cases:
-
-| Tracker says | localStorage has | Action |
-|-------------|-----------------|--------|
-| `has_pairing: true, token: T` | Save with matching `pairingToken: T` | **Restore session.** |
-| `has_pairing: true, token: T` | No save at all | **Unrecognized pairing — request close.** |
-| `has_pairing: true, token: T` | Save with different `pairingToken: T2` | **Close unknown pairing and restore the saved session UI.** Peer remains inactive, so an off-chain restored session cascades on-chain. |
-| `has_pairing: false` | Full save exists | **Restore the saved session UI with no active peer.** If it is still off-chain, the peer-loss cascade calls `goOnChain()`. |
-| `has_pairing: false` | No save | **Idle — wait for new match.** |
-
-The reconciliation handler itself mostly restores local session state, requests
-close for unknown pairings, or marks the peer inactive. On-chain escalation is
-centralized in Shell's cascade rule: off-chain session + lost peer =
-`goOnChain()`. This same cascade is used when a `closed` event arrives
-mid-session.
-
-#### Mid-session reconnect (`activePairingTokenRef` is set)
-
-When the game channel reconnects during an active session, `connection_status` fires
-again. The handler checks whether the tracker still knows about the active
-pairing:
-
-| Tracker says | Action |
-|-------------|--------|
-| `has_pairing: true, token` matches `activePairingTokenRef` | **Continue.** Call `resendUnacked()` to replay un-acked messages. |
-| Any other state (no pairing, or different token) | **Keep local session active and mark peer inactive.** If the session is still off-chain, the peer-loss cascade calls `goOnChain()`. |
-
-The `activePairingTokenRef` is set in `startSession()` and cleared on session
-end or reset.
+On reconnect with an active session peer, the player app resends un-acked
+messages. The tracker has no concept of pairings or session state — reconnect
+reconciliation is purely a client-side concern based on local session saves.
 
 ### Static Asset Layers
 
@@ -1162,5 +1143,5 @@ protocol violations, not to limit concurrency.
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |
-| `lobby/lobby-service/src/index.ts` | Tracker server: lobby, challenges, pairing, message relay, liveness sweep |
-| `lobby/lobby-service/src/lobbyState.ts` | Tracker state: players, challenges, pairings |
+| `lobby/lobby-service/src/index.ts` | Tracker server: lobby, challenges, addressed message relay, liveness sweep |
+| `lobby/lobby-service/src/lobbyState.ts` | Tracker state: players, challenges |

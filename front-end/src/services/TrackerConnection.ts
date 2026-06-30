@@ -1,41 +1,32 @@
-import { PeerConnectionResult, ChatMessage } from '../types/ChiaGaming';
 import { log } from './log';
+import {
+  decode as decodeBencodex,
+  encode as encodeBencodex,
+  getText,
+  isDictionary,
+  type BencodexKey,
+  type BencodexValue,
+} from 'chia-gaming-bencodex';
 
-export interface MatchedParams {
-  token: string;
+export interface AdvisoryStartParams {
+  peer_id: string;
+  peer_alias: string;
   amount: string;
-  i_am_initiator: boolean;
-  my_alias?: string;
-  peer_alias?: string;
-  channel_timeout?: string;
-  unroll_timeout?: string;
-}
-
-export interface ConnectionStatus {
-  has_pairing: boolean;
-  token?: string;
-  amount?: string;
-  i_am_initiator?: boolean;
-  peer_connected?: boolean;
-  my_alias?: string;
-  peer_alias?: string;
   channel_timeout?: string;
   unroll_timeout?: string;
 }
 
 export interface TrackerConnectionCallbacks {
-  onMatched: (params: MatchedParams) => void;
-  onConnectionStatus: (status: ConnectionStatus) => void;
-  onPeerReconnected: () => void;
-  onDataMessage: (msgno: number, msg: Uint8Array) => void;
-  onAck: (ack: number) => void;
-  onKeepalive: () => void;
+  onAdvisoryStart: (params: AdvisoryStartParams) => void;
+  onPeerMessage: (from_id: string, from_alias: string, payload: Uint8Array) => void;
+  onPeerAppMessage: (from_id: string, from_alias: string, data: PeerAppMessage) => void;
+  onDeliveryFailure: (to: string) => void;
+  onRegistered: (player_id: string) => void;
   onClosed: () => void;
+  onLobbyAttention: () => void;
   onTrackerDisconnected: () => void;
   onTrackerReconnected: () => void;
   onTrackerActivity: () => void;
-  onChat: (msg: ChatMessage) => void;
-  onLobbyAttention: () => void;
 }
 
 export interface TrackerConnectionOptions {
@@ -43,30 +34,105 @@ export interface TrackerConnectionOptions {
   initialAlias?: string | null;
 }
 
-// Binary frame type tags for peer-to-peer relay (opaque to the tracker).
-const FRAME_DATA = 0x01;
-const FRAME_ACK = 0x02;
-const FRAME_KEEPALIVE = 0x03;
-
 type TrackerEnvelope =
-  | { type: 'connection_status'; has_pairing: boolean; token?: string; amount?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string; channel_timeout?: string; unroll_timeout?: string }
-  | { type: 'matched'; token: string; amount: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string; channel_timeout?: string; unroll_timeout?: string }
-  | { type: 'chat'; text: string; from_alias: string; timestamp: number }
-  | { type: 'peer_reconnected' }
-  | { type: 'keepalive' }
+  | { type: 'advisory_start'; peer_id: string; peer_alias: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'registered'; player_id: string }
+  | { type: 'delivery_failure'; to: string }
+  | { type: 'lobby_attention' }
   | { type: 'closed' }
-  | { type: 'error'; error?: string }
-  | { type: 'lobby_attention' };
+  | { type: 'keepalive' }
+  | { type: 'error'; error?: string };
+
+export type PeerAppMessage =
+  | { type: 'session_proposal'; amount: string; from_alias?: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'session_reject' }
+  | { type: 'chat'; text: string; timestamp?: bigint };
+
+function definedBencodexFields(data: Record<string, BencodexValue | undefined>): Record<string, BencodexValue> {
+  const out: Record<string, BencodexValue> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+function optionalText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined {
+  const value = map.get(key);
+  return typeof value === 'string' ? value : undefined;
+}
+
+function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string {
+  const value = optionalText(map, key);
+  if (value === undefined) throw new Error(`missing text field: ${key}`);
+  return value;
+}
+
+function decodeTrackerEnvelope(input: ArrayBuffer): TrackerEnvelope | null {
+  const decoded = decodeBencodex(input);
+  if (!isDictionary(decoded)) return null;
+  const type = getText(decoded, 'type');
+  if (!type) return null;
+  switch (type) {
+    case 'advisory_start':
+      return {
+        type,
+        peer_id: requireText(decoded, 'peer_id'),
+        peer_alias: requireText(decoded, 'peer_alias'),
+        amount: requireText(decoded, 'amount'),
+        channel_timeout: optionalText(decoded, 'channel_timeout'),
+        unroll_timeout: optionalText(decoded, 'unroll_timeout'),
+      };
+    case 'registered':
+      return { type, player_id: requireText(decoded, 'player_id') };
+    case 'delivery_failure':
+      return { type, to: requireText(decoded, 'to') };
+    case 'lobby_attention':
+    case 'closed':
+    case 'keepalive':
+      return { type };
+    case 'error':
+      return { type, error: optionalText(decoded, 'error') };
+    default:
+      return null;
+  }
+}
+
+function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
+  const decoded = decodeBencodex(payload);
+  if (!isDictionary(decoded)) return null;
+  const type = getText(decoded, 'type');
+  if (!type) return null;
+  switch (type) {
+    case 'session_proposal':
+      return {
+        type,
+        amount: requireText(decoded, 'amount'),
+        from_alias: optionalText(decoded, 'from_alias'),
+        channel_timeout: optionalText(decoded, 'channel_timeout'),
+        unroll_timeout: optionalText(decoded, 'unroll_timeout'),
+      };
+    case 'session_reject':
+      return { type };
+    case 'chat': {
+      const text = requireText(decoded, 'text');
+      const rawTimestamp = decoded.get('timestamp');
+      return {
+        type,
+        text,
+        timestamp: typeof rawTimestamp === 'bigint' ? rawTimestamp : undefined,
+      };
+    }
+    default:
+      return null;
+  }
+}
 
 export class TrackerConnection {
   private trackerUrl: string;
   private sessionId: string;
   private callbacks: TrackerConnectionCallbacks;
   private ws: WebSocket | null = null;
-  private binaryBuffer: ArrayBuffer[] = [];
-  private handlerRegistered = false;
   private closed = false;
-  private closePending = false;
   private wasDisconnected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -74,6 +140,8 @@ export class TrackerConnection {
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
   private busy = false;
+  private closePending = false;
+  private myPlayerId: string | null = null;
   private alias: string | undefined;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, options: TrackerConnectionOptions = {}) {
@@ -97,7 +165,7 @@ export class TrackerConnection {
   private sendWs(payload: Record<string, unknown>): void {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify(payload));
+    ws.send(encodeBencodex(definedBencodexFields(payload as Record<string, BencodexValue | undefined>)));
   }
 
   private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
@@ -156,80 +224,17 @@ export class TrackerConnection {
       this.callbacks.onTrackerActivity();
 
       if (evt.data instanceof ArrayBuffer) {
-        if (this.closed || this.closePending) return;
-        if (!this.handlerRegistered) {
-          this.binaryBuffer.push(evt.data);
-          return;
+        if (this.closed) return;
+        const bytes = new Uint8Array(evt.data);
+        if (bytes[0] === 0x64) {
+          this.dispatchTrackerEnvelope(evt.data);
+        } else {
+          this.dispatchBinaryFrame(evt.data);
         }
-        this.dispatchBinaryFrame(evt.data);
         return;
       }
 
-      let msg: TrackerEnvelope | null = null;
-      try {
-        msg = JSON.parse(evt.data as string) as TrackerEnvelope;
-      } catch {
-        log('[tracker] recv malformed ws json');
-        return;
-      }
-      if (!msg || typeof msg !== 'object' || !('type' in msg)) {
-        log('[tracker] recv malformed ws envelope');
-        return;
-      }
-
-      switch (msg.type) {
-        case 'connection_status': {
-          const status: ConnectionStatus = {
-            has_pairing: msg.has_pairing,
-            token: msg.token,
-            amount: msg.amount,
-            i_am_initiator: msg.i_am_initiator,
-            peer_connected: msg.peer_connected,
-            my_alias: msg.my_alias,
-            peer_alias: msg.peer_alias,
-            channel_timeout: msg.channel_timeout,
-            unroll_timeout: msg.unroll_timeout,
-          };
-          log(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
-          this.callbacks.onConnectionStatus(status);
-          break;
-        }
-        case 'matched': {
-          const params: MatchedParams = {
-            token: msg.token,
-            amount: msg.amount,
-            i_am_initiator: msg.i_am_initiator,
-            my_alias: msg.my_alias,
-            peer_alias: msg.peer_alias,
-            channel_timeout: msg.channel_timeout,
-            unroll_timeout: msg.unroll_timeout,
-          };
-          log(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
-          this.callbacks.onMatched(params);
-          break;
-        }
-        case 'chat':
-          this.callbacks.onChat({ text: msg.text, fromAlias: msg.from_alias, timestamp: BigInt(msg.timestamp), isMine: false });
-          break;
-        case 'peer_reconnected':
-          log('[tracker] peer_reconnected');
-          this.callbacks.onPeerReconnected();
-          break;
-        case 'keepalive':
-          break;
-        case 'closed':
-          this.closePending = false;
-          this.callbacks.onClosed();
-          break;
-        case 'lobby_attention':
-          this.callbacks.onLobbyAttention();
-          break;
-        case 'error':
-          log(`[tracker] server error: ${msg.error ?? 'unknown'}`);
-          break;
-        default:
-          break;
-      }
+      log('[tracker] recv unexpected text ws frame');
     };
 
     ws.onerror = () => {
@@ -274,56 +279,85 @@ export class TrackerConnection {
     };
   }
 
-  sendMessage(msgno: number, input: Uint8Array) {
-    log(`[tracker] send msgno=${msgno} len=${input.byteLength}`);
-    const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const frame = new Uint8Array(1 + 4 + input.byteLength);
-    const view = new DataView(frame.buffer);
-    frame[0] = FRAME_DATA;
-    view.setUint32(1, msgno, false);
-    frame.set(input, 5);
-    ws.send(frame);
-  }
-
-  sendAck(ackMsgno: number) {
-    log(`[tracker] send ack=${ackMsgno}`);
-    const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const frame = new Uint8Array(1 + 4);
-    const view = new DataView(frame.buffer);
-    frame[0] = FRAME_ACK;
-    view.setUint32(1, ackMsgno, false);
-    ws.send(frame);
-  }
-
-  sendKeepalive() {
-    const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(new Uint8Array([FRAME_KEEPALIVE]));
-  }
-
-  hostLog(_msg: string) {
-    // no-op: server-side logging not supported over REST
-  }
-
-  sendChat(text: string) {
-    this.sendWs({ type: 'chat', session_id: this.sessionId, text });
-  }
-
-  close() {
-    if (this.closed) return;
-    if (this.closePending) {
-      this.sendCloseRequest();
+  private dispatchTrackerEnvelope(buf: ArrayBuffer): void {
+    let msg: TrackerEnvelope | null = null;
+    try {
+      msg = decodeTrackerEnvelope(buf);
+    } catch {
+      log('[tracker] recv malformed bencodex envelope');
       return;
     }
-    this.closePending = true;
-    log('[tracker] requesting close');
-    this.sendCloseRequest();
+    if (!msg || typeof msg !== 'object' || !('type' in msg)) {
+      log('[tracker] recv malformed ws envelope');
+      return;
+    }
+
+    switch (msg.type) {
+      case 'advisory_start': {
+        const params: AdvisoryStartParams = {
+          peer_id: msg.peer_id,
+          peer_alias: msg.peer_alias,
+          amount: msg.amount,
+          channel_timeout: msg.channel_timeout,
+          unroll_timeout: msg.unroll_timeout,
+        };
+        log(`[tracker] advisory_start peer=${params.peer_id} alias=${params.peer_alias} amount=${params.amount}`);
+        this.callbacks.onAdvisoryStart(params);
+        break;
+      }
+      case 'registered':
+        this.myPlayerId = msg.player_id;
+        log(`[tracker] registered as player_id=${msg.player_id}`);
+        this.callbacks.onRegistered(msg.player_id);
+        break;
+      case 'delivery_failure':
+        log(`[tracker] delivery_failure to=${msg.to}`);
+        this.callbacks.onDeliveryFailure(msg.to);
+        break;
+      case 'lobby_attention':
+        this.callbacks.onLobbyAttention();
+        break;
+      case 'closed':
+        this.closePending = false;
+        this.callbacks.onClosed();
+        break;
+      case 'keepalive':
+        break;
+      case 'error':
+        log(`[tracker] server error: ${msg.error ?? 'unknown'}`);
+        break;
+      default:
+        break;
+    }
   }
 
-  private sendCloseRequest() {
-    this.sendWs({ type: 'close', session_id: this.sessionId });
+  /**
+   * Send a binary payload to a specific peer through the tracker pipe.
+   * Wire format: [4-byte target_id_len BE][target_id UTF-8][payload]
+   */
+  sendToPeer(targetId: string, payload: Uint8Array): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const targetBuf = new TextEncoder().encode(targetId);
+    const frame = new Uint8Array(4 + targetBuf.byteLength + payload.byteLength);
+    const view = new DataView(frame.buffer);
+    view.setUint32(0, targetBuf.byteLength, false);
+    frame.set(targetBuf, 4);
+    frame.set(payload, 4 + targetBuf.byteLength);
+    ws.send(frame);
+    log(`[tracker] send to=${targetId} len=${payload.byteLength}`);
+  }
+
+  /**
+   * Send a bencodex app message to a specific peer through the tracker pipe.
+   */
+  sendPeerAppMessage(targetId: string, data: PeerAppMessage): void {
+    const payload = encodeBencodex(definedBencodexFields(data as Record<string, BencodexValue | undefined>));
+    this.sendToPeer(targetId, payload);
+  }
+
+  getPlayerId(): string | null {
+    return this.myPlayerId;
   }
 
   forceDisconnect() {
@@ -333,72 +367,6 @@ export class TrackerConnection {
     this.stopKeepaliveTimer();
     this.ws?.close();
     this.ws = null;
-  }
-
-  getPeerConnection(): PeerConnectionResult {
-    return {
-      sendMessage: (msgno: number, input: Uint8Array) => this.sendMessage(msgno, input),
-      sendAck: (ackMsgno: number) => this.sendAck(ackMsgno),
-      sendKeepalive: () => this.sendKeepalive(),
-      hostLog: (msg: string) => this.hostLog(msg),
-      close: () => this.close(),
-    };
-  }
-
-  registerMessageHandler(
-    handler: (msgno: number, msg: Uint8Array) => void,
-    ackHandler: (ack: number) => void,
-    keepaliveHandler: () => void,
-  ) {
-    this.callbacks.onDataMessage = handler;
-    this.callbacks.onAck = ackHandler;
-    this.callbacks.onKeepalive = keepaliveHandler;
-    this.handlerRegistered = true;
-    const buffered = this.binaryBuffer;
-    this.binaryBuffer = [];
-    for (const frame of buffered) {
-      this.dispatchBinaryFrame(frame);
-    }
-  }
-
-  private dispatchBinaryFrame(buf: ArrayBuffer): void {
-    if (buf.byteLength < 1) {
-      log('[tracker] recv binary frame empty');
-      return;
-    }
-    const bytes = new Uint8Array(buf);
-    const tag = bytes[0];
-    switch (tag) {
-      case FRAME_DATA: {
-        if (buf.byteLength < 5) {
-          log('[tracker] recv data frame too short');
-          return;
-        }
-        const view = new DataView(buf);
-        const msgno = view.getUint32(1, false);
-        const msg = new Uint8Array(buf, 5);
-        log(`[tracker] recv msgno=${msgno} len=${msg.byteLength}`);
-        this.callbacks.onDataMessage(msgno, msg);
-        break;
-      }
-      case FRAME_ACK: {
-        if (buf.byteLength < 5) {
-          log('[tracker] recv ack frame too short');
-          return;
-        }
-        const view = new DataView(buf);
-        const ackMsgno = view.getUint32(1, false);
-        log(`[tracker] recv ack=${ackMsgno}`);
-        this.callbacks.onAck(ackMsgno);
-        break;
-      }
-      case FRAME_KEEPALIVE:
-        this.callbacks.onKeepalive();
-        break;
-      default:
-        log(`[tracker] recv unknown binary frame tag=${tag}`);
-        break;
-    }
   }
 
   setBusy(busy: boolean, alias?: string | null) {
@@ -416,6 +384,21 @@ export class TrackerConnection {
     this.sendWs(this.presencePayload('set_busy'));
   }
 
+  close() {
+    if (this.closed) return;
+    if (this.closePending) {
+      this.sendCloseRequest();
+      return;
+    }
+    this.closePending = true;
+    log('[tracker] requesting close');
+    this.sendCloseRequest();
+  }
+
+  private sendCloseRequest() {
+    this.sendWs({ type: 'close', session_id: this.sessionId });
+  }
+
   disconnect() {
     this.closed = true;
     this.stopKeepaliveTimer();
@@ -425,6 +408,47 @@ export class TrackerConnection {
     }
     this.ws?.close();
     this.ws = null;
+  }
+
+  private dispatchBinaryFrame(buf: ArrayBuffer): void {
+    // Inbound binary: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
+    if (buf.byteLength < 4) {
+      log('[tracker] recv binary frame too short');
+      return;
+    }
+    const view = new DataView(buf);
+    const fromIdLen = view.getUint32(0, false);
+    if (buf.byteLength < 4 + fromIdLen + 4) {
+      log('[tracker] recv binary frame header incomplete');
+      return;
+    }
+    const fromIdBytes = new Uint8Array(buf, 4, fromIdLen);
+    const fromId = new TextDecoder().decode(fromIdBytes);
+    const aliasOffset = 4 + fromIdLen;
+    const fromAliasLen = view.getUint32(aliasOffset, false);
+    const payloadStart = aliasOffset + 4 + fromAliasLen;
+    if (buf.byteLength < payloadStart) {
+      log('[tracker] recv binary frame alias header incomplete');
+      return;
+    }
+    const fromAliasBytes = new Uint8Array(buf, aliasOffset + 4, fromAliasLen);
+    const fromAlias = new TextDecoder().decode(fromAliasBytes);
+    const payload = new Uint8Array(buf, payloadStart);
+
+    if (payload.length > 0 && payload[0] === 0x64) {
+      try {
+        const data = decodePeerAppMessage(payload);
+        if (data) {
+          this.callbacks.onPeerAppMessage(fromId, fromAlias, data);
+          return;
+        }
+      } catch {
+        // Not a valid app message, fall through to raw peer protocol bytes.
+      }
+    }
+
+    log(`[tracker] recv from=${fromId} len=${payload.byteLength}`);
+    this.callbacks.onPeerMessage(fromId, fromAlias, payload);
   }
 
   private startKeepaliveTimer() {

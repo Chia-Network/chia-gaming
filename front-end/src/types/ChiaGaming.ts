@@ -4,6 +4,8 @@ import { jsonStringify } from '../util/jsonSafe';
 
 export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
+export type PeerLiveness = 'connected' | 'degraded' | 'dead' | null;
+
 export type SessionPhase = 'none' | 'off-chain' | 'on-chain' | 'resolved';
 
 interface Amount {
