@@ -1371,7 +1371,10 @@ const Shell = () => {
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
-    trackerConnRef.current?.sendPeerAppMessage(sessionPeerIdRef.current!, { type: 'chat', text, timestamp: BigInt(Date.now()) });
+    const peerId = sessionPeerIdRef.current;
+    if (peerId) {
+      trackerConnRef.current?.sendPeerAppMessage(peerId, { type: 'chat', text, timestamp: BigInt(Date.now()) });
+    }
     setChatMessages(prev => {
       const next = [...prev, { text, fromAlias: myAlias, timestamp: BigInt(Date.now()), isMine: true }];
       if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
