@@ -827,6 +827,7 @@ const Shell = () => {
       pendingAdvisoryRef.current === null &&
       pendingProposalRef.current === null &&
       sessionPeerIdRef.current === null &&
+      !sessionSaveRef.current?.sessionPeerId &&
       pendingMsgHandlerRef2.current === null;
   }, []);
 
