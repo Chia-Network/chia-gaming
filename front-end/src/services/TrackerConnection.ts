@@ -262,6 +262,7 @@ export class TrackerConnection {
         if (this.reconnectAttempt >= TrackerConnection.MAX_RECONNECT_ATTEMPTS) {
           log('[tracker] reconnect budget exhausted, declaring connection dead');
           this.closed = true;
+          this.callbacks.onClosed();
           return;
         }
         const base = TrackerConnection.RECONNECT_DELAYS[

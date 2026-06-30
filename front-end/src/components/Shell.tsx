@@ -1212,8 +1212,10 @@ const Shell = () => {
           }
         },
         onClosed: () => {
-          console.log('[Shell] peer pairing ended');
+          console.log('[Shell] tracker connection ended');
+          trackerWsUpRef.current = false;
           markPeerInactive();
+          setTrackerLiveness('disconnected');
         },
         onTrackerDisconnected: () => {
           console.log('[Shell] tracker disconnected');
