@@ -4,7 +4,7 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, CoinOfInterestEntry } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
 import { TrackerConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/TrackerConnection';
 import { subscribeLog } from '../services/log';
 import {
@@ -541,7 +541,7 @@ const Shell = () => {
 
   const [walletConnected, setWalletConnected] = useState(false);
   const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
-  const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
+  const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
   const [sessionError, setSessionError] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
@@ -757,6 +757,7 @@ const Shell = () => {
   const sessionSaveRef = useRef<SessionState | null>(null);
   const historyRef = useRef<string[]>(history);
   historyRef.current = history;
+  const peerLivenessRef = useRef<PeerLiveness>(null);
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
@@ -792,13 +793,21 @@ const Shell = () => {
 
 
   const markPeerActive = useCallback(() => {
+    if (peerLivenessRef.current === 'dead') return;
     lastPeerActivityRef.current = Date.now();
-    setPeerConnected(true);
+    peerLivenessRef.current = 'connected';
+    setPeerLiveness('connected');
   }, []);
 
   const markPeerInactive = useCallback(() => {
     lastPeerActivityRef.current = 0;
-    setPeerConnected(false);
+    peerLivenessRef.current = null;
+    setPeerLiveness(null);
+  }, []);
+
+  const markPeerDead = useCallback(() => {
+    peerLivenessRef.current = 'dead';
+    setPeerLiveness('dead');
   }, []);
 
   const registerMessageHandler = useCallback((handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
@@ -973,8 +982,13 @@ const Shell = () => {
         if (!trackerWsUpRef.current) return 'reconnecting';
         return activityFresh ? 'connected' : 'inactive';
       });
-      const peerLive = lastPeerActivityRef.current > 0 && now - lastPeerActivityRef.current <= 60_000;
-      setPeerConnected(peerLive);
+      if (peerLivenessRef.current !== 'dead' && peerLivenessRef.current !== null) {
+        const stale = lastPeerActivityRef.current > 0 && now - lastPeerActivityRef.current > 30_000;
+        if (stale && peerLivenessRef.current === 'connected') {
+          peerLivenessRef.current = 'degraded';
+          setPeerLiveness('degraded');
+        }
+      }
     }, 5_000);
     return () => clearInterval(id);
   }, []);
@@ -1214,6 +1228,7 @@ const Shell = () => {
           } else if (msg.type === 'session_reject') {
             console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, sessionPeerIdRef.current, sessionPeerIdRef.current === fromId);
             if (sessionPeerIdRef.current === fromId) {
+              markPeerDead();
               cancelAttemptedSession();
             }
           } else if (msg.type === 'chat') {
@@ -1231,7 +1246,9 @@ const Shell = () => {
         onDeliveryFailure: (to: string) => {
           console.warn('[Shell] delivery_failure to=%s', to);
           if (to === sessionPeerIdRef.current) {
-            markPeerInactive();
+            if (peerLivenessRef.current === 'dead') return;
+            peerLivenessRef.current = 'degraded';
+            setPeerLiveness('degraded');
           }
         },
         onRegistered: (playerId: string) => {
@@ -1276,13 +1293,13 @@ const Shell = () => {
   }, [uniqueId, markPeerActive, markPeerInactive, cancelAttemptedSession, clearSessionPreservingHistory, isAvailableForNewSessionPrompt, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const requestTrackerConnect = useCallback((origin: string) => {
-    if (peerConnected && sessionPhase === 'off-chain') {
+    if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
       });
-    } else if (peerConnected) {
+    } else if (peerLiveness === 'connected' || peerLiveness === 'degraded') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'This will end your peer connection.',
@@ -1291,7 +1308,7 @@ const Shell = () => {
     } else {
       connectToTracker(origin, { resetSession: true });
     }
-  }, [peerConnected, sessionPhase, connectToTracker]);
+  }, [peerLiveness, sessionPhase, connectToTracker]);
 
   // Auto-connect to saved tracker once this tab owns the app lease. Tracker
   // identity is independent of wallet restore, so do not gate this on userReady.
@@ -1672,13 +1689,13 @@ const Shell = () => {
   }, [markPeerInactive]);
 
   const handleDisconnectTracker = useCallback(() => {
-    if (peerConnected && sessionPhase === 'off-chain') {
+    if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
       });
-    } else if (peerConnected) {
+    } else if (peerLiveness === 'connected' || peerLiveness === 'degraded') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'This will end your peer connection.',
@@ -1687,7 +1704,7 @@ const Shell = () => {
     } else {
       doDisconnectTracker();
     }
-  }, [peerConnected, sessionPhase, doDisconnectTracker]);
+  }, [peerLiveness, sessionPhase, doDisconnectTracker]);
 
   const handleEndPeerConnection = useCallback(() => {
     resetPeerRelayState();
@@ -1742,12 +1759,13 @@ const Shell = () => {
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
     trackerConnRef.current?.setBusy(false);
+    markPeerDead();
     resetPeerRelayState();
     setDashboardSessionModel(prev => prev
       ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
       : prev
     );
-  }, [resetPeerRelayState]);
+  }, [markPeerDead, resetPeerRelayState]);
 
   const requestDashboardGoOnChain = useCallback(() => {
     const channelState = dashboardSessionModel?.channel.status.state;
@@ -2003,18 +2021,20 @@ const Shell = () => {
                 dotColor = 'var(--color-canvas-text-subtle)';
               } else if (sessionError) {
                 dotColor = 'var(--color-alert-solid)';
-              } else if (sessionPhase === 'on-chain') {
-                dotColor = 'var(--color-warning-solid)';
-              } else if (sessionPhase === 'off-chain' && !peerConnected) {
+              } else if (peerLiveness === 'dead') {
                 dotColor = 'var(--color-alert-solid)';
-              } else if (sessionPhase === 'off-chain' && peerConnected) {
+              } else if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') {
+                dotColor = 'var(--color-warning-solid)';
+              } else if (peerLiveness === 'connected') {
                 dotColor = 'var(--color-success-solid)';
               } else {
                 dotColor = 'var(--color-canvas-text-subtle)';
               }
               break;
             case 'chat':
-              dotColor = peerConnected ? 'var(--color-success-solid)' : 'var(--color-canvas-text-subtle)';
+              dotColor = peerLiveness === 'connected'
+                ? 'var(--color-success-solid)'
+                : 'var(--color-canvas-text-subtle)';
               break;
           }
 
@@ -2365,7 +2385,7 @@ const Shell = () => {
             messages={chatMessages}
             onSend={sendChat}
             myAlias={gameParams?.myAlias ?? 'You'}
-            peerConnected={!!peerConnected}
+            peerConnected={peerLiveness === 'connected'}
             onEndPeer={handleEndPeerConnection}
             opponentAlias={gameParams?.opponentAlias}
           />

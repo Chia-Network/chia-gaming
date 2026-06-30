@@ -638,10 +638,16 @@ keepalive freshness into four states:
 Transitions: `onTrackerDisconnected` → Reconnecting, `onTrackerReconnected` →
 Connected, keepalive timeout while WS is up → Inactive.
 
-**Peer indicator** is a boolean: any peer activity (data, ack, or keepalive)
-within the last 60 seconds (`PEER_LIVENESS_MS`) means Active, otherwise
-Inactive. The activity ref is updated by the `onPeerMessage` callback in
-`TrackerConnection`, ensuring it stays current across reconnects.
+**Peer indicator** (`PeerLiveness`) has four states:
+
+| State | Meaning | Dot color |
+|-------|---------|-----------|
+| `connected` | Peer traffic received within the last 30 seconds | Green |
+| `degraded` | Delivery failure reported by tracker, or no peer traffic for 30+ seconds | Yellow |
+| `dead` | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Red |
+| `null` | No active peer session | Grey |
+
+`dead` is sticky: incoming messages from that peer are ignored. Only a new session start resets to `null`.
 
 **Action buttons**: Controls live with the state axis they affect. The tracker
 disconnect button lives in the Tracker tab header strip (right-aligned next to

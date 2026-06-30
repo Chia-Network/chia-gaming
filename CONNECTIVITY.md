@@ -354,8 +354,9 @@ The tracker does not create a session. It can only advise and relay:
 - **Peer relay**: Addressed message relay through tracker WebSocket pipe with
   numbered ack protocol, reorder queue, and keepalive
   (`front-end/src/hooks/WasmBlobWrapper.ts`).
-- **Peer liveness**: 60-second activity timeout with 5-second polling
-  interval in `Shell.tsx`. Tracker liveness with 45-second timeout.
+- **Peer liveness**: 30-second degradation threshold (no dead-from-timeout)
+  with 5-second polling interval in `Shell.tsx`. Dead state only from explicit
+  go-on-chain or FOAD signals. Tracker liveness with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
 - **Session persistence**: `SessionState` in localStorage with serialized
@@ -454,7 +455,7 @@ and serve a different purpose.
 |-----|-------|--------|-----|------|
 | Wallet | Connected | — | Disconnected | — |
 | Tracker | Connected | Reconnecting | Inactive (no heartbeat) | Not connected (null / disconnected) |
-| Game | Off-chain, peer up | On-chain (resolving) | Error state or peer lost while off-chain | No session |
+| Game | Peer connected | On-chain or peer degraded | Error, or peer dead | No session / resolved |
 | Chat | Peer connected | — | — | No peer |
 | History | — | — | — | Always gray |
 | Log | — | — | — | Always gray |
@@ -463,16 +464,17 @@ and serve a different purpose.
 
 The Game tab dot checks conditions in this order:
 
-1. `sessionPhase === 'none'` → **gray** (no session)
+1. `sessionPhase === 'none' || 'resolved'` → **gray** (no active session)
 2. `sessionError` → **red** (genuine error — always wins)
-3. `sessionPhase === 'on-chain'` → **yellow** (actively resolving — overrides peer-lost red because peer loss auto-transitions to on-chain)
-4. `sessionPhase === 'off-chain'` and `!peerConnected` → **red** (peer lost while off-chain, briefly visible before auto-transition)
-5. `sessionPhase === 'off-chain'` and `peerConnected` → **green** (playing normally)
+3. `peerLiveness === 'dead'` → **red** (terminal — go-on-chain or FOAD)
+4. `sessionPhase === 'on-chain'` or `peerLiveness === 'degraded'` → **yellow** (resolving or stale peer)
+5. `peerLiveness === 'connected'` → **green** (playing normally)
+6. Otherwise → **gray**
 
 ### Game tab error conditions (red dot)
 
-The Game tab shows a red dot when `sessionError` is true or when the peer
-is lost while the session is off-chain. `sessionError` is derived from:
+The Game tab shows a red dot when `sessionError` is true or when
+`peerLiveness === 'dead'` (go-on-chain or FOAD received). `sessionError` is derived from:
 
 - `Failed` channel state — the channel encountered an unrecoverable error
 - `ResolvedStale` channel state — the channel resolved but the outcome is
