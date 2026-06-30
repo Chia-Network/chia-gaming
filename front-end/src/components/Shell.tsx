@@ -1148,7 +1148,9 @@ const Shell = () => {
             console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, sessionPeerIdRef.current, sessionPeerIdRef.current === fromId);
             if (sessionPeerIdRef.current === fromId) {
               markPeerDead();
-              cancelAttemptedSession();
+              if (sessionPhaseRef.current === 'none') {
+                cancelAttemptedSession();
+              }
             }
           } else if (msg.type === 'chat') {
             const chatMsg: ChatMessage = { text: msg.text, fromAlias: fromAlias, timestamp: msg.timestamp ?? BigInt(Date.now()), isMine: false };
