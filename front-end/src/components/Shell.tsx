@@ -1100,6 +1100,7 @@ const Shell = () => {
           setActiveTab('game');
         },
         onPeerMessage: (fromId: string, _fromAlias: string, payload: Uint8Array) => {
+          if (peerLivenessRef.current === 'dead') return;
           markPeerActive();
           if (fromId !== sessionPeerIdRef.current) return;
           if (payload.length < 1) return;
@@ -1122,6 +1123,7 @@ const Shell = () => {
           }
         },
         onPeerAppMessage: (fromId: string, fromAlias: string, msg: PeerAppMessage) => {
+          if (peerLivenessRef.current === 'dead') return;
           markPeerActive();
           console.log('[Shell] onPeerAppMessage type=%s from=%s', msg.type, fromId);
           if (msg.type === 'session_proposal') {
