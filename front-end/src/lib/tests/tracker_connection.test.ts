@@ -201,6 +201,15 @@ describe('connection setup', () => {
     const ws = MockWebSocket.instance!;
     expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true }]);
   });
+
+  it('sends identify with initial alias over ws on open', async () => {
+    const cb = makeCallbacks();
+    makeConnection('http://t', 's1', cb, { initialBusy: true, initialAlias: 'Alice' });
+    await Promise.resolve(); // flush microtasks
+
+    const ws = MockWebSocket.instance!;
+    expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' }]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -391,7 +400,23 @@ describe('setBusy', () => {
     expect(ws.sentControl).toEqual([{ type: 'set_busy', session_id: 's1', busy: true }]);
   });
 
-  it('includes busy=true in identify on reconnect', async () => {
+  it('sends set_busy with alias and keeps it for later refreshes', async () => {
+    const cb = makeCallbacks();
+    const conn = makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    const ws = MockWebSocket.instance!;
+    ws.sentControl = [];
+
+    conn.setBusy(true, 'Alice');
+    conn.refreshPresence();
+
+    expect(ws.sentControl).toEqual([
+      { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
+      { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
+    ]);
+  });
+
+  it('preserves busy presence in identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
@@ -409,6 +434,26 @@ describe('setBusy', () => {
     const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
     expect(identifyMsg).toBeDefined();
     expect(identifyMsg.busy).toBe(true);
+    jest.useRealTimers();
+  });
+
+  it('includes alias in identify on reconnect', async () => {
+    jest.useFakeTimers();
+    const cb = makeCallbacks();
+    const conn = makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    expectedTrackerDisconnects = 1;
+    conn.setBusy(true, 'Alice');
+
+    const ws1 = MockWebSocket.instance!;
+    ws1._fireClose();
+    jest.advanceTimersByTime(5000);
+    await Promise.resolve();
+
+    const ws2 = MockWebSocket.instance!;
+    expect(ws2).not.toBe(ws1);
+    const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
+    expect(identifyMsg).toMatchObject({ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' });
     jest.useRealTimers();
   });
 });

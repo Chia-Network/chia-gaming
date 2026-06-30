@@ -933,6 +933,7 @@ fn calpoker_parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) ->
     .is_ok()
 }
 
+#[test]
 fn test_calpoker_proposal_rejects_zero_stake() {
     let mut allocator = AllocEncoder::new();
 
@@ -949,6 +950,7 @@ fn test_calpoker_proposal_rejects_zero_stake() {
     );
 }
 
+#[test]
 fn test_calpoker_parser_rejects_zero_stake_peer_wire_data() {
     let mut allocator = AllocEncoder::new();
 
@@ -971,6 +973,7 @@ fn test_calpoker_parser_rejects_zero_stake_peer_wire_data() {
     );
 }
 
+#[test]
 fn test_calpoker_handlers_happy_path() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -978,6 +981,7 @@ fn test_calpoker_handlers_happy_path() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
 fn test_calpoker_handlers_evil_path() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -985,6 +989,7 @@ fn test_calpoker_handlers_evil_path() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
 fn test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);

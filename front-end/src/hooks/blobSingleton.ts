@@ -119,7 +119,7 @@ export async function restoreSession(
 }
 
 export function getBlobSingleton(
-  blockchain: BlockchainPoller,
+  blockchain: BlockchainPoller | null,
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
@@ -187,6 +187,9 @@ export function getBlobSingleton(
   } else {
     const newSession = async () => {
       try {
+        if (!blockchain) {
+          throw new Error('Cannot start a new session without a blockchain connection');
+        }
         startNewSession();
         const gameHexes = await loadGameHexes(fetchHex);
         await configGameObject(

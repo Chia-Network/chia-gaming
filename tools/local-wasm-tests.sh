@@ -82,6 +82,9 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     fi
 fi
 
+echo "=== Running lobby-service tests ==="
+(cd "$REPO_ROOT/lobby/lobby-service" && pnpm run test)
+
 # Kill any stale simulator on our port before starting a fresh one
 lsof -ti:5800 -sTCP:LISTEN | xargs kill 2>/dev/null || true
 lsof -ti:5801 -sTCP:LISTEN | xargs kill 2>/dev/null || true

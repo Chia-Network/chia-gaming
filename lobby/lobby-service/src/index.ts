@@ -46,9 +46,10 @@ type LobbyInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; busy?: boolean }
+  | { type: 'identify'; session_id: string; busy?: boolean; alias?: string }
   | { type: 'send'; to: string }
-  | { type: 'set_busy'; session_id: string; busy: boolean }
+  | { type: 'close'; session_id: string }
+  | { type: 'set_busy'; session_id: string; busy: boolean; alias?: string }
   | { type: 'keepalive' };
 
 interface LobbyConnMeta {
@@ -205,7 +206,19 @@ function sendLobbyEvent(playerId: string, type: string, payload: unknown): void 
 }
 
 function aliasForPlayer(playerId: string): string {
-  return lobby.players[playerId]?.alias ?? playerId;
+  const liveAlias = lobby.players[playerId]?.alias;
+  if (liveAlias) return liveAlias;
+  const sessionId = playerToSession.get(playerId);
+  return sessionId ? knownAliases.get(sessionId) ?? playerId : playerId;
+}
+
+function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
+  if (!alias) return;
+  knownAliases.set(sessionId, alias);
+  const player = lobby.players[playerId];
+  if (player) {
+    player.alias = alias;
+  }
 }
 
 function replayPendingChallengesToPlayer(playerId: string): void {
@@ -676,6 +689,17 @@ function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): voi
   logTrackerVerbose('game_relay_binary', { from: meta.playerId, to: targetId, payload_bytes: payload.byteLength });
 }
 
+function onGameClose(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'close' }>): void {
+  const meta = wsGameMeta.get(ws);
+  if (!meta) {
+    logTracker('game_close_drop_unknown_session', { session_id: msg.session_id });
+    return;
+  }
+  const playerId = meta.playerId;
+  logTracker('game_close', { player_id: playerId, session_id: msg.session_id });
+  sendGameEvent(playerId, 'closed', {});
+}
+
 function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_busy' }>): void {
   const meta = wsGameMeta.get(ws);
   if (!meta) {
@@ -909,6 +933,9 @@ gameWsServer.on('connection', (ws) => {
         break;
       case 'send':
         onGameSend(ws, parsed, null);
+        break;
+      case 'close':
+        onGameClose(ws, parsed);
         break;
       case 'set_busy':
         onSetBusy(ws, parsed);

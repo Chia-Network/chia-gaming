@@ -22,6 +22,7 @@ export interface TrackerConnectionCallbacks {
   onPeerAppMessage: (from_id: string, from_alias: string, data: PeerAppMessage) => void;
   onDeliveryFailure: (to: string) => void;
   onRegistered: (player_id: string) => void;
+  onClosed: () => void;
   onLobbyAttention: () => void;
   onTrackerDisconnected: () => void;
   onTrackerReconnected: () => void;
@@ -30,6 +31,7 @@ export interface TrackerConnectionCallbacks {
 
 export interface TrackerConnectionOptions {
   initialBusy?: boolean;
+  initialAlias?: string | null;
 }
 
 type TrackerEnvelope =
@@ -37,6 +39,7 @@ type TrackerEnvelope =
   | { type: 'registered'; player_id: string }
   | { type: 'delivery_failure'; to: string }
   | { type: 'lobby_attention' }
+  | { type: 'closed' }
   | { type: 'keepalive' }
   | { type: 'error'; error?: string };
 
@@ -84,6 +87,7 @@ function decodeTrackerEnvelope(input: ArrayBuffer): TrackerEnvelope | null {
     case 'delivery_failure':
       return { type, to: requireText(decoded, 'to') };
     case 'lobby_attention':
+    case 'closed':
     case 'keepalive':
       return { type };
     case 'error':
@@ -136,13 +140,16 @@ export class TrackerConnection {
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
   private busy = false;
+  private closePending = false;
   private myPlayerId: string | null = null;
+  private alias: string | undefined;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, options: TrackerConnectionOptions = {}) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
     this.busy = options.initialBusy ?? false;
+    this.alias = options.initialAlias ?? undefined;
     this.connectWs();
   }
 
@@ -159,6 +166,15 @@ export class TrackerConnection {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(encodeBencodex(definedBencodexFields(payload as Record<string, BencodexValue | undefined>)));
+  }
+
+  private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
+    return {
+      type,
+      session_id: this.sessionId,
+      busy: this.busy,
+      ...(this.alias ? { alias: this.alias } : {}),
+    };
   }
 
   private connectWs(): void {
@@ -185,7 +201,10 @@ export class TrackerConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      this.sendWs({ type: 'identify', session_id: this.sessionId, busy: this.busy });
+      this.sendWs(this.presencePayload('identify'));
+      if (this.closePending) {
+        this.sendCloseRequest();
+      }
       if (this.wasDisconnected) {
         log('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
@@ -297,6 +316,10 @@ export class TrackerConnection {
       case 'lobby_attention':
         this.callbacks.onLobbyAttention();
         break;
+      case 'closed':
+        this.closePending = false;
+        this.callbacks.onClosed();
+        break;
       case 'keepalive':
         break;
       case 'error':
@@ -336,11 +359,6 @@ export class TrackerConnection {
     return this.myPlayerId;
   }
 
-  setBusy(busy: boolean) {
-    this.busy = busy;
-    this.sendWs({ type: 'set_busy', session_id: this.sessionId, busy });
-  }
-
   forceDisconnect() {
     if (this.closed) return;
     this.closed = true;
@@ -348,6 +366,36 @@ export class TrackerConnection {
     this.stopKeepaliveTimer();
     this.ws?.close();
     this.ws = null;
+  }
+
+  setBusy(busy: boolean, alias?: string | null) {
+    this.busy = busy;
+    if (alias !== undefined) {
+      this.alias = alias || undefined;
+    }
+    this.sendWs(this.presencePayload('set_busy'));
+  }
+
+  refreshPresence(alias?: string | null) {
+    if (alias !== undefined) {
+      this.alias = alias || undefined;
+    }
+    this.sendWs(this.presencePayload('set_busy'));
+  }
+
+  close() {
+    if (this.closed) return;
+    if (this.closePending) {
+      this.sendCloseRequest();
+      return;
+    }
+    this.closePending = true;
+    log('[tracker] requesting close');
+    this.sendCloseRequest();
+  }
+
+  private sendCloseRequest() {
+    this.sendWs({ type: 'close', session_id: this.sessionId });
   }
 
   disconnect() {
