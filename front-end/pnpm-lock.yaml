@@ -40,6 +40,9 @@ importers:
       bech32:
         specifier: ^2.0.0
         version: 2.0.0
+      chia-gaming-bencodex:
+        specifier: file:../shared/bencodex
+        version: file:../shared/bencodex
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -1512,6 +1515,9 @@ packages:
 
   chia-bls@1.0.3:
     resolution: {integrity: sha512-RCxRjLZrBPRu1xo6i5USfsCbQ9RTIdF6/o349rWbZQP9sM6ksAezmuFSBDEM6LV1NOAOiSULOQJTRIQK5CX2Yw==}
+
+  chia-gaming-bencodex@file:../shared/bencodex:
+    resolution: {directory: ../shared/bencodex, type: directory}
 
   chokidar@5.0.0:
     resolution: {integrity: sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==}
@@ -4360,6 +4366,8 @@ snapshots:
       chai: 4.5.0
       jssha: 3.3.1
       randombytes: 2.1.0
+
+  chia-gaming-bencodex@file:../shared/bencodex: {}
 
   chokidar@5.0.0:
     dependencies:

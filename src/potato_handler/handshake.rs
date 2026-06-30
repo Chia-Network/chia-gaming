@@ -13,6 +13,8 @@ pub struct HandshakeB {
     pub reward_payout_signature: Aggsig,
     pub channel_key_pop: Aggsig,
     pub unroll_key_pop: Aggsig,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
 }
 
 pub type HandshakeA = HandshakeB;

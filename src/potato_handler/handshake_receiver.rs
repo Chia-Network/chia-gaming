@@ -338,6 +338,19 @@ impl HandshakeReceiverHandler {
                     ));
                 }
 
+                if msg.my_contribution != self.their_contribution {
+                    return Err(Error::Channel(format!(
+                        "HandshakeA contribution mismatch: peer claims my_contribution={:?} but we expect their_contribution={:?}",
+                        msg.my_contribution, self.their_contribution
+                    )));
+                }
+                if msg.their_contribution != self.my_contribution {
+                    return Err(Error::Channel(format!(
+                        "HandshakeA contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
+                        msg.their_contribution, self.my_contribution
+                    )));
+                }
+
                 let my_hs_info = {
                     let channel_public_key =
                         private_to_public_key(&self.private_keys.my_channel_coin_private_key);
@@ -365,6 +378,8 @@ impl HandshakeReceiverHandler {
                         reward_payout_signature: reward_payout_sig,
                         channel_key_pop,
                         unroll_key_pop,
+                        my_contribution: self.my_contribution.clone(),
+                        their_contribution: self.their_contribution.clone(),
                     }
                 };
 

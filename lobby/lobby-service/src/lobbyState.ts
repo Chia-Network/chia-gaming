@@ -4,7 +4,6 @@ import {
   Player,
   PlayerStatus,
   Challenge,
-  Pairing,
 } from './types/lobby';
 
 function randomHex(): string {
@@ -18,9 +17,6 @@ function listOfObject<T>(object: Record<string, T>): T[] {
 export class Lobby {
   players: Record<string, Player> = {};
   challenges: Map<string, Challenge> = new Map();
-  pairings: Map<string, Pairing> = new Map();
-  // Reverse lookup: player_id -> token for the pairing they're in
-  playerToPairing: Map<string, string> = new Map();
 
   addPlayer(player: Player) {
     this.players[player.id] = player;
@@ -62,43 +58,5 @@ export class Lobby {
 
   removeChallenge(challengeId: string) {
     this.challenges.delete(challengeId);
-  }
-
-  createPairing(playerAId: string, playerBId: string, amount: string, channel_timeout?: string, unroll_timeout?: string): Pairing {
-    const token = randomHex();
-    const pairing: Pairing = {
-      playerA_id: playerAId,
-      playerB_id: playerBId,
-      token,
-      amount,
-      channel_timeout,
-      unroll_timeout,
-    };
-    this.pairings.set(token, pairing);
-    this.playerToPairing.set(playerAId, token);
-    this.playerToPairing.set(playerBId, token);
-    return pairing;
-  }
-
-  getPairingForPlayer(playerId: string): Pairing | undefined {
-    const token = this.playerToPairing.get(playerId);
-    if (!token) return undefined;
-    return this.pairings.get(token);
-  }
-
-  getPairedPlayerId(playerId: string): string | undefined {
-    const pairing = this.getPairingForPlayer(playerId);
-    if (!pairing) return undefined;
-    if (pairing.playerA_id === playerId) return pairing.playerB_id;
-    return pairing.playerA_id;
-  }
-
-  removePairing(token: string) {
-    const pairing = this.pairings.get(token);
-    if (pairing) {
-      this.playerToPairing.delete(pairing.playerA_id);
-      this.playerToPairing.delete(pairing.playerB_id);
-      this.pairings.delete(token);
-    }
   }
 }

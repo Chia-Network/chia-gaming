@@ -11,6 +11,7 @@
     "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'"
   },
   "dependencies": {
+    "chia-gaming-bencodex": "file:../../shared/bencodex",
     "cors": "2.8.5",
     "express": "5.1.0",
     "minimist": "1.2.8",

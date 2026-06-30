@@ -220,6 +220,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const showFinalHeader = gameState === GAME_STATES.FINAL && !!winner && !showSwapAnimation;
   const opponentResultVerb = winner === 'tie' ? 'ties' : winner === 'ai' ? 'wins' : 'loses';
   const playerResultVerb = winner === 'tie' ? 'ties' : winner === 'player' ? 'wins' : 'loses';
+  const resultLabel = (label: string, verb: 'wins' | 'loses' | 'ties') => {
+    if (label === 'You') {
+      return `You ${verb === 'wins' ? 'win' : verb === 'loses' ? 'lose' : 'tie'}`;
+    }
+    return `${label} ${verb}`;
+  };
 
   const doHandleMakeMove = () => {
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
@@ -610,9 +616,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             <div className='w-full h-8 flex items-center justify-center text-base font-semibold text-canvas-text'>
               <span className='truncate max-w-full'>
                 {showFinalHeader && opponentDisplayText
-                  ? `${opponentLabel} ${opponentResultVerb} (${opponentDisplayText})`
+                  ? `${resultLabel(opponentLabel, opponentResultVerb)} (${opponentDisplayText})`
                   : timeoutByUs === true
-                    ? `${opponentLabel} wins`
+                    ? resultLabel(opponentLabel, 'wins')
                     : timeoutByUs === false
                       ? `${opponentLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
                       : `${opponentLabel}'s Hand`}
@@ -644,11 +650,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             <div className='w-full h-8 flex items-center justify-center text-base font-semibold text-canvas-text'>
               <span className='truncate max-w-full'>
                 {showFinalHeader && playerDisplayText
-                  ? `${myLabel} ${playerResultVerb} (${playerDisplayText})`
+                  ? `${resultLabel(myLabel, playerResultVerb)} (${playerDisplayText})`
                   : timeoutByUs === true
                     ? `${myLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
                     : timeoutByUs === false
-                      ? `${myLabel} wins`
+                      ? resultLabel(myLabel, 'wins')
                       : `${myLabel}'s Hand`}
               </span>
             </div>

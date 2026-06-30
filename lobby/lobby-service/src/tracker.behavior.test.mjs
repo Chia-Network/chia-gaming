@@ -6,7 +6,10 @@ import path from 'node:path';
 import { createServer } from 'node:net';
 import { test } from 'node:test';
 
+import bencodex from 'chia-gaming-bencodex';
 import { WebSocket } from 'ws';
+
+const { decode: decodeBencodex, encode: encodeBencodex, isDictionary } = bencodex;
 
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -78,6 +81,23 @@ function sendJson(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
+function sendGame(ws, payload) {
+  ws.send(encodeBencodex(payload));
+}
+
+function plainBencodex(value) {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) return value.map(plainBencodex);
+  if (isDictionary(value)) {
+    const out = {};
+    for (const [key, item] of value.entries()) {
+      out[typeof key === 'string' ? key : Buffer.from(key).toString('utf8')] = plainBencodex(item);
+    }
+    return out;
+  }
+  return value;
+}
+
 async function nextJson(ws, predicate = () => true, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -87,6 +107,23 @@ async function nextJson(ws, predicate = () => true, timeoutMs = 2_000) {
     function onMessage(raw) {
       const text = typeof raw === 'string' ? raw : raw.toString();
       const msg = JSON.parse(text);
+      if (!predicate(msg)) return;
+      clearTimeout(timer);
+      ws.off('message', onMessage);
+      resolve(msg);
+    }
+    ws.on('message', onMessage);
+  });
+}
+
+async function nextGame(ws, predicate = () => true, timeoutMs = 2_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.off('message', onMessage);
+      reject(new Error('timed out waiting for websocket message'));
+    }, timeoutMs);
+    function onMessage(raw) {
+      const msg = plainBencodex(decodeBencodex(raw));
       if (!predicate(msg)) return;
       clearTimeout(timer);
       ws.off('message', onMessage);
@@ -117,8 +154,8 @@ async function joinLobby(origin, sessionId, alias, extra = {}) {
 
 async function identifyGame(origin, sessionId) {
   const game = await openWs(origin, '/ws/game');
-  sendJson(game, { type: 'identify', session_id: sessionId, available: true });
-  await nextJson(game, (msg) => msg.type === 'connection_status');
+  sendGame(game, { type: 'identify', session_id: sessionId, busy: false });
+  await nextGame(game, (msg) => msg.type === 'registered');
   return game;
 }
 
@@ -178,21 +215,30 @@ test('challenge authority and availability come from bound sessions', async () =
     sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, amount: '100' });
     const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
 
+    // Carol cannot accept Bob's challenge (she's not the target)
     sendJson(carol.lobby, {
       type: 'challenge_accept',
       challenge_id: challenge.challenge_id,
       accepter_id: bob.id,
     });
     await assert.rejects(
-      nextJson(aliceGame, (msg) => msg.type === 'matched', 250),
+      nextGame(bobGame, (msg) => msg.type === 'advisory_start', 250),
       /timed out/,
     );
 
-    const aliceMatched = nextJson(aliceGame, (msg) => msg.type === 'matched');
-    const bobMatched = nextJson(bobGame, (msg) => msg.type === 'matched');
+    // Bob accepts — Bob (accepter/initiator) gets advisory_start
+    const bobAdvisory = nextGame(bobGame, (msg) => msg.type === 'advisory_start');
     sendJson(bob.lobby, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
-    await Promise.all([aliceMatched, bobMatched]);
+    const advisory = await bobAdvisory;
+    assert.equal(advisory.peer_id, alice.id);
+    assert.equal(advisory.amount, '100');
 
+    // Bob's client sets busy (simulating what the frontend does on advisory_start)
+    sendGame(bobGame, { type: 'set_busy', session_id: 'secret-bob-match', busy: true });
+    // Wait for lobby update to propagate
+    await nextJson(carol.lobby, (msg) => msg.type === 'lobby_update');
+
+    // Carol cannot challenge Bob (he's now busy)
     const carolError = nextJson(carol.lobby, (msg) => msg.type === 'error');
     const carolResolved = nextJson(carol.lobby, (msg) => msg.type === 'challenge_resolved');
     sendJson(carol.lobby, { type: 'challenge', target_id: bob.id, amount: '100' });

@@ -304,7 +304,14 @@ export function useLobbySocket(
 
     connect();
 
+    const onBeforeUnload = () => {
+      try { wsRef.current?.close(); } catch { /* ignore */ }
+      try { pendingWsRef.current?.close(); } catch { /* ignore */ }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
       closingRef.current = true;
       lobbyHsLog('connection_cleanup', {
         conn_id: connIdRef.current,

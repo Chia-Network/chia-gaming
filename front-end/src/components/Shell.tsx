@@ -5,7 +5,7 @@ import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, CoinOfInterestEntry } from '../types/ChiaGaming';
-import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
+import { TrackerConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/TrackerConnection';
 import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
@@ -39,6 +39,7 @@ import {
   claimLease,
   onFenced,
   offFenced,
+  getAlias,
 } from '../hooks/save';
 import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
@@ -154,6 +155,71 @@ function sessionSaveStartsBusy(save: SessionState | null): boolean {
   if (!save?.serializedCradle && !save?.pairingToken) return false;
   const { perGameAmount } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
   return selectSessionPhase(sessionModelFromSave(save, perGameAmount)) !== 'resolved';
+}
+
+type PendingSessionProposal = {
+  from_id: string;
+  from_alias: string;
+  amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
+};
+
+type SessionStartRequest = {
+  peerId: string;
+  opponentAlias?: string;
+  amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
+  iStarted: boolean;
+  clearBufferedMessages: boolean;
+};
+
+function parseSessionAmount(raw: string): bigint {
+  try {
+    return BigInt(raw);
+  } catch {
+    return FALLBACK_AMOUNT;
+  }
+}
+
+function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
+  if (!raw) return undefined;
+  try {
+    return BigInt(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function buildTrackerPeerConnection(conn: TrackerConnection, peerId: string): PeerConnectionResult {
+  const buildFrame = (tag: number, msgno: number, data?: Uint8Array): Uint8Array => {
+    const len = 1 + 4 + (data?.byteLength ?? 0);
+    const frame = new Uint8Array(len);
+    const view = new DataView(frame.buffer);
+    frame[0] = tag;
+    view.setUint32(1, msgno, false);
+    if (data) frame.set(data, 5);
+    return frame;
+  };
+
+  return {
+    sendMessage: (msgno: number, input: Uint8Array) => { conn.sendToPeer(peerId, buildFrame(0x01, msgno, input)); },
+    sendAck: (ackMsgno: number) => { conn.sendToPeer(peerId, buildFrame(0x02, ackMsgno)); },
+    sendKeepalive: () => { conn.sendToPeer(peerId, new Uint8Array([0x03])); },
+    hostLog: () => {},
+    close: () => {},
+  };
+}
+
+function idlePeerConnection(): PeerConnectionResult {
+  return {
+    sendMessage: () => {},
+    sendAck: () => {},
+    sendKeepalive: () => {},
+    hostLog: () => {},
+    close: () => {},
+  };
 }
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
@@ -420,6 +486,23 @@ const Shell = () => {
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Consent prompt state for the new tracker protocol
+  const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
+  const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
+  const setPendingAdvisoryState = useCallback((next: AdvisoryStartParams | null) => {
+    pendingAdvisoryRef.current = next;
+    setPendingAdvisory(next);
+  }, []);
+  const [pendingProposal, setPendingProposal] = useState<PendingSessionProposal | null>(null);
+  const pendingProposalRef = useRef<PendingSessionProposal | null>(null);
+  const setPendingProposalState = useCallback((next: PendingSessionProposal | null) => {
+    pendingProposalRef.current = next;
+    setPendingProposal(next);
+  }, []);
+  const sessionPeerIdRef = useRef<string | null>(null);
+  const pendingMsgHandlerRef2 = useRef<{ handler: (msgno: number, msg: Uint8Array) => void; ackHandler: (ack: number) => void; keepaliveHandler: () => void } | null>(null);
+  const peerMsgBufferRef = useRef<Array<{ tag: number; msgno: number; data: Uint8Array }>>([]);
+
   // The dashboard pulls the protocol-state pretty-print on demand (when its
   // detail view is expanded) rather than having it pushed on every change. The
   // live session registers a getter here; the dashboard reads through it.
@@ -672,6 +755,8 @@ const Shell = () => {
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionState | null>(null);
+  const historyRef = useRef<string[]>(history);
+  historyRef.current = history;
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
@@ -689,17 +774,22 @@ const Shell = () => {
     deferStateUpdate(() => {
       setHistory(prev => {
         const next = [...prev, line];
+        historyRef.current = next;
         saveSession({ humanHistory: next });
         return next;
       });
     });
   }, [deferStateUpdate]);
 
-  const pendingMsgHandlerRef = useRef<{
-    handler: (msgno: number, msg: Uint8Array) => void;
-    ackHandler: (ack: number) => void;
-    keepaliveHandler: () => void;
-  } | null>(null);
+  const clearSessionPreservingHistory = useCallback(() => {
+    const humanHistory = historyRef.current;
+    clearSession();
+    if (humanHistory.length > 0) {
+      saveSession({ humanHistory });
+    }
+  }, []);
+
+
 
   const markPeerActive = useCallback(() => {
     lastPeerActivityRef.current = Date.now();
@@ -712,15 +802,155 @@ const Shell = () => {
   }, []);
 
   const registerMessageHandler = useCallback((handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
-    pendingMsgHandlerRef.current = { handler, ackHandler, keepaliveHandler };
-    if (trackerConnRef.current) {
-      trackerConnRef.current.registerMessageHandler(
-        (msgno, msg) => { markPeerActive(); handler(msgno, msg); },
-        (ack) => { markPeerActive(); ackHandler(ack); },
-        () => { markPeerActive(); keepaliveHandler(); },
-      );
+    pendingMsgHandlerRef2.current = { handler, ackHandler, keepaliveHandler };
+    const buffered = peerMsgBufferRef.current.splice(0);
+    for (const item of buffered) {
+      if (item.tag === 0x01) handler(item.msgno, item.data);
+      else if (item.tag === 0x02) ackHandler(item.msgno);
+      else if (item.tag === 0x03) keepaliveHandler();
     }
-  }, [markPeerActive]);
+  }, []);
+
+  const isAvailableForNewSessionPrompt = useCallback(() => {
+    const phase = sessionPhaseRef.current;
+    return (phase === 'none' || phase === 'resolved') &&
+      pendingAdvisoryRef.current === null &&
+      pendingProposalRef.current === null &&
+      sessionPeerIdRef.current === null &&
+      pendingMsgHandlerRef2.current === null;
+  }, []);
+
+  const sendSessionReject = useCallback((peerId: string) => {
+    trackerConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
+  }, []);
+
+  const resetPeerRelayState = useCallback(() => {
+    sessionPeerIdRef.current = null;
+    pendingMsgHandlerRef2.current = null;
+    peerMsgBufferRef.current = [];
+    peerConnTargetRef.current = idlePeerConnection();
+    markPeerInactive();
+  }, [markPeerInactive]);
+
+  const cancelAttemptedSession = useCallback(() => {
+    setPendingAdvisoryState(null);
+    setPendingProposalState(null);
+    resetPeerRelayState();
+    destroyBlobSingleton();
+    clearSessionPreservingHistory();
+    try { getActiveBlockchain().stop(); } catch { /* not connected */ }
+    sessionSaveRef.current = null;
+    activePairingTokenRef.current = null;
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
+    }
+    setCleanShutdownGraceActive(false);
+    setSessionPhase('none');
+    setSessionError(false);
+    setGameParams(null);
+    setPeerConn(null);
+    setDashboardSessionModel(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    trackerConnRef.current?.setBusy(false);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+
+  const startFreshSessionWithPeer = useCallback((request: SessionStartRequest) => {
+    const conn = trackerConnRef.current;
+    if (!conn) return;
+
+    const amount = parseSessionAmount(request.amount);
+    const perGame = amount / 10n || 1n;
+    const token = `peer_${request.peerId}_${Date.now()}`;
+
+    pendingMsgHandlerRef2.current = null;
+    if (request.clearBufferedMessages) {
+      peerMsgBufferRef.current = [];
+    }
+    sessionPeerIdRef.current = request.peerId;
+    peerConnTargetRef.current = buildTrackerPeerConnection(conn, request.peerId);
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+    activePairingTokenRef.current = token;
+
+    setSessionPhase('none');
+    setSessionError(false);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(true);
+    setDashboardSessionModel(null);
+    destroyBlobSingleton();
+    clearSessionPreservingHistory();
+    try { getActiveBlockchain().start(); } catch { /* not connected */ }
+    setChatMessages([]);
+    setGameParams({
+      iStarted: request.iStarted,
+      amount,
+      perGameAmount: perGame,
+      restoring: false,
+      pairingToken: token,
+      myAlias: undefined,
+      opponentAlias: request.opponentAlias,
+      channelTimeout: parseOptionalBigInt(request.channel_timeout),
+      unrollTimeout: parseOptionalBigInt(request.unroll_timeout),
+    });
+    setPeerConn(stablePeerConn);
+    conn.setBusy(true);
+  }, [clearSessionPreservingHistory, stablePeerConn]);
+
+  const acceptPendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
+    const conn = trackerConnRef.current;
+    if (!conn) return;
+    setPendingAdvisoryState(null);
+    conn.sendPeerAppMessage(advisory.peer_id, {
+      type: 'session_proposal',
+      amount: advisory.amount,
+      from_alias: getAlias(),
+      channel_timeout: advisory.channel_timeout,
+      unroll_timeout: advisory.unroll_timeout,
+    });
+    startFreshSessionWithPeer({
+      peerId: advisory.peer_id,
+      opponentAlias: advisory.peer_alias,
+      amount: advisory.amount,
+      channel_timeout: advisory.channel_timeout,
+      unroll_timeout: advisory.unroll_timeout,
+      iStarted: true,
+      clearBufferedMessages: true,
+    });
+  }, [setPendingAdvisoryState, startFreshSessionWithPeer]);
+
+  const declinePendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
+    setPendingAdvisoryState(null);
+    sendSessionReject(advisory.peer_id);
+    trackerConnRef.current?.setBusy(false);
+  }, [sendSessionReject, setPendingAdvisoryState]);
+
+  const acceptPendingProposal = useCallback((proposal: PendingSessionProposal) => {
+    setPendingProposalState(null);
+    startFreshSessionWithPeer({
+      peerId: proposal.from_id,
+      opponentAlias: proposal.from_alias,
+      amount: proposal.amount,
+      channel_timeout: proposal.channel_timeout,
+      unroll_timeout: proposal.unroll_timeout,
+      iStarted: false,
+      clearBufferedMessages: false,
+    });
+  }, [setPendingProposalState, startFreshSessionWithPeer]);
+
+  const declinePendingProposal = useCallback((proposal: PendingSessionProposal) => {
+    setPendingProposalState(null);
+    resetPeerRelayState();
+    sendSessionReject(proposal.from_id);
+    trackerConnRef.current?.setBusy(false);
+  }, [resetPeerRelayState, sendSessionReject, setPendingProposalState]);
 
   useEffect(() => {
     return subscribeLog((line) => {
@@ -849,7 +1079,31 @@ const Shell = () => {
       sessionPhaseRef.current = 'none';
       activePairingTokenRef.current = token;
       conn.setBusy(save ? sessionSaveStartsBusy(save) : true);
-      peerConnTargetRef.current = conn.getPeerConnection();
+
+      // Build PeerConnectionResult that sends addressed, reliability-framed messages
+      const peerId = sessionPeerIdRef.current!;
+      const buildFrame = (tag: number, msgno: number, data?: Uint8Array): Uint8Array => {
+        const len = 1 + 4 + (data?.byteLength ?? 0);
+        const frame = new Uint8Array(len);
+        const view = new DataView(frame.buffer);
+        frame[0] = tag;
+        view.setUint32(1, msgno, false);
+        if (data) frame.set(data, 5);
+        return frame;
+      };
+      peerConnTargetRef.current = {
+        sendMessage: (msgno: number, input: Uint8Array) => {
+          conn.sendToPeer(peerId, buildFrame(0x01, msgno, input));
+        },
+        sendAck: (ackMsgno: number) => {
+          conn.sendToPeer(peerId, buildFrame(0x02, ackMsgno));
+        },
+        sendKeepalive: () => {
+          conn.sendToPeer(peerId, new Uint8Array([0x03]));
+        },
+        hostLog: (_msg: string) => {},
+        close: () => {},
+      };
       if (!save) {
         setRestoreStatus('idle');
         setRestoreError(null);
@@ -884,8 +1138,7 @@ const Shell = () => {
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
           destroyBlobSingleton();
-          clearSession();
-          setHistory([]);
+          clearSessionPreservingHistory();
           setChatMessages([]);
           setActiveTab('game');
         }
@@ -900,114 +1153,101 @@ const Shell = () => {
     let conn: TrackerConnection;
     try {
       conn = new TrackerConnection(origin, trackerSessionId, {
-        onMatched: (matched: MatchedParams) => {
+        onAdvisoryStart: (params: AdvisoryStartParams) => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          markPeerActive();
-          let amount: bigint;
-          try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
-          const perGame = amount / 10n || 1n;
-          let channelTimeout: bigint | undefined;
-          let unrollTimeout: bigint | undefined;
-          try { if (matched.channel_timeout) channelTimeout = BigInt(matched.channel_timeout); } catch {}
-          try { if (matched.unroll_timeout) unrollTimeout = BigInt(matched.unroll_timeout); } catch {}
-          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias, channelTimeout, unrollTimeout);
-        },
-        onConnectionStatus: (status: ConnectionStatus) => {
-          console.log('[Shell] onConnectionStatus: has_pairing=%s token=%s peer_connected=%s activeToken=%s',
-            status.has_pairing, status.token ?? 'none', status.peer_connected, activePairingTokenRef.current ?? 'null');
-          trackerWsUpRef.current = true;
-          lastTrackerActivityRef.current = Date.now();
-          setTrackerLiveness('connected');
-          if (sessionSaveRef.current?.serializedCradle) {
-            setRestoreTrackerReconciled(true);
-          }
-          if (!status.has_pairing || status.peer_connected === false) {
-            markPeerInactive();
-          } else if (status.peer_connected === true) {
-            markPeerActive();
-          } else {
-            setPeerConnected(null);
-          }
-          if (activePairingTokenRef.current !== null) {
-            if (status.has_pairing && status.token === activePairingTokenRef.current) {
-              console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
-              blobSingleton?.resendUnacked();
-            } else {
-              console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
-              markPeerInactive();
-            }
+          console.log('[Shell] advisory_start: peer=%s alias=%s amount=%s', params.peer_id, params.peer_alias, params.amount);
+          if (!isAvailableForNewSessionPrompt()) {
+            console.log('[Shell] advisory_start declined: client unavailable for new session');
+            sendSessionReject(params.peer_id);
             return;
           }
-
-          const save = peekSession();
-          if (status.has_pairing && status.token) {
-            if (save && save.pairingToken === status.token) {
-              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
-              let chTimeout: bigint | undefined;
-              let unTimeout: bigint | undefined;
-              try { if (status.channel_timeout) chTimeout = BigInt(status.channel_timeout); } catch {}
-              try { if (status.unroll_timeout) unTimeout = BigInt(status.unroll_timeout); } catch {}
-              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias, chTimeout, unTimeout);
-            } else if (!save) {
-              console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
-              conn.close();
-              clearSession();
-            } else if (save.serializedCradle) {
-              console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
-              conn.close();
-              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
-              sessionSaveRef.current = save;
-              setGameParams({
-                iStarted: save.iStarted ?? false,
-                amount,
-                perGameAmount: perGame,
-                restoring: true,
-                pairingToken: save.pairingToken ?? '',
-                myAlias: save.myAlias,
-                opponentAlias: save.opponentAlias,
-              });
-              setPeerConn(conn.getPeerConnection());
-              const savedHistory = humanHistoryFromSave(save);
-              const savedLog = diagnosticLogFromSave(save);
-              if (savedHistory) setHistory(savedHistory);
-              if (savedLog) setLogLines(savedLog);
-              if (save.chatMessages) setChatMessages(save.chatMessages);
+          setPendingAdvisoryState(params);
+          trackerConnRef.current?.setBusy(true);
+          setActiveTab('game');
+        },
+        onPeerMessage: (fromId: string, _fromAlias: string, payload: Uint8Array) => {
+          markPeerActive();
+          if (fromId !== sessionPeerIdRef.current) return;
+          if (payload.length < 1) return;
+          const tag = payload[0];
+          const handler = pendingMsgHandlerRef2.current;
+          if (tag === 0x01 && payload.length >= 5) {
+            const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+            const msgno = view.getUint32(1, false);
+            const msg = payload.slice(5);
+            if (handler) handler.handler(msgno, msg);
+            else peerMsgBufferRef.current.push({ tag, msgno, data: msg });
+          } else if (tag === 0x02 && payload.length >= 5) {
+            const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+            const ack = view.getUint32(1, false);
+            if (handler) handler.ackHandler(ack);
+            else peerMsgBufferRef.current.push({ tag, msgno: ack, data: new Uint8Array(0) });
+          } else if (tag === 0x03) {
+            if (handler) handler.keepaliveHandler();
+            else peerMsgBufferRef.current.push({ tag, msgno: 0, data: new Uint8Array(0) });
+          }
+        },
+        onPeerAppMessage: (fromId: string, fromAlias: string, msg: PeerAppMessage) => {
+          markPeerActive();
+          console.log('[Shell] onPeerAppMessage type=%s from=%s', msg.type, fromId);
+          if (msg.type === 'session_proposal') {
+            const peerAlias = fromAlias || msg.from_alias || fromId;
+            console.log('[Shell] session_proposal from=%s alias=%s amount=%s', fromId, peerAlias, msg.amount);
+            if (!isAvailableForNewSessionPrompt()) {
+              console.log('[Shell] session_proposal declined: client unavailable for new session');
+              sendSessionReject(fromId);
+              return;
             }
-          } else {
-            if (save && save.serializedCradle) {
-              console.warn('[Shell] connection_status: no pairing but have full save, restoring session (peer gone; go on-chain manually to resolve)');
-              const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
-              sessionSaveRef.current = save;
-              setGameParams({
-                iStarted: save.iStarted ?? false,
-                amount,
-                perGameAmount: perGame,
-                restoring: true,
-                pairingToken: save.pairingToken ?? '',
-                myAlias: save.myAlias,
-                opponentAlias: save.opponentAlias,
-              });
-              setPeerConn(conn.getPeerConnection());
-              const savedHistory = humanHistoryFromSave(save);
-              const savedLog = diagnosticLogFromSave(save);
-              if (savedHistory) setHistory(savedHistory);
-              if (savedLog) setLogLines(savedLog);
-              if (save.chatMessages) setChatMessages(save.chatMessages);
+            sessionPeerIdRef.current = fromId;
+            peerMsgBufferRef.current = [];
+            setPendingProposalState({
+              from_id: fromId,
+              from_alias: peerAlias,
+              amount: msg.amount,
+              channel_timeout: msg.channel_timeout,
+              unroll_timeout: msg.unroll_timeout,
+            });
+            trackerConnRef.current?.setBusy(true);
+            setActiveTab('game');
+          } else if (msg.type === 'session_reject') {
+            console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, sessionPeerIdRef.current, sessionPeerIdRef.current === fromId);
+            if (sessionPeerIdRef.current === fromId) {
+              cancelAttemptedSession();
+            }
+          } else if (msg.type === 'chat') {
+            const chatMsg: ChatMessage = { text: msg.text, fromAlias: fromAlias, timestamp: msg.timestamp ?? BigInt(Date.now()), isMine: false };
+            setChatMessages(prev => {
+              const next = [...prev, chatMsg];
+              if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
+              return next;
+            });
+            if (activeTabRef.current !== 'chat') {
+              setUnreadChat(true);
             }
           }
         },
-        onPeerReconnected: () => {
-          markPeerActive();
-          blobSingleton?.resendUnacked();
+        onDeliveryFailure: (to: string) => {
+          console.warn('[Shell] delivery_failure to=%s', to);
+          if (to === sessionPeerIdRef.current) {
+            markPeerInactive();
+          }
         },
-        onDataMessage: (_msgno: number, _msg: Uint8Array) => { markPeerActive(); },
-        onAck: (_ack: number) => { markPeerActive(); },
-        onKeepalive: () => { markPeerActive(); },
-        onClosed: () => {
-          console.log('[Shell] peer pairing ended');
-          markPeerInactive();
+        onRegistered: (playerId: string) => {
+          trackerWsUpRef.current = true;
+          lastTrackerActivityRef.current = Date.now();
+          setTrackerLiveness('connected');
+          console.log('[Shell] registered as player_id=%s', playerId);
+          // On reconnect with an active session, re-send un-acked messages
+          if (sessionPeerIdRef.current && blobSingleton) {
+            blobSingleton.resendUnacked();
+          }
+        },
+        onLobbyAttention: () => {
+          if (activeTabRef.current !== 'tracker') {
+            setTrackerAlert(true);
+          }
         },
         onTrackerDisconnected: () => {
           console.log('[Shell] tracker disconnected');
@@ -1023,21 +1263,6 @@ const Shell = () => {
         onTrackerActivity: () => {
           lastTrackerActivityRef.current = Date.now();
         },
-        onChat: (msg: ChatMessage) => {
-          setChatMessages(prev => {
-            const next = [...prev, msg];
-            if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
-            return next;
-          });
-          if (activeTabRef.current !== 'chat') {
-            setUnreadChat(true);
-          }
-        },
-        onLobbyAttention: () => {
-          if (activeTabRef.current !== 'tracker') {
-            setTrackerAlert(true);
-          }
-        },
       }, { initialBusy: sessionSaveStartsBusy(initialSave) });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
@@ -1048,16 +1273,7 @@ const Shell = () => {
     }
     trackerConnRef.current = conn;
 
-    if (pendingMsgHandlerRef.current) {
-      const { handler, ackHandler, keepaliveHandler } = pendingMsgHandlerRef.current;
-      conn.registerMessageHandler(
-        (msgno, msg) => { markPeerActive(); handler(msgno, msg); },
-        (ack) => { markPeerActive(); ackHandler(ack); },
-        () => { markPeerActive(); keepaliveHandler(); },
-      );
-    }
-
-  }, [uniqueId, markPeerActive, markPeerInactive]);
+  }, [uniqueId, markPeerActive, markPeerInactive, cancelAttemptedSession, clearSessionPreservingHistory, isAvailableForNewSessionPrompt, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const requestTrackerConnect = useCallback((origin: string) => {
     if (peerConnected && sessionPhase === 'off-chain') {
@@ -1167,12 +1383,12 @@ const Shell = () => {
         }
       } else {
         setBlockchainType(undefined);
-        clearSession();
+        clearSessionPreservingHistory();
         setConnectionSetup(null);
         setConnecting(false);
       }
     }
-  }, [uniqueId, completeConnection, setConnecting]);
+  }, [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting]);
 
   const handleFinalize = useCallback(async () => {
     if (!connectionSetup || !blockchainType) return;
@@ -1204,15 +1420,15 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setConnectionSetup(null);
     setBlockchainType(undefined);
-    clearSession();
+    clearSessionPreservingHistory();
     setConnecting(false);
     setWalletConnected(false);
     setShowSimModal(false);
-  }, [blockchainType, stopBalancePolling]);
+  }, [blockchainType, clearSessionPreservingHistory, stopBalancePolling]);
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
-    trackerConnRef.current?.sendChat(text);
+    trackerConnRef.current?.sendPeerAppMessage(sessionPeerIdRef.current!, { type: 'chat', text, timestamp: BigInt(Date.now()) });
     setChatMessages(prev => {
       const next = [...prev, { text, fromAlias: myAlias, timestamp: BigInt(Date.now()), isMine: true }];
       if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
@@ -1236,15 +1452,23 @@ const Shell = () => {
 
     if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
 
-    console.log('[Shell] session resolved; marking not busy');
+    console.log('[Shell] session resolved; tearing down peer connection, stopping poller');
     sessionFinishedCleanupRef.current = true;
     trackerConnRef.current?.setBusy(false);
+    try { getActiveBlockchain().stop(); } catch { /* not connected */ }
+    stopBalancePolling();
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
-    if (previousPhase !== 'on-chain' && !hasError) {
-      setActiveTab('tracker');
-    }
-  }, [setActiveTab]);
+    setPendingAdvisoryState(null);
+    setPendingProposalState(null);
+
+    // Tear down the peer connection so keepalives stop flowing and the message
+    // handler is cleared for a potential next session.  We do NOT destroy the
+    // blob singleton here — it's still needed to render the resolved game state.
+    resetPeerRelayState();
+
+    setActiveTab('tracker');
+  }, [stopBalancePolling, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1466,9 +1690,9 @@ const Shell = () => {
   }, [peerConnected, sessionPhase, doDisconnectTracker]);
 
   const handleEndPeerConnection = useCallback(() => {
-    trackerConnRef.current?.close();
-    markPeerInactive();
-  }, [markPeerInactive]);
+    resetPeerRelayState();
+    trackerConnRef.current?.setBusy(false);
+  }, [resetPeerRelayState]);
 
   const startCleanShutdownGrace = useCallback(() => {
     if (cleanShutdownGraceTimerRef.current !== null) {
@@ -1482,10 +1706,10 @@ const Shell = () => {
   }, []);
 
   const cancelDashboardSession = useCallback(() => {
-    trackerConnRef.current?.close();
-    markPeerInactive();
+    resetPeerRelayState();
+    trackerConnRef.current?.setBusy(false);
     destroyBlobSingleton();
-    clearSession();
+    clearSessionPreservingHistory();
     sessionSaveRef.current = null;
     activePairingTokenRef.current = null;
     sessionStartedRef.current = false;
@@ -1499,11 +1723,10 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(false);
-    setHistory([]);
     setChatMessages([]);
     setActiveTab('tracker');
     trackerConnRef.current?.setBusy(false);
-  }, [markPeerInactive, setActiveTab]);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, setActiveTab]);
 
   const requestDashboardCleanShutdown = useCallback(() => {
     startCleanShutdownGrace();
@@ -1518,13 +1741,13 @@ const Shell = () => {
     blobSingleton?.goOnChain();
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
-    trackerConnRef.current?.close();
-    markPeerInactive();
+    trackerConnRef.current?.setBusy(false);
+    resetPeerRelayState();
     setDashboardSessionModel(prev => prev
       ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
       : prev
     );
-  }, [markPeerInactive]);
+  }, [resetPeerRelayState]);
 
   const requestDashboardGoOnChain = useCallback(() => {
     const channelState = dashboardSessionModel?.channel.status.state;
@@ -1694,6 +1917,53 @@ const Shell = () => {
     cleanShutdownGraceActive,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
+  const sessionConsentOverlay = pendingAdvisory ? (
+    <div className='absolute inset-0 flex items-center justify-center bg-canvas-bg/80 backdrop-blur-sm z-50'>
+      <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
+        <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
+        <p className='text-sm text-canvas-text mb-4'>
+          <strong>{pendingAdvisory.peer_alias}</strong> would like to play for <strong>{pendingAdvisory.amount}</strong> mojos.
+        </p>
+        <div className='flex gap-3 justify-center'>
+          <button
+            onClick={() => acceptPendingAdvisory(pendingAdvisory)}
+            className='px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+          >
+            Accept
+          </button>
+          <button
+            onClick={() => declinePendingAdvisory(pendingAdvisory)}
+            className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : pendingProposal ? (
+    <div className='absolute inset-0 flex items-center justify-center bg-canvas-bg/80 backdrop-blur-sm z-50'>
+      <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
+        <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
+        <p className='text-sm text-canvas-text mb-4'>
+          <strong>{pendingProposal.from_alias}</strong> is proposing a session for <strong>{pendingProposal.amount}</strong> mojos.
+        </p>
+        <div className='flex gap-3 justify-center'>
+          <button
+            onClick={() => acceptPendingProposal(pendingProposal)}
+            className='px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+          >
+            Accept
+          </button>
+          <button
+            onClick={() => declinePendingProposal(pendingProposal)}
+            className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // --- Main tabbed app ---
   return (
@@ -2054,30 +2324,36 @@ const Shell = () => {
                 </button>
               </div>
             ) : keepSession ? (
-              <GameSessionErrorBoundary>
-                <GameSession
-                  key={gameParams.pairingToken}
-                  params={gameParams}
-                  peerConn={peerConn}
-                  registerMessageHandler={registerMessageHandler}
-                  appendGameLog={appendHistory}
-                  sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
-                  onGameActivity={onGameActivity}
-                  onSessionPhaseChange={handleSessionPhaseChange}
-                  onRestoreStatusChange={handleRestoreStatusChange}
-                  onSessionModelChange={handleSessionModelChange}
-                  onProtocolStateProviderChange={handleProtocolStateProviderChange}
-                  onCoinsProviderChange={handleCoinsProviderChange}
-                  suppressPhaseReporting={restoreBlocked}
-                />
-              </GameSessionErrorBoundary>
+              <div className='relative w-full h-full'>
+                <GameSessionErrorBoundary>
+                  <GameSession
+                    key={gameParams.pairingToken}
+                    params={gameParams}
+                    peerConn={peerConn}
+                    registerMessageHandler={registerMessageHandler}
+                    appendGameLog={appendHistory}
+                    sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
+                    onGameActivity={onGameActivity}
+                    onSessionPhaseChange={handleSessionPhaseChange}
+                    onRestoreStatusChange={handleRestoreStatusChange}
+                    onSessionModelChange={handleSessionModelChange}
+                    onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                    onCoinsProviderChange={handleCoinsProviderChange}
+                    suppressPhaseReporting={restoreBlocked}
+                  />
+                </GameSessionErrorBoundary>
+                {sessionConsentOverlay}
+              </div>
             ) : sessionCanMount ? (
               <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
                 Restoring session...
               </div>
             ) : (
-              <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-                No active game session
+              <div className='relative w-full h-full'>
+                <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+                  No active game session
+                </div>
+                {sessionConsentOverlay}
               </div>
             )}
           </div>

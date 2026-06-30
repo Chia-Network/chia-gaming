@@ -230,6 +230,8 @@ impl HandshakeInitiatorHandler {
             reward_payout_signature: reward_payout_sig,
             channel_key_pop,
             unroll_key_pop,
+            my_contribution: self.my_contribution.clone(),
+            their_contribution: self.their_contribution.clone(),
         }
     }
 
@@ -450,6 +452,19 @@ impl HandshakeInitiatorHandler {
                     return Err(Error::Channel(
                         "Invalid proof-of-possession for unroll key in HandshakeB".to_string(),
                     ));
+                }
+
+                if msg.my_contribution != self.their_contribution {
+                    return Err(Error::Channel(format!(
+                        "HandshakeB contribution mismatch: peer claims my_contribution={:?} but we expect their_contribution={:?}",
+                        msg.my_contribution, self.their_contribution
+                    )));
+                }
+                if msg.their_contribution != self.my_contribution {
+                    return Err(Error::Channel(format!(
+                        "HandshakeB contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
+                        msg.their_contribution, self.my_contribution
+                    )));
                 }
 
                 let our_channel_pk =
