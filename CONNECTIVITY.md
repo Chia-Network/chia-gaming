@@ -147,15 +147,20 @@ blockchain operations stall but the logical state is unchanged.
 Forced cascades flow downward through the dependency chain:
 
 ```
-tracker dies  →  peer dies  →  off-chain session goes on-chain
+tracker dies  →  peer degraded  →  user decides whether to go on-chain
 ```
 
 Specific rules:
 
+- **Tracker goes down temporarily** → peer relay interrupted → liveness
+  degrades to yellow. Tracker auto-reconnects; peer messages resume when
+  the pipe is back.
 - **Tracker goes down permanently** → peer is gone (rides the same socket) →
-  if session is off-chain, auto-transition to on-chain.
-- **Peer lost** (hard disconnect, liveness timeout, or tracker death) → if
-  session is off-chain, auto-transition to on-chain.
+  liveness degrades to yellow. User must manually go on-chain to resolve.
+- **Peer silent 30+ seconds or delivery failure** → liveness degrades to
+  yellow. No automatic escalation — silence alone is not terminal.
+- **Explicit terminal signal** (local go-on-chain or received FOAD) → peer
+  marked dead (red). This is the only path to the dead state.
 - **Session transitions off-chain → on-chain** — one-way. No going back.
 - **Wallet loss** — no cascade. Session is logically unchanged; blockchain
   operations just can't make progress until a wallet is reconnected.
@@ -422,13 +427,15 @@ The tracker does not create a session. It can only advise and relay:
   warning if peer/session would be affected.
 
 - **User-initiated peer disconnect**: Ending a peer session means marking
-  oneself as available again (`setBusy(false)`). If the session is off-chain,
-  losing the peer automatically cascades to on-chain.
+  oneself as available again (`setBusy(false)`). The session remains
+  off-chain until the user explicitly goes on-chain.
 
-- **Automatic peer-loss cascade**: When the peer is lost (delivery failures,
-  liveness timeout, or tracker disconnect) while the session is off-chain,
-  Shell automatically calls `goOnChain()` on the WASM cradle. No user
-  prompt — this is the cascade rule: off-chain + no peer = on-chain.
+- **Peer degradation (no auto-cascade)**: When the peer becomes unreachable
+  (delivery failures, 30-second silence, or tracker disconnect) while the
+  session is off-chain, `peerLiveness` moves to `'degraded'` (yellow dot).
+  There is no automatic go-on-chain — the user must decide to escalate.
+  Only explicit terminal signals (user clicks "Go On-Chain" or receives a
+  FOAD) mark the peer as dead.
 
 - **Cascade warning dialogs**: Confirmation dialogs currently warn before
   disconnecting or switching trackers when a peer/session would be affected.
