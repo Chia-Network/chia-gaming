@@ -20,7 +20,7 @@ import type { ChannelState } from '../types/ChiaGaming';
 
 const PRE_ACTIVE_STATES: ReadonlySet<ChannelState> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'WaitingForOffer', 'OfferSent', 'TransactionPending',
+  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';

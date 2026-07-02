@@ -2176,7 +2176,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             ChannelState::Handshaking
             | ChannelState::WaitingForHeightToOffer
             | ChannelState::WaitingForHeightToAccept => 0,
-            ChannelState::WaitingForOffer => 1,
+            ChannelState::MakingOffer | ChannelState::MakingOfferAcceptance => 1,
             ChannelState::OfferSent => 2,
             ChannelState::TransactionPending => 3,
             ChannelState::Active => 4,

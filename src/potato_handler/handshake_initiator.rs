@@ -869,7 +869,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
             InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {
                 ChannelState::Handshaking
             }
-            InitiatorState::WaitingForOffer(_, _) => ChannelState::WaitingForOffer,
+            InitiatorState::WaitingForOffer(_, _) => ChannelState::MakingOffer,
             InitiatorState::Finished(_) => {
                 if self.transaction_pushed {
                     ChannelState::TransactionPending

@@ -815,7 +815,7 @@ impl PeerHandler for HandshakeReceiverHandler {
         let state = match &self.state {
             ReceiverState::WaitingForA | ReceiverState::SentB(_) => ChannelState::Handshaking,
             ReceiverState::SentD(_) => ChannelState::Handshaking,
-            ReceiverState::WaitingForCompletion(_, _) => ChannelState::WaitingForOffer,
+            ReceiverState::WaitingForCompletion(_, _) => ChannelState::MakingOfferAcceptance,
             ReceiverState::Finished(_) => ChannelState::TransactionPending,
             ReceiverState::Done => return None,
         };

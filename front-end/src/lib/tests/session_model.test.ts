@@ -38,7 +38,7 @@ describe('session model selectors', () => {
     });
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'WaitingForOffer' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'MakingOffer' } },
     }))).toMatchObject({
       actionLabel: 'Cancel',
       actionEnabled: true,

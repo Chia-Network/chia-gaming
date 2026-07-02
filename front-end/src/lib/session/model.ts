@@ -296,12 +296,13 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
   WaitingForHeightToAccept: 'Waiting For Height To Accept',
-  WaitingForOffer: 'Waiting For Offer',
+  MakingOffer: 'Making Offer',
+  MakingOfferAcceptance: 'Making Offer Acceptance',
   OfferSent: 'Offer Sent',
-  TransactionPending: 'Tx Pending',
+  TransactionPending: 'Making Channel',
   Active: 'Active',
   ShuttingDown: 'Shutting Down',
-  ShutdownTransactionPending: 'Shutdown Tx Pending',
+  ShutdownTransactionPending: 'Shutting Down',
   GoingOnChain: 'Going On Chain',
   Unrolling: 'Unrolling',
   ResolvedClean: 'Resolved Clean',
@@ -574,7 +575,8 @@ function dashboardActionFor(
     case 'Handshaking':
     case 'WaitingForHeightToOffer':
     case 'WaitingForHeightToAccept':
-    case 'WaitingForOffer':
+    case 'MakingOffer':
+    case 'MakingOfferAcceptance':
       return { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' };
     case 'OfferSent':
     case 'TransactionPending':
