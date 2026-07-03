@@ -222,7 +222,7 @@ impl ManagedCradle for SynchronousGameCradle {
     }
 
     fn is_terminal(&self) -> bool {
-        self.channel_status_terminal()
+        self.is_fully_resolved()
     }
 }
 

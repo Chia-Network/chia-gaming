@@ -189,6 +189,10 @@ pub trait PeerHandler {
         None
     }
 
+    fn has_active_on_chain_games(&self) -> bool {
+        false
+    }
+
     /// Coin ids worth surfacing in the dashboard (channel/unroll/change/game/
     /// game-change), each tagged with its kind. Defaults to none, which is the
     /// correct answer during handshake before any coin exists.
@@ -834,6 +838,12 @@ impl SynchronousGameCradle {
                     | ChannelState::Failed,
             )
         )
+    }
+
+    /// True when the session is fully resolved: channel status is terminal and
+    /// no on-chain games are still being played out.
+    pub fn is_fully_resolved(&self) -> bool {
+        self.channel_status_terminal() && !self.peer.has_active_on_chain_games()
     }
 
     pub fn get_watching_coins(&self) -> Vec<CoinString> {

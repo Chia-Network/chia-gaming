@@ -1899,6 +1899,9 @@ impl PeerHandler for OnChainGameHandler {
         }
         coins
     }
+    fn has_active_on_chain_games(&self) -> bool {
+        self.game_map.values().any(|s| !s.game_finished)
+    }
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
