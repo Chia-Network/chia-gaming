@@ -1355,6 +1355,8 @@ export function useGameSession(
           case 'log':
             log(`[wasm] ${evt.message}`);
             break;
+          case 'terminal':
+            break;
           default: {
             const _exhaustive: never = evt;
             console.warn('unhandled event type:', _exhaustive);

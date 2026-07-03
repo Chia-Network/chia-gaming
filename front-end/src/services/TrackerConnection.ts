@@ -27,11 +27,7 @@ export interface TrackerConnectionCallbacks {
   onTrackerDisconnected: () => void;
   onTrackerReconnected: () => void;
   onTrackerActivity: () => void;
-}
-
-export interface TrackerConnectionOptions {
-  initialBusy?: boolean;
-  initialAlias?: string | null;
+  getPresence: () => { busy: boolean; alias?: string };
 }
 
 type TrackerEnvelope =
@@ -144,12 +140,13 @@ export class TrackerConnection {
   private myPlayerId: string | null = null;
   private alias: string | undefined;
 
-  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks, options: TrackerConnectionOptions = {}) {
+  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
-    this.busy = options.initialBusy ?? false;
-    this.alias = options.initialAlias ?? undefined;
+    const presence = callbacks.getPresence();
+    this.busy = presence.busy;
+    this.alias = presence.alias;
     this.connectWs();
   }
 
@@ -201,6 +198,9 @@ export class TrackerConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
+      const presence = this.callbacks.getPresence();
+      this.busy = presence.busy;
+      this.alias = presence.alias;
       this.sendWs(this.presencePayload('identify'));
       if (this.closePending) {
         this.sendCloseRequest();
@@ -371,13 +371,6 @@ export class TrackerConnection {
 
   setBusy(busy: boolean, alias?: string | null) {
     this.busy = busy;
-    if (alias !== undefined) {
-      this.alias = alias || undefined;
-    }
-    this.sendWs(this.presencePayload('set_busy'));
-  }
-
-  refreshPresence(alias?: string | null) {
     if (alias !== undefined) {
       this.alias = alias || undefined;
     }

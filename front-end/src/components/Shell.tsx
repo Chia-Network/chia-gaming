@@ -52,13 +52,11 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/WasmBlobWrapper';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldAdvertiseAvailable, shouldMountGameSession, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, shouldMountGameSession, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   selectGameDashboardView,
   selectStatusBarBalances,
-  selectSessionPhase,
   sessionAmountsFromSave,
-  sessionModelFromSave,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type GameDashboardActionKind,
@@ -150,12 +148,6 @@ function sessionSaveForReactProps(save: SessionState | null): SessionState | und
     });
   }
   return propSafeSave;
-}
-
-function sessionSaveStartsBusy(save: SessionState | null): boolean {
-  if (!save?.serializedCradle && !save?.pairingToken) return false;
-  const { perGameAmount } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
-  return selectSessionPhase(sessionModelFromSave(save, perGameAmount)) !== 'resolved';
 }
 
 type PendingSessionProposal = {
@@ -950,7 +942,6 @@ const Shell = () => {
   const declinePendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
     setPendingAdvisoryState(null);
     sendSessionReject(advisory.peer_id);
-    trackerConnRef.current?.setBusy(false);
   }, [sendSessionReject, setPendingAdvisoryState]);
 
   const acceptPendingProposal = useCallback((proposal: PendingSessionProposal) => {
@@ -970,7 +961,6 @@ const Shell = () => {
     setPendingProposalState(null);
     resetPeerRelayState();
     sendSessionReject(proposal.from_id);
-    trackerConnRef.current?.setBusy(false);
   }, [resetPeerRelayState, sendSessionReject, setPendingProposalState]);
 
   useEffect(() => {
@@ -1111,7 +1101,6 @@ const Shell = () => {
             return;
           }
           setPendingAdvisoryState(params);
-          trackerConnRef.current?.setBusy(true);
           setActiveTab('game');
         },
         onPeerMessage: (fromId: string, _fromAlias: string, payload: Uint8Array) => {
@@ -1159,7 +1148,6 @@ const Shell = () => {
               channel_timeout: msg.channel_timeout,
               unroll_timeout: msg.unroll_timeout,
             });
-            trackerConnRef.current?.setBusy(true);
             setActiveTab('game');
           } else if (msg.type === 'session_reject') {
             console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, sessionPeerIdRef.current, sessionPeerIdRef.current === fromId);
@@ -1227,14 +1215,14 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          conn.refreshPresence(gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias);
         },
         onTrackerActivity: () => {
           lastTrackerActivityRef.current = Date.now();
         },
-      }, {
-        initialBusy: sessionSaveStartsBusy(initialSave),
-        initialAlias: initialSave?.myAlias ?? initialSave?.alias,
+        getPresence: () => ({
+          busy: sessionPhaseRef.current !== 'none' && sessionPhaseRef.current !== 'resolved',
+          alias: gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
+        }),
       });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
@@ -1428,26 +1416,12 @@ const Shell = () => {
     setSessionError(!!hasError);
 
     if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
-
-    console.log('[Shell] session resolved; tearing down peer connection, stopping poller');
     sessionFinishedCleanupRef.current = true;
-    trackerConnRef.current?.setBusy(false, gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias);
-    try { getActiveBlockchain().stop(); } catch { /* not connected */ }
-    stopBalancePolling();
-    sessionSaveRef.current = null;
-    activePairingTokenRef.current = null;
-    setPendingAdvisoryState(null);
-    setPendingProposalState(null);
-
-    // Tear down the peer connection so keepalives stop flowing and the message
-    // handler is cleared for a potential next session.  We do NOT destroy the
-    // blob singleton here — it's still needed to render the resolved game state.
-    resetPeerRelayState();
 
     if (shouldSwitchToTrackerOnResolved(previousPhase, !!hasError)) {
       setActiveTab('tracker');
     }
-  }, [stopBalancePolling, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState, setActiveTab]);
+  }, [setActiveTab]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1465,14 +1439,27 @@ const Shell = () => {
     setDashboardSessionModel(model);
   }, []);
 
-  const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
-
   useEffect(() => {
-    trackerConnRef.current?.setBusy(
-      !shouldAdvertiseAvailable(sessionPhase, restoreBlocked),
-      gameParams?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
-    );
-  }, [sessionPhase, restoreBlocked, gameParams?.myAlias]);
+    if (!gameParams) return;
+    const blob = blobSingleton;
+    if (!blob) return;
+    const sub = blob.getObservable().subscribe({
+      next: (evt) => {
+        if (evt.type !== 'terminal') return;
+        const alias = gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+        trackerConnRef.current?.setBusy(false, alias);
+        stopBalancePolling();
+        resetPeerRelayState();
+        sessionSaveRef.current = null;
+        activePairingTokenRef.current = null;
+        setPendingAdvisoryState(null);
+        setPendingProposalState(null);
+      },
+    });
+    return () => sub.unsubscribe();
+  }, [gameParams, stopBalancePolling, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+
+  const restoreBlocked = isRestoreBlocked(!!gameParams?.restoring, restoreStatus, restoreTrackerReconciled);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);

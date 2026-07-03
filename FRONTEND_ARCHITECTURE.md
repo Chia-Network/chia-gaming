@@ -114,9 +114,16 @@ pending challenges involving either player, and sends an **advisory_start**
 message to the accepter's game channel only. That advisory is not authority to
 start a session by itself; it asks the accepter's player app whether to initiate.
 The player app self-declares whether it is `busy` over the game channel. Busy
-means the app has an unresolved session obligation or is already showing a
-session-consent prompt and should not receive challenges. When the app later
-reports that it is not busy, the tracker sets the player back to `'waiting'`.
+means the app has an active session (the user explicitly accepted a session
+start). The `TrackerConnection` uses a `getPresence` callback — provided by
+Shell — to derive the authoritative busy+alias state at connect and reconnect
+time for the `identify` message. Explicit `setBusy(true)` is called only when
+the user accepts a session (not when a consent dialog is merely displayed), and
+`setBusy(false)` fires on the blob's terminal event or when the user explicitly
+ends/cancels a session. Showing a session-consent dialog does not set busy;
+concurrent proposals are silently declined by `isAvailableForNewSessionPrompt()`.
+When the app later reports that it is not busy, the tracker sets the player back
+to `'waiting'`.
 
 #### Game channel events
 
@@ -751,6 +758,11 @@ The Shell does not know about game protocol details. When the tracker emits
 and renders the `GameSession` component. Specific game types and per-hand terms
 are chosen later inside the session through game proposals.
 
+Session-end side effects (tracker busy state, balance polling, peer relay
+teardown, clearing session refs) are driven by the blob's `{ type: 'terminal' }`
+RxJS event, not by `handleSessionPhaseChange`. That callback only handles React
+UI state: phase, error, and tab switching.
+
 ### Blockchain Connection Flow
 
 Shell manages wallet connections through two abstractions defined in
@@ -842,6 +854,17 @@ When WASM processing registers new watched coins, `WasmBlobWrapper` applies the
 `BlockchainPoller.attachCradle()` seeds itself once from `snapshot_watched_coins()`
 without replaying old events. Future explicit unwatch/abandon events should flow
 as deltas too.
+
+**Polling Termination.** `ManagerDrain` carries a `terminal` flag, set by
+`TransactionManager.flush_and_collect` when the channel has reached a terminal
+state (clean shutdown confirmed, on-chain resolution complete, or channel
+creation expired). When `WasmBlobWrapper.processResult` sees `terminal: true`,
+it stops the `BlockchainPoller` and keepalive timer directly — without
+round-tripping through the React notification-to-effect chain. It also emits a
+`{ type: 'terminal' }` event on its RxJS stream so Shell can perform its own
+cleanup (tracker busy state, balance polling, peer relay teardown). This is the
+sole mechanism for stopping polling; `handleSessionPhaseChange` in Shell no
+longer performs side-effect cleanup.
 
 ### WalletConnect BigInt Serialization
 

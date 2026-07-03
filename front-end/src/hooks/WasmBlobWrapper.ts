@@ -542,6 +542,12 @@ export class WasmBlobWrapper implements PollingCradle {
 
     this.drainAndSubmitTransactions();
     this.scheduleDrain();
+
+    if (result.terminal) {
+      this.blockchain?.stop();
+      this.stopKeepaliveTimer();
+      this.rxjsEmitter?.next({ type: 'terminal' });
+    }
   }
 
   private scheduleDrain(): void {

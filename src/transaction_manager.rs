@@ -179,6 +179,7 @@ pub struct ManagerDrain {
     pub events: CradleEventQueue,
     pub watch_coins: Vec<CoinString>,
     pub resync: Option<(usize, bool)>,
+    pub terminal: bool,
 }
 
 /// The minimal interface the [`TransactionManager`] needs from the cradle it
@@ -196,6 +197,10 @@ pub trait ManagedCradle {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error>;
+
+    fn is_terminal(&self) -> bool {
+        false
+    }
 }
 
 impl ManagedCradle for SynchronousGameCradle {
@@ -214,6 +219,10 @@ impl ManagedCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error> {
         SynchronousGameCradle::flush_and_collect(self, allocator)
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.channel_status_terminal()
     }
 }
 
@@ -876,10 +885,12 @@ impl<C: ManagedCradle> TransactionManager<C> {
             self.pending_resync = result.resync;
         }
         self.absorb_events(result.events);
+        let terminal = self.channel_expired || self.cradle.is_terminal();
         Ok(ManagerDrain {
             events: std::mem::take(&mut self.pending_events),
             watch_coins: std::mem::take(&mut self.pending_watch_coins),
             resync: self.pending_resync.take(),
+            terminal,
         })
     }
 }
