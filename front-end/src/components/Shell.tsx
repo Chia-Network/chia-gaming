@@ -1454,6 +1454,7 @@ const Shell = () => {
         resetPeerRelayState();
         sessionPhaseRef.current = 'resolved';
         setSessionPhase('resolved');
+        sessionFinishedCleanupRef.current = true;
         sessionSaveRef.current = null;
         activePairingTokenRef.current = null;
         setPendingAdvisoryState(null);
