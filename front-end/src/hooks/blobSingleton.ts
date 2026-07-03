@@ -65,6 +65,7 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash, channelTimeout, unrollTimeout);
   gameObject.setGameCradle(cradle);
+  gameObject.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
   gameObject.activateSpend();
   log('[wasm] game object configured (handshake)');

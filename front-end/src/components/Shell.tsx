@@ -1449,7 +1449,11 @@ const Shell = () => {
         const alias = gameParamsRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
         trackerConnRef.current?.setBusy(false, alias);
         stopBalancePolling();
+        peerLivenessRef.current = null;
+        setPeerLiveness(null);
         resetPeerRelayState();
+        sessionPhaseRef.current = 'resolved';
+        setSessionPhase('resolved');
         sessionSaveRef.current = null;
         activePairingTokenRef.current = null;
         setPendingAdvisoryState(null);
