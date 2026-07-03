@@ -161,6 +161,7 @@ export interface SessionState {
   serializedCradle?: string;
   pairingToken?: string;
   sessionPeerId?: string;
+  gameSessionId?: string;
   messageNumber?: bigint;
   remoteNumber?: bigint;
   channelReady?: boolean;

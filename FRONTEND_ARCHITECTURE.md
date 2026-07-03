@@ -38,6 +38,14 @@ players connect to the same tracker with a shared token, and the tracker routes
 messages between them. This is simple and works well behind NATs,
 but it means the tracker must stay connected for the duration of the session.
 
+Per-session peer state is encapsulated in a **`PeerSession`** object
+(`front-end/src/services/PeerSession.ts`). Each game session gets one
+`PeerSession`; it owns the session ID, peer ID, liveness tracking, message
+buffering/routing, and outbound send methods. Shell holds a single
+`peerSessionRef` (`PeerSession | null`) rather than the five individual refs
+previously used for peer state. Destroying the PeerSession makes the object
+inert — all further calls are no-ops.
+
 A future option is to upgrade to WebRTC for peer-to-peer messaging after the
 initial matchmaking. This would remove the tracker as a runtime dependency once
 both peers are connected, but adds ICE/STUN/TURN complexity. Game messages are
@@ -119,8 +127,8 @@ start). The `TrackerConnection` uses a `getPresence` callback — provided by
 Shell — to derive the authoritative busy+alias state at connect and reconnect
 time for the `identify` message. Explicit `setBusy(true)` is called only when
 the user accepts a session (not when a consent dialog is merely displayed), and
-`setBusy(false)` fires on the blob's terminal event or when the user explicitly
-ends/cancels a session. Showing a session-consent dialog does not set busy;
+`setBusy(false)` fires on the session controller's terminal event or when the
+user explicitly ends/cancels a session. Showing a session-consent dialog does not set busy;
 concurrent proposals are silently declined by `isAvailableForNewSessionPrompt()`.
 When the app later reports that it is not busy, the tracker sets the player back
 to `'waiting'`.
@@ -168,14 +176,16 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
    showing another consent prompt, it declines by sending `session_reject` to
    the peer through the pipe.
 6. If the accepter consents, that app becomes the channel initiator. It marks
-   itself busy, sends a bencodex `session_proposal` app message to the peer,
+   itself busy, generates a random hex `game_session_id`, sends a bencodex
+   `session_proposal` app message (including the `game_session_id`) to the peer,
    starts the WASM session as initiator, and then sends the binary handshake
    frames through the same addressed pipe.
-7. The peer receives the `session_proposal`, reserves that peer id so early
-   handshake bytes can buffer, marks itself busy while the prompt is open, and
-   shows its own consent prompt. If unavailable or declined, it sends
-   `session_reject` and discards any buffered handshake bytes. If accepted, it
-   starts the WASM session as receiver and drains the buffered handshake bytes.
+7. The peer receives the `session_proposal`, stores the `game_session_id` in its
+   PeerSession, reserves that peer id so early handshake bytes can buffer, marks
+   itself busy while the prompt is open, and shows its own consent prompt. If
+   unavailable or declined, it sends `session_reject` and discards any buffered
+   handshake bytes. If accepted, it starts the WASM session as receiver and
+   drains the buffered handshake bytes.
 8. Both players exchange binary game frames through the addressed tracker pipe.
    The reliability layer (msgno/ack/keepalive) is encoded inside the binary
    payload, peer-to-peer — the tracker never interprets it.
@@ -404,9 +414,9 @@ The old `SessionSave` name is now only a deprecated TypeScript alias for
 #### Save architecture
 
 Session persistence is owned by the outer JavaScript layer, not by
-`WasmBlobWrapper`. The save combines two sources of state:
+`SessionController`. The save combines two sources of state:
 
-1. **WASM-native state** — `WasmBlobWrapper.getWasmFields()` returns the
+1. **WASM-native state** — `SessionController.getWasmFields()` returns the
    cradle serialization, message counters, protocol state, history, aliases,
    and other fields that originate inside the WASM bridge.
 2. **JS-side state** — React state in `useGameSession`: game coin, turn state,
@@ -419,8 +429,8 @@ fires in two situations:
 
 - **JS state changes** — a React effect triggers `persistFullSession` whenever
   any dependency in the JS-side state changes.
-- **WASM state changes** — `WasmBlobWrapper.onSaveNeeded` is wired to
-  `persistFullSession`. Inside WasmBlobWrapper, `scheduleSave()` debounces
+- **WASM state changes** — `SessionController.onSaveNeeded` is wired to
+  `persistFullSession`. Inside SessionController, `scheduleSave()` debounces
   (500ms) and fires `onSaveNeeded` for ordinary state changes such as
   notifications, history/log updates, and ack pruning. Delivery-critical message
   state uses a stricter path described below. Transaction submission and
@@ -434,12 +444,12 @@ both JS and WASM state at once.
 
 Peer message counters and queues are part of the reliable transport protocol,
 so they are not allowed to wait for the normal debounce. When an outbound WASM
-message is produced, `WasmBlobWrapper` increments `messageNumber`, appends the
+message is produced, `SessionController` increments `messageNumber`, appends the
 message to `unackedMessages`, and queues the actual WebSocket send. When an
 inbound message is delivered, it advances `remoteNumber` and queues the ack. The
 queued sends/acks are held until the current WASM event drain is empty.
 
-At that point `WasmBlobWrapper` performs one immediate durability flush:
+At that point `SessionController` performs one immediate durability flush:
 
 1. Cancel any pending debounced save.
 2. Call `onSaveNeeded`, which serializes the cradle and merges the current
@@ -536,8 +546,8 @@ When the user chooses to resume a full save, `performResume` fires:
 3. Connect to the tracker. On `connection_status`, reconcile the tracker's
    pairing state against the save (see
    [Reconnect Reconciliation](#reconnect-reconciliation)).
-4. `blobSingleton.restoreSession` loads WASM and deserializes the cradle via
-   `WasmStateInit.deserializeGame()`, restores counters and logs, and calls
+4. `sessionController.restoreSession` loads WASM and deserializes the cradle
+   via `WasmStateInit.deserializeGame()`, restores counters and logs, and calls
    `markRestored()`.
 5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
    auto-flush), re-send all un-acked messages and re-submit all pending
@@ -600,7 +610,7 @@ the log and persisted through the normal debounced save path.
 
 #### Inbound
 
-`WasmBlobWrapper.deliverMessage` enforces strict ordering:
+`SessionController.deliverMessage` enforces strict ordering:
 
 - `msgno <= remoteNumber`: duplicate, dropped. An ack is re-sent in case the
   original ack was lost. If another message boundary is already waiting for a
@@ -621,15 +631,15 @@ or keepalive) counts as proof of life.
 - **Send interval:** 15 seconds (`KEEPALIVE_INTERVAL_MS`)
 
 The keepalive timer starts when `ChannelCreated` fires (or on restore when
-`channelReady` is already true). `WasmBlobWrapper.notePeerActivity()` is called
+`channelReady` is already true). `SessionController.notePeerActivity()` is called
 on every inbound message delivery, ack reception, and keepalive reception.
 
-Peer liveness is measured passively from relay traffic. `Shell.tsx` derives two
-liveness indicators using a 5-second polling interval. These feed into the
-**tab-dot connectivity indicators** — colored dots to the left of each tab label
-showing connection health (green / yellow / red / gray). They are also passed to
-`GameSession` for in-game display. Separately, Shell has a cascade rule: if the
-peer is marked lost while the session is still off-chain, it calls
+Peer liveness is measured passively from relay traffic. The `PeerSession` object
+derives liveness indicators using a 5-second polling interval. These feed into
+the **tab-dot connectivity indicators** — colored dots to the left of each tab
+label showing connection health (green / yellow / red / gray). They are also
+passed to `GameSession` for in-game display. Separately, Shell has a cascade
+rule: if the peer is marked lost while the session is still off-chain, it calls
 `goOnChain()` on the WASM cradle.
 
 **Tracker indicator** (`TrackerLiveness`) combines WebSocket connectivity with
@@ -759,9 +769,12 @@ and renders the `GameSession` component. Specific game types and per-hand terms
 are chosen later inside the session through game proposals.
 
 Session-end side effects (tracker busy state, balance polling, peer relay
-teardown, clearing session refs) are driven by the blob's `{ type: 'terminal' }`
-RxJS event, not by `handleSessionPhaseChange`. That callback only handles React
-UI state: phase, error, and tab switching.
+teardown, clearing session refs) are driven by the `onTerminal` callback wired
+at session-controller creation time, not by `handleSessionPhaseChange`. That
+callback only handles React UI state: phase, error, and tab switching. The
+`onTerminal` callback is passed through `GameSession` → `useGameSession` →
+`getOrCreateSessionController`, so the subscription is co-located with blob
+creation and naturally re-subscribes on each new session.
 
 ### Blockchain Connection Flow
 
@@ -825,7 +838,7 @@ backends. All other connection logic is shared.
 After a wallet backend is active, the player app uses `BlockchainPoller` as the
 host-side coordinator for chain observations. It separates three concerns:
 
-1. **Polling interest** — `WasmBlobWrapper`/`TransactionManager` know the
+1. **Polling interest** — `SessionController`/`TransactionManager` know the
    semantic meaning of watched coins. The frontend poller only receives the
    transport-level projection: coin name plus full coin string. Runtime
    additions arrive as `watchCoins` deltas from WASM drain results.
@@ -848,8 +861,8 @@ those observations. The scheduler may stop querying a coin after it has reported
 the coin spent and the spend is buried by the confirmation depth; this is generic
 poll-retention cleanup, not game/channel interpretation.
 
-When WASM processing registers new watched coins, `WasmBlobWrapper` applies the
-`watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
+When WASM processing registers new watched coins, `SessionController` applies
+the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
 `TransactionManager` already contains the semantic watch set, so
 `BlockchainPoller.attachCradle()` seeds itself once from `snapshot_watched_coins()`
 without replaying old events. Future explicit unwatch/abandon events should flow
@@ -858,13 +871,13 @@ as deltas too.
 **Polling Termination.** `ManagerDrain` carries a `terminal` flag, set by
 `TransactionManager.flush_and_collect` when the channel has reached a terminal
 state (clean shutdown confirmed, on-chain resolution complete, or channel
-creation expired). When `WasmBlobWrapper.processResult` sees `terminal: true`,
+creation expired). When `SessionController.processResult` sees `terminal: true`,
 it stops the `BlockchainPoller` and keepalive timer directly — without
-round-tripping through the React notification-to-effect chain. It also emits a
-`{ type: 'terminal' }` event on its RxJS stream so Shell can perform its own
-cleanup (tracker busy state, balance polling, peer relay teardown). This is the
-sole mechanism for stopping polling; `handleSessionPhaseChange` in Shell no
-longer performs side-effect cleanup.
+round-tripping through the React notification-to-effect chain. It also fires the
+`onTerminal` callback so Shell can perform its own cleanup (tracker busy state,
+balance polling, peer relay teardown). This is the sole mechanism for stopping
+polling; `handleSessionPhaseChange` in Shell no longer performs side-effect
+cleanup.
 
 ### WalletConnect BigInt Serialization
 
@@ -985,9 +998,9 @@ matches. The player app never reads from or writes to the iframe's DOM.
 The `GameSession` component manages one game session (a channel with a series of
 individual hands). The `useGameSession` hook owns:
 
-- **WASM cradle** — the `WasmBlobWrapper` lifecycle, obtained via
-  `getBlobSingleton`. The singleton persists across hands within a session.
-- **Notification dispatch** — subscribes to `WasmBlobWrapper`'s observable and
+- **WASM cradle** — the `SessionController` lifecycle, obtained via
+  `getOrCreateSessionController`. The singleton persists across hands within a session.
+- **Notification dispatch** — subscribes to `SessionController`'s observable and
   routes notifications to scoped notification queues (channel-scope and
   game-scope) or to the gameplay event stream (gameplay events).
 - **Session-level state** — channel coin lifecycle, game coin lifecycle, running
@@ -1007,7 +1020,7 @@ type. `front-end/src/lib/gameRegistry.ts` currently exposes California Poker
 (`calpoker`) and Space Poker (`spacepoker`) as user-facing game types.
 
 `CalpokerHand` receives gameplay events via an RxJS observable and sends moves
-back through `WasmBlobWrapper`.
+back through `SessionController`.
 
 The `useCalpokerHand` hook manages the five-step protocol:
 
@@ -1154,9 +1167,10 @@ protocol violations, not to limit concurrency.
 | `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
 | `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
 | `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
-| `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue, `getWasmFields()` for persistence |
+| `front-end/src/hooks/SessionController.ts` | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence |
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
-| `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
+| `front-end/src/hooks/blobSingleton.ts` | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
+| `front-end/src/services/PeerSession.ts` | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods |
 | `front-end/src/hooks/save.ts` | `SessionState` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
 | `front-end/src/hooks/BlockchainPoller.ts` | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots |
 | `front-end/src/lib/AsyncScheduler.ts` | Generic serialized async queue and repeating polling loop |

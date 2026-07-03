@@ -31,8 +31,8 @@ import {
 import { _resetForTests as resetSaveState } from '../../hooks/save';
 import { setDiagSink } from '../../services/log';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { configGameObject } from '../../hooks/blobSingleton';
-import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
+import { configSessionController } from '../../hooks/blobSingleton';
+import { SessionController } from '../../hooks/SessionController';
 // @ts-ignore
 import * as fs from 'fs';
 // @ts-ignore
@@ -174,7 +174,7 @@ afterAll(async () => {
 });
 
 const activeSubscriptions: Subscription[] = [];
-const activeCradles: WasmBlobWrapperAdapter[] = [];
+const activeCradles: SessionControllerAdapter[] = [];
 let testPoller: BlockchainPoller | null = null;
 
 function addActiveSubscription(sub: Subscription): Subscription {
@@ -182,7 +182,7 @@ function addActiveSubscription(sub: Subscription): Subscription {
   return sub;
 }
 
-function addActiveCradle(cradle: WasmBlobWrapperAdapter): WasmBlobWrapperAdapter {
+function addActiveCradle(cradle: SessionControllerAdapter): SessionControllerAdapter {
   activeCradles.push(cradle);
   return cradle;
 }
@@ -223,8 +223,8 @@ afterEach(async () => {
   }
 });
 
-class WasmBlobWrapperAdapter {
-  blob: WasmBlobWrapper | undefined;
+class SessionControllerAdapter {
+  blob: SessionController | undefined;
   waiting_messages: Array<SimpleMessage>;
 
   constructor() {
@@ -233,12 +233,12 @@ class WasmBlobWrapperAdapter {
 
   getObservable() {
     if (!this.blob) {
-      throw 'WasmBlobWrapperAdapter.getObservable() called before set_blob';
+      throw 'SessionControllerAdapter.getObservable() called before set_blob';
     }
     return this.blob.getObservable();
   }
 
-  set_blob(blob: WasmBlobWrapper) {
+  set_blob(blob: SessionController) {
     this.blob = blob;
     this.blob.kickSystem(2);
   }
@@ -270,7 +270,7 @@ class WasmBlobWrapperAdapter {
   }
 }
 
-function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
+function all_handshaked(cradles: Array<SessionControllerAdapter>) {
   for (let c = 0; c < 2; c++) {
     if (!cradles[c].handshaked()) {
       return false;
@@ -279,7 +279,7 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
   return true;
 }
 
-function debugCradleState(cradle: WasmBlobWrapperAdapter): string {
+function debugCradleState(cradle: SessionControllerAdapter): string {
   const blob = cradle.blob as any;
   if (!blob) return 'no-blob';
   return [
@@ -294,7 +294,7 @@ function debugCradleState(cradle: WasmBlobWrapperAdapter): string {
   ].join('/');
 }
 
-async function flushWrapperDrain(cradles: Array<WasmBlobWrapperAdapter>): Promise<void> {
+async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
   await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
 }
 
@@ -304,8 +304,8 @@ async function pollOnce(poller: BlockchainPoller): Promise<void> {
 
 async function action_with_messages(
   poller: BlockchainPoller,
-  cradle1: WasmBlobWrapperAdapter,
-  cradle2: WasmBlobWrapperAdapter,
+  cradle1: SessionControllerAdapter,
+  cradle2: SessionControllerAdapter,
 ) {
   let cradles = [cradle1, cradle2];
   let subscriptions: Subscription[] = [];
@@ -379,7 +379,7 @@ async function action_with_messages(
   }
 }
 
-async function initWasmBlobWrapper(
+async function initSessionController(
   blockchain: BlockchainPoller,
   uniqueId: string,
   iStarted: boolean,
@@ -389,7 +389,7 @@ async function initWasmBlobWrapper(
   const amount = 100n;
 
   await fakeBlockchainInfo.registerUser(uniqueId);
-  let gameObject = new WasmBlobWrapper(
+  let gameObject = new SessionController(
     blockchain,
     uniqueId,
     amount,
@@ -397,7 +397,7 @@ async function initWasmBlobWrapper(
   );
 
   let gameHexes = await loadGameHexes(fetchHex);
-  await configGameObject(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
+  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
 
   return gameObject;
 }
@@ -452,8 +452,8 @@ it(
       testLog(`after poller start connected=${fakeBlockchainInfo.isConnected()}`);
       const poller = testPoller;
 
-      const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
-      const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
+      const cradle1 = addActiveCradle(new SessionControllerAdapter());
+      const cradle2 = addActiveCradle(new SessionControllerAdapter());
       let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
@@ -465,7 +465,7 @@ it(
       };
       let wasm_init1 = new WasmStateInit(fetchHex);
       storeInitArgs(async () => {}, WholeWasmObject);
-      let wasm_blob1 = await initWasmBlobWrapper(
+      let wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
         true,
@@ -485,7 +485,7 @@ it(
         close: () => {},
       };
       let wasm_init2 = new WasmStateInit(fetchHex);
-      let wasm_blob2 = await initWasmBlobWrapper(
+      let wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',
         false,

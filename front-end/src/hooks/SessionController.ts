@@ -78,7 +78,7 @@ export function isBenignTransactionSubmitError(message: string): boolean {
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
-export class WasmBlobWrapper implements PollingCradle {
+export class SessionController implements PollingCradle {
   amount: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
@@ -605,7 +605,7 @@ export class WasmBlobWrapper implements PollingCradle {
         return;
       }
     }
-    throw new Error('WasmBlobWrapper pending work did not settle');
+    throw new Error('SessionController pending work did not settle');
   }
 
   private dispatchEvent(event: CradleEvent): void {

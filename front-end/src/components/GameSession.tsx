@@ -6,7 +6,7 @@ import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
-import { WasmBlobWrapper, RestoreStatus } from '../hooks/WasmBlobWrapper';
+import { SessionController, RestoreStatus } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
 import Calpoker from '../features/calPoker';
 import {
@@ -360,7 +360,7 @@ function NotificationOverlay({
 }
 
 interface CalpokerHandProps {
-  gameObject: WasmBlobWrapper;
+  gameObject: SessionController;
   gameId: string;
   iStarted: boolean;
   playerNumber: number;
@@ -664,12 +664,13 @@ export interface GameSessionProps {
   onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
+  onTerminal?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
   const uniqueId = getPlayerId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain);
+  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain, onTerminal);
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -681,17 +682,17 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
   useEffect(() => {
     if (!onProtocolStateProviderChange) return;
-    const gameObject = session.gameObject;
+    const gameObject = session.sessionController;
     onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
-  }, [session.gameObject, onProtocolStateProviderChange]);
+  }, [session.sessionController, onProtocolStateProviderChange]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;
-    const gameObject = session.gameObject;
+    const gameObject = session.sessionController;
     onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
     return () => onCoinsProviderChange(null);
-  }, [session.gameObject, onCoinsProviderChange]);
+  }, [session.sessionController, onCoinsProviderChange]);
 
   useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;
@@ -781,7 +782,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               {gameSpecificView.gameType === 'calpoker' ? (
                 <CalpokerHand
                   key={session.handKey}
-                  gameObject={session.gameObject}
+                  gameObject={session.sessionController}
                   gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
                   iStarted={session.iStarted}
                   playerNumber={session.playerNumber}
@@ -796,7 +797,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               ) : gameSpecificView.gameType === 'spacepoker' ? (
                 <SpacePoker
                   key={session.handKey}
-                  gameObject={session.gameObject}
+                  gameObject={session.sessionController}
                   gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
                   iStarted={session.iStarted}
                   gameplayEvent$={session.gameplayEvent$}

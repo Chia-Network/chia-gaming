@@ -15,11 +15,11 @@ import {
   SessionPhase,
 } from '../types/ChiaGaming';
 import {
-  getBlobSingleton,
+  getOrCreateSessionController,
   initStarted,
   setInitStarted,
 } from './blobSingleton';
-import { WasmBlobWrapper, RestoreStatus } from './WasmBlobWrapper';
+import { SessionController, RestoreStatus } from './SessionController';
 import type { BlockchainPoller } from './BlockchainPoller';
 import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBase64 } from './save';
 import { coinIdFromBytes, coerceToBytes } from '../util';
@@ -535,7 +535,7 @@ export interface UseGameSessionResult {
   activeGameId: string | null;
   activeGameType: string;
   displayGameId: string | null;
-  gameObject: WasmBlobWrapper;
+  sessionController: SessionController;
   gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
@@ -583,11 +583,12 @@ export function useGameSession(
   appendGameLog: (line: string) => void,
   sessionSave?: SessionState,
   blockchain: BlockchainPoller | null = null,
+  onTerminal?: () => void,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
-  const { gameObject } = getBlobSingleton(
+  const { sessionController: sc } = getOrCreateSessionController(
     blockchain,
     peerConn,
     registerMessageHandler,
@@ -600,14 +601,15 @@ export function useGameSession(
     getDefaultFee,
     Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
     Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
+    onTerminal,
   );
 
-  if (params.myAlias) gameObject.myAlias = params.myAlias;
-  if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
+  if (params.myAlias) sc.myAlias = params.myAlias;
+  if (params.opponentAlias) sc.opponentAlias = params.opponentAlias;
   const restoredModel = sessionSave ? sessionModelFromSave(sessionSave, perGameAmount) : null;
 
-  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>(() => gameObject.getRestoreStatus());
-  const [restoreError, setRestoreError] = useState<string | null>(() => gameObject.getRestoreError());
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>(() => sc.getRestoreStatus());
+  const [restoreError, setRestoreError] = useState<string | null>(() => sc.getRestoreError());
 
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>(() =>
@@ -746,7 +748,7 @@ export function useGameSession(
     () => restoredModel?.betweenHand.newHandRequested ?? false
   );
   const [cleanShutdownStarted, setCleanShutdownStarted] = useState(
-    () => restoredModel?.channel.cleanShutdownStarted ?? gameObject.cleanShutdownCalled
+    () => restoredModel?.channel.cleanShutdownStarted ?? sc.cleanShutdownCalled
   );
 
   const lastOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
@@ -794,18 +796,18 @@ export function useGameSession(
   rejectedOnceTermsRef.current = rejectedOnceTerms;
   lastHandTermsRef.current = lastHandTerms;
 
-  const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
-  gameObjectRef.current = gameObject;
+  const scRef = useRef<SessionController>(sc);
+  scRef.current = sc;
 
   useEffect(() => {
-    return gameObject.onRestoreStatusChange((status, error) => {
+    return sc.onRestoreStatusChange((status, error) => {
       setRestoreStatus(status);
       setRestoreError(error);
     });
-  }, [gameObject]);
+  }, [sc]);
 
   const cancelStalePeerProposals = useCallback((exceptId?: string) => {
-    const go = gameObjectRef.current;
+    const go = scRef.current;
     const cached = cachedPeerProposalRef.current;
     if (cached && cached.id !== exceptId) {
       try { go?.cancel_proposal(cached.id); } catch (_) { /* already cancelled */ }
@@ -817,7 +819,7 @@ export function useGameSession(
   }, []);
 
   const persistFullSession = useCallback(() => {
-    const go = gameObjectRef.current;
+    const go = scRef.current;
     const wasm = go?.getWasmFields();
     if (!wasm) return;
     const model = createSessionModel({
@@ -907,14 +909,14 @@ export function useGameSession(
 
   // Wire up the wasm-side save trigger
   useEffect(() => {
-    const go = gameObjectRef.current;
+    const go = scRef.current;
     if (!go) return;
     go.onSaveNeeded = persistFullSession;
     return () => { go.onSaveNeeded = null; };
   }, [persistFullSession]);
 
   const proposeNewGame = useCallback((terms: HandTerms) => {
-    const go = gameObjectRef.current;
+    const go = scRef.current;
     if (!go || !go.isChannelReady()) return;
     if (gameIdsRef.current.length > 0) {
       log('[notify] proposeNewGame blocked — game active');
@@ -944,7 +946,7 @@ export function useGameSession(
   const onHandOutcome = useCallback((outcome: CalpokerOutcome) => {
     setLastOutcome(outcome);
     lastOutcomeRef.current = outcome;
-    const go = gameObjectRef.current;
+    const go = scRef.current;
     if (go) {
       go.lastOutcomeWin = outcome.my_win_outcome;
     }
@@ -975,11 +977,11 @@ export function useGameSession(
   const triggerGoOnChain = useCallback(() => {
     log('[game] going on chain');
     setGoOnChainPressed(true);
-    gameObjectRef.current?.goOnChain();
+    scRef.current?.goOnChain();
   }, []);
 
   const handleNotification = useCallback(async (n: WasmNotification) => {
-    const go = gameObjectRef.current;
+    const go = scRef.current;
     if (typeof n !== 'object' || n === null) return;
 
     // ChannelStatus: persistent display, no toast
@@ -1010,7 +1012,7 @@ export function useGameSession(
             ? 'Session over — you won everything!'
             : 'Session over — you lost everything.';
           pushChannel({ kind: 'session-over', title: 'Session Over', message: msg });
-          gameObjectRef.current?.cleanShutdown();
+          scRef.current?.cleanShutdown();
           return;
         }
       }
@@ -1341,7 +1343,7 @@ export function useGameSession(
 
   // Subscribe to WASM events
   useEffect(() => {
-    const subscription = gameObject.getObservable().subscribe({
+    const subscription = sc.getObservable().subscribe({
       next: (evt: WasmEvent) => {
         switch (evt.type) {
           case 'notification':
@@ -1373,17 +1375,17 @@ export function useGameSession(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameObject, handleNotification, pushChannel]);
+  }, [sc, handleNotification, pushChannel]);
 
   // Drive the cradle's coin polling: the poller asks the cradle which coins to
   // watch and feeds raw chain state back via report_coin_states.
   useEffect(() => {
-    if (!gameObject || !blockchain) return;
-    gameObject.attachBlockchain(blockchain);
+    if (!sc || !blockchain) return;
+    sc.attachBlockchain(blockchain);
     return () => {
-      gameObject.detachBlockchain(blockchain);
+      sc.detachBlockchain(blockchain);
     };
-  }, [gameObject, blockchain]);
+  }, [sc, blockchain]);
 
   useEffect(() => {
     return () => {
@@ -1400,7 +1402,7 @@ export function useGameSession(
     if (cached) {
       if (termsEqual(cached.terms, lastTerms)) {
         try {
-          gameObjectRef.current?.acceptProposal(cached.id);
+          scRef.current?.acceptProposal(cached.id);
         } catch (e) {
           console.error('acceptProposal failed:', e);
         }
@@ -1442,7 +1444,7 @@ export function useGameSession(
         return;
       }
       try {
-        gameObjectRef.current?.cancel_proposal(cached.id);
+        scRef.current?.cancel_proposal(cached.id);
       } catch (e) {
         console.error('cancel_proposal failed:', e);
       }
@@ -1479,7 +1481,7 @@ export function useGameSession(
     const review = reviewPeerProposalRef.current;
     if (!review) return;
     try {
-      gameObjectRef.current?.acceptProposal(review.id);
+      scRef.current?.acceptProposal(review.id);
     } catch (e) {
       console.error('acceptProposal failed:', e);
     }
@@ -1490,7 +1492,7 @@ export function useGameSession(
     const review = reviewPeerProposalRef.current;
     if (review) {
       try {
-        gameObjectRef.current?.cancel_proposal(review.id);
+        scRef.current?.cancel_proposal(review.id);
       } catch (e) {
         console.error('cancel_proposal failed:', e);
       }
@@ -1502,7 +1504,7 @@ export function useGameSession(
 
   const startCleanShutdown = useCallback(() => {
     setCleanShutdownStarted(true);
-    gameObjectRef.current?.cleanShutdown();
+    scRef.current?.cleanShutdown();
   }, []);
 
   const goOnChain = useCallback(() => {
@@ -1532,7 +1534,7 @@ export function useGameSession(
       activeIds: gameIds,
       lastDisplayedId: lastDisplayedGameId,
       activeGameType,
-      handState: gameObject.handState,
+      handState: sc.handState,
       queue: gameQueue,
     },
     betweenHand: {
@@ -1552,22 +1554,22 @@ export function useGameSession(
     },
     history: {
       humanHistory: [],
-      wasmNotificationHistory: gameObject.history,
-      diagnosticLog: gameObject.logHistory,
-      chatMessages: gameObject.chatMessages,
+      wasmNotificationHistory: sc.history,
+      diagnosticLog: sc.logHistory,
+      chatMessages: sc.chatMessages,
     },
     myRunningBalance,
-    lastOutcomeWin: gameObject.lastOutcomeWin,
+    lastOutcomeWin: sc.lastOutcomeWin,
   }), [
     params.restoring, restoreStatus, restoreError,
     channelStatus, gameConnectionState, goOnChainPressed, cleanShutdownStarted,
     dismissedChannelState, channelQueue, gameCoin, handStatus, gameTerminal, handKey,
-    gameIds, lastDisplayedGameId, activeGameType, gameObject.handState,
+    gameIds, lastDisplayedGameId, activeGameType, sc.handState,
     gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
     rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,
     composeGameType, composeProposalSent, newHandRequested, myRunningBalance,
-    gameObject.history, gameObject.logHistory, gameObject.chatMessages,
-    gameObject.lastOutcomeWin,
+    sc.history, sc.logHistory, sc.chatMessages,
+    sc.lastOutcomeWin,
   ]);
   const gameSessionView = selectGameSessionView(sessionModel);
   const gameSpecificView = selectGameSpecificView(sessionModel);
@@ -1589,7 +1591,7 @@ export function useGameSession(
     activeGameId: gameSessionView.activeGameId,
     activeGameType: gameSessionView.activeGameType,
     displayGameId: gameSessionView.displayGameId,
-    gameObject,
+    sessionController: sc,
     gameplayEvent$: gameplayEventSubject.asObservable(),
     appendGameLog,
     onHandOutcome,

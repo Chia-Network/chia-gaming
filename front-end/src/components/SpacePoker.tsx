@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, type ReactNode } from 'react';
 import { Observable } from 'rxjs';
-import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
+import { SessionController } from '../hooks/SessionController';
 import {
   useSpacepokerHand,
   SpHandler,
@@ -300,7 +300,7 @@ function ActionBar({
 }
 
 export interface SpacePokerProps {
-  gameObject: WasmBlobWrapper;
+  gameObject: SessionController;
   gameId: string;
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;

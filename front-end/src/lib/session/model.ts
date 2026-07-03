@@ -4,7 +4,7 @@ import type {
   GameConnectionState,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import type { RestoreStatus } from '../../hooks/WasmBlobWrapper';
+import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionState } from '../../hooks/save';
 
 export type GameTurnState =
