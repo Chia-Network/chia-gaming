@@ -65,12 +65,6 @@ struct SubmittedTx {
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
-    /// Whether the manager may rebroadcast this transaction each block until it
-    /// lands.  True only when the transaction creates a coin we can watch for
-    /// landing *and* carries no relative timelock (which a later height could
-    /// violate after a reorg).  See `resubmit_pending`.
-    #[serde(default)]
-    auto_resubmit: bool,
 }
 
 fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
@@ -94,28 +88,6 @@ fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
         }));
     }
     out
-}
-
-/// Whether any spend in the bundle carries an `ASSERT_HEIGHT_RELATIVE`
-/// condition.  Such a spend is only valid once the coin it spends has aged past
-/// the timelock, so the manager must not blindly rebroadcast it: after a reorg
-/// re-mines the input at a later height the timelock is no longer satisfied and
-/// resubmitting would be rejected.  The one such spend the manager submits --
-/// the eager unroll-timeout claim -- already has its own reorg-aware
-/// resubmission via the ripeness path, so excluding it here loses no coverage.
-/// A bundle we cannot analyze is treated as timelocked (conservative).
-fn bundle_has_relative_timelock(bundle: &SpendBundle) -> bool {
-    let mut allocator = AllocEncoder::new();
-    bundle.spends.iter().any(|spend| {
-        let puzzle = spend.bundle.puzzle.to_program();
-        let solution = spend.bundle.solution.p();
-        match CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution) {
-            Ok(conditions) => conditions
-                .iter()
-                .any(|c| matches!(c, CoinCondition::AssertHeightRelative(_))),
-            Err(_) => true,
-        }
-    })
 }
 
 /// Combine two optional expiry heights, keeping the tightest (smallest)
@@ -379,18 +351,12 @@ impl<C> TransactionManager<C> {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
             } else {
                 let outputs = expected_output_coins(bundle);
-                // Eligible for blind rebroadcast only when it creates an output
-                // and rebroadcasting it at any later height stays valid (no
-                // relative timelock). Outputs are not polled from here; the
-                // input-spent path stops resubmission once any spend wins.
-                let auto_resubmit = !outputs.is_empty() && !bundle_has_relative_timelock(bundle);
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
                     spent_coin_ids,
                     expected_output_coins: outputs,
                     landed: false,
                     expiry: *expiry,
-                    auto_resubmit,
                 });
             }
         }
@@ -703,13 +669,6 @@ impl<C: ManagedCradle> TransactionManager<C> {
         self.pending_submissions
             .extend(to_submit.into_iter().map(|spend| (spend, None)));
 
-        // Rebroadcast any still-unlanded, resubmit-eligible transaction whose
-        // input is still present.  This covers a dropped broadcast for a spend
-        // that has no relative timelock and no other resubmission path (e.g. an
-        // unroll preempt), without resurrecting a transaction whose input has
-        // already been spent (by us landing it, or by a conflicting spend).
-        self.resubmit_pending(height);
-
         let report = WatchReport {
             created_watched,
             deleted_watched,
@@ -747,43 +706,6 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 self.pending_submissions.push(submission);
             }
         }
-    }
-
-    /// Rebroadcast resubmit-eligible transactions that have not yet been proven
-    /// landed by an independently-watched protocol output, once per block, so a
-    /// single dropped broadcast cannot strand the protocol while waiting for a
-    /// coin spend that never comes.  Only transactions that
-    ///
-    ///   * are flagged `auto_resubmit` (create an output and carry no relative
-    ///     timelock, so rebroadcasting at this height stays valid),
-    ///   * have not been observed to land, and
-    ///   * still have at least one input coin present (unspent)
-    ///
-    /// are resubmitted.  The input-present gate is what makes this safe against
-    /// abandoned intents: once a transaction's input is spent -- whether by our
-    /// own spend landing or by a conflicting spend winning -- it is no longer
-    /// rebroadcast.  Cross-party conflicts (the opponent spending the same coin
-    /// with a different bundle) are expected on a real chain and resolve
-    /// naturally; only one of the competing spends can land.
-    fn resubmit_pending(&mut self, height: u64) {
-        let mut to_resubmit: Vec<(SpendBundle, Option<u64>)> = Vec::new();
-        for tx in self.submitted.iter() {
-            if tx.landed || !tx.auto_resubmit {
-                continue;
-            }
-            if matches!(tx.expiry, Some(e) if height >= e) {
-                continue;
-            }
-            let input_present = self
-                .present_coins
-                .iter()
-                .any(|coin| tx.spent_coin_ids.contains(&coin.to_coin_id()));
-            if !input_present {
-                continue;
-            }
-            to_resubmit.push((tx.bundle.clone(), tx.expiry));
-        }
-        self.pending_submissions.extend(to_resubmit);
     }
 
     /// Drop coins whose confirmed spend is buried at least `confirmation_depth`
@@ -930,35 +852,6 @@ mod tests {
         let conditions = [(CREATE_COIN, (output_ph, (output_amount, ())))];
         let conditions_node = conditions.to_clvm(&mut allocator).expect("conditions");
         let puzzle = conditions_node
-            .to_quoted_program(&mut allocator)
-            .expect("quoted puzzle");
-        SpendBundle {
-            name: Some(name.to_string()),
-            spends: vec![CoinSpend {
-                coin: input.clone(),
-                bundle: Spend {
-                    puzzle: Puzzle::from(puzzle),
-                    solution: Program::from_bytes(&[0x80]).into(),
-                    signature: Default::default(),
-                },
-            }],
-        }
-    }
-
-    /// Like `test_bundle_spending_creating` but the puzzle also asserts a
-    /// relative height timelock, so the manager must treat it as ineligible for
-    /// blind rebroadcast.
-    fn test_bundle_timelocked(name: &str, input: &CoinString, output: &CoinString) -> SpendBundle {
-        use crate::common::constants::ASSERT_HEIGHT_RELATIVE;
-        let mut allocator = AllocEncoder::new();
-        let (_, output_ph, output_amount) = output.to_parts().expect("valid output coin");
-        let conditions = (
-            (CREATE_COIN, (output_ph, (output_amount, ()))),
-            ((ASSERT_HEIGHT_RELATIVE, (5u64, ())), ()),
-        )
-            .to_clvm(&mut allocator)
-            .expect("conditions");
-        let puzzle = conditions
             .to_quoted_program(&mut allocator)
             .expect("quoted puzzle");
         SpendBundle {
@@ -1943,7 +1836,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_resubmits_dropped_output_bearing_spend_until_it_lands() {
+    fn no_per_block_resubmission_of_unlanded_transactions() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(40);
         let child = CoinString::from_parts(
@@ -1959,12 +1852,11 @@ mod tests {
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
-        // Host submits once; the manager records it.
         assert_eq!(mgr.drain_submissions().len(), 1);
 
-        // The input is present and the tx has not landed, so each block the
-        // manager rebroadcasts it (e.g. recovering from a dropped broadcast).
-        for height in 10..=11 {
+        // Subsequent blocks must not rebroadcast the transaction; the host
+        // retries only on wallet reconnect via requeue_submitted.
+        for height in 10..=12 {
             mgr.report_coin_states(
                 &mut allocator,
                 height,
@@ -1975,126 +1867,10 @@ mod tests {
                 }],
             )
             .expect("report");
-            let resub = mgr.drain_submissions();
-            assert_eq!(resub.len(), 1, "expected rebroadcast at height {height}");
-            assert_eq!(resub[0].name.as_deref(), Some("spend-coin"));
+            assert!(
+                mgr.drain_submissions().is_empty(),
+                "should not rebroadcast at height {height}",
+            );
         }
-
-        // It lands: the input is spent and the expected child appears.  The
-        // manager stops rebroadcasting.
-        mgr.report_coin_states(
-            &mut allocator,
-            12,
-            &[
-                CoinStateRecord {
-                    coin: coin.clone(),
-                    created_height: Some(10),
-                    spent_height: Some(12),
-                },
-                CoinStateRecord {
-                    coin: child.clone(),
-                    created_height: Some(12),
-                    spent_height: None,
-                },
-            ],
-        )
-        .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
-    }
-
-    #[test]
-    fn auto_resubmit_stops_when_input_spent_by_conflict() {
-        let mut allocator = AllocEncoder::new();
-        let coin = test_coin(42);
-        let child = CoinString::from_parts(
-            &coin.to_coin_id(),
-            &PuzzleHash::from_bytes([43; 32]),
-            &Amount::new(1),
-        );
-        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
-        let mut mock = MockGameCradle::default();
-        mock.queue_drain(vec![
-            watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
-        ]);
-        let mut mgr = TransactionManager::new(mock);
-        mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().len(), 1);
-
-        // A conflicting transaction wins: the input is spent but our expected
-        // child never appears.  The manager must neither rebroadcast nor retain
-        // the now-dead intent.
-        mgr.report_coin_states(
-            &mut allocator,
-            12,
-            &[CoinStateRecord {
-                coin: coin.clone(),
-                created_height: Some(10),
-                spent_height: Some(12),
-            }],
-        )
-        .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
-    }
-
-    #[test]
-    fn auto_resubmit_skips_timelocked_spend() {
-        let mut allocator = AllocEncoder::new();
-        let coin = test_coin(44);
-        let child = CoinString::from_parts(
-            &coin.to_coin_id(),
-            &PuzzleHash::from_bytes([45; 32]),
-            &Amount::new(1),
-        );
-        let spend_tx = test_bundle_timelocked("timelocked-spend", &coin, &child);
-        let mut mock = MockGameCradle::default();
-        mock.queue_drain(vec![
-            watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
-        ]);
-        let mut mgr = TransactionManager::new(mock);
-        mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().len(), 1);
-
-        // Even with the input present and the tx unlanded, a spend carrying a
-        // relative timelock is never blindly rebroadcast: a later height could
-        // violate the timelock after a reorg.
-        mgr.report_coin_states(
-            &mut allocator,
-            10,
-            &[CoinStateRecord {
-                coin: coin.clone(),
-                created_height: Some(10),
-                spent_height: None,
-            }],
-        )
-        .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
-    }
-
-    #[test]
-    fn auto_resubmit_skips_when_input_not_present() {
-        let mut allocator = AllocEncoder::new();
-        let coin = test_coin(46);
-        let child = CoinString::from_parts(
-            &coin.to_coin_id(),
-            &PuzzleHash::from_bytes([47; 32]),
-            &Amount::new(1),
-        );
-        let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
-        let mut mock = MockGameCradle::default();
-        mock.queue_drain(vec![
-            watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
-        ]);
-        let mut mgr = TransactionManager::new(mock);
-        mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().len(), 1);
-
-        // The input coin has never been observed live, so there is nothing to
-        // rebroadcast against -- resubmission waits until the input is present.
-        mgr.report_coin_states(&mut allocator, 10, &[])
-            .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
     }
 }
