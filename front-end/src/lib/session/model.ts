@@ -508,7 +508,6 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
   cleanShutdownGraceActive?: boolean;
-  chainAvailable?: boolean;
 }
 
 function channelStatusDetail(model: SessionModel): string | null {
@@ -624,19 +623,13 @@ export function selectGameDashboardView(
 
   const channel = model.channel.status;
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false);
-  const chainActionOffline =
-    options.chainAvailable === false &&
-    (action.actionKind === 'clean-shutdown' || action.actionKind === 'go-on-chain');
-  const channelDetail = channelStatusDetail(model);
 
   return {
     channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],
-    channelDetail: chainActionOffline
-      ? [channelDetail, 'Reconnect wallet to submit chain transactions.'].filter(Boolean).join(' ')
-      : channelDetail,
+    channelDetail: channelStatusDetail(model),
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
-    ...(chainActionOffline ? { ...action, actionEnabled: false, actionKind: 'none' as const } : action),
+    ...action,
   };
 }
 

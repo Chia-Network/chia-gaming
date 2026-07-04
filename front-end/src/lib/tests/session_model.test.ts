@@ -115,26 +115,25 @@ describe('session model selectors', () => {
     });
   });
 
-  it('disables chain-submitting dashboard actions while the blockchain is offline', () => {
+  it('allows chain-submitting dashboard actions even while the blockchain is offline', () => {
     const cleanShutdown = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: { activeIds: [] },
-    }), { chainAvailable: false });
+    }));
     expect(cleanShutdown).toMatchObject({
       actionLabel: 'Clean Shutdown',
-      actionEnabled: false,
-      actionKind: 'none',
-      channelDetail: 'Reconnect wallet to submit chain transactions.',
+      actionEnabled: true,
+      actionKind: 'clean-shutdown',
     });
 
     const goOnChain = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: { activeIds: ['7'] },
-    }), { chainAvailable: false });
+    }));
     expect(goOnChain).toMatchObject({
       actionLabel: 'Go On-Chain',
-      actionEnabled: false,
-      actionKind: 'none',
+      actionEnabled: true,
+      actionKind: 'go-on-chain',
     });
   });
 

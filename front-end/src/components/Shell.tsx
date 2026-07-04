@@ -1824,7 +1824,6 @@ const Shell = () => {
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     cleanShutdownGraceActive,
-    chainAvailable: walletConnected,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
   const sessionConsentOverlay = pendingAdvisory ? (
