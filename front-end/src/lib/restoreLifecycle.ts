@@ -30,6 +30,10 @@ export function shouldAdvertiseAvailable(
   }), sessionPhase);
 }
 
+export function shouldReportTrackerBusy(sessionPhase: SessionPhase): boolean {
+  return sessionPhase !== 'none' && sessionPhase !== 'resolved';
+}
+
 export function shouldMountGameSession(
   sessionCanMount: boolean,
   walletConnected: boolean,

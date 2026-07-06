@@ -2,6 +2,7 @@ import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
   shouldMountGameSession,
+  shouldReportTrackerBusy,
   shouldSwitchToTrackerOnResolved,
 } from '../restoreLifecycle';
 
@@ -21,6 +22,13 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('none', false)).toBe(true);
     expect(shouldAdvertiseAvailable('resolved', false)).toBe(true);
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
+  });
+
+  it('keeps tracker presence busy until the session is resolved', () => {
+    expect(shouldReportTrackerBusy('none')).toBe(false);
+    expect(shouldReportTrackerBusy('resolved')).toBe(false);
+    expect(shouldReportTrackerBusy('off-chain')).toBe(true);
+    expect(shouldReportTrackerBusy('on-chain')).toBe(true);
   });
 
   it('mounts a saved session without requiring a live blockchain connection', () => {
