@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionController } from './SessionController';
 import { GameplayEvent } from './useGameSession';
 import { log } from '../services/log';
 import { PersistedGameState } from './save';
@@ -156,7 +156,7 @@ function persistedSpacepokerState(state: SpacepokerHandState): PersistedGameStat
 }
 
 export function useSpacepokerHand(
-  _gameObject: WasmBlobWrapper,
+  _gameObject: SessionController,
   _gameId: string,
   _iStarted: boolean,
   gameplayEvent$: Observable<GameplayEvent>,

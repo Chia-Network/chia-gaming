@@ -1326,6 +1326,9 @@ mod gaming_wasm {
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
+        if drain.terminal {
+            let _ = js_sys::Reflect::set(&obj, &"terminal".into(), &true.into());
+        }
         Ok(obj.into())
     }
 

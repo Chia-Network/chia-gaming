@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import {
   CalpokerOutcome,
 } from '../types/ChiaGaming';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionController } from './SessionController';
 import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
 import { GameplayEvent } from './useGameSession';
 
@@ -91,7 +91,7 @@ export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
 }
 
 export function useCalpokerHand(
-  gameObject: WasmBlobWrapper,
+  gameObject: SessionController,
   gameId: string,
   iStarted: boolean,
   gameplayEvent$: Observable<GameplayEvent>,

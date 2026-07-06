@@ -1,5 +1,5 @@
 import type { SessionPhase } from '../types/ChiaGaming';
-import type { RestoreStatus } from '../hooks/WasmBlobWrapper';
+import type { RestoreStatus } from '../hooks/SessionController';
 import {
   createSessionModel,
   selectRestoreBlocked,

@@ -4,7 +4,7 @@ import type {
   GameConnectionState,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import type { RestoreStatus } from '../../hooks/WasmBlobWrapper';
+import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionState } from '../../hooks/save';
 
 export type GameTurnState =
@@ -296,12 +296,13 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
   WaitingForHeightToAccept: 'Waiting For Height To Accept',
-  WaitingForOffer: 'Waiting For Offer',
+  MakingOffer: 'Making Offer',
+  MakingOfferAcceptance: 'Making Offer Acceptance',
   OfferSent: 'Offer Sent',
-  TransactionPending: 'Tx Pending',
+  TransactionPending: 'Making Channel',
   Active: 'Active',
   ShuttingDown: 'Shutting Down',
-  ShutdownTransactionPending: 'Shutdown Tx Pending',
+  ShutdownTransactionPending: 'Shutting Down',
   GoingOnChain: 'Going On Chain',
   Unrolling: 'Unrolling',
   ResolvedClean: 'Resolved Clean',
@@ -507,7 +508,6 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
   cleanShutdownGraceActive?: boolean;
-  chainAvailable?: boolean;
 }
 
 function channelStatusDetail(model: SessionModel): string | null {
@@ -574,7 +574,8 @@ function dashboardActionFor(
     case 'Handshaking':
     case 'WaitingForHeightToOffer':
     case 'WaitingForHeightToAccept':
-    case 'WaitingForOffer':
+    case 'MakingOffer':
+    case 'MakingOfferAcceptance':
       return { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' };
     case 'OfferSent':
     case 'TransactionPending':
@@ -622,19 +623,13 @@ export function selectGameDashboardView(
 
   const channel = model.channel.status;
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false);
-  const chainActionOffline =
-    options.chainAvailable === false &&
-    (action.actionKind === 'clean-shutdown' || action.actionKind === 'go-on-chain');
-  const channelDetail = channelStatusDetail(model);
 
   return {
     channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],
-    channelDetail: chainActionOffline
-      ? [channelDetail, 'Reconnect wallet to submit chain transactions.'].filter(Boolean).join(' ')
-      : channelDetail,
+    channelDetail: channelStatusDetail(model),
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
-    ...(chainActionOffline ? { ...action, actionEnabled: false, actionKind: 'none' as const } : action),
+    ...action,
   };
 }
 

@@ -5,7 +5,7 @@ import {
   RngId,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionController } from './SessionController';
 
 export type GameHexPair = { proposalHex: string; parserHex: string };
 export type GameHexes = Record<string, GameHexPair>;

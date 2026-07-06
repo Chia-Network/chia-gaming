@@ -54,6 +54,7 @@ export interface WasmResult {
   events?: CradleEvent[];
   watchCoins?: Array<{ coin_name: string; coin_string: string }>;
   ids?: string[];
+  terminal?: boolean;
 }
 
 export type WasmInitFn = (opts?: { module_or_path?: string | URL | Request | Response | Promise<Response> }) => Promise<any>;
@@ -150,7 +151,7 @@ export interface GameStatusPayload {
 
 export type ChannelState =
   | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
-  | 'WaitingForOffer' | 'OfferSent' | 'TransactionPending'
+  | 'MakingOffer' | 'MakingOfferAcceptance' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
@@ -174,7 +175,8 @@ export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
-  | { type: 'log'; message: string };
+  | { type: 'log'; message: string }
+  | { type: 'terminal' };
 
 interface GameCradleCreateConfig {
   rng_id: number;

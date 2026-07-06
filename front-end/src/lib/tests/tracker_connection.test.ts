@@ -139,7 +139,7 @@ afterAll(() => {
   }
 });
 
-function makeCallbacks(): TrackerConnectionCallbacks & Record<string, jest.Mock> {
+function makeCallbacks(presence?: { busy: boolean; alias?: string }): TrackerConnectionCallbacks & Record<string, jest.Mock> {
   return {
     onAdvisoryStart: jest.fn(),
     onPeerMessage: jest.fn(),
@@ -150,6 +150,7 @@ function makeCallbacks(): TrackerConnectionCallbacks & Record<string, jest.Mock>
     onTrackerDisconnected: jest.fn(() => { trackerDisconnectCount++; }),
     onTrackerReconnected: jest.fn(),
     onTrackerActivity: jest.fn(),
+    getPresence: jest.fn(() => presence ?? { busy: false }),
   };
 }
 
@@ -157,9 +158,8 @@ function makeConnection(
   trackerUrl: string,
   sessionId: string,
   callbacks: TrackerConnectionCallbacks,
-  options?: ConstructorParameters<typeof TrackerConnection>[3],
 ): TrackerConnection {
-  const conn = new TrackerConnection(trackerUrl, sessionId, callbacks, options);
+  const conn = new TrackerConnection(trackerUrl, sessionId, callbacks);
   activeConnections.add(conn);
   return conn;
 }
@@ -193,19 +193,19 @@ describe('connection setup', () => {
     expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: false }]);
   });
 
-  it('sends identify with initial busy=true over ws on open', async () => {
-    const cb = makeCallbacks();
-    makeConnection('http://t', 's1', cb, { initialBusy: true });
+  it('sends identify with busy=true from getPresence over ws on open', async () => {
+    const cb = makeCallbacks({ busy: true });
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     const ws = MockWebSocket.instance!;
     expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true }]);
   });
 
-  it('sends identify with initial alias over ws on open', async () => {
-    const cb = makeCallbacks();
-    makeConnection('http://t', 's1', cb, { initialBusy: true, initialAlias: 'Alice' });
-    await Promise.resolve(); // flush microtasks
+  it('sends identify with alias from getPresence over ws on open', async () => {
+    const cb = makeCallbacks({ busy: true, alias: 'Alice' });
+    makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
 
     const ws = MockWebSocket.instance!;
     expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' }]);
@@ -400,7 +400,7 @@ describe('setBusy', () => {
     expect(ws.sentControl).toEqual([{ type: 'set_busy', session_id: 's1', busy: true }]);
   });
 
-  it('sends set_busy with alias and keeps it for later refreshes', async () => {
+  it('sends set_busy with alias', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
@@ -408,21 +408,19 @@ describe('setBusy', () => {
     ws.sentControl = [];
 
     conn.setBusy(true, 'Alice');
-    conn.refreshPresence();
 
     expect(ws.sentControl).toEqual([
-      { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
       { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
     ]);
   });
 
-  it('preserves busy presence in identify on reconnect', async () => {
+  it('uses getPresence for identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
+    (cb.getPresence as jest.Mock).mockReturnValue({ busy: true });
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedTrackerDisconnects = 1;
-    conn.setBusy(true);
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
@@ -437,13 +435,13 @@ describe('setBusy', () => {
     jest.useRealTimers();
   });
 
-  it('includes alias in identify on reconnect', async () => {
+  it('includes alias from getPresence in identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
+    (cb.getPresence as jest.Mock).mockReturnValue({ busy: true, alias: 'Alice' });
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedTrackerDisconnects = 1;
-    conn.setBusy(true, 'Alice');
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();

@@ -1255,13 +1255,20 @@ impl PotatoHandler {
         };
 
         if self.pending_clean_shutdown.is_some() {
-            if matches!(msg_envelope.borrow(), PeerMessage::CleanShutdownComplete(_)) {
-                effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
-                return Ok(effects);
+            match msg_envelope.borrow() {
+                PeerMessage::CleanShutdownComplete(_) => {
+                    effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
+                    return Ok(effects);
+                }
+                PeerMessage::RequestPotato(_) => {
+                    return Ok(effects);
+                }
+                _ => {
+                    return Err(Error::StrErr(format!(
+                        "expected CleanShutdownComplete, got {msg_envelope:?}"
+                    )));
+                }
             }
-            return Err(Error::StrErr(format!(
-                "expected CleanShutdownComplete, got {msg_envelope:?}"
-            )));
         }
 
         match msg_envelope.borrow() {

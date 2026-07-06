@@ -1,4 +1,4 @@
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionController } from './SessionController';
 import { WasmStateInit, loadGameHexes, GameHexes } from './WasmStateInit';
 import {
   PeerConnectionResult,
@@ -12,7 +12,9 @@ import {
 import { coerceToBytes } from '../util';
 import { log } from '../services/log';
 
-export var blobSingleton: WasmBlobWrapper | null = null;
+export var sessionController: SessionController | null = null;
+/** @deprecated alias for sessionController */
+export { sessionController as blobSingleton };
 export var initStarted = false;
 
 function parseBigIntCounter(value: unknown, fallback: bigint): bigint {
@@ -28,13 +30,15 @@ export function setInitStarted(value: boolean) {
     initStarted = value;
 }
 
-export function destroyBlobSingleton(): void {
-    if (blobSingleton) {
-        blobSingleton.cleanup();
-        blobSingleton = null;
+export function destroySessionController(): void {
+    if (sessionController) {
+        sessionController.cleanup();
+        sessionController = null;
     }
     initStarted = false;
 }
+/** @deprecated use destroySessionController */
+export { destroySessionController as destroyBlobSingleton };
 
 async function fetchHex(fetchUrl: string): Promise<string> {
     const resp = await fetch(fetchUrl);
@@ -44,8 +48,8 @@ async function fetchHex(fetchUrl: string): Promise<string> {
     return resp.text();
 }
 
-export async function configGameObject(
-  gameObject: WasmBlobWrapper,
+export async function configSessionController(
+  sc: SessionController,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
   gameHexes: GameHexes,
@@ -54,25 +58,26 @@ export async function configGameObject(
   amount: bigint,
   channelTimeout?: number,
   unrollTimeout?: number,
-): Promise<WasmBlobWrapper> {
+): Promise<SessionController> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
-  gameObject.loadWasm(wasmConnection);
+  sc.loadWasm(wasmConnection);
   const entropy = new Uint8Array(32);
   crypto.getRandomValues(entropy);
   const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.rpc.getAddress();
-  gameObject.setBlockchainAddress(address);
+  sc.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash, channelTimeout, unrollTimeout);
-  gameObject.setGameCradle(cradle);
+  sc.setGameCradle(cradle);
+  sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
-  gameObject.activateSpend();
-  log('[wasm] game object configured (handshake)');
-  return gameObject;
+  sc.activateSpend();
+  log('[wasm] session controller configured (handshake)');
+  return sc;
 }
 
 export async function restoreSession(
-  gameObject: WasmBlobWrapper,
+  sc: SessionController,
   save: SessionState,
   wasmStateInit: WasmStateInit,
 ): Promise<void> {
@@ -80,45 +85,38 @@ export async function restoreSession(
     throw new Error('restoreSession called without serializedCradle');
   }
   const wasmConnection = await wasmStateInit.getWasmConnection();
-  gameObject.loadWasm(wasmConnection);
+  sc.loadWasm(wasmConnection);
 
   const cradleBytes = base64ToUint8(save.serializedCradle);
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
-  // Restore JS-side delivery state before installing the cradle. setGameCradle()
-  // can immediately spill buffered peer messages and replay unacked outbound
-  // messages, so it must observe the saved counters and queues.
-  gameObject.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
-  gameObject.remoteNumber = parseBigIntCounter(save.remoteNumber, 0n);
-  gameObject.channelReady = save.channelReady ?? false;
-  gameObject.iStarted = save.iStarted ?? false;
-  gameObject.pairingToken = save.pairingToken ?? '';
-  gameObject.unackedMessages = (save.unackedMessages ?? []).map(m => ({
+  sc.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
+  sc.remoteNumber = parseBigIntCounter(save.remoteNumber, 0n);
+  sc.channelReady = save.channelReady ?? false;
+  sc.iStarted = save.iStarted ?? false;
+  sc.pairingToken = save.pairingToken ?? '';
+  sc.unackedMessages = (save.unackedMessages ?? []).map(m => ({
     msgno: parseBigIntCounter(m.msgno, 0n),
     msg: base64ToUint8(m.msg),
   }));
-  gameObject.history = [...(save.history ?? [])];
-  gameObject.logHistory = [...(save.log ?? [])];
-  gameObject.activeGameId = save.activeGameId ?? null;
-  gameObject.handState = save.handState ?? null;
-  gameObject.lastChannelStatus = save.channelStatus
+  sc.history = [...(save.history ?? [])];
+  sc.logHistory = [...(save.log ?? [])];
+  sc.activeGameId = save.activeGameId ?? null;
+  sc.handState = save.handState ?? null;
+  sc.lastChannelStatus = save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
     : null;
-  gameObject.myAlias = save.myAlias;
-  gameObject.opponentAlias = save.opponentAlias;
-  gameObject.lastOutcomeWin = save.lastOutcomeWin;
-  gameObject.chatMessages = save.chatMessages ?? [];
-  gameObject.markRestored();
-  gameObject.setGameCradle(cradle);
-
-  // The transaction manager (in the deserialized cradle) already knows which
-  // coins to watch; attaching the restored wrapper refreshes the poller's
-  // bootstrap coin-interest snapshot from that durable state.
+  sc.myAlias = save.myAlias;
+  sc.opponentAlias = save.opponentAlias;
+  sc.lastOutcomeWin = save.lastOutcomeWin;
+  sc.chatMessages = save.chatMessages ?? [];
+  sc.markRestored();
+  sc.setGameCradle(cradle);
 
   log('[restore] session restored');
 }
 
-export function getBlobSingleton(
+export function getOrCreateSessionController(
   blockchain: BlockchainPoller | null,
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
@@ -131,59 +129,69 @@ export function getBlobSingleton(
   getFee?: () => bigint,
   channelTimeout?: number,
   unrollTimeout?: number,
-): { gameObject: WasmBlobWrapper } {
-  if (blobSingleton) {
-    return { gameObject: blobSingleton };
+  onTerminal?: () => void,
+): { sessionController: SessionController } {
+  if (sessionController) {
+    return { sessionController };
   }
 
   const wasmStateInit = new WasmStateInit(fetchHex);
 
-  blobSingleton = new WasmBlobWrapper(
+  sessionController = new SessionController(
     blockchain,
     uniqueId,
     amount,
     peerConn,
   );
-  blobSingleton.iStarted = iStarted;
-  blobSingleton.pairingToken = pairingToken ?? '';
-  blobSingleton.perGameAmount = perGameAmount ?? 0n;
-  if (getFee) blobSingleton.getFee = getFee;
-  blobSingleton.setPeerKeepalive(() => peerConn.sendKeepalive());
+  sessionController.iStarted = iStarted;
+  sessionController.pairingToken = pairingToken ?? '';
+  sessionController.perGameAmount = perGameAmount ?? 0n;
+  if (getFee) sessionController.getFee = getFee;
+  sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
+
+  if (onTerminal) {
+    const sc = sessionController;
+    const sub = sc.getObservable().subscribe({
+      next: (evt) => {
+        if (evt.type === 'terminal') {
+          sub.unsubscribe();
+          onTerminal();
+        }
+      },
+    });
+  }
 
   registerMessageHandler(
     (msgno: number, msg: Uint8Array) => {
-      blobSingleton?.deliverMessage(BigInt(msgno), msg);
+      sessionController?.deliverMessage(BigInt(msgno), msg);
     },
     (ack: number) => {
-      blobSingleton?.receiveAck(BigInt(ack));
+      sessionController?.receiveAck(BigInt(ack));
     },
     () => {
-      blobSingleton?.receiveKeepalive();
+      sessionController?.receiveKeepalive();
     },
   );
 
-  blobSingleton.kickSystem(2);
+  sessionController.kickSystem(2);
 
   if (sessionSave) {
-    const restoringObject = blobSingleton;
+    const restoringObject = sessionController;
     const doRestore = async () => {
       try {
         await restoreSession(restoringObject, sessionSave, wasmStateInit);
       } catch (e) {
-        console.error('[blobSingleton] restoreSession error:', e);
-        log(`[blobSingleton] restoreSession error: ${String(e)}`);
-        if (blobSingleton === restoringObject) {
+        console.error('[sessionController] restoreSession error:', e);
+        log(`[sessionController] restoreSession error: ${String(e)}`);
+        if (sessionController === restoringObject) {
           restoringObject.cleanup();
-          blobSingleton = null;
+          sessionController = null;
           initStarted = false;
         }
         throw e;
       }
     };
-    void restoringObject.beginRestore(doRestore()).catch(() => {
-      // The wrapper has already emitted an error event and the singleton has
-      // been cleared so a later resume cannot reuse partial restore state.
-    });
+    void restoringObject.beginRestore(doRestore()).catch(() => {});
   } else {
     const newSession = async () => {
       try {
@@ -192,8 +200,8 @@ export function getBlobSingleton(
         }
         startNewSession();
         const gameHexes = await loadGameHexes(fetchHex);
-        await configGameObject(
-          blobSingleton!,
+        await configSessionController(
+          sessionController!,
           iStarted,
           wasmStateInit,
           gameHexes,
@@ -207,13 +215,21 @@ export function getBlobSingleton(
         const msg = e instanceof Error ? (e.stack || e.message)
           : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
           : String(e);
-        console.error('[blobSingleton] newSession error:', e);
-        log(`[blobSingleton] newSession error: ${msg}`);
-        blobSingleton!.rxjsEmitter?.next({ type: 'error', error: msg });
+        console.error('[sessionController] newSession error:', e);
+        log(`[sessionController] newSession error: ${msg}`);
+        sessionController!.rxjsEmitter?.next({ type: 'error', error: msg });
       }
     };
     newSession();
   }
 
-  return { gameObject: blobSingleton };
+  return { sessionController };
+}
+
+/** @deprecated use getOrCreateSessionController */
+export function getBlobSingleton(
+  ...args: Parameters<typeof getOrCreateSessionController>
+): { gameObject: SessionController } {
+  const result = getOrCreateSessionController(...args);
+  return { gameObject: result.sessionController };
 }

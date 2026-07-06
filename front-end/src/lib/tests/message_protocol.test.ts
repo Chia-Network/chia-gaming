@@ -1,4 +1,4 @@
-import { isBenignTransactionSubmitError, WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
+import { isBenignTransactionSubmitError, SessionController } from '../../hooks/SessionController';
 import {
   ChiaGame,
   WasmConnection,
@@ -88,14 +88,14 @@ function makePeerConn(
 }
 
 interface TestHarness {
-  blob: WasmBlobWrapper;
+  blob: SessionController;
   cradle: ChiaGame;
   sentMessages: Array<{ msgno: number; msg: Uint8Array }>;
   sentAcks: number[];
 }
 
 /**
- * Returns a WasmBlobWrapper at qualifyingEvents=7 (system ready).
+ * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameCradle → kickSystem(2) → qe=7.
  */
 function createReadyBlob(
@@ -103,7 +103,7 @@ function createReadyBlob(
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
-  const blob = new WasmBlobWrapper(
+  const blob = new SessionController(
     mockBlockchain,
     'test',
     100n,
@@ -124,13 +124,13 @@ function createReadyBlob(
   return { blob, cradle, sentMessages, sentAcks };
 }
 
-/** Returns a WasmBlobWrapper at qe=1 — messages will be buffered until kickSystem(2). */
+/** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
 function createUnreadyBlob(
   onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
-  const blob = new WasmBlobWrapper(
+  const blob = new SessionController(
     mockBlockchain,
     'test',
     100n,
@@ -144,7 +144,7 @@ function createUnreadyBlob(
   return { blob, cradle, sentMessages, sentAcks };
 }
 
-let activeBlob: WasmBlobWrapper | null = null;
+let activeBlob: SessionController | null = null;
 
 function setTestGlobal(key: string, value: unknown) {
   Object.defineProperty(globalThis, key, {
@@ -169,11 +169,11 @@ afterEach(() => {
   clearTestGlobal('localStorage');
 });
 
-function flushDeferredWork(blob: WasmBlobWrapper) {
+function flushDeferredWork(blob: SessionController) {
   blob.flushDeferredWork();
 }
 
-function transactionSubmitQueue(blob: WasmBlobWrapper): Promise<void> {
+function transactionSubmitQueue(blob: SessionController): Promise<void> {
   return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
 }
 
@@ -334,7 +334,7 @@ describe('restore ordering', () => {
   it('restores counters before spilling buffered messages and replaying unacked', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(
+    const blob = new SessionController(
       mockBlockchain,
       'test',
       100n,
@@ -384,7 +384,7 @@ describe('restore ordering', () => {
   it('marks restore failures and emits an error event', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(
+    const blob = new SessionController(
       mockBlockchain,
       'test',
       100n,
@@ -413,7 +413,7 @@ describe('restore ordering', () => {
   it('does not expose stack frames in user-facing error events', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(
+    const blob = new SessionController(
       mockBlockchain,
       'test',
       100n,
@@ -444,7 +444,7 @@ describe('cleanShutdown calls shut_down on cradle', () => {
   it('calls shut_down on cradle', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(mockBlockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(mockBlockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
 
     const cradle = {
@@ -483,7 +483,7 @@ describe('transaction submission', () => {
     ), 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = makeMockCradle();
 
@@ -522,7 +522,7 @@ describe('transaction submission', () => {
     ), 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -555,7 +555,7 @@ describe('transaction submission', () => {
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -592,7 +592,7 @@ describe('transaction submission', () => {
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -628,7 +628,7 @@ describe('transaction submission', () => {
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const errors: string[] = [];
     blob.getObservable().subscribe((evt) => {
