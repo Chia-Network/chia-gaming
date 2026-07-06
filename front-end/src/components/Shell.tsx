@@ -4,7 +4,7 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
 import { TrackerConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/TrackerConnection';
 import { PeerSession, generateSessionId } from '../services/PeerSession';
 import { subscribeLog } from '../services/log';
@@ -26,8 +26,6 @@ import {
   setFeeUnit as saveFeeUnit,
   getActiveTab as getSavedTab,
   setActiveTab as saveActiveTab,
-  getUnreadChat as getSavedUnreadChat,
-  setUnreadChat as saveUnreadChat,
   getUnreadGame as getSavedUnreadGame,
   setUnreadGame as saveUnreadGame,
   getWalletAlert as getSavedWalletAlert,
@@ -70,10 +68,9 @@ import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { Button } from './button';
 
-import ChatPanel from './ChatPanel';
 import { TrackerPicker } from './TrackerPicker';
 
-type TabId = 'wallet' | 'tracker' | 'game' | 'chat' | 'history' | 'log';
+type TabId = 'wallet' | 'tracker' | 'game' | 'history' | 'log';
 
 const MOJOS_PER_XCH = 1_000_000_000_000;
 
@@ -198,7 +195,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
   { id: 'game', label: 'Game' },
-  { id: 'chat', label: 'Chat' },
   { id: 'history', label: 'History' },
   { id: 'log', label: 'Log' },
 ];
@@ -445,7 +441,7 @@ const Shell = () => {
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
     if (saved === 'session') return 'game';
-    const valid: TabId[] = ['wallet', 'tracker', 'game', 'chat', 'history', 'log'];
+    const valid: TabId[] = ['wallet', 'tracker', 'game', 'history', 'log'];
     return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
   });
   const setActiveTab = useCallback((tab: TabId) => {
@@ -608,9 +604,6 @@ const Shell = () => {
   const [history, setHistory] = useState<string[]>([]);
   const [logLines, setLogLines] = useState<string[]>([]);
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [unreadChat, setUnreadChatRaw] = useState(() => getSavedUnreadChat());
-  const setUnreadChat = useCallback((v: boolean) => { setUnreadChatRaw(v); saveUnreadChat(v); }, []);
   const [unreadGame, setUnreadGameRaw] = useState(() => getSavedUnreadGame());
   const setUnreadGame = useCallback((v: boolean) => { setUnreadGameRaw(v); saveUnreadGame(v); }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
@@ -860,7 +853,6 @@ const Shell = () => {
     destroySessionController();
     clearSessionPreservingHistory();
     try { getActiveBlockchain().start(); } catch { /* not connected */ }
-    setChatMessages([]);
     setSessionConfig({
       iStarted: request.iStarted,
       amount,
@@ -1104,16 +1096,6 @@ const Shell = () => {
                 cancelAttemptedSession();
               }
             }
-          } else if (msg.type === 'chat') {
-            const chatMsg: ChatMessage = { text: msg.text, fromAlias: fromAlias, timestamp: msg.timestamp ?? BigInt(Date.now()), isMine: false };
-            setChatMessages(prev => {
-              const next = [...prev, chatMsg];
-              if (sessionController) { sessionController.chatMessages = next; sessionController.scheduleSave(); }
-              return next;
-            });
-            if (activeTabRef.current !== 'chat') {
-              setUnreadChat(true);
-            }
           }
         },
         onDeliveryFailure: (to: string) => {
@@ -1332,16 +1314,6 @@ const Shell = () => {
     setShowSimModal(false);
   }, [blockchainType, clearSessionPreservingHistory, stopBalancePolling]);
 
-  const sendChat = useCallback((text: string) => {
-    const myAlias = sessionConfig?.myAlias ?? 'You';
-    peerSessionRef.current?.sendAppMessage({ type: 'chat', text, timestamp: BigInt(Date.now()) });
-    setChatMessages(prev => {
-      const next = [...prev, { text, fromAlias: myAlias, timestamp: BigInt(Date.now()), isMine: true }];
-      if (sessionController) { sessionController.chatMessages = next; sessionController.scheduleSave(); }
-      return next;
-    });
-  }, [sessionConfig?.myAlias]);
-
   const onGameActivity = useCallback(() => {
     if (activeTabRef.current !== 'game') {
       deferStateUpdate(() => {
@@ -1397,7 +1369,6 @@ const Shell = () => {
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
-    if (tabId === 'chat') setUnreadChat(false);
     if (tabId === 'game') setUnreadGame(false);
     if (tabId === 'wallet') setWalletAlert(false);
     if (tabId === 'tracker') setTrackerAlert(false);
@@ -1438,8 +1409,6 @@ const Shell = () => {
     const savedLog = diagnosticLogFromSave(save);
     if (savedHistory) setHistory(savedHistory);
     if (savedLog) setLogLines(savedLog);
-    if (save.chatMessages) setChatMessages(save.chatMessages);
-
     setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
@@ -1631,7 +1600,6 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(false);
-    setChatMessages([]);
     setActiveTab('tracker');
     trackerConnRef.current?.setBusy(false, alias);
   }, [clearSessionPreservingHistory, resetPeerRelayState, setActiveTab]);
@@ -1885,7 +1853,6 @@ const Shell = () => {
         {TAB_DEFS.map((tab) => {
           const active = activeTab === tab.id;
           const showDot = !active && (
-            (tab.id === 'chat' && unreadChat) ||
             (tab.id === 'game' && unreadGame) ||
             (tab.id === 'wallet' && walletAlert) ||
             (tab.id === 'tracker' && trackerAlert)
@@ -1921,11 +1888,6 @@ const Shell = () => {
               } else {
                 dotColor = 'var(--color-canvas-text-subtle)';
               }
-              break;
-            case 'chat':
-              dotColor = peerLiveness === 'connected'
-                ? 'var(--color-success-solid)'
-                : 'var(--color-canvas-text-subtle)';
               break;
           }
 
@@ -2270,18 +2232,6 @@ const Shell = () => {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Chat tab */}
-        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'chat' ? 'flex' : 'none', flexDirection: 'column' }}>
-          <ChatPanel
-            messages={chatMessages}
-            onSend={sendChat}
-            myAlias={sessionConfig?.myAlias ?? 'You'}
-            peerConnected={peerLiveness === 'connected'}
-            onEndPeer={handleEndPeerConnection}
-            opponentAlias={sessionConfig?.opponentAlias}
-          />
         </div>
 
         {/* History tab */}

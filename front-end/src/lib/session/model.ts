@@ -1,6 +1,5 @@
 import type {
   ChannelState,
-  ChatMessage,
   GameConnectionState,
   SessionPhase,
 } from '../../types/ChiaGaming';
@@ -150,7 +149,6 @@ export interface SessionHistoryModel {
   humanHistory: string[];
   wasmNotificationHistory: string[];
   diagnosticLog: string[];
-  chatMessages: ChatMessage[];
 }
 
 export interface SessionModel {
@@ -382,7 +380,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       humanHistory: [],
       wasmNotificationHistory: [],
       diagnosticLog: [],
-      chatMessages: [],
       ...history,
     },
     myRunningBalance: partial.myRunningBalance ?? 0n,
@@ -954,7 +951,6 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       humanHistory: save.humanHistory ?? save.history ?? [],
       wasmNotificationHistory: save.wasmNotificationHistory ?? [],
       diagnosticLog: save.diagnosticLog ?? save.log ?? [],
-      chatMessages: save.chatMessages ?? [],
     },
     myRunningBalance: parseBigintString(save.myRunningBalance, 0n),
     lastOutcomeWin: save.lastOutcomeWin,
@@ -974,7 +970,6 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     humanHistory: model.history.humanHistory.length > 0 ? model.history.humanHistory : undefined,
     wasmNotificationHistory: model.history.wasmNotificationHistory.length > 0 ? model.history.wasmNotificationHistory : undefined,
     diagnosticLog: model.history.diagnosticLog.length > 0 ? model.history.diagnosticLog : undefined,
-    chatMessages: model.history.chatMessages.length > 0 ? model.history.chatMessages : undefined,
     gameCoinHex: model.game.coin.coinHex,
     gameTurnState: model.game.coin.turnState,
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,

@@ -140,7 +140,7 @@ control envelopes (`identify`, `set_busy`, `registered`, `advisory_start`,
 `delivery_failure`, `lobby_attention`, `keepalive`, and `error`) are bencodex
 binary dictionary frames. The addressed peer-relay envelope is still a
 length-prefixed binary frame; peer app messages inside that envelope
-(`session_proposal`, `session_reject`, and `chat`) are bencodex dictionaries,
+(`session_proposal` and `session_reject`) are bencodex dictionaries,
 while WASM protocol frames remain raw bytes with the existing reliability tags.
 
 **Player App → Tracker:**
@@ -365,7 +365,6 @@ full mid-game session state:
 | `trackerUrl` | `string?` | Last selected tracker origin for reconnect on reload. |
 | `savedGames` | `SavedGame[]?` | Older saved-game list used by legacy helpers. |
 | `activeTab` | `string?` | Last selected top-level tab. |
-| `unreadChat` | `boolean?` | Whether the Chat tab has unread activity. |
 | `unreadGame` | `boolean?` | Whether the Game tab has unread activity. |
 | `walletAlert` | `boolean?` | Whether the Wallet tab should show an alert dot. |
 | `trackerAlert` | `boolean?` | Whether the Tracker tab should show an alert dot. |
@@ -388,7 +387,6 @@ full mid-game session state:
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
-| `chatMessages` | `ChatMessage[]?` | Persisted peer chat messages for the current/lingering pairing. |
 | `gameCoinHex` | `string \| null?` | Current game coin or reward coin ID shown in the Game tab. |
 | `gameTurnState` | `string?` | Current game turn state used for restore and timeout labels. |
 | `gameTerminalType` | `string?` | Last terminal game status category. |
@@ -541,7 +539,7 @@ state and reloads.
 
 When the user chooses to resume a full save, `performResume` fires:
 
-1. Hydrate local UI state (game params, history, log, chat) from the save.
+1. Hydrate local UI state (game params, history, log) from the save.
 2. Connect to the wallet backend (`beginConnect` + `finalize`).
 3. Connect to the tracker. On `connection_status`, reconcile the tracker's
    pairing state against the save (see
@@ -594,8 +592,8 @@ peer-to-peer reliability tag before handing the payload to `TrackerConnection`:
 - **Ack payload:** tag `0x02`, 4-byte big-endian `msgno`.
 - **Keepalive payload:** tag `0x03`.
 
-Peer app messages that are not WASM protocol bytes (`session_proposal`,
-`session_reject`, and `chat`) are bencodex dictionaries inside the same
+Peer app messages that are not WASM protocol bytes (`session_proposal`
+and `session_reject`) are bencodex dictionaries inside the same
 addressed peer-relay envelope. The tracker does not interpret either form; it
 only forwards the addressed payload.
 
@@ -744,7 +742,6 @@ but the MVP is limited to one game at a time.
 │  │  └────────────────────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
-│  Chat tab (ChatPanel — peer text messages)                      │
 │  History tab (append-only text area)                            │
 │  Log tab (append-only text area)                                │
 └─────────────────────────────────────────────────────────────────┘
@@ -760,7 +757,7 @@ The Shell is the top-level React component. It owns:
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
-- **Tab navigation** — six tabs: Wallet, Tracker, Game, Chat, History, Log
+- **Tab navigation** — five tabs: Wallet, Tracker, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
 The Shell does not know about game protocol details. When the tracker emits

@@ -102,13 +102,6 @@ export interface GameSessionParams {
   unrollTimeout?: bigint;  // blocks, for unroll coin
 }
 
-export interface ChatMessage {
-  text: string;
-  fromAlias: string;
-  timestamp: bigint;
-  isMine: boolean;
-}
-
 type WasmNotificationTag =
   | 'ChannelStatus'
   | 'GameStatus'

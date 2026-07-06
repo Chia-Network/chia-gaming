@@ -861,7 +861,6 @@ export function useGameSession(
         humanHistory: [],
         wasmNotificationHistory: wasm.history,
         diagnosticLog: wasm.log,
-        chatMessages: wasm.chatMessages,
       },
       myRunningBalance,
       lastOutcomeWin: wasm.lastOutcomeWin,
@@ -1556,7 +1555,6 @@ export function useGameSession(
       humanHistory: [],
       wasmNotificationHistory: sc.history,
       diagnosticLog: sc.logHistory,
-      chatMessages: sc.chatMessages,
     },
     myRunningBalance,
     lastOutcomeWin: sc.lastOutcomeWin,
@@ -1568,7 +1566,7 @@ export function useGameSession(
     gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
     rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,
     composeGameType, composeProposalSent, newHandRequested, myRunningBalance,
-    sc.history, sc.logHistory, sc.chatMessages,
+    sc.history, sc.logHistory,
     sc.lastOutcomeWin,
   ]);
   const gameSessionView = selectGameSessionView(sessionModel);

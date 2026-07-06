@@ -151,7 +151,6 @@ export interface SessionState {
 
   // UI state
   activeTab?: string;
-  unreadChat?: boolean;
   unreadGame?: boolean;
   walletAlert?: boolean;
   trackerAlert?: boolean;
@@ -181,7 +180,6 @@ export interface SessionState {
   myAlias?: string;
   opponentAlias?: string;
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
-  chatMessages?: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }>;
   gameCoinHex?: string | null;
   gameTurnState?: string;
   gameHandStatus?: string;
@@ -595,7 +593,6 @@ export function clearSession(): void {
     trackerUrl: prev.trackerUrl,
     savedGames: prev.savedGames,
     activeTab: prev.activeTab,
-    unreadChat: prev.unreadChat,
     unreadGame: prev.unreadGame,
     walletAlert: prev.walletAlert,
     trackerAlert: prev.trackerAlert,
@@ -674,14 +671,6 @@ export function setActiveTab(tab: string): void {
 }
 
 // --- Notification badges ---
-
-export function getUnreadChat(): boolean {
-  return loadState().unreadChat ?? false;
-}
-
-export function setUnreadChat(v: boolean): void {
-  mutate(s => { s.unreadChat = v || undefined; });
-}
 
 export function getUnreadGame(): boolean {
   return loadState().unreadGame ?? false;
