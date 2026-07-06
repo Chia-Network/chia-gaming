@@ -53,7 +53,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldMountGameSession, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   selectGameDashboardView,
   selectStatusBarBalances,
@@ -1164,7 +1164,7 @@ const Shell = () => {
           lastTrackerActivityRef.current = Date.now();
         },
         getPresence: () => ({
-          busy: sessionPhaseRef.current !== 'none' && sessionPhaseRef.current !== 'resolved',
+          busy: shouldReportTrackerBusy(sessionPhaseRef.current),
           alias: sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
         }),
       });
@@ -1600,7 +1600,7 @@ const Shell = () => {
 
   const handleEndPeerConnection = useCallback(() => {
     resetPeerRelayState();
-    trackerConnRef.current?.setBusy(false);
+    trackerConnRef.current?.setBusy(shouldReportTrackerBusy(sessionPhaseRef.current));
   }, [resetPeerRelayState]);
 
   const startCleanShutdownGrace = useCallback(() => {
@@ -1649,7 +1649,7 @@ const Shell = () => {
     sessionController?.goOnChain();
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
-    trackerConnRef.current?.setBusy(false);
+    trackerConnRef.current?.setBusy(shouldReportTrackerBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
     setDashboardSessionModel(prev => prev
