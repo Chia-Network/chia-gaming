@@ -189,8 +189,7 @@ pub trait PeerHandler {
         None
     }
 
-    fn wallet_callback_failed(&mut self, _reason: String) {
-    }
+    fn wallet_callback_failed(&mut self, _reason: String) {}
 
     fn has_active_on_chain_games(&self) -> bool {
         false
