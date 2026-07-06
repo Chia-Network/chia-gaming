@@ -520,15 +520,14 @@ function SpacePokerHand({
   myName,
   opponentName,
 }: SpacePokerHandProps) {
-  const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : undefined;
-  const stackSize = unitMojos && unitMojos > 0n ? perGameAmount / unitMojos : 0n;
+  const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : 1n;
+  const stackSize = unitMojos > 0n ? perGameAmount / unitMojos : 0n;
 
   const handleGameLog = useCallback((lines: string[]) => {
-    const unitLabel = unitMojos ? formatAmount(unitMojos) : formatAmount(perGameAmount);
-    appendGameLog(`Space Poker ${stackSize} (${unitLabel})`);
+    appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
     lines.forEach(l => appendGameLog(l));
     appendGameLog('');
-  }, [appendGameLog, perGameAmount, unitMojos, stackSize]);
+  }, [appendGameLog, unitMojos, stackSize]);
 
   return (
     <SpacePoker
