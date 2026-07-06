@@ -8,6 +8,7 @@ import {
   SpOutcome,
   SpTerminalState,
   SpacepokerDisplayMode,
+  SpacepokerHandState,
 } from '../hooks/useSpacepokerHand';
 import { GameplayEvent } from '../hooks/useGameSession';
 import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
@@ -560,7 +561,14 @@ export default function SpacePoker({
   useCheatNerfKeys(handleCheat, handleNerf);
 
   // Write to the session history panel when the hand finishes.
-  const gameLogFiredRef = useRef(false);
+  // If restoring from a persisted terminal state, skip logging (already logged).
+  const [alreadyTerminalAtMount] = useState(() => {
+    const hs = gameObject.handState;
+    if (!hs || hs.gameType !== 'spacepoker') return false;
+    const s = hs.state as SpacepokerHandState | undefined;
+    return s?.terminalState != null && s.terminalState !== 'none';
+  });
+  const gameLogFiredRef = useRef(alreadyTerminalAtMount);
   useEffect(() => {
     if (sp.terminalState === 'none' || gameLogFiredRef.current) return;
     if (!sp.playerHoleCards) return;
