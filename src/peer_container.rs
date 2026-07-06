@@ -189,6 +189,9 @@ pub trait PeerHandler {
         None
     }
 
+    fn wallet_callback_failed(&mut self, _reason: String) {
+    }
+
     fn has_active_on_chain_games(&self) -> bool {
         false
     }
@@ -447,6 +450,15 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error>;
+
+    /// Report that a wallet callback (selectCoins, createOfferForIds) failed
+    /// during the handshake.  The handshake handler transitions to Failed with
+    /// the reason as an advisory.
+    fn wallet_callback_failed(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        reason: String,
     ) -> Result<(), Error>;
 
     /// Get the reward puzzle hash
@@ -874,6 +886,16 @@ impl SynchronousGameCradle {
             self.peer.provide_coin_spend_bundle(&mut env, bundle)?
         };
         self.process_effects(effects, allocator)?;
+        Ok(())
+    }
+
+    pub fn wallet_callback_failed(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        reason: String,
+    ) -> Result<(), Error> {
+        self.peer.wallet_callback_failed(reason);
+        self.detect_phase_transition();
         Ok(())
     }
 
@@ -1580,6 +1602,14 @@ impl GameCradle for SynchronousGameCradle {
         }
         self.process_effects(reported_effects, allocator)?;
         Ok(())
+    }
+
+    fn wallet_callback_failed(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        reason: String,
+    ) -> Result<(), Error> {
+        self.wallet_callback_failed(allocator, reason)
     }
 }
 

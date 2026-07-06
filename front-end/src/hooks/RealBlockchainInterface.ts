@@ -424,10 +424,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if ((response as any)?.error) {
         const errMsg = (response as any).error;
         log(`[wc-blockchain] createOfferForIds daemon error: ${errMsg}`);
-        if (/insufficient funds/i.test(String(errMsg))) {
-          throw new Error(String(errMsg));
-        }
-        return null;
+        throw new Error(String(errMsg));
       }
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
@@ -465,10 +462,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const errorMsg = (parsedError as any)?.data?.error
         ?? (parsedError as any)?.data?.structuredError?.message
         ?? '';
-      if (/insufficient funds/i.test(errorMsg) || /insufficient funds/i.test(errorText)) {
-        throw new Error(errorMsg || errorText);
-      }
-      return null;
+      throw new Error(errorMsg || errorText || 'createOfferForIds failed');
     }
   }
 

@@ -209,6 +209,7 @@ export interface WasmConnection {
   provide_launcher_coin: (cid: number, hex_launcher_coin: string) => WasmResult | undefined;
   provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult | undefined;
   provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult | undefined;
+  wallet_callback_failed: (cid: number, reason: string) => WasmResult | undefined;
   get_channel_puzzle_hash: (cid: number) => string | null;
   new_block: (
     cid: number,
@@ -402,6 +403,14 @@ export class ChiaGame {
 
   provide_offer_bech32(offer_bech32: string): any {
     return this.wasm.provide_offer_bech32(this.cradle, offer_bech32);
+  }
+
+  wallet_callback_failed(reason: string): WasmResult | undefined {
+    const maybeFail = (
+      this.wasm as unknown as { wallet_callback_failed?: (cid: number, reason: string) => WasmResult | undefined }
+    ).wallet_callback_failed;
+    if (typeof maybeFail !== 'function') return undefined;
+    return maybeFail(this.cradle, reason);
   }
 
   get_channel_puzzle_hash(): string | null {

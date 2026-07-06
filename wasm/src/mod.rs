@@ -770,6 +770,16 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn wallet_callback_failed(cid: i32, reason: &str) -> Result<JsValue, JsValue> {
+        let reason = reason.to_string();
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .wallet_callback_failed(&mut cradle.allocator, reason)
+        })
+    }
+
+    #[wasm_bindgen]
     pub fn convert_offer_to_coinset_org(offer_bech32: &str) -> Result<JsValue, JsValue> {
         let bundle = decode_offer_to_spend_bundle(offer_bech32)
             .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;

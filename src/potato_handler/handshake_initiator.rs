@@ -97,6 +97,8 @@ pub struct HandshakeInitiatorHandler {
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     failed: bool,
+    #[serde(default)]
+    failure_advisory: Option<String>,
 
     #[serde(skip)]
     replacement: Option<Box<PotatoHandler>>,
@@ -127,6 +129,7 @@ impl HandshakeInitiatorHandler {
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
             failed: false,
+            failure_advisory: None,
             replacement: None,
         }
     }
@@ -723,6 +726,10 @@ impl PeerHandler for HandshakeInitiatorHandler {
         self.failed = true;
         Ok(vec![])
     }
+    fn wallet_callback_failed(&mut self, reason: String) {
+        self.failed = true;
+        self.failure_advisory = Some(reason);
+    }
     fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
         if self.pending_coin_spend && self.last_height > 0 {
@@ -817,7 +824,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
         if self.failed {
             return Some(ChannelStatusSnapshot {
                 state: ChannelState::Failed,
-                advisory: None,
+                advisory: self.failure_advisory.clone(),
                 coin: self
                     .channel_handler
                     .as_ref()
