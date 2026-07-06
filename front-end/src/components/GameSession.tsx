@@ -493,6 +493,59 @@ function CalpokerHand({
   );
 }
 
+interface SpacePokerHandProps {
+  gameObject: SessionController;
+  gameId: string;
+  iStarted: boolean;
+  gameplayEvent$: Observable<GameplayEvent>;
+  betSize: string;
+  unitSizeMojos?: string;
+  onTurnChanged: (isMyTurn: boolean) => void;
+  appendGameLog: (line: string) => void;
+  perGameAmount: bigint;
+  myName?: string;
+  opponentName?: string;
+}
+
+function SpacePokerHand({
+  gameObject,
+  gameId,
+  iStarted,
+  gameplayEvent$,
+  betSize,
+  unitSizeMojos,
+  onTurnChanged,
+  appendGameLog,
+  perGameAmount,
+  myName,
+  opponentName,
+}: SpacePokerHandProps) {
+  const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : undefined;
+  const stackSize = unitMojos && unitMojos > 0n ? perGameAmount / unitMojos : 0n;
+
+  const handleGameLog = useCallback((lines: string[]) => {
+    const unitLabel = unitMojos ? formatAmount(unitMojos) : formatAmount(perGameAmount);
+    appendGameLog(`Space Poker ${stackSize} (${unitLabel})`);
+    lines.forEach(l => appendGameLog(l));
+    appendGameLog('');
+  }, [appendGameLog, perGameAmount, unitMojos, stackSize]);
+
+  return (
+    <SpacePoker
+      gameObject={gameObject}
+      gameId={gameId}
+      iStarted={iStarted}
+      gameplayEvent$={gameplayEvent$}
+      betSize={betSize}
+      unitSizeMojos={unitSizeMojos}
+      onTurnChanged={onTurnChanged}
+      onGameLog={handleGameLog}
+      myName={myName}
+      opponentName={opponentName}
+    />
+  );
+}
+
 function ComposeProposalDialog({
   session,
   maxPerHandMojos,
@@ -795,7 +848,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                   opponentName={params.opponentAlias}
                 />
               ) : gameSpecificView.gameType === 'spacepoker' ? (
-                <SpacePoker
+                <SpacePokerHand
                   key={session.handKey}
                   gameObject={session.sessionController}
                   gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
@@ -806,6 +859,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                     ? String(session.lastHandTerms.spacepokerUnitSize)
                     : undefined}
                   onTurnChanged={session.onTurnChanged}
+                  appendGameLog={session.appendGameLog}
+                  perGameAmount={session.currentHandAmount}
                   myName={params.myAlias}
                   opponentName={params.opponentAlias}
                 />
