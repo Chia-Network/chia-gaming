@@ -269,11 +269,11 @@ describe('PeerSession', () => {
       const conn = mockTrackerConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
-      ps.sendAppMessage({ type: 'chat', text: 'hello' });
+      ps.sendAppMessage({ type: 'session_reject' });
       expect(conn.sentAppMessages).toHaveLength(1);
       expect(conn.sentAppMessages[0]).toEqual({
         targetId: 'peer1',
-        data: { type: 'chat', text: 'hello' },
+        data: { type: 'session_reject' },
       });
     });
   });

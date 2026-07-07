@@ -197,7 +197,6 @@ describe('flat state', () => {
       messageNumber: 5,
       remoteNumber: 3,
       unackedMessages: [{ msgno: 4, msg: 'hello' }],
-      chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 123, isMine: true }],
       handState: {
         gameType: 'calpoker',
         version: 1,
@@ -227,7 +226,6 @@ describe('flat state', () => {
     expect(typeof state.messageNumber).toBe('bigint');
     expect(typeof state.remoteNumber).toBe('bigint');
     expect(typeof state.unackedMessages?.[0].msgno).toBe('bigint');
-    expect(typeof state.chatMessages?.[0].timestamp).toBe('bigint');
     expect(state.handState?.gameType).toBe('calpoker');
     expect(typeof state.handState?.version).toBe('bigint');
     expect(typeof handState.moveNumber).toBe('bigint');

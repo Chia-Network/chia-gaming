@@ -320,7 +320,7 @@ peer-data recovery path.
 
 ### Non-Potato Messages
 
-`PeerMessage::Message` (for in-game readable messages) remains a separate type
+`PeerMessage::Message` (for advisory game messages) remains a separate type
 that does not carry the potato and can be sent at any time.
 
 **Key code:** `src/potato_handler/mod.rs` (`PotatoHandler`, `PotatoState`)

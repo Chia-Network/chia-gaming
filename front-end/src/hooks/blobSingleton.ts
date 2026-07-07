@@ -109,7 +109,6 @@ export async function restoreSession(
   sc.myAlias = save.myAlias;
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
-  sc.chatMessages = save.chatMessages ?? [];
   sc.markRestored();
   sc.setGameCradle(cradle);
 

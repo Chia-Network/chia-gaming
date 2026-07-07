@@ -43,7 +43,6 @@ export interface WasmFields {
   myAlias: string | undefined;
   opponentAlias: string | undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
-  chatMessages: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }>;
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -136,7 +135,6 @@ export class SessionController implements PollingCradle {
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
-  chatMessages: Array<{ text: string; fromAlias: string; timestamp: bigint; isMine: boolean }> = [];
   onSaveNeeded: (() => void) | null = null;
   getFee: () => bigint = () => 0n;
 
@@ -895,7 +893,6 @@ export class SessionController implements PollingCradle {
         myAlias: this.myAlias,
         opponentAlias: this.opponentAlias,
         lastOutcomeWin: this.lastOutcomeWin,
-        chatMessages: [...this.chatMessages],
       };
     } catch (e) {
       console.error('[wasm] getWasmFields failed:', e);

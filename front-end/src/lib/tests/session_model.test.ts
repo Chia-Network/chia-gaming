@@ -646,13 +646,12 @@ describe('session model selectors', () => {
     )).toEqual({ amount: 1n, perGameAmount: 2n });
   });
 
-  it('separates history, diagnostic log, chat, and wasm notification history in snapshots', () => {
+  it('separates history, diagnostic log, and wasm notification history in snapshots', () => {
     const model = createSessionModel({
       history: {
         humanHistory: ['human line'],
         wasmNotificationHistory: ['{"ChannelStatus":{}}'],
         diagnosticLog: ['diag line'],
-        chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 1n, isMine: true }],
       },
     });
 
@@ -660,7 +659,6 @@ describe('session model selectors', () => {
       humanHistory: ['human line'],
       wasmNotificationHistory: ['{"ChannelStatus":{}}'],
       diagnosticLog: ['diag line'],
-      chatMessages: [{ text: 'hi', fromAlias: 'me', timestamp: 1n, isMine: true }],
     });
   });
 

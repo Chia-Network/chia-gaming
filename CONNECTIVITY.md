@@ -140,7 +140,7 @@ After collapsing ephemeral states, the system has **7 resting states**:
 |---|---------|------|---------|-------------|
 | 1 | up | up | none | Idle on a tracker. Can accept challenges. |
 | 2 | up | up | off-chain | Playing a game through the relay. |
-| 3 | up | up | on-chain | Resolving on-chain, peer still connected. Chat works. |
+| 3 | up | up | on-chain | Resolving on-chain, peer still connected. |
 | 4 | up | down | none | On a tracker, no match. Waiting in lobby. |
 | 5 | up | down | on-chain | Resolving on-chain, peer gone. Tracker available for future matchmaking. |
 | 6 | down | down | none | Disconnected from everything. Can reconnect. |
@@ -204,7 +204,7 @@ Specific rules:
 
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
-| Go on-chain | When session = off-chain | None currently. | Session transitions to on-chain. Game messages stop. Chat continues. |
+| Go on-chain | When session = off-chain | None currently. | Session transitions to on-chain. Game messages stop. |
 | Clean shutdown | Between hands only, requires peer cooperation | None (it's the graceful path) | Cooperative close. Channel resolves cleanly. |
 
 ---
@@ -240,8 +240,6 @@ When a session transitions to on-chain:
 - **Acks for already-delivered messages**: still processed (they concern the
   past).
 - **Keepalives**: harmless but no longer meaningful for game liveness.
-- **Chat**: **still works**. Chat is independent of the game protocol and
-  rides the same tracker relay.
 
 ### Terminal detection
 
@@ -265,10 +263,8 @@ any pending hand obligations have finished:
 7. A new match replaces the old resolved display. There is no manual "Close
    Session" button.
 8. The old peer connection is no longer a live session route. The app may still
-   show the finished session and prior chat/history, but new peer messages must
+   show the finished session and prior history, but new peer messages must
    come from a newly accepted session.
-9. Chat messages persist across session boundaries and are only cleared when a
-   new pairing starts.
 
 ---
 
@@ -404,8 +400,7 @@ The tracker does not create a session. It can only advise and relay:
   pending hand obligations), Shell stops live protocol interaction, destroys the
   `PeerSession`, resets `sessionStartedRef`, and marks the player as not busy. The game UI stays visible as a read-only resolved display
   until a new match replaces it, and a reload may restore that finished view.
-  Chat persists across session boundaries and is only cleared when a new session
-  starts. Terminal error or suspect outcomes are carried separately via
+  Terminal error or suspect outcomes are carried separately via
   `sessionError`.
 
 - **Game message filtering on-chain**: `SessionController` has an `onChain`
@@ -421,7 +416,7 @@ The tracker does not create a session. It can only advise and relay:
   the broader session phase changes, while restore blocking keeps unresolved
   restores busy until reconciliation completes. A resolved session no longer has
   an active game obligation, so the player can be available for a new match even
-  if the existing relay/chat is still visible.
+  if the existing relay is still visible.
 
 - **Tracker-side `set_busy` handler**: The tracker server accepts bencodex
   `set_busy` messages on the game channel. It updates the player's lobby
@@ -464,8 +459,8 @@ tab. The dot is always present (gray when idle/irrelevant) so the tab bar
 layout never shifts.
 
 Separately, the existing upper-right notification dots indicate unread
-activity (unread chat messages, new game events, etc.). These are unchanged
-and serve a different purpose.
+activity (new game events, etc.). These are unchanged and serve a different
+purpose.
 
 ### Per-tab color semantics
 
@@ -474,7 +469,6 @@ and serve a different purpose.
 | Wallet | Connected | — | Disconnected | — |
 | Tracker | Connected | Reconnecting | Inactive (no heartbeat) | Not connected (null / disconnected) |
 | Game | Peer connected | On-chain or peer degraded | Error, or peer dead | No session / resolved |
-| Chat | Peer connected | — | — | No peer |
 | History | — | — | — | Always gray |
 | Log | — | — | — | Always gray |
 
@@ -524,10 +518,6 @@ The frontend uses `game_finished` from `other_params` and the current
 
 - **Disconnect Tracker**: In the tracker tab header strip, right-aligned
   next to the "Connected to {trackerOrigin}" text.
-- **Disconnect**: In the Chat tab header bar, visible when a peer is
-  connected. Ends the pairing via the tracker; peer loss cascades to
-  on-chain automatically if a session is active. The header also shows
-  the opponent's alias when connected.
 
 ### Not yet implemented
 

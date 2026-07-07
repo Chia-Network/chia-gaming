@@ -41,8 +41,7 @@ type TrackerEnvelope =
 
 export type PeerAppMessage =
   | { type: 'session_proposal'; amount: string; from_alias?: string; channel_timeout?: string; unroll_timeout?: string; game_session_id?: string }
-  | { type: 'session_reject' }
-  | { type: 'chat'; text: string; timestamp?: bigint };
+  | { type: 'session_reject' };
 
 function definedBencodexFields(data: Record<string, BencodexValue | undefined>): Record<string, BencodexValue> {
   const out: Record<string, BencodexValue> = {};
@@ -110,15 +109,6 @@ function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
       };
     case 'session_reject':
       return { type };
-    case 'chat': {
-      const text = requireText(decoded, 'text');
-      const rawTimestamp = decoded.get('timestamp');
-      return {
-        type,
-        text,
-        timestamp: typeof rawTimestamp === 'bigint' ? rawTimestamp : undefined,
-      };
-    }
     default:
       return null;
   }
