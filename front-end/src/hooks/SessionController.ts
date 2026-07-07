@@ -399,8 +399,11 @@ export class SessionController implements PollingCradle {
     } catch (e) {
       this.launcherProvided = false;
       diagStack('handleNeedLauncherCoin error', e);
-      log(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      const msg = extractErrorMessage(e);
+      log(`[wasm] handleNeedLauncherCoin error: ${msg}`);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      const failResult = this.cradle?.wallet_callback_failed(msg);
+      this.processResult(failResult);
     }
   }
 
@@ -427,7 +430,11 @@ export class SessionController implements PollingCradle {
         maxHeight,
       );
       if (!bundle) {
-        console.error('[wasm] createOfferForIds returned null');
+        const msg = 'Wallet createOfferForIds failed (returned null)';
+        log(`[wasm] ${msg}`);
+        this.rxjsEmitter?.next({ type: 'error', error: msg });
+        const failResult = this.cradle?.wallet_callback_failed(msg);
+        this.processResult(failResult);
         return;
       }
 
@@ -451,6 +458,8 @@ export class SessionController implements PollingCradle {
         msg = 'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
       }
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      const failResult = this.cradle?.wallet_callback_failed(msg);
+      this.processResult(failResult);
     }
   }
 
@@ -491,8 +500,14 @@ export class SessionController implements PollingCradle {
         log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
         return;
       }
+      const coinDescs = (tx.spends ?? [])
+        .map((cs: any) => {
+          const coinHex = typeof cs.coin === 'string' ? cs.coin : '';
+          return coinHex.length >= 64 ? coinHex.slice(0, 64) : coinHex || 'unknown';
+        })
+        .join(', ');
       diagStack('submitTransaction failed', e);
-      log(`[wasm] submitTransaction failed: ${message}`);
+      log(`[wasm] submitTransaction failed: ${message} coins=[${coinDescs}]`);
       this.rxjsEmitter?.next({ type: 'error', error: message });
     }
   }
@@ -669,7 +684,12 @@ export class SessionController implements PollingCradle {
       return;
     }
     try {
-      const ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
+      let ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
+      if (!ps) {
+        log(`[wasm] getPuzzleAndSolution returned null, retrying after 5s`);
+        await new Promise(r => setTimeout(r, 5000));
+        ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
+      }
       if (this.cradle) {
         const result = ps
           ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
