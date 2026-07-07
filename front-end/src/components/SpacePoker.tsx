@@ -1,14 +1,18 @@
-import { useState, useCallback, useEffect, type ReactNode } from 'react';
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { Observable } from 'rxjs';
 import { SessionController } from '../hooks/SessionController';
 import {
   useSpacepokerHand,
   SpHandler,
   SpHandEntry,
+  SpOutcome,
+  SpTerminalState,
   SpacepokerDisplayMode,
+  SpacepokerHandState,
 } from '../hooks/useSpacepokerHand';
 import { GameplayEvent } from '../hooks/useGameSession';
 import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
+import { formatAmount } from '../util';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',
@@ -83,6 +87,210 @@ function describeHand(eval_: bigint[]): string {
     return (b ? `Boosted, ${fullRank(r)} high` : `${fullRank(r)} high`) + kickerSuffix(eval_.slice(7));
   }
   return eval_.join(' ');
+}
+
+// ── Hand history log formatting ──
+
+const LOG_RANKS: Record<number, string> = {
+  2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',
+  10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A',
+};
+
+function logRank(rank: bigint): string {
+  return LOG_RANKS[Number(rank)] ?? String(rank);
+}
+
+function logHoleCards(cards: [bigint, bigint], boost: boolean): string {
+  return `${logRank(cards[0])}${logRank(cards[1])}${boost ? '+' : '-'}`;
+}
+
+function logBestHand(cards: bigint[], boost: boolean): string {
+  return cards.map(c => logRank(c)).join('') + (boost ? '+' : '-');
+}
+
+function formatSpacepokerHandLog(
+  playerHoleCards: [bigint, bigint],
+  playerBoost: boolean,
+  opponentHoleCards: [bigint, bigint] | null,
+  opponentBoost: boolean | null,
+  communityCards: (bigint | null)[],
+  handHistory: SpHandEntry[],
+  outcome: SpOutcome | null,
+  terminalState: SpTerminalState,
+  coinTossIOpen: boolean | null,
+  betUnit: bigint,
+  stackSize: bigint,
+): string[] {
+  const weOpenFirst = coinTossIOpen === true;
+  const posLabel = weOpenFirst ? '1st' : '2nd';
+
+  // Build the flat item list from the hand history.
+  // Track each player's cumulative bet to detect all-in.
+  const items: string[] = [];
+  let ourTotal = 1n; // ante
+  let theirTotal = 1n; // ante
+  let nextRevealIdx = 0; // 0=flop(3 cards), 1=turn, 2=river
+
+  for (let i = 0; i < handHistory.length; i++) {
+    const entry = handHistory[i];
+    const isUs = entry.player === 'you';
+
+    if (entry.action === 'fold') {
+      items.push('\u274C');
+      continue;
+    }
+    if (entry.action === 'concede') {
+      items.push('\u{1F3F3}\uFE0F');
+      continue;
+    }
+    if (entry.action === 'reveal') {
+      if (isUs) {
+        // Our reveal at showdown — not an item in the log; the result line covers it.
+        continue;
+      }
+      // Opponent reveal: show eyes + their hole cards
+      if (opponentHoleCards) {
+        items.push('\u{1F440}' + logHoleCards(opponentHoleCards, opponentBoost ?? false));
+      }
+      continue;
+    }
+
+    if (entry.action === 'raise') {
+      const units = entry.units ?? 0n;
+      if (isUs) {
+        ourTotal += units;
+      } else {
+        theirTotal += units;
+      }
+      if ((isUs && ourTotal >= stackSize) || (!isUs && theirTotal >= stackSize)) {
+        items.push('all');
+      } else {
+        items.push(String(units));
+      }
+    } else {
+      // check or call — both rendered as checkmark
+      if (entry.action === 'call') {
+        // A call matches the outstanding raise; add it to the caller's total.
+        // The raise amount isn't on this entry, but we can infer it: the
+        // difference between the two players' totals before this call.
+        const gap = isUs
+          ? theirTotal - ourTotal
+          : ourTotal - theirTotal;
+        if (gap > 0n) {
+          if (isUs) ourTotal += gap;
+          else theirTotal += gap;
+        }
+      }
+      items.push('\u2705');
+    }
+
+    // After a street-ending action, insert the next community card reveal.
+    if (entry.endsStreet || entry.action === 'call') {
+      if (nextRevealIdx === 0) {
+        // Flop: 3 cards
+        const flop = communityCards.slice(0, 3).filter((c): c is bigint => c != null);
+        if (flop.length > 0) {
+          items.push('\u270B' + flop.map(c => logRank(c)).join(''));
+          nextRevealIdx = 1;
+        }
+      } else if (nextRevealIdx === 1) {
+        // Turn
+        const turn = communityCards[3];
+        if (turn != null) {
+          items.push('\u270B' + logRank(turn));
+          nextRevealIdx = 2;
+        }
+      } else if (nextRevealIdx === 2) {
+        // River
+        const river = communityCards[4];
+        if (river != null) {
+          items.push('\u270B' + logRank(river));
+          nextRevealIdx = 3;
+        }
+      }
+    }
+  }
+
+  // If opponent's hole cards were revealed at showdown but no 'reveal' entry
+  // was in the history (e.g. the call at showdown carried the reveal data),
+  // append them with the eyes prefix.
+  const lastItem = items[items.length - 1];
+  const oppRevealed = terminalState === 'revealed' && opponentHoleCards;
+  if (oppRevealed) {
+    const oppStr = '\u{1F440}' + logHoleCards(opponentHoleCards!, opponentBoost ?? false);
+    if (lastItem !== oppStr && lastItem !== '\u{1F3F3}\uFE0F' && lastItem !== '\u274C') {
+      items.push(oppStr);
+    }
+  }
+
+  // Apply spacing.  After the position label there is always a double space.
+  // Between successive items the gap alternates:
+  //   1st: single, double, single, double, ...
+  //   2nd: double, single, double, single, ...
+  let actionLine = `${logHoleCards(playerHoleCards, playerBoost)} ${posLabel}`;
+  for (let i = 0; i < items.length; i++) {
+    if (i === 0) {
+      actionLine += '  '; // always double after position label
+    } else {
+      // Gap index (i-1) determines double/single.
+      // 1st: gap0 (between item0–item1) = single, gap1 = double, ...
+      //   → even gap index = single, odd = double
+      // 2nd: gap0 = double, gap1 = single, ...
+      //   → even gap index = double, odd = single
+      const gapIdx = i - 1;
+      const isDouble = weOpenFirst ? (gapIdx % 2 !== 0) : (gapIdx % 2 === 0);
+      actionLine += isDouble ? '  ' : ' ';
+    }
+    actionLine += items[i];
+  }
+
+  // Build result line
+  let resultLine = '';
+  if (terminalState === 'folded-by-you') {
+    // We folded: compute how much we lost
+    const lost = ourTotal;
+    const lostMojos = lost * betUnit;
+    resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
+  } else if (terminalState === 'folded-by-opponent') {
+    // They folded: compute how much we won
+    const won = theirTotal;
+    const wonMojos = won * betUnit;
+    resultLine = `Win ${won} (${formatAmount(wonMojos)})`;
+  } else if (terminalState === 'conceded-by-opponent') {
+    // They conceded at showdown: we win the pot
+    const won = theirTotal;
+    const wonMojos = won * betUnit;
+    resultLine = `Win ${won} (${formatAmount(wonMojos)})`;
+    if (outcome?.playerHandCards && outcome.playerHandCards.length > 0) {
+      resultLine += ` with ${logBestHand(outcome.playerHandCards, playerBoost)}`;
+    }
+  } else if (terminalState === 'conceded-by-you') {
+    // We conceded at showdown
+    const lost = ourTotal;
+    const lostMojos = lost * betUnit;
+    resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
+  } else if (terminalState === 'revealed' && outcome) {
+    const r = outcome.result;
+    if (r > 0n) {
+      const won = theirTotal;
+      const wonMojos = won * betUnit;
+      resultLine = `Win ${won} (${formatAmount(wonMojos)})`;
+    } else if (r < 0n) {
+      const lost = ourTotal;
+      const lostMojos = lost * betUnit;
+      resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
+    } else {
+      resultLine = 'Split';
+    }
+    if (outcome.playerHandCards && outcome.playerHandCards.length > 0) {
+      resultLine += ` with ${logBestHand(outcome.playerHandCards, playerBoost)}`;
+    }
+    if (outcome.opponentHandCards && outcome.opponentHandCards.length > 0) {
+      resultLine += ` vs ${logBestHand(outcome.opponentHandCards, opponentBoost ?? false)}`;
+    }
+  }
+
+  return [actionLine, resultLine];
 }
 
 const SEL_BAR = 'w-full h-1 rounded-full';
@@ -307,6 +515,7 @@ export interface SpacePokerProps {
   betSize: string;
   unitSizeMojos?: string;
   onTurnChanged: (isMyTurn: boolean) => void;
+  onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
 }
@@ -319,6 +528,7 @@ export default function SpacePoker({
   betSize,
   unitSizeMojos,
   onTurnChanged,
+  onGameLog,
   myName,
   opponentName,
 }: SpacePokerProps) {
@@ -349,6 +559,38 @@ export default function SpacePoker({
     gameObject.nerf();
   }, [gameObject]);
   useCheatNerfKeys(handleCheat, handleNerf);
+
+  // Write to the session history panel when the hand finishes.
+  // If restoring from a persisted terminal state, skip logging (already logged).
+  const [alreadyTerminalAtMount] = useState(() => {
+    const hs = gameObject.handState;
+    if (!hs || hs.gameType !== 'spacepoker') return false;
+    const s = hs.state as SpacepokerHandState | undefined;
+    return s?.terminalState != null && s.terminalState !== 'none';
+  });
+  const gameLogFiredRef = useRef(alreadyTerminalAtMount);
+  useEffect(() => {
+    if (sp.terminalState === 'none' || gameLogFiredRef.current) return;
+    if (!sp.playerHoleCards) return;
+    gameLogFiredRef.current = true;
+    const stackSize = sp.betUnit > 0n ? betSizeValue / sp.betUnit : 0n;
+    const lines = formatSpacepokerHandLog(
+      sp.playerHoleCards,
+      sp.playerBoost,
+      sp.opponentHoleCards,
+      sp.opponentBoost,
+      sp.communityCards,
+      sp.handHistory,
+      sp.outcome,
+      sp.terminalState,
+      sp.coinTossIOpen,
+      sp.betUnit,
+      stackSize,
+    );
+    onGameLog(lines);
+  }, [sp.terminalState, sp.playerHoleCards, sp.playerBoost, sp.opponentHoleCards,
+      sp.opponentBoost, sp.communityCards, sp.handHistory, sp.outcome,
+      sp.coinTossIOpen, sp.betUnit, betSizeValue, onGameLog]);
 
   const communitySlots = 5;
   const communityReversed = [...sp.communityCards];
