@@ -349,7 +349,7 @@ describe('outbound message format', () => {
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
 
-    conn.sendPeerAppMessage('p_target', { type: 'session_proposal', amount: '100' });
+    conn.sendPeerAppMessage('p_target', { type: 'session_proposal', proposer_amount: '100', responder_amount: '100' });
     expect(ws.sentBinary).toHaveLength(1);
 
     const frame = ws.sentBinary[0];
@@ -359,7 +359,7 @@ describe('outbound message format', () => {
     expect(targetId).toBe('p_target');
     const payloadBytes = frame.slice(4 + targetIdLen);
     const parsed = toPlainObject(decodeBencodex(payloadBytes) as BencodexValue);
-    expect(parsed).toEqual({ type: 'session_proposal', amount: '100' });
+    expect(parsed).toEqual({ type: 'session_proposal', proposer_amount: '100', responder_amount: '100' });
   });
 });
 
