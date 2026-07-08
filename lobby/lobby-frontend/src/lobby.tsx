@@ -6,7 +6,8 @@ import { Button } from './button';
 
 const MIN_TIMEOUT_BLOCKS = 3;
 const MAX_TIMEOUT_BLOCKS = 30;
-const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n; // 1,000,000 XCH
+const MOJOS_PER_XCH = 1_000_000_000_000n;
+const MOJO_DISPLAY_THRESHOLD = 1_000_000n;
 
 function isTimeoutInRange(value: string | undefined): boolean {
   if (!value) return true;
@@ -14,13 +15,23 @@ function isTimeoutInRange(value: string | undefined): boolean {
   return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
 }
 
-function isAmountValid(value: string | undefined): boolean {
-  if (!value || !/^[1-9][0-9]*$/.test(value)) return false;
+function formatAmount(mojoStr: string): string {
+  let mojos: bigint;
   try {
-    return BigInt(value) <= MAX_AMOUNT_MOJOS;
+    mojos = BigInt(mojoStr);
   } catch {
-    return false;
+    return `${mojoStr} mojos`;
   }
+  if (mojos < MOJO_DISPLAY_THRESHOLD) {
+    return `${mojos.toLocaleString()} mojos`;
+  }
+  const whole = mojos / MOJOS_PER_XCH;
+  const frac = mojos % MOJOS_PER_XCH;
+  if (frac === 0n) {
+    return `${whole.toLocaleString()} XCH`;
+  }
+  const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
+  return `${whole.toLocaleString()}.${fracStr} XCH`;
 }
 
 const LobbyScreen = () => {
@@ -100,20 +111,12 @@ const LobbyScreen = () => {
 
   useEffect(() => {
     if (!pendingChallenge) return;
-    const { channel_timeout, unroll_timeout, challenger_amount, target_amount } = pendingChallenge;
+    const { channel_timeout, unroll_timeout } = pendingChallenge;
     if (!isTimeoutInRange(channel_timeout) || !isTimeoutInRange(unroll_timeout)) {
       console.warn(
         `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
         `timeouts out of range (channel=${channel_timeout}, unroll=${unroll_timeout}, ` +
         `allowed=${MIN_TIMEOUT_BLOCKS}–${MAX_TIMEOUT_BLOCKS})`,
-      );
-      declineChallenge(pendingChallenge.challenge_id);
-      return;
-    }
-    if (!isAmountValid(challenger_amount) || !isAmountValid(target_amount)) {
-      console.warn(
-        `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
-        `amounts out of range (challenger=${challenger_amount}, target=${target_amount})`,
       );
       declineChallenge(pendingChallenge.challenge_id);
     }
@@ -135,7 +138,7 @@ const LobbyScreen = () => {
   }
 
   function submitChallenge() {
-    if (!challengeTarget || !formValid) return;
+    if (!challengeTarget || !timeoutsValid) return;
     const myAmt = asymmetricAmounts ? challengerAmount : challengeAmount;
     const theirAmt = asymmetricAmounts ? targetAmount : challengeAmount;
     sendChallenge(challengeTarget.id, myAmt, theirAmt, challengeChannelTimeout, challengeUnrollTimeout);
@@ -143,10 +146,6 @@ const LobbyScreen = () => {
   }
 
   const timeoutsValid = isTimeoutInRange(challengeChannelTimeout) && isTimeoutInRange(challengeUnrollTimeout);
-  const amountsValid = asymmetricAmounts
-    ? isAmountValid(challengerAmount) && isAmountValid(targetAmount)
-    : isAmountValid(challengeAmount);
-  const formValid = timeoutsValid && amountsValid;
 
   if (!aliasLoaded) {
     return (
@@ -265,9 +264,7 @@ const LobbyScreen = () => {
                     min="1"
                     value={challengerAmount}
                     onChange={(e) => setChallengerAmount(e.target.value)}
-                    className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
-                      isAmountValid(challengerAmount) ? 'border-canvas-border' : 'border-red-500'
-                    }`}
+                    className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
                   />
                 </label>
                 <label className="block text-sm text-canvas-text">
@@ -277,9 +274,7 @@ const LobbyScreen = () => {
                     min="1"
                     value={targetAmount}
                     onChange={(e) => setTargetAmount(e.target.value)}
-                    className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
-                      isAmountValid(targetAmount) ? 'border-canvas-border' : 'border-red-500'
-                    }`}
+                    className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
                   />
                 </label>
               </>
@@ -291,9 +286,7 @@ const LobbyScreen = () => {
                   min="1"
                   value={challengeAmount}
                   onChange={(e) => setChallengeAmount(e.target.value)}
-                  className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
-                    isAmountValid(challengeAmount) ? 'border-canvas-border' : 'border-red-500'
-                  }`}
+                  className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
                 />
               </label>
             )}
@@ -339,14 +332,13 @@ const LobbyScreen = () => {
               />
             </label>
           </div>
-          {!formValid && (
+          {!timeoutsValid && (
             <p className="text-sm text-red-500">
-              {!amountsValid && <>Amounts must be positive integers (max 1,000,000 XCH).<br /></>}
-              {!timeoutsValid && <>Timeouts must be between {MIN_TIMEOUT_BLOCKS} and {MAX_TIMEOUT_BLOCKS} blocks.</>}
+              Timeouts must be between {MIN_TIMEOUT_BLOCKS} and {MAX_TIMEOUT_BLOCKS} blocks.
             </p>
           )}
           <div className="flex gap-2">
-            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge} disabled={!formValid}>
+            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge} disabled={!timeoutsValid}>
               Send Challenge
             </Button>
             <Button variant="solid" size="sm" onClick={() => setChallengeTarget(null)}>
@@ -464,11 +456,11 @@ function IncomingChallengeDialog({
       </p>
       <p className="text-sm text-canvas-text mb-3">
         {symmetric ? (
-          <>Buy-in: {challenge.challenger_amount} mojos each</>
+          <>Buy-in: {formatAmount(challenge.challenger_amount)} each</>
         ) : (
           <>
-            Their buy-in: {challenge.challenger_amount} mojos
-            <br />Your buy-in: {challenge.target_amount} mojos
+            Their buy-in: {formatAmount(challenge.challenger_amount)}
+            <br />Your buy-in: {formatAmount(challenge.target_amount)}
           </>
         )}
         {challenge.channel_timeout && <><br />Channel timeout: {challenge.channel_timeout} blocks</>}

@@ -377,9 +377,7 @@ function getLobbySenderId(ws: WebSocket): string | undefined {
 }
 
 function validateAmount(raw: string | undefined): string | null {
-  if (!raw || !/^[1-9][0-9]{0,18}$/.test(raw)) return 'Invalid amount: must be a positive integer.';
-  const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n;
-  if (BigInt(raw) > MAX_AMOUNT_MOJOS) return 'Amount exceeds maximum (1,000,000 XCH).';
+  if (!raw || !/^[1-9][0-9]*$/.test(raw)) return 'Invalid amount: must be a positive integer.';
   return null;
 }
 
