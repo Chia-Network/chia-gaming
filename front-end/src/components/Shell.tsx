@@ -53,6 +53,7 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
+  ABANDON_WAITING_STATES,
   selectGameDashboardView,
   selectStatusBarBalances,
   sessionAmountsFromSave,
@@ -201,6 +202,8 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
+const ABANDON_DELAY_MS = 120_000;
+const GRACE_DELAY_MS = 10_000;
 
 const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   connected: 'Connected',
@@ -456,6 +459,10 @@ const Shell = () => {
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [abandonEnabled, setAbandonEnabled] = useState(false);
+  const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitingEnteredAtRef = useRef<number | null>(null);
+
   // Consent prompt state for the new tracker protocol
   const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
   const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
@@ -598,8 +605,39 @@ const Shell = () => {
         clearTimeout(cleanShutdownGraceTimerRef.current);
         cleanShutdownGraceTimerRef.current = null;
       }
+      if (abandonTimerRef.current !== null) {
+        clearTimeout(abandonTimerRef.current);
+        abandonTimerRef.current = null;
+      }
     };
   }, []);
+
+  // Abandon timer: track when the channel enters a waiting state and enable
+  // the abandon action after ABANDON_DELAY_MS.
+  const channelState = dashboardSessionModel?.channel.status.state ?? null;
+  useEffect(() => {
+    if (channelState && ABANDON_WAITING_STATES.has(channelState)) {
+      if (waitingEnteredAtRef.current === null) {
+        const now = Date.now();
+        waitingEnteredAtRef.current = now;
+        saveSession({ waitingStateEnteredAt: now });
+        abandonTimerRef.current = setTimeout(() => {
+          abandonTimerRef.current = null;
+          setAbandonEnabled(true);
+        }, ABANDON_DELAY_MS);
+      }
+    } else {
+      if (abandonTimerRef.current !== null) {
+        clearTimeout(abandonTimerRef.current);
+        abandonTimerRef.current = null;
+      }
+      if (waitingEnteredAtRef.current !== null) {
+        waitingEnteredAtRef.current = null;
+        saveSession({ waitingStateEnteredAt: undefined });
+      }
+      setAbandonEnabled(false);
+    }
+  }, [channelState]);
 
   const [history, setHistory] = useState<string[]>([]);
   const [logLines, setLogLines] = useState<string[]>([]);
@@ -811,6 +849,12 @@ const Shell = () => {
       clearTimeout(cleanShutdownGraceTimerRef.current);
       cleanShutdownGraceTimerRef.current = null;
     }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
     setSessionPhase('none');
     setSessionError(false);
@@ -1416,6 +1460,32 @@ const Shell = () => {
     setWalletConnected(iface.isConnected());
     setResuming(false);
 
+    // Restore abandon timer from persisted timestamp
+    if (save.waitingStateEnteredAt != null) {
+      const elapsed = Date.now() - save.waitingStateEnteredAt;
+      waitingEnteredAtRef.current = save.waitingStateEnteredAt;
+      if (elapsed >= ABANDON_DELAY_MS) {
+        setAbandonEnabled(true);
+      } else {
+        abandonTimerRef.current = setTimeout(() => {
+          abandonTimerRef.current = null;
+          setAbandonEnabled(true);
+        }, ABANDON_DELAY_MS - elapsed);
+      }
+    }
+
+    // Restore clean shutdown grace from persisted timestamp
+    if (save.cleanShutdownGraceStartedAt != null) {
+      const elapsed = Date.now() - save.cleanShutdownGraceStartedAt;
+      if (elapsed < GRACE_DELAY_MS) {
+        setCleanShutdownGraceActive(true);
+        cleanShutdownGraceTimerRef.current = setTimeout(() => {
+          cleanShutdownGraceTimerRef.current = null;
+          setCleanShutdownGraceActive(false);
+        }, GRACE_DELAY_MS - elapsed);
+      }
+    }
+
     // For WalletConnect restores, finalize performs the first wallet RPC
     // (address lookup). Keep it in the background so local restore can render
     // while the simulator/wallet is unavailable.
@@ -1577,10 +1647,12 @@ const Shell = () => {
       clearTimeout(cleanShutdownGraceTimerRef.current);
     }
     setCleanShutdownGraceActive(true);
+    saveSession({ cleanShutdownGraceStartedAt: Date.now() });
     cleanShutdownGraceTimerRef.current = setTimeout(() => {
       cleanShutdownGraceTimerRef.current = null;
       setCleanShutdownGraceActive(false);
-    }, 10_000);
+      saveSession({ cleanShutdownGraceStartedAt: undefined });
+    }, GRACE_DELAY_MS);
   }, []);
 
   const cancelDashboardSession = useCallback(() => {
@@ -1652,6 +1724,17 @@ const Shell = () => {
         break;
       case 'go-on-chain':
         requestDashboardGoOnChain();
+        break;
+      case 'abandon':
+        setConfirmDialog({
+          title: 'Abandon session?',
+          body: 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation. Only abandon if you believe the session is permanently stuck.',
+          confirmLabel: 'Abandon',
+          onConfirm: () => {
+            setConfirmDialog(null);
+            cancelDashboardSession();
+          },
+        });
         break;
       case 'none':
         break;
@@ -1792,6 +1875,7 @@ const Shell = () => {
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     cleanShutdownGraceActive,
+    abandonEnabled,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
   const sessionConsentOverlay = pendingAdvisory ? (
