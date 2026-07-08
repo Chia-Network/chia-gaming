@@ -241,7 +241,10 @@ const LobbyScreen = () => {
 
       <div className="border-b border-canvas-line mb-4" />
 
-      {pendingChallenge && (
+      {pendingChallenge
+        && isTimeoutInRange(pendingChallenge.channel_timeout)
+        && isTimeoutInRange(pendingChallenge.unroll_timeout)
+        && (
         <IncomingChallengeDialog
           challenge={pendingChallenge}
           onAccept={() => acceptChallenge(pendingChallenge.challenge_id)}
