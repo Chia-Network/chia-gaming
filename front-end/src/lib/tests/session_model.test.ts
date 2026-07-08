@@ -637,13 +637,13 @@ describe('session model selectors', () => {
       { amount: '123', perGameAmount: '45' },
       1n,
       2n,
-    )).toEqual({ amount: 123n, perGameAmount: 45n });
+    )).toEqual({ amount: 123n, myContribution: 1n, theirContribution: 1n, perGameAmount: 45n });
 
     expect(sessionAmountsFromSave(
       { amount: 'bad', perGameAmount: undefined },
       1n,
       2n,
-    )).toEqual({ amount: 1n, perGameAmount: 2n });
+    )).toEqual({ amount: 1n, myContribution: 1n, theirContribution: 1n, perGameAmount: 2n });
   });
 
   it('separates history, diagnostic log, and wasm notification history in snapshots', () => {

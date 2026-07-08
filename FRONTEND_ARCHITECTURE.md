@@ -380,7 +380,9 @@ full mid-game session state:
 | `remoteNumber` | `number?` | Last delivered inbound game-message sequence number. |
 | `channelReady` | `boolean?` | Whether the channel has been created and peer keepalives can start. |
 | `iStarted` | `boolean?` | Whether this player was the channel/session initiator. |
-| `amount` | `string?` | Channel buy-in amount as a decimal bigint string. |
+| `amount` | `string?` | Total channel buy-in (sum of both contributions) as a decimal bigint string. |
+| `myContribution` | `string?` | This player's channel buy-in contribution as a decimal bigint string. |
+| `theirContribution` | `string?` | Opponent's channel buy-in contribution as a decimal bigint string. |
 | `perGameAmount` | `string?` | Default per-hand amount as a decimal bigint string. |
 | `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound binary game messages, with `msg` base64-encoded for JSON storage, that have not been acknowledged by the peer. |
 | `history` | `string[]?` | Game notification log. |

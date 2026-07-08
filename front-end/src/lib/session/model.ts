@@ -784,11 +784,10 @@ export function sessionAmountsFromSave(
   fallbackPerGameAmount: bigint,
 ): { amount: bigint; myContribution: bigint; theirContribution: bigint; perGameAmount: bigint } {
   const amount = parseBigintString(save.amount, fallbackAmount);
-  const halfAmount = amount / 2n || fallbackAmount;
   return {
     amount,
-    myContribution: parseBigintString(save.myContribution, halfAmount),
-    theirContribution: parseBigintString(save.theirContribution, halfAmount),
+    myContribution: parseBigintString(save.myContribution, fallbackAmount),
+    theirContribution: parseBigintString(save.theirContribution, fallbackAmount),
     perGameAmount: parseBigintString(save.perGameAmount, fallbackPerGameAmount),
   };
 }

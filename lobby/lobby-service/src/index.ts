@@ -376,8 +376,11 @@ function getLobbySenderId(ws: WebSocket): string | undefined {
   return wsLobbyMeta.get(ws)?.playerId;
 }
 
+const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n; // 1,000,000 XCH — sanity cap, not a business limit
+
 function validateAmount(raw: string | undefined): string | null {
-  if (!raw || !/^[1-9][0-9]*$/.test(raw)) return 'Invalid amount: must be a positive integer.';
+  if (!raw || !/^[1-9][0-9]{0,18}$/.test(raw)) return 'Invalid amount: must be a positive integer.';
+  if (BigInt(raw) > MAX_AMOUNT_MOJOS) return 'Amount exceeds sanity limit.';
   return null;
 }
 
