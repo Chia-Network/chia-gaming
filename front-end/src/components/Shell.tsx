@@ -202,7 +202,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 ];
 
 const FALLBACK_AMOUNT = 100n;
-const FALLBACK_PER_GAME = 10n;
 
 const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   connected: 'Connected',
@@ -1403,7 +1402,7 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    const { amount, myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
+    const { amount, myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
     if (save.pairingToken) {
       setSessionConfig({
         iStarted: save.iStarted ?? false,
