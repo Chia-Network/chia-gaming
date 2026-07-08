@@ -702,7 +702,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 if !tx.spent_coin_ids.contains(&parent) {
                     return true;
                 }
-                if matches!(tx.expiry, Some(e) if height >= e) {
+                if matches!(tx.expiry, Some(e) if height >= e + CHANNEL_EXPIRY_BUFFER) {
                     return false;
                 }
                 resubmit = Some((tx.bundle.clone(), tx.expiry));
