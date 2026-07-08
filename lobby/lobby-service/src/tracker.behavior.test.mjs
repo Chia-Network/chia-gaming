@@ -258,4 +258,39 @@ test('challenge authority and availability come from bound sessions', async () =
   }
 });
 
+test('challenges with out-of-range timeouts are rejected', async () => {
+  const tracker = await startTracker();
+  try {
+    const alice = await joinLobby(tracker.origin, 'secret-alice-timeout', 'Alice');
+    const bob = await joinLobby(tracker.origin, 'secret-bob-timeout', 'Bob');
+    await identifyGame(tracker.origin, 'secret-alice-timeout');
+    await identifyGame(tracker.origin, 'secret-bob-timeout');
+
+    // channel_timeout too low (2 < 3)
+    const err1 = nextJson(alice.lobby, (msg) => msg.type === 'error');
+    const res1 = nextJson(alice.lobby, (msg) => msg.type === 'challenge_resolved');
+    sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, amount: '100', channel_timeout: '2' });
+    assert.match((await err1).error, /channel_timeout/);
+    assert.equal((await res1).accepted, false);
+
+    // unroll_timeout too high (31 > 30)
+    const err2 = nextJson(alice.lobby, (msg) => msg.type === 'error');
+    const res2 = nextJson(alice.lobby, (msg) => msg.type === 'challenge_resolved');
+    sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, amount: '100', unroll_timeout: '31' });
+    assert.match((await err2).error, /unroll_timeout/);
+    assert.equal((await res2).accepted, false);
+
+    // valid timeouts at the boundaries succeed
+    sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, amount: '100', channel_timeout: '3', unroll_timeout: '30' });
+    const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
+    assert.equal(challenge.channel_timeout, '3');
+    assert.equal(challenge.unroll_timeout, '30');
+
+    await closeWs(alice.lobby);
+    await closeWs(bob.lobby);
+  } finally {
+    await tracker.stop();
+  }
+});
+
 
