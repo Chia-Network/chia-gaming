@@ -585,7 +585,7 @@ export function useGameSession(
   blockchain: BlockchainPoller | null = null,
   onTerminal?: () => void,
 ): UseGameSessionResult {
-  const { iStarted, amount, myContribution, theirContribution, perGameAmount } = params;
+  const { iStarted, amount, myContribution, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
   const { sessionController: sc } = getOrCreateSessionController(
@@ -595,7 +595,6 @@ export function useGameSession(
     uniqueId,
     amount,
     myContribution,
-    theirContribution,
     iStarted,
     sessionSave,
     params.pairingToken,
@@ -882,7 +881,6 @@ export function useGameSession(
       iStarted: wasm.iStarted,
       amount: wasm.amount,
       myContribution: wasm.myContribution,
-      theirContribution: String(BigInt(wasm.amount) - BigInt(wasm.myContribution)),
       perGameAmount: wasm.perGameAmount,
       unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
       activeGameId: wasm.activeGameId,

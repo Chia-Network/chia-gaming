@@ -167,7 +167,6 @@ export interface SessionState {
   iStarted?: boolean;
   amount?: string;
   myContribution?: string;
-  theirContribution?: string;
   perGameAmount?: string;
   unackedMessages?: Array<{ msgno: bigint; msg: string }>;
   history?: string[];

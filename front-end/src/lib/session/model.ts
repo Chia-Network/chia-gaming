@@ -788,15 +788,15 @@ function requireBigintString(value: string | undefined, label: string): bigint {
 }
 
 export function sessionAmountsFromSave(
-  save: Pick<SessionState, 'myContribution' | 'theirContribution' | 'perGameAmount'>,
+  save: Pick<SessionState, 'amount' | 'myContribution' | 'perGameAmount'>,
 ): { amount: bigint; myContribution: bigint; theirContribution: bigint; perGameAmount: bigint } {
+  const amount = requireBigintString(save.amount, 'amount');
   const myContribution = requireBigintString(save.myContribution, 'myContribution');
-  const theirContribution = requireBigintString(save.theirContribution, 'theirContribution');
   const perGameAmount = requireBigintString(save.perGameAmount, 'perGameAmount');
   return {
-    amount: myContribution + theirContribution,
+    amount,
     myContribution,
-    theirContribution,
+    theirContribution: amount - myContribution,
     perGameAmount,
   };
 }
