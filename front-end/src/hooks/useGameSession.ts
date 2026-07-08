@@ -585,7 +585,7 @@ export function useGameSession(
   blockchain: BlockchainPoller | null = null,
   onTerminal?: () => void,
 ): UseGameSessionResult {
-  const { iStarted, amount, perGameAmount } = params;
+  const { iStarted, amount, myContribution, theirContribution, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
   const { sessionController: sc } = getOrCreateSessionController(
@@ -594,6 +594,8 @@ export function useGameSession(
     registerMessageHandler,
     uniqueId,
     amount,
+    myContribution,
+    theirContribution,
     iStarted,
     sessionSave,
     params.pairingToken,

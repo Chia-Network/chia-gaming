@@ -39,12 +39,13 @@ export class Lobby {
     return listOfObject(this.players);
   }
 
-  createChallenge(fromId: string, targetId: string, amount: string, channel_timeout?: string, unroll_timeout?: string): Challenge {
+  createChallenge(fromId: string, targetId: string, challengerAmount: string, targetAmount: string, channel_timeout?: string, unroll_timeout?: string): Challenge {
     const challenge: Challenge = {
       id: randomHex(),
       from_id: fromId,
       target_id: targetId,
-      amount,
+      challenger_amount: challengerAmount,
+      target_amount: targetAmount,
       channel_timeout,
       unroll_timeout,
     };

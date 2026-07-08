@@ -55,7 +55,8 @@ export async function configSessionController(
   gameHexes: GameHexes,
   blockchain: BlockchainPoller,
   uniqueId: string,
-  amount: bigint,
+  myContribution: bigint,
+  theirContribution: bigint,
   channelTimeout?: number,
   unrollTimeout?: number,
 ): Promise<SessionController> {
@@ -67,7 +68,7 @@ export async function configSessionController(
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash, channelTimeout, unrollTimeout);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
   sc.setGameCradle(cradle);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
@@ -121,6 +122,8 @@ export function getOrCreateSessionController(
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
   amount: bigint,
+  myContribution: bigint,
+  theirContribution: bigint,
   iStarted: boolean,
   sessionSave?: SessionState,
   pairingToken?: string,
@@ -206,7 +209,8 @@ export function getOrCreateSessionController(
           gameHexes,
           blockchain,
           uniqueId,
-          amount,
+          myContribution,
+          theirContribution,
           channelTimeout,
           unrollTimeout,
         );

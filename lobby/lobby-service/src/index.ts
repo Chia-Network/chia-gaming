@@ -36,7 +36,7 @@ const verbose = Boolean(args.verbose);
 type LobbyInboundMessage =
   | { type: 'join'; id?: string; alias?: string; session_id?: string }
   | { type: 'leave'; id?: string }
-  | { type: 'challenge'; from_id?: string; target_id: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'challenge'; from_id?: string; target_id: string; challenger_amount: string; target_amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'challenge_accept'; challenge_id: string; accepter_id?: string }
   | { type: 'challenge_decline'; challenge_id: string }
   | { type: 'challenge_cancel'; from_id?: string }
@@ -229,7 +229,8 @@ function replayPendingChallengesToPlayer(playerId: string): void {
       challenge_id: challenge.id,
       from_id: challenge.from_id,
       from_alias: fromAlias,
-      amount: challenge.amount,
+      challenger_amount: challenge.challenger_amount,
+      target_amount: challenge.target_amount,
       channel_timeout: challenge.channel_timeout,
       unroll_timeout: challenge.unroll_timeout,
     });
@@ -375,14 +376,34 @@ function getLobbySenderId(ws: WebSocket): string | undefined {
   return wsLobbyMeta.get(ws)?.playerId;
 }
 
+function validateAmount(raw: string | undefined): string | null {
+  if (!raw || !/^[1-9][0-9]{0,18}$/.test(raw)) return 'Invalid amount: must be a positive integer.';
+  const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n;
+  if (BigInt(raw) > MAX_AMOUNT_MOJOS) return 'Amount exceeds maximum (1,000,000 XCH).';
+  return null;
+}
+
+const MIN_TIMEOUT_BLOCKS = 3;
+const MAX_TIMEOUT_BLOCKS = 30;
+
+function validateTimeout(raw: string | undefined, label: string): string | null {
+  if (raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < MIN_TIMEOUT_BLOCKS || n > MAX_TIMEOUT_BLOCKS) {
+    return `${label} must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`;
+  }
+  return null;
+}
+
 function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge' }>): void {
   const senderId = getLobbySenderId(ws);
-  const { target_id, amount } = msg;
+  const { target_id, challenger_amount, target_amount } = msg;
   logTracker('challenge_received', {
     ws_id: wsId(ws),
     sender_id: senderId ?? null,
     target_id,
-    amount: amount ?? '100',
+    challenger_amount: challenger_amount ?? '100',
+    target_amount: target_amount ?? '100',
   });
   const fromPlayer = senderId ? lobby.players[senderId] : undefined;
   if (!fromPlayer) {
@@ -417,14 +438,28 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     return;
   }
 
-  if (!amount || !/^[1-9][0-9]{0,18}$/.test(amount)) {
-    sendWs(ws, 'error', { error: 'Invalid amount: must be a positive integer.' });
+  const challengerErr = validateAmount(challenger_amount);
+  if (challengerErr) {
+    sendWs(ws, 'error', { error: challengerErr });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
-  const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n;
-  if (BigInt(amount) > MAX_AMOUNT_MOJOS) {
-    sendWs(ws, 'error', { error: 'Amount exceeds maximum (1,000,000 XCH).' });
+  const targetErr = validateAmount(target_amount);
+  if (targetErr) {
+    sendWs(ws, 'error', { error: targetErr });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+
+  const channelTimeoutErr = validateTimeout(msg.channel_timeout, 'Channel timeout');
+  if (channelTimeoutErr) {
+    sendWs(ws, 'error', { error: channelTimeoutErr });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+  const unrollTimeoutErr = validateTimeout(msg.unroll_timeout, 'Unroll timeout');
+  if (unrollTimeoutErr) {
+    sendWs(ws, 'error', { error: unrollTimeoutErr });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
@@ -432,7 +467,8 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   const challenge = lobby.createChallenge(
     fromPlayer.id,
     target_id,
-    amount,
+    challenger_amount,
+    target_amount,
     msg.channel_timeout,
     msg.unroll_timeout,
   );
@@ -441,7 +477,8 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     challenge_id: challenge.id,
     from_id: fromPlayer.id,
     from_alias: fromPlayer.alias,
-    amount: challenge.amount,
+    challenger_amount: challenge.challenger_amount,
+    target_amount: challenge.target_amount,
     channel_timeout: challenge.channel_timeout,
     unroll_timeout: challenge.unroll_timeout,
   });
@@ -500,7 +537,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     challenge_id,
     initiator_id: challenge.from_id,
     target_id: challenge.target_id,
-    amount: challenge.amount,
+    challenger_amount: challenge.challenger_amount,
+    target_amount: challenge.target_amount,
   });
 
   const challengerAlias = lobby.players[challenge.from_id]?.alias ?? challenge.from_id;
@@ -511,11 +549,13 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     accepted: true,
   });
 
-  // Send advisory_start to the ACCEPTER (target) who becomes the initiator
+  // Send advisory_start to the ACCEPTER (target) who becomes the initiator.
+  // Map to the accepter's perspective: my_amount = target_amount, their_amount = challenger_amount.
   const advisoryPayload: Record<string, unknown> = {
     peer_id: challenge.from_id,
     peer_alias: challengerAlias,
-    amount: challenge.amount,
+    my_amount: challenge.target_amount,
+    their_amount: challenge.challenger_amount,
   };
   if (challenge.channel_timeout) advisoryPayload.channel_timeout = challenge.channel_timeout;
   if (challenge.unroll_timeout) advisoryPayload.unroll_timeout = challenge.unroll_timeout;

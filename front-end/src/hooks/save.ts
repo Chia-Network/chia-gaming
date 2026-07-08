@@ -166,6 +166,8 @@ export interface SessionState {
   channelReady?: boolean;
   iStarted?: boolean;
   amount?: string;
+  myContribution?: string;
+  theirContribution?: string;
   perGameAmount?: string;
   unackedMessages?: Array<{ msgno: bigint; msg: string }>;
   history?: string[];

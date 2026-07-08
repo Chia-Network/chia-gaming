@@ -212,7 +212,7 @@ test('challenge authority and availability come from bound sessions', async () =
     const bobGame = await identifyGame(tracker.origin, 'secret-bob-match');
     const carolGame = await identifyGame(tracker.origin, 'secret-carol-match');
 
-    sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, amount: '100' });
+    sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
     const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
 
     // Carol cannot accept Bob's challenge (she's not the target)
@@ -231,7 +231,8 @@ test('challenge authority and availability come from bound sessions', async () =
     sendJson(bob.lobby, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
     const advisory = await bobAdvisory;
     assert.equal(advisory.peer_id, alice.id);
-    assert.equal(advisory.amount, '100');
+    assert.equal(advisory.my_amount, '100');
+    assert.equal(advisory.their_amount, '100');
 
     // Bob's client sets busy (simulating what the frontend does on advisory_start)
     sendGame(bobGame, { type: 'set_busy', session_id: 'secret-bob-match', busy: true });
@@ -241,7 +242,7 @@ test('challenge authority and availability come from bound sessions', async () =
     // Carol cannot challenge Bob (he's now busy)
     const carolError = nextJson(carol.lobby, (msg) => msg.type === 'error');
     const carolResolved = nextJson(carol.lobby, (msg) => msg.type === 'challenge_resolved');
-    sendJson(carol.lobby, { type: 'challenge', target_id: bob.id, amount: '100' });
+    sendJson(carol.lobby, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
     const error = await carolError;
     assert.match(error.error, /active session/);
     const resolved = await carolResolved;
@@ -258,4 +259,102 @@ test('challenge authority and availability come from bound sessions', async () =
   }
 });
 
+test('asymmetric buy-in amounts are perspective-corrected in advisory_start', async () => {
+  const tracker = await startTracker();
+  try {
+    const alice = await joinLobby(tracker.origin, 'secret-alice-asym', 'Alice');
+    const bob = await joinLobby(tracker.origin, 'secret-bob-asym', 'Bob');
+    const aliceGame = await identifyGame(tracker.origin, 'secret-alice-asym');
+    const bobGame = await identifyGame(tracker.origin, 'secret-bob-asym');
 
+    // Alice challenges Bob with asymmetric amounts
+    sendJson(alice.lobby, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '200',
+      target_amount: '50',
+    });
+    const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
+    assert.equal(challenge.challenger_amount, '200');
+    assert.equal(challenge.target_amount, '50');
+
+    // Bob accepts — advisory_start should be from Bob's perspective
+    const bobAdvisory = nextGame(bobGame, (msg) => msg.type === 'advisory_start');
+    sendJson(bob.lobby, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
+    const advisory = await bobAdvisory;
+    assert.equal(advisory.peer_id, alice.id);
+    assert.equal(advisory.my_amount, '50');
+    assert.equal(advisory.their_amount, '200');
+
+    await closeWs(alice.lobby);
+    await closeWs(bob.lobby);
+    await closeWs(aliceGame);
+    await closeWs(bobGame);
+  } finally {
+    await tracker.stop();
+  }
+});
+
+test('challenges with out-of-range timeouts are rejected by the server', async () => {
+  const tracker = await startTracker();
+  try {
+    const alice = await joinLobby(tracker.origin, 'secret-alice-timeout', 'Alice');
+    const bob = await joinLobby(tracker.origin, 'secret-bob-timeout', 'Bob');
+    const aliceGame = await identifyGame(tracker.origin, 'secret-alice-timeout');
+    const bobGame = await identifyGame(tracker.origin, 'secret-bob-timeout');
+
+    // channel_timeout too low (below min of 3)
+    const errPromise1 = nextJson(alice.lobby, (msg) => msg.type === 'error');
+    const resolvedPromise1 = nextJson(alice.lobby, (msg) => msg.type === 'challenge_resolved');
+    sendJson(alice.lobby, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+      channel_timeout: '1',
+    });
+    const err1 = await errPromise1;
+    assert.match(err1.error, /Channel timeout/);
+    await resolvedPromise1;
+
+    // channel_timeout too high (above max of 30)
+    const errPromise2 = nextJson(alice.lobby, (msg) => msg.type === 'error');
+    const resolvedPromise2 = nextJson(alice.lobby, (msg) => msg.type === 'challenge_resolved');
+    const noBobChallenge = assert.rejects(
+      nextJson(bob.lobby, (msg) => msg.type === 'challenge_received', 250),
+      /timed out/,
+    );
+    sendJson(alice.lobby, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+      channel_timeout: '83',
+      unroll_timeout: '15',
+    });
+    const err2 = await errPromise2;
+    assert.match(err2.error, /Channel timeout/);
+    await resolvedPromise2;
+    await noBobChallenge;
+
+    // Valid timeouts at the max should succeed
+    sendJson(alice.lobby, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+      channel_timeout: '30',
+      unroll_timeout: '30',
+    });
+    const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
+    assert.equal(challenge.channel_timeout, '30');
+    assert.equal(challenge.unroll_timeout, '30');
+
+    await closeWs(alice.lobby);
+    await closeWs(bob.lobby);
+    await closeWs(aliceGame);
+    await closeWs(bobGame);
+  } finally {
+    await tracker.stop();
+  }
+});

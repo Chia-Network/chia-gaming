@@ -335,8 +335,12 @@ iframe-side protocol changes are needed — it is read-only for this signal.
 
 The tracker does not create a session. It can only advise and relay:
 
-1. A lobby user creates a challenge. The tracker stores that pending challenge
-   and sends `challenge_received` to the target lobby iframe.
+1. A lobby user creates a challenge with per-player buy-in contributions and
+   optional channel/unroll timeouts. The tracker validates the challenge at the
+   lobby boundary: amounts must be positive and within the configured maximum,
+   and timeout block counts must be in the 3-30 range. Invalid challenges are
+   rejected before the target lobby sees them; valid challenges are stored and
+   sent as `challenge_received` to the target lobby iframe.
 2. If the target accepts in the lobby, the tracker removes that challenge,
    cancels stale challenge records involving either player, and sends
    `advisory_start` to the target player's game channel. The target is now the

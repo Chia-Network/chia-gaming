@@ -779,12 +779,16 @@ function parsePositiveBigintString(value: string | undefined, fallback: bigint):
 }
 
 export function sessionAmountsFromSave(
-  save: Pick<SessionState, 'amount' | 'perGameAmount'>,
+  save: Pick<SessionState, 'amount' | 'myContribution' | 'theirContribution' | 'perGameAmount'>,
   fallbackAmount: bigint,
   fallbackPerGameAmount: bigint,
-): { amount: bigint; perGameAmount: bigint } {
+): { amount: bigint; myContribution: bigint; theirContribution: bigint; perGameAmount: bigint } {
+  const amount = parseBigintString(save.amount, fallbackAmount);
+  const halfAmount = amount / 2n || fallbackAmount;
   return {
-    amount: parseBigintString(save.amount, fallbackAmount),
+    amount,
+    myContribution: parseBigintString(save.myContribution, halfAmount),
+    theirContribution: parseBigintString(save.theirContribution, halfAmount),
     perGameAmount: parseBigintString(save.perGameAmount, fallbackPerGameAmount),
   };
 }

@@ -397,7 +397,7 @@ async function initSessionController(
   );
 
   let gameHexes = await loadGameHexes(fetchHex);
-  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
+  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount, amount);
 
   return gameObject;
 }

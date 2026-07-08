@@ -4,6 +4,25 @@ import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';
 
+const MIN_TIMEOUT_BLOCKS = 3;
+const MAX_TIMEOUT_BLOCKS = 30;
+const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n; // 1,000,000 XCH
+
+function isTimeoutInRange(value: string | undefined): boolean {
+  if (!value) return true;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
+}
+
+function isAmountValid(value: string | undefined): boolean {
+  if (!value || !/^[1-9][0-9]*$/.test(value)) return false;
+  try {
+    return BigInt(value) <= MAX_AMOUNT_MOJOS;
+  } catch {
+    return false;
+  }
+}
+
 const LobbyScreen = () => {
   const params = getSearchParams();
   const uniqueId = params.uniqueId || '';
@@ -79,20 +98,55 @@ const LobbyScreen = () => {
     setLobbyAlias(publicId ?? '', value);
   }
 
+  useEffect(() => {
+    if (!pendingChallenge) return;
+    const { channel_timeout, unroll_timeout, challenger_amount, target_amount } = pendingChallenge;
+    if (!isTimeoutInRange(channel_timeout) || !isTimeoutInRange(unroll_timeout)) {
+      console.warn(
+        `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
+        `timeouts out of range (channel=${channel_timeout}, unroll=${unroll_timeout}, ` +
+        `allowed=${MIN_TIMEOUT_BLOCKS}–${MAX_TIMEOUT_BLOCKS})`,
+      );
+      declineChallenge(pendingChallenge.challenge_id);
+      return;
+    }
+    if (!isAmountValid(challenger_amount) || !isAmountValid(target_amount)) {
+      console.warn(
+        `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
+        `amounts out of range (challenger=${challenger_amount}, target=${target_amount})`,
+      );
+      declineChallenge(pendingChallenge.challenge_id);
+    }
+  }, [pendingChallenge, declineChallenge]);
+
   const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(null);
   const [challengeAmount, setChallengeAmount] = useState('100');
+  const [asymmetricAmounts, setAsymmetricAmounts] = useState(false);
+  const [challengerAmount, setChallengerAmount] = useState('100');
+  const [targetAmount, setTargetAmount] = useState('100');
   const [challengeChannelTimeout, setChallengeChannelTimeout] = useState('15');
   const [challengeUnrollTimeout, setChallengeUnrollTimeout] = useState('15');
 
   function openChallengeDialog(targetId: string, targetAlias: string) {
     setChallengeTarget({ id: targetId, alias: targetAlias });
+    setAsymmetricAmounts(false);
+    setChallengerAmount(challengeAmount);
+    setTargetAmount(challengeAmount);
   }
 
   function submitChallenge() {
-    if (!challengeTarget) return;
-    sendChallenge(challengeTarget.id, challengeAmount, challengeChannelTimeout, challengeUnrollTimeout);
+    if (!challengeTarget || !formValid) return;
+    const myAmt = asymmetricAmounts ? challengerAmount : challengeAmount;
+    const theirAmt = asymmetricAmounts ? targetAmount : challengeAmount;
+    sendChallenge(challengeTarget.id, myAmt, theirAmt, challengeChannelTimeout, challengeUnrollTimeout);
     setChallengeTarget(null);
   }
+
+  const timeoutsValid = isTimeoutInRange(challengeChannelTimeout) && isTimeoutInRange(challengeUnrollTimeout);
+  const amountsValid = asymmetricAmounts
+    ? isAmountValid(challengerAmount) && isAmountValid(targetAmount)
+    : isAmountValid(challengeAmount);
+  const formValid = timeoutsValid && amountsValid;
 
   if (!aliasLoaded) {
     return (
@@ -202,39 +256,97 @@ const LobbyScreen = () => {
             Challenge <strong>{challengeTarget.alias}</strong>
           </p>
           <div className="space-y-2">
-            <label className="block text-sm text-canvas-text">
-              Total buy-in (mojos)
+            {asymmetricAmounts ? (
+              <>
+                <label className="block text-sm text-canvas-text">
+                  Your buy-in (mojos)
+                  <input
+                    type="number"
+                    min="1"
+                    value={challengerAmount}
+                    onChange={(e) => setChallengerAmount(e.target.value)}
+                    className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
+                      isAmountValid(challengerAmount) ? 'border-canvas-border' : 'border-red-500'
+                    }`}
+                  />
+                </label>
+                <label className="block text-sm text-canvas-text">
+                  Their buy-in (mojos)
+                  <input
+                    type="number"
+                    min="1"
+                    value={targetAmount}
+                    onChange={(e) => setTargetAmount(e.target.value)}
+                    className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
+                      isAmountValid(targetAmount) ? 'border-canvas-border' : 'border-red-500'
+                    }`}
+                  />
+                </label>
+              </>
+            ) : (
+              <label className="block text-sm text-canvas-text">
+                Buy-in per player (mojos)
+                <input
+                  type="number"
+                  min="1"
+                  value={challengeAmount}
+                  onChange={(e) => setChallengeAmount(e.target.value)}
+                  className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
+                    isAmountValid(challengeAmount) ? 'border-canvas-border' : 'border-red-500'
+                  }`}
+                />
+              </label>
+            )}
+            <label className="flex items-center gap-2 text-sm text-canvas-text cursor-pointer">
               <input
-                type="number"
-                min="1"
-                value={challengeAmount}
-                onChange={(e) => setChallengeAmount(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                type="checkbox"
+                checked={asymmetricAmounts}
+                onChange={(e) => {
+                  setAsymmetricAmounts(e.target.checked);
+                  if (e.target.checked) {
+                    setChallengerAmount(challengeAmount);
+                    setTargetAmount(challengeAmount);
+                  }
+                }}
+                className="rounded border-canvas-border"
               />
+              Different amounts for each player
             </label>
             <label className="block text-sm text-canvas-text">
-              Channel timeout (blocks)
+              Channel timeout (blocks, {MIN_TIMEOUT_BLOCKS}–{MAX_TIMEOUT_BLOCKS})
               <input
                 type="number"
-                min="1"
+                min={MIN_TIMEOUT_BLOCKS}
+                max={MAX_TIMEOUT_BLOCKS}
                 value={challengeChannelTimeout}
                 onChange={(e) => setChallengeChannelTimeout(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
+                  isTimeoutInRange(challengeChannelTimeout) ? 'border-canvas-border' : 'border-red-500'
+                }`}
               />
             </label>
             <label className="block text-sm text-canvas-text">
-              Unroll timeout (blocks)
+              Unroll timeout (blocks, {MIN_TIMEOUT_BLOCKS}–{MAX_TIMEOUT_BLOCKS})
               <input
                 type="number"
-                min="1"
+                min={MIN_TIMEOUT_BLOCKS}
+                max={MAX_TIMEOUT_BLOCKS}
                 value={challengeUnrollTimeout}
                 onChange={(e) => setChallengeUnrollTimeout(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
+                  isTimeoutInRange(challengeUnrollTimeout) ? 'border-canvas-border' : 'border-red-500'
+                }`}
               />
             </label>
           </div>
+          {!formValid && (
+            <p className="text-sm text-red-500">
+              {!amountsValid && <>Amounts must be positive integers (max 1,000,000 XCH).<br /></>}
+              {!timeoutsValid && <>Timeouts must be between {MIN_TIMEOUT_BLOCKS} and {MAX_TIMEOUT_BLOCKS} blocks.</>}
+            </p>
+          )}
           <div className="flex gap-2">
-            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge}>
+            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge} disabled={!formValid}>
               Send Challenge
             </Button>
             <Button variant="solid" size="sm" onClick={() => setChallengeTarget(null)}>
@@ -344,13 +456,21 @@ function IncomingChallengeDialog({
   onAccept: () => void;
   onDecline: () => void;
 }) {
+  const symmetric = challenge.challenger_amount === challenge.target_amount;
   return (
     <div className="mb-4 p-4 rounded-lg theme-force-light bg-white border border-canvas-border">
       <p className="text-canvas-text-contrast font-medium mb-2">
         <strong>{challenge.from_alias}</strong> challenges you
       </p>
       <p className="text-sm text-canvas-text mb-3">
-        Buy-in: {challenge.amount} mojos
+        {symmetric ? (
+          <>Buy-in: {challenge.challenger_amount} mojos each</>
+        ) : (
+          <>
+            Their buy-in: {challenge.challenger_amount} mojos
+            <br />Your buy-in: {challenge.target_amount} mojos
+          </>
+        )}
         {challenge.channel_timeout && <><br />Channel timeout: {challenge.channel_timeout} blocks</>}
         {challenge.unroll_timeout && <><br />Unroll timeout: {challenge.unroll_timeout} blocks</>}
       </p>

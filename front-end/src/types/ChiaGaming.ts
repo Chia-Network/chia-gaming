@@ -92,14 +92,16 @@ type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
 
 export interface GameSessionParams {
   iStarted: boolean;
-  amount: bigint;          // mojos, total channel buy-in
-  perGameAmount: bigint;   // mojos per hand
+  amount: bigint;              // mojos, total channel buy-in (myContribution + theirContribution)
+  myContribution: bigint;      // my share of the channel
+  theirContribution: bigint;   // opponent's share of the channel
+  perGameAmount: bigint;       // mojos per hand
   restoring?: boolean;
   pairingToken?: string;
   myAlias?: string;
   opponentAlias?: string;
-  channelTimeout?: bigint; // blocks, for channel coin
-  unrollTimeout?: bigint;  // blocks, for unroll coin
+  channelTimeout?: bigint;     // blocks, for channel coin
+  unrollTimeout?: bigint;      // blocks, for unroll coin
 }
 
 type WasmNotificationTag =
