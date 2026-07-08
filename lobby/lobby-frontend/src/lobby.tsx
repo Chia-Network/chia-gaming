@@ -15,6 +15,10 @@ function isTimeoutInRange(value: string | undefined): boolean {
   return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
 }
 
+function isAmountValid(value: string | undefined): boolean {
+  return !!value && /^[1-9][0-9]*$/.test(value);
+}
+
 function formatAmount(mojoStr: string): string {
   let mojos: bigint;
   try {
@@ -111,12 +115,20 @@ const LobbyScreen = () => {
 
   useEffect(() => {
     if (!pendingChallenge) return;
-    const { channel_timeout, unroll_timeout } = pendingChallenge;
+    const { channel_timeout, unroll_timeout, challenger_amount, target_amount } = pendingChallenge;
     if (!isTimeoutInRange(channel_timeout) || !isTimeoutInRange(unroll_timeout)) {
       console.warn(
         `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
         `timeouts out of range (channel=${channel_timeout}, unroll=${unroll_timeout}, ` +
         `allowed=${MIN_TIMEOUT_BLOCKS}–${MAX_TIMEOUT_BLOCKS})`,
+      );
+      declineChallenge(pendingChallenge.challenge_id);
+      return;
+    }
+    if (!isAmountValid(challenger_amount) || !isAmountValid(target_amount)) {
+      console.warn(
+        `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
+        `invalid amounts (challenger=${challenger_amount}, target=${target_amount})`,
       );
       declineChallenge(pendingChallenge.challenge_id);
     }
@@ -244,6 +256,8 @@ const LobbyScreen = () => {
       {pendingChallenge
         && isTimeoutInRange(pendingChallenge.channel_timeout)
         && isTimeoutInRange(pendingChallenge.unroll_timeout)
+        && isAmountValid(pendingChallenge.challenger_amount)
+        && isAmountValid(pendingChallenge.target_amount)
         && (
         <IncomingChallengeDialog
           challenge={pendingChallenge}
