@@ -881,6 +881,8 @@ export function useGameSession(
       channelReady: wasm.channelReady,
       iStarted: wasm.iStarted,
       amount: wasm.amount,
+      myContribution: wasm.myContribution,
+      theirContribution: String(BigInt(wasm.amount) - BigInt(wasm.myContribution)),
       perGameAmount: wasm.perGameAmount,
       unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
       activeGameId: wasm.activeGameId,

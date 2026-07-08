@@ -33,6 +33,7 @@ export interface WasmFields {
   channelReady: boolean;
   iStarted: boolean;
   amount: string;
+  myContribution: string;
   perGameAmount: string;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   history: string[];
@@ -79,6 +80,7 @@ export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
 export class SessionController implements PollingCradle {
   amount: bigint;
+  myContribution: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
   sendMessage: (msgno: bigint, msg: Uint8Array) => void;
@@ -166,6 +168,7 @@ export class SessionController implements PollingCradle {
     this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
     this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
     this.amount = amount;
+    this.myContribution = amount;
     this.perGameAmount = 0n;
     this.iStarted = false;
     this.channelReady = false;
@@ -385,7 +388,7 @@ export class SessionController implements PollingCradle {
     this.launcherProvided = true;
 
     try {
-      const coin = await blockchain.rpc.selectCoins(this.uniqueId, this.amount);
+      const coin = await blockchain.rpc.selectCoins(this.uniqueId, this.myContribution);
       if (!coin) {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
@@ -903,6 +906,7 @@ export class SessionController implements PollingCradle {
         channelReady: this.channelReady,
         iStarted: this.iStarted,
         amount: this.amount.toString(),
+        myContribution: this.myContribution.toString(),
         perGameAmount: this.perGameAmount.toString(),
         unackedMessages: [...this.unackedMessages],
         history: [...this.history],

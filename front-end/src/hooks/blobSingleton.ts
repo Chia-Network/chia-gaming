@@ -145,6 +145,7 @@ export function getOrCreateSessionController(
     amount,
     peerConn,
   );
+  sessionController.myContribution = myContribution;
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;

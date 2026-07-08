@@ -832,7 +832,8 @@ const Shell = () => {
     const myContribution = parseSessionAmount(request.myAmount);
     const theirContribution = parseSessionAmount(request.theirAmount);
     const amount = myContribution + theirContribution;
-    const perGame = amount / 10n || 1n;
+    const minContribution = myContribution < theirContribution ? myContribution : theirContribution;
+    const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();
     const token = `peer_${request.peerId}_${Date.now()}`;
 
