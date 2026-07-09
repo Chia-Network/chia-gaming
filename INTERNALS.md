@@ -25,8 +25,8 @@ There are three distinct timeouts in the system:
 
 | Timeout           | Purpose                                                                                                                                                                                    | Typical test value |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock.                                                                                                    | 100 blocks         |
-| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Fixed at 15 blocks in the current protocol.            | 15 blocks          |
+| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The tracker lobby accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
+| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The tracker lobby accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
 | `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals may choose any positive value; the UX defaults to 15 blocks. | 15 blocks          |
 
 
@@ -42,11 +42,12 @@ timeout = current height). The simulator enforces this by panicking if a
 transaction with an unsatisfied `ASSERT_HEIGHT_RELATIVE` is submitted to the
 mempool.
 
-The fixed 15-block unroll timeout gives honest users enough time to preempt
+The default 15-block unroll timeout gives honest users enough time to preempt
 stale unrolls without making mainnet dispute resolution overly slow. At mainnet
 block cadence it is roughly five minutes; in the simulator it is roughly 150
-seconds. Timeout negotiation may be reintroduced later, but it is non-trivial
-protocol work and is not part of the current invariant.
+seconds. The tracker lobby bounds channel and unroll timeout negotiation to
+3-30 blocks so users can make small adjustments without accepting arbitrarily
+long or short dispute windows.
 
 ### Eager Timeout Submission and Confirmation-Driven Notifications
 

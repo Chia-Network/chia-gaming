@@ -226,12 +226,14 @@ describe('event routing', () => {
       type: 'advisory_start',
       peer_id: 'p2',
       peer_alias: 'Bob',
-      amount: '100',
+      my_amount: '100',
+      their_amount: '100',
     });
     expect(cb.onAdvisoryStart).toHaveBeenCalledWith({
       peer_id: 'p2',
       peer_alias: 'Bob',
-      amount: '100',
+      my_amount: '100',
+      their_amount: '100',
       channel_timeout: undefined,
       unroll_timeout: undefined,
     });
@@ -297,7 +299,7 @@ describe('binary message relay', () => {
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    const appMessage = { type: 'session_proposal', amount: '500' };
+    const appMessage = { type: 'session_proposal', proposer_amount: '500', responder_amount: '500' };
     const payload = encodeBencodex(appMessage);
     MockWebSocket.instance!._fireBinaryInbound('p_sender', payload);
     expect(cb.onPeerAppMessage).toHaveBeenCalledWith('p_sender', 'p_sender', appMessage);
@@ -347,7 +349,7 @@ describe('outbound message format', () => {
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
 
-    conn.sendPeerAppMessage('p_target', { type: 'session_proposal', amount: '100' });
+    conn.sendPeerAppMessage('p_target', { type: 'session_proposal', proposer_amount: '100', responder_amount: '100' });
     expect(ws.sentBinary).toHaveLength(1);
 
     const frame = ws.sentBinary[0];
@@ -357,7 +359,7 @@ describe('outbound message format', () => {
     expect(targetId).toBe('p_target');
     const payloadBytes = frame.slice(4 + targetIdLen);
     const parsed = toPlainObject(decodeBencodex(payloadBytes) as BencodexValue);
-    expect(parsed).toEqual({ type: 'session_proposal', amount: '100' });
+    expect(parsed).toEqual({ type: 'session_proposal', proposer_amount: '100', responder_amount: '100' });
   });
 });
 
