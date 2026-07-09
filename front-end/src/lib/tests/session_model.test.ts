@@ -634,19 +634,19 @@ describe('session model selectors', () => {
 
   it('parses saved session amounts through a shared bigint adapter', () => {
     expect(sessionAmountsFromSave(
-      { amount: '150', myContribution: '100', perGameAmount: '45' },
-    )).toEqual({ amount: 150n, myContribution: 100n, theirContribution: 50n, perGameAmount: 45n });
+      { myContribution: '100', theirContribution: '50', perGameAmount: '45' },
+    )).toEqual({ myContribution: 100n, theirContribution: 50n, perGameAmount: 45n });
 
     expect(sessionAmountsFromSave(
-      { amount: '200', myContribution: '100', perGameAmount: '10' },
-    )).toEqual({ amount: 200n, myContribution: 100n, theirContribution: 100n, perGameAmount: 10n });
+      { myContribution: '100', theirContribution: '100', perGameAmount: '10' },
+    )).toEqual({ myContribution: 100n, theirContribution: 100n, perGameAmount: 10n });
 
     expect(() => sessionAmountsFromSave(
-      { amount: '150', myContribution: '100' } as any,
+      { myContribution: '100', theirContribution: '50' } as any,
     )).toThrow('Garbled save');
 
     expect(() => sessionAmountsFromSave(
-      { amount: '150', myContribution: 'bad', perGameAmount: '10' },
+      { myContribution: 'bad', theirContribution: '50', perGameAmount: '10' },
     )).toThrow('Garbled save');
 
     expect(() => sessionAmountsFromSave(

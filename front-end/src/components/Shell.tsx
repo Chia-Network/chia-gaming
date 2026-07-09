@@ -846,7 +846,6 @@ const Shell = () => {
 
     const myContribution = parseSessionAmount(request.myAmount);
     const theirContribution = parseSessionAmount(request.theirAmount);
-    const amount = myContribution + theirContribution;
     const minContribution = myContribution < theirContribution ? myContribution : theirContribution;
     const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();
@@ -876,7 +875,6 @@ const Shell = () => {
     try { getActiveBlockchain().start(); } catch { /* not connected */ }
     setSessionConfig({
       iStarted: request.iStarted,
-      amount,
       myContribution,
       theirContribution,
       perGameAmount: perGame,
@@ -1432,11 +1430,10 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    const { amount, myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
+    const { myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
     if (save.pairingToken) {
       setSessionConfig({
         iStarted: save.iStarted ?? false,
-        amount,
         myContribution,
         theirContribution,
         perGameAmount: perGame,

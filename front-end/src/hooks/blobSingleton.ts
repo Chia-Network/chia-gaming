@@ -66,7 +66,7 @@ export async function configSessionController(
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
-  const theirContribution = sc.amount - sc.myContribution;
+  const theirContribution = sc.theirContribution;
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
   sc.setGameCradle(cradle);
   sc.attachBlockchain(blockchain);
@@ -120,8 +120,8 @@ export function getOrCreateSessionController(
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
-  amount: bigint,
   myContribution: bigint,
+  theirContribution: bigint,
   iStarted: boolean,
   sessionSave?: SessionState,
   pairingToken?: string,
@@ -140,10 +140,10 @@ export function getOrCreateSessionController(
   sessionController = new SessionController(
     blockchain,
     uniqueId,
-    amount,
     peerConn,
   );
   sessionController.myContribution = myContribution;
+  sessionController.theirContribution = theirContribution;
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;

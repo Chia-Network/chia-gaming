@@ -32,8 +32,8 @@ export interface WasmFields {
   remoteNumber: bigint;
   channelReady: boolean;
   iStarted: boolean;
-  amount: string;
   myContribution: string;
+  theirContribution: string;
   perGameAmount: string;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   history: string[];
@@ -79,8 +79,8 @@ export function isBenignTransactionSubmitError(message: string): boolean {
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
 export class SessionController implements PollingCradle {
-  amount: bigint;
   myContribution: bigint;
+  theirContribution: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
   sendMessage: (msgno: bigint, msg: Uint8Array) => void;
@@ -151,7 +151,6 @@ export class SessionController implements PollingCradle {
   constructor(
     blockchain: BlockchainPoller | null,
     uniqueId: string,
-    amount: bigint,
     peer_conn: PeerConnectionResult,
   ) {
     Object.defineProperty(this, '_handState', {
@@ -167,8 +166,8 @@ export class SessionController implements PollingCradle {
     this.remoteNumber = 0n;
     this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
     this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
-    this.amount = amount;
-    this.myContribution = amount;
+    this.myContribution = 0n;
+    this.theirContribution = 0n;
     this.perGameAmount = 0n;
     this.iStarted = false;
     this.channelReady = false;
@@ -905,8 +904,8 @@ export class SessionController implements PollingCradle {
         remoteNumber: this.remoteNumber,
         channelReady: this.channelReady,
         iStarted: this.iStarted,
-        amount: this.amount.toString(),
         myContribution: this.myContribution.toString(),
+        theirContribution: this.theirContribution.toString(),
         perGameAmount: this.perGameAmount.toString(),
         unackedMessages: [...this.unackedMessages],
         history: [...this.history],

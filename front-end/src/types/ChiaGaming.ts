@@ -92,7 +92,6 @@ type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
 
 export interface GameSessionParams {
   iStarted: boolean;
-  amount: bigint;              // mojos, total channel buy-in (myContribution + theirContribution)
   myContribution: bigint;      // my share of the channel
   theirContribution: bigint;   // opponent's share of the channel
   perGameAmount: bigint;       // mojos per hand
