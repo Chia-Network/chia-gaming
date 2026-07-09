@@ -1482,6 +1482,7 @@ const Shell = () => {
         cleanShutdownGraceTimerRef.current = setTimeout(() => {
           cleanShutdownGraceTimerRef.current = null;
           setCleanShutdownGraceActive(false);
+          saveSession({ cleanShutdownGraceStartedAt: undefined });
         }, Number(GRACE_DELAY_MS - elapsed));
       }
     }
