@@ -1,7 +1,6 @@
 (include *standard-cl-23*)
 
-(import games.spacepoker.onchain.space_hand_eval exposing space_hand_eval space_hand_calc)
-(import games.game_codes)
+(import games.spacepoker.onchain.space_hand_eval exposing space_hand_eval)
 (import std.and)
 (import std.if_any_fail)
 (import std.assert)
@@ -11,50 +10,44 @@
 (import std.li)
 
 ; state is (half_pot mover_image waiter_preimage)
-; MOVE is mover's preimage (32 bytes) concatenated with card selection bitfield (1 byte)
+; MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
 ; evidence is waiter's card selection bitfield
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         (half_pot mover_image waiter_preimage)
-        previous_validation_program evidence output_conditions)
+        previous_validation_program evidence)
 
     (if_any_fail
-        (= (strlen MOVE) 33)
+        (= (strlen MOVE) 17)
         (not VALIDATION_INFO_HASH)
-        (= mover_image (sha256 (substr MOVE 0 32)))
+        (= mover_image (sha256 (substr MOVE 0 16)))
         0
         (assign
-            mover_bitfield (substr MOVE 32 33)
+            mover_bitfield (substr MOVE 16 17)
             (mover_cards waiter_cards mover_boost waiter_boost)
-                (make_all_cards (substr MOVE 0 32) waiter_preimage)
+                (make_all_cards (substr MOVE 0 16) waiter_preimage)
             mover_selected (pull_from_bitfield mover_cards mover_bitfield)
             (if (!= (popcount mover_bitfield) 5)
                 0
-                (if (not evidence)
-                    ; off-chain: nil evidence, accept without checking mover_share
-                    (if WAITER_PUBKEY (x "on-chain requires evidence")
-                        (list 0 0 0 "end"))
-                    ; on-chain: evidence is waiter's card selection bitfield.
-                    ; Slash succeeds only if mover takes MORE than deserved.
-                    ; Mover is allowed to be generous (take less).
-                    (assert (= (popcount evidence) 5)
-                        (assign
-                            waiter_selected (pull_from_bitfield waiter_cards evidence)
-                            fair_share (assign result (deep_compare
-                                    (space_hand_eval mover_selected mover_boost)
-                                    (space_hand_eval waiter_selected waiter_boost))
-                                (if (not result)
-                                    (/ AMOUNT 2)
-                                    (= result 1)
-                                    (+ (/ AMOUNT 2) half_pot)
-                                    (- (/ AMOUNT 2) half_pot)
-                                )
+                ; evidence is waiter's card selection bitfield (provided by slasher).
+                ; Slash succeeds only if mover takes MORE than deserved.
+                (assert (= (popcount evidence) 5)
+                    (assign
+                        waiter_selected (pull_from_bitfield waiter_cards evidence)
+                        fair_share (assign result (deep_compare
+                                (space_hand_eval mover_selected mover_boost)
+                                (space_hand_eval waiter_selected waiter_boost))
+                            (if (not result)
+                                (/ AMOUNT 2)
+                                (= result 1)
+                                (+ (/ AMOUNT 2) half_pot)
+                                (- (/ AMOUNT 2) half_pot)
                             )
-                            (if (> MOVER_SHARE fair_share)
-                                0
-                                (list 0 0 0 "end")
-                            )
+                        )
+                        (if (> MOVER_SHARE fair_share)
+                            0
+                            (list 0)
                         )
                     )
                 )
@@ -74,6 +67,11 @@
     )
 )
 
+; Community cards are revealed in the order: flop (3 cards from chain
+; position 3, revealed first), turn (1 card from position 2), river (1
+; card from position 1). The card list order here must match
+; derive_all_cards in spacepoker_generate.clinc so the bitfield indexes
+; the same cards on both sides.
 (defun make_all_cards (alice_pre bob_pre)
     (assign
         alice_image_1 (sha256 alice_pre)
@@ -84,13 +82,13 @@
         bob_image_2 (sha256 bob_image_1)
         bob_image_3 (sha256 bob_image_2)
         bob_image_4 (sha256 bob_image_3)
-        river_card (f (make_cards alice_image_3 bob_image_3 1))
+        (flop_1 flop_2 flop_3) (make_cards alice_image_3 bob_image_3 3)
         turn_card (f (make_cards alice_image_2 bob_image_2 1))
-        flop_cards (make_cards alice_image_1 bob_image_1 3)
+        river_card (f (make_cards alice_image_1 bob_image_1 1))
         (alice_hole_1 alice_hole_2) (make_cards alice_pre bob_image_4 2)
         (bob_hole_1 bob_hole_2) (make_cards bob_pre alice_image_4 2)
-        alice_cards (li alice_hole_1 alice_hole_2 river_card turn_card &rest flop_cards)
-        bob_cards (li bob_hole_1 bob_hole_2 river_card turn_card &rest flop_cards)
+        alice_cards (li alice_hole_1 alice_hole_2 flop_1 flop_2 flop_3 turn_card river_card)
+        bob_cards (li bob_hole_1 bob_hole_2 flop_1 flop_2 flop_3 turn_card river_card)
         alice_boost (not (% (sha256 (logxor alice_pre bob_image_4)) 3))
         bob_boost (not (% (sha256 (logxor bob_pre alice_image_4)) 3))
         (li alice_cards bob_cards alice_boost bob_boost)

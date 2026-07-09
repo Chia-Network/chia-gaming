@@ -169,6 +169,7 @@ export interface SessionState {
   history?: string[];
   log?: string[];
   activeGameId?: string | null;
+  activeGameType?: string;
   handState?: CalpokerHandState | null;
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
@@ -188,10 +189,11 @@ export interface SessionState {
   dismissedChannelState?: string;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
-  betweenHandLastTerms?: { my_contribution: string; their_contribution: string } | null;
-  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string } | null;
+  betweenHandComposeGameType?: string;
+  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
+  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
@@ -229,9 +231,9 @@ function clearWalletConnectLocalStorageKeys(): void {
   } catch { /* ignore */ }
 }
 
-export function clearWalletConnectStorage(): void {
+export async function clearWalletConnectStorage(): Promise<void> {
   clearWalletConnectLocalStorageKeys();
-  void clearWalletConnectIndexedDb();
+  await clearWalletConnectIndexedDb();
 }
 
 async function clearWalletConnectIndexedDb(): Promise<void> {

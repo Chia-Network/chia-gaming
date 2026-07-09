@@ -226,6 +226,8 @@ export class WasmBlobWrapper {
 
   getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
+  hasCradle(): boolean { return this.cradle !== undefined; }
+
   isChannelReady(): boolean { return this.channelReady; }
 
   getObservable() {
@@ -257,6 +259,18 @@ export class WasmBlobWrapper {
       this.deliverBlockData(peak, report);
     }
     this.spillStoredMessages();
+    if (this.onChain) {
+      try {
+        const result = this.cradle.go_on_chain();
+        this.processResult(result);
+      } catch (e) {
+        const msg = e instanceof Error ? (e.stack || e.message)
+          : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
+          : String(e);
+        console.error('[wasm] deferred goOnChain failed:', msg);
+        this.rxjsEmitter?.next({ type: 'error', error: msg });
+      }
+    }
   }
 
   activateSpend() {
@@ -681,6 +695,15 @@ export class WasmBlobWrapper {
     return result?.ids || [];
   }
 
+  // Register a game type at runtime. Required for krunk, whose CLVM
+  // proposal/parser must be curried with a session-specific dictionary
+  // before the framework can run them.
+  registerGameType(name: string, hex: string, parserHex?: string): void {
+    if (!this.cradle) throw new Error('no cradle');
+    const result = this.cradle.register_game_type(name, hex, parserHex);
+    this.processResult(result);
+  }
+
   acceptProposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
     const result = this.cradle.accept_proposal(gameId);
@@ -728,8 +751,11 @@ export class WasmBlobWrapper {
   }
 
   goOnChain(): void {
-    if (!this.cradle) throw new Error('no cradle');
     this.onChain = true;
+    if (!this.cradle) {
+      log('[wasm] goOnChain: no cradle yet, intent stored');
+      return;
+    }
     try {
       const result = this.cradle.go_on_chain();
       this.processResult(result);

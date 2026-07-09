@@ -7,7 +7,6 @@
 
 (import std.li)
 (import std.curry)
-(import std.map)
 (import std.assert)
 (import std.append)
 (import std.relops)
@@ -17,7 +16,8 @@
 (import std.print)
 (import games.calpoker.handcalc exposing handcalc)
 (import games.calpoker.onchain.make_cards exposing make_cards)
-(import games.calpoker.onchain.arrange_cards exposing get_final_cards_in_canonical_order)
+(import games.calpoker.onchain.arrange_cards exposing get_final_cards_in_canonical_order pull_out_cards)
+(import games.calpoker.onchain.onehandcalc exposing onehandcalc)
 
 ; proposal factory takes readable returns ((my_contribution their_contribution [(size whether_we_go_first
 ;   initial_validator_hash initial_move initial_max_move_size initial_state
@@ -290,20 +290,13 @@
 )
 
 ; pre_state is (bob_discards alice_cards bob_cards alice_commit)
-; move is alice_salted_discards
-; either fraud proves or accepts split
+; move is alice_salted_discards (17 bytes) + alice_card_selections (1 byte)
+; Computes final cards and hand values from pre_state + move directly
+; (terminal move: the on-chain validator is not run off-chain).
 (defun calpoker_bob_handler_e (
         amount
-        pre_state
-        (@ state (
-            bob_discards
-            alice_cards
-            bob_cards
-            alice_final_cards
-            bob_final_cards
-            alice_hand_value
-            )
-        )
+        (bob_discards alice_cards bob_cards alice_commit)
+        state
         move
         validation_program_hash
         split
@@ -311,6 +304,9 @@
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
+        (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
+            alice_cards alice_discards bob_cards bob_discards)
+        alice_hand_value (onehandcalc (pull_out_cards alice_selects alice_final_cards))
         (bob_hand_value bob_selects) (handcalc bob_final_cards)
         (assert
             (= (strlen move) 18)

@@ -1,16 +1,19 @@
 (include *standard-cl-23*)
 
-(import games.krunk.onchain.krunk_validator_hashes exposing guess_hash)
+(import games.krunk.onchain.guess exposing (program_hash as guess_hash))
 (import games.krunk.onchain.krunk_make_clue exposing make_clue)
-(import games.krunk.krunk_helpers exposing list_contains)
 (import std.if_any_fail)
+(import std.assert)
+(import std.and)
+(import std.relops)
 (import std.li)
 (import std.len)
+(import std.condition_codes)
 
 (defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
 
-(defun krunk_payout_share (amount n)
-    (* (/ amount 100) (f (drop (- n 1) KRUNK_PAYOUTS)))
+(defun krunk_payout_share (base_unit n)
+    (* base_unit (f (drop (- n 1) KRUNK_PAYOUTS)))
 )
 
 (defun drop (n lst)
@@ -21,43 +24,44 @@
 )
 
 ; Bob challenging Alice's clue or reveal.
-; state is (bob_guesses alice_clues alice_commit)
+; state is (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
 ; MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
+; On a continue (clue), we transition back to guess. guess_hash is imported
+; directly from games.krunk.onchain.guess.
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (bob_guesses alice_clues alice_commit)
-    previous_validation_program evidence output_conditions)
+    (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
+    previous_validation_program evidence)
 
     (if (= (strlen MOVE) 1)
         ; Alice gave a clue for Bob's latest guess.
         (if_any_fail
             (= MOVER_SHARE 0)
-            (= (len alice_clues) 4)
+            (< (len alice_clues) 4)
+            (> 0x72 MOVE)
             0
             (list guess_hash
-                (li bob_guesses (c MOVE alice_clues) alice_commit)
-                5
-                "clue")
+                (li dict_pubkey base_unit bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
+                5)
         )
         ; Alice revealed salt||word.
-        (if (l evidence)
-            ; Slash: Alice's committed word is outside the supplied dictionary.
-            (assert
-                (not (list_contains (substr MOVE 16 21) evidence))
-                0
+        (if (= (strlen evidence) 10)
+            ; Slash: Alice's committed word is outside a signed dictionary range.
+            (assign
+                revealed_word (substr MOVE 16 21)
+                (assert
+                    (>= revealed_word (substr evidence 0 5))
+                    (<= revealed_word (substr evidence 5 10))
+                    (list 0 0 0 (list AGG_SIG_UNSAFE dict_pubkey evidence))
+                )
             )
             (if (= (strlen evidence) 1)
                 ; Slash: Alice gave a provably wrong clue at index evidence.
                 (assert
-                    (or
-                        (and (> evidence 0)
-                            (= (f (drop evidence bob_guesses))
-                                (substr MOVE 16 21)))
-                        (!= (make_clue (substr MOVE 16 21)
-                                (f (drop evidence bob_guesses)))
-                            (f (drop evidence alice_clues)))
-                    )
+                    (!= (make_clue (substr MOVE 16 21)
+                            (f (drop evidence bob_guesses)))
+                        (f (drop evidence alice_clues)))
                     0
                 )
                 (if_any_fail
@@ -65,7 +69,7 @@
                     (= alice_commit (sha256 (substr MOVE 0 16) (substr MOVE 16 21)))
                     (= MOVER_SHARE
                         (if (= (f bob_guesses) (substr MOVE 16 21))
-                            (krunk_payout_share AMOUNT (len bob_guesses))
+                            (krunk_payout_share base_unit (len bob_guesses))
                             (if (= (len bob_guesses) 5)
                                 0
                                 (x "clue reveal before terminal")
@@ -73,7 +77,7 @@
                         )
                     )
                     0
-                    (list 0 0 0 "clue reveal")
+                    (list 0 0 0)
                 )
             )
         )

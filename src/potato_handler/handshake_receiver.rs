@@ -13,9 +13,11 @@ use crate::common::standard_coin::{
     private_to_public_key, sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
-    Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, IntoErr,
-    Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash,
+    IntoErr, Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
+use crate::games::krunk_dict_tree::{generate_gap_evidence, sign_gap_evidence, sigs_from_bytes, sigs_to_bytes, verify_gap_signatures};
+use crate::games::krunk_dictionary;
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
     format_coin, ChannelState, ChannelStatusSnapshot, Effect, ResyncInfo,
@@ -334,6 +336,15 @@ impl HandshakeReceiverHandler {
                         "Invalid proof-of-possession for unroll key in HandshakeA".to_string(),
                     ));
                 }
+                if !msg
+                    .dict_signing_key_pop
+                    .verify(&msg.dict_signing_pubkey, &msg.dict_signing_pubkey.bytes())
+                {
+                    return Err(Error::Channel(
+                        "Invalid proof-of-possession for dict signing key in HandshakeA"
+                            .to_string(),
+                    ));
+                }
 
                 let my_hs_info = {
                     let channel_public_key =
@@ -354,6 +365,25 @@ impl HandshakeReceiverHandler {
                         .private_keys
                         .my_unroll_coin_private_key
                         .sign(unroll_public_key.bytes());
+
+                    let my_dict_pk = private_to_public_key(
+                        &self.private_keys.my_dict_signing_private_key,
+                    );
+                    let dict_signing_key_pop = self
+                        .private_keys
+                        .my_dict_signing_private_key
+                        .sign(my_dict_pk.bytes());
+                    let their_dict_pk = msg.dict_signing_pubkey.clone();
+                    let aggregate_dict_pk = my_dict_pk.clone() + their_dict_pk;
+                    let dictionary = krunk_dictionary();
+                    let word_refs: Vec<&[u8]> = dictionary.iter().map(|b| b.as_ref()).collect();
+                    let gaps = generate_gap_evidence(&word_refs);
+                    let partial_sigs = sign_gap_evidence(
+                        &self.private_keys.my_dict_signing_private_key,
+                        &aggregate_dict_pk,
+                        &gaps,
+                    );
+
                     HandshakeB {
                         channel_public_key,
                         unroll_public_key,
@@ -362,6 +392,9 @@ impl HandshakeReceiverHandler {
                         reward_payout_signature: reward_payout_sig,
                         channel_key_pop,
                         unroll_key_pop,
+                        dict_signing_pubkey: my_dict_pk,
+                        dict_signing_key_pop,
+                        dict_partial_signatures: Some(sigs_to_bytes(&partial_sigs)),
                     }
                 };
 
@@ -434,6 +467,35 @@ impl HandshakeReceiverHandler {
                     name: Some("channel"),
                 });
                 effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
+
+                // Aggregate dictionary signing: receiver's own partial sigs +
+                // initiator's partial sigs from HandshakeC.
+                if let Some(my_sig_bytes) = &info.second_player_hs_info.dict_partial_signatures {
+                    let my_partial_sigs = sigs_from_bytes(my_sig_bytes)?;
+                    let their_partial_sigs = sigs_from_bytes(&msg.dict_partial_signatures)?;
+                    let my_dict_pk = private_to_public_key(
+                        &self.private_keys.my_dict_signing_private_key,
+                    );
+                    let their_dict_pk = info.first_player_hs_info.dict_signing_pubkey.clone();
+                    let aggregate_dict_pk = my_dict_pk + their_dict_pk.clone();
+                    let dictionary = krunk_dictionary();
+                    let word_refs: Vec<&[u8]> = dictionary.iter().map(|b| b.as_ref()).collect();
+                    verify_gap_signatures(
+                        &their_partial_sigs,
+                        &their_dict_pk,
+                        &aggregate_dict_pk,
+                        &word_refs,
+                    )?;
+                    let factory = crate::games::build_krunk_game_factory(
+                        env.allocator,
+                        &my_partial_sigs,
+                        &their_partial_sigs,
+                        &aggregate_dict_pk,
+                    )?;
+                    self.game_types
+                        .insert(crate::games::krunk_game_type(), factory);
+                }
+
                 self.state = ReceiverState::SentD(Box::new(info));
             }
 
@@ -819,6 +881,15 @@ impl PeerHandler for HandshakeReceiverHandler {
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         HandshakeReceiverHandler::channel_handler(self)
+    }
+    fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
+        self.game_types.insert(game_type, factory);
+    }
+    fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        for factory in self.game_types.values_mut() {
+            factory.ensure_built(allocator)?;
+        }
+        Ok(())
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

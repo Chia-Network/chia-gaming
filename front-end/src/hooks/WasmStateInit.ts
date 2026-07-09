@@ -7,6 +7,9 @@ import {
 import { Observable, Subject } from 'rxjs';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 
+export type GameHexPair = { proposalHex: string; parserHex: string };
+export type GameHexes = Record<string, GameHexPair>;
+
 var chia_gaming_init: WasmInitFn | undefined = undefined;
 var cg: WasmConnection | undefined = undefined;
 var logInitialized = false;
@@ -75,6 +78,13 @@ export class WasmStateInit {
       'clsp/referee/onchain/referee.hex',
       'clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex',
       'clsp/games/calpoker/calpoker_include_calpoker_parser.hex',
+      'clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex',
+      'clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex',
+      // Krunk hex is deposited so curry_krunk_programs (which calls
+      // read_hex_puzzle on these paths) can produce a dictionary-curried
+      // factory at proposal time.
+      'clsp/games/krunk/krunk_include_krunk_make_proposal.hex',
+      'clsp/games/krunk/krunk_include_krunk_parser.hex',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -147,17 +157,21 @@ export class WasmStateInit {
     // return this.wasmConnection?.chia_identity(rngSeed);
   }
 
-  async loadCalpoker(): Promise<{proposalHex: string, parserHex: string}> {
-    const [proposalHex, parserHex] = await Promise.all([
+  async loadGameHexes(): Promise<GameHexes> {
+    const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
       this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
       this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+      this.fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
+      this.fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
     ]);
-    return { proposalHex, parserHex };
+    return {
+      calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },
+      spacepoker: { proposalHex: spacepokerProposal, parserHex: spacepokerParser },
+    };
   }
 
   createGame(
-    calpokerHex: string,
-    calpokerParserHex: string,
+    gameHexes: GameHexes,
     rngId: number,
     wasm: WasmConnection,
     have_potato: boolean,
@@ -165,15 +179,13 @@ export class WasmStateInit {
     their_contribution: bigint,
     rewardPuzzleHash: string,
   ): { game: ChiaGame, puzzleHash: string } {
+    const game_types: Record<string, { version: number; hex: string; parser_hex: string }> = {};
+    for (const [name, hexes] of Object.entries(gameHexes)) {
+      game_types[name] = { version: 1, hex: hexes.proposalHex, parser_hex: hexes.parserHex };
+    }
     const result = wasm.create_game_cradle({
       rng_id: rngId,
-      game_types: {
-        calpoker: {
-          version: 1,
-          hex: calpokerHex,
-          parser_hex: calpokerParserHex,
-        },
-      },
+      game_types,
       have_potato: have_potato,
       my_contribution: { amt: my_contribution },
       their_contribution: { amt: their_contribution },
@@ -200,10 +212,15 @@ export class WasmStateInit {
   }
 }
 
-export async function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): Promise<{proposalHex: string, parserHex: string}> {
-  const [proposalHex, parserHex] = await Promise.all([
+export async function loadGameHexes(fetchHex: (filename: string) => Promise<string>): Promise<GameHexes> {
+  const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
     fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
     fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+    fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
+    fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
   ]);
-  return { proposalHex, parserHex };
+  return {
+    calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },
+    spacepoker: { proposalHex: spacepokerProposal, parserHex: spacepokerParser },
+  };
 }

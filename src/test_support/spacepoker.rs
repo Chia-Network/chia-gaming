@@ -6,7 +6,7 @@ use crate::common::types::{AllocEncoder, Program};
 use crate::peer_container::SynchronousGameCradle;
 use crate::test_support::game::GameAction;
 
-pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
+pub fn prefix_test_moves(_allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
     let nil_move = Program::from_hex("80").expect("should build nil move");
     let zero_raise = Program::from_hex("80").expect("should build zero raise");
 

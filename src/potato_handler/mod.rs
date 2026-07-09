@@ -16,8 +16,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
@@ -203,7 +203,8 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         wire: &WireProposeGame,
-    ) -> Result<Rc<GameStartInfo>, Error> {
+    ) -> Result<(Rc<GameStartInfo>, GameType), Error> {
+        let resolved_game_type = wire.start.game_type.clone();
         let (my_games, their_games) =
             self.get_games_by_start_type(env, true, &wire.game_id, &wire.start)?;
         let (_mine, theirs) = if wire.start.my_turn {
@@ -211,12 +212,49 @@ impl PotatoHandler {
         } else {
             (their_games, my_games)
         };
-        theirs.get(wire.start_index).cloned().ok_or_else(|| {
+        let gsi = theirs.get(wire.start_index).cloned().ok_or_else(|| {
             Error::StrErr(format!(
                 "wire proposal start_index {} out of range for game {}",
                 wire.start_index, wire.game_id
             ))
-        })
+        })?;
+
+        if let Some(wire_hash) = &wire.start.initial_validation_program_hash {
+            let local_hash = gsi.initial_validation_program.hash();
+            if wire_hash != local_hash {
+                return Err(Error::StrErr(format!(
+                    "wire proposal initial_validation_program_hash mismatch: \
+                     wire={} local={}",
+                    wire_hash, local_hash
+                )));
+            }
+        }
+        if let Some(wire_state) = &wire.start.initial_state {
+            let local_state_bytes = gsi.initial_state.pref().bytes();
+            if wire_state.bytes() != local_state_bytes {
+                return Err(Error::StrErr(
+                    "wire proposal initial_state mismatch".to_string(),
+                ));
+            }
+        }
+        if let Some(wire_max) = wire.start.initial_max_move_size {
+            if wire_max != gsi.initial_max_move_size {
+                return Err(Error::StrErr(format!(
+                    "wire proposal initial_max_move_size mismatch: wire={wire_max} local={}",
+                    gsi.initial_max_move_size
+                )));
+            }
+        }
+        if let Some(wire_share) = &wire.start.initial_mover_share {
+            if *wire_share != gsi.initial_mover_share {
+                return Err(Error::StrErr(format!(
+                    "wire proposal initial_mover_share mismatch: wire={wire_share} local={}",
+                    gsi.initial_mover_share
+                )));
+            }
+        }
+
+        Ok((gsi, resolved_game_type))
     }
 
     pub fn from_completed_handshake(
@@ -566,16 +604,19 @@ impl PotatoHandler {
                         }));
                     }
 
-                    let gsi = self.hydrate_wire_proposal(env, wire)?;
+                    let (gsi, resolved_game_type) = self.hydrate_wire_proposal(env, wire)?;
                     let ch = self.channel_handler_mut()?;
                     ch.apply_received_proposal(env, &gsi)?;
                     let game_id = gsi.game_id;
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
+                    let ivp_hash = gsi.initial_validation_program.hash().clone();
                     effects.push(Effect::Notify(GameNotification::ProposalMade {
                         id: game_id,
                         my_contribution,
                         their_contribution,
+                        initial_validation_program_hash: ivp_hash,
+                        game_type: resolved_game_type,
                     }));
                 }
                 BatchAction::AcceptProposal(game_id) => {
@@ -1042,7 +1083,8 @@ impl PotatoHandler {
         game_id: &GameID,
         game_start: &GameStart,
     ) -> Result<GameStartInfoPair, Error> {
-        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
+        let starter = if let Some(starter) = self.game_types.get_mut(&game_start.game_type) {
+            starter.ensure_built(env.allocator)?;
             starter
         } else {
             return Err(Error::StrErr(format!(
@@ -1053,12 +1095,20 @@ impl PotatoHandler {
 
         let their_contribution = game_start.amount.checked_sub(&game_start.my_contribution)?;
 
+        let starter_program = starter
+            .program
+            .as_ref()
+            .ok_or_else(|| Error::StrErr(
+                "GameFactory program missing after ensure_built".to_string(),
+            ))?
+            .clone();
+
         if let Some(parser_prog) = &starter.parser_program {
             let alice_game = game::Game::new_from_proposal(
                 env.allocator,
                 i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
@@ -1079,7 +1129,7 @@ impl PotatoHandler {
                 env.allocator,
                 !i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
@@ -1112,7 +1162,7 @@ impl PotatoHandler {
                 env.allocator,
                 i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 params_prog.clone(),
             )?;
             let alice_result: Vec<Rc<GameStartInfo>> = alice_game
@@ -1132,7 +1182,7 @@ impl PotatoHandler {
                 env.allocator,
                 !i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 params_prog,
             )?;
             let bob_result: Vec<Rc<GameStartInfo>> = bob_game
@@ -1445,8 +1495,14 @@ impl FromLocalUI for PotatoHandler {
         let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id).collect();
 
         for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games).enumerate() {
+            let mut wire_start = game.clone();
+            wire_start.initial_validation_program_hash =
+                Some(mine.initial_validation_program.hash().clone());
+            wire_start.initial_state = Some(Program::from_bytes(mine.initial_state.pref().bytes()));
+            wire_start.initial_max_move_size = Some(mine.initial_max_move_size);
+            wire_start.initial_mover_share = Some(mine.initial_mover_share.clone());
             let wire = WireProposeGame {
-                start: game.clone(),
+                start: wire_start,
                 game_id,
                 start_index: index,
             };
@@ -1693,6 +1749,15 @@ impl PeerHandler for PotatoHandler {
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         PotatoHandler::channel_handler(self)
+    }
+    fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
+        self.game_types.insert(game_type, factory);
+    }
+    fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        for factory in self.game_types.values_mut() {
+            factory.ensure_built(allocator)?;
+        }
+        Ok(())
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

@@ -1,33 +1,9 @@
-(include *standard-cl-23*)
-
 (import std.li)
 (import std.len)
 (import std.or)
-
-(export list_contains)
-(export assert_word_in_dictionary)
-(export expand_clue)
-(export krunk_should_reveal)
-(export krunk_reveal_move)
-(export krunk_reveal_mover_share)
+(import std.relops)
 
 (defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
-
-(defun list_contains (item mylist)
-    (if (not mylist)
-        0
-        (= item (f mylist))
-        1
-        (list_contains item (r mylist))
-    )
-)
-
-(defun assert_word_in_dictionary (dictionary word)
-    (if (list_contains word dictionary)
-        0
-        dictionary
-    )
-)
 
 (defun expand_clue (clue_byte)
     (expand_clue_inner (+ clue_byte 128) 5)
@@ -40,8 +16,8 @@
     )
 )
 
-(defun krunk_payout_share (amount n)
-    (* (/ amount 100) (f (drop (- n 1) KRUNK_PAYOUTS)))
+(defun krunk_payout_share (base_unit n)
+    (* base_unit (f (drop (- n 1) KRUNK_PAYOUTS)))
 )
 
 (defun drop (n lst)
@@ -63,9 +39,9 @@
     (concat salt word)
 )
 
-(defun krunk_reveal_mover_share (amount bob_guesses word)
+(defun krunk_reveal_mover_share (base_unit bob_guesses word)
     (if (= (f bob_guesses) word)
-        (krunk_payout_share amount (len bob_guesses))
+        (krunk_payout_share base_unit (len bob_guesses))
         (if (= (len bob_guesses) 5)
             0
             (x "krunk_reveal_mover_share: not terminal")

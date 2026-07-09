@@ -1,12 +1,12 @@
 (include *standard-cl-23*)
 
 (import games.krunk.krunk_helpers exposing
-    assert_word_in_dictionary
     expand_clue
     krunk_should_reveal
     krunk_reveal_move
     krunk_reveal_mover_share
 )
+(import games.krunk.krunk_dict_tree exposing dict_lookup)
 (import games.krunk.onchain.krunk_make_clue exposing make_clue)
 
 (import std.li)
@@ -17,97 +17,102 @@
 
 ; --- proposal factory / parser ---
 ;
-; dictionary is a user-supplied list of valid 5-letter words. Both players
-; pass the same list to make_proposal and parser when negotiating a hand.
+; DICT_TREE is a balanced BST of dictionary words curried into handlers at
+; registration time. DICT_PUBKEY is the aggregate BLS key for dictionary
+; range signing (both players' keys combined). The on-chain initial state
+; is (DICT_PUBKEY base_unit); the full tree stays off-chain.
 
 (import games.krunk.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
 (import games.krunk.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
 (import games.krunk.onchain.clue exposing (program as val_clue) (program_hash as clue_hash))
 
-(defun krunk_make_proposal (bet_size dictionary)
-    (li
+(defconstant MIN_WORD 0x8000000000)
+(defconstant MAX_WORD 0x7fffffffff)
+
+(defun krunk_make_proposal (DICT_TREE DICT_PUBKEY bet_size)
+    (assign
+        base_unit (/ bet_size 50)
         (li
-            bet_size
-            bet_size
             (li
-                (li (* 2 bet_size) 1 commit_hash 0 32 dictionary 0)
+                bet_size
+                bet_size
+                (li
+                    (li (* 2 bet_size) 1 commit_hash 0 32 (li DICT_PUBKEY base_unit) 0)
+                )
             )
-        )
-        (li
-            (li (curry krunk_alice_handler_commit dictionary) val_commit)
+            (li
+                (li (curry krunk_alice_handler_commit DICT_TREE) val_commit)
+            )
         )
     )
 )
 
-(defun krunk_game_spec_from_wire (args)
-    (f (f (r (r args))))
-)
-
-(defun krunk_dictionary_from_wire (args)
-    (f (r (r (r (r (r (krunk_game_spec_from_wire args)))))))
-)
-
-(defun krunk_parser (@ args (bet_size))
+; Parser is called as run_program(parser_clvm, wire_data) so wire_data is
+; the entire env. After currying with DICT_TREE and DICT_PUBKEY at
+; registration time, the env becomes (DICT_TREE DICT_PUBKEY . wire_data).
+(defun krunk_parser (DICT_TREE DICT_PUBKEY . wire_data)
     (assign
-        dictionary (krunk_dictionary_from_wire args)
+        bet_size (f wire_data)
+        base_unit (/ bet_size 50)
         (assert
-            (deep= args (f (krunk_make_proposal bet_size dictionary)))
-            (li bet_size (li (li val_commit (curry krunk_bob_handler_commit dictionary))))
+            (deep= wire_data (f (krunk_make_proposal DICT_TREE DICT_PUBKEY bet_size)))
+            (li (list bet_size base_unit) (li (li val_commit (curry krunk_bob_handler_commit DICT_TREE))))
         )
     )
 )
 
 ; --- Alice handlers ---
 
-(defun krunk_alice_handler_commit (DICTIONARY local_move amount state mover_share entropy)
+(defun krunk_alice_handler_commit (DICT_TREE local_move amount state mover_share entropy)
     (assign
         word local_move
-        exclusion (assert_word_in_dictionary DICTIONARY word)
-        (assert (not exclusion) (x "word not in dictionary"))
         salt (substr entropy 0 16)
         move (sha256 salt word)
-        (list
-            "krunk_alice_handler_commit"
-            move
-            val_commit
-            commit_hash
-            val_guess
-            guess_hash
-            32
-            0
-            (curry krunk_alice_handler_guess salt word DICTIONARY)
-            0
+        (assert
+            (not (dict_lookup MIN_WORD MAX_WORD word DICT_TREE))
+            (list
+                "krunk_alice_handler_commit"
+                move
+                val_commit
+                commit_hash
+                val_guess
+                guess_hash
+                32
+                0
+                (curry krunk_alice_handler_guess salt word DICT_TREE)
+                0
+            )
         )
     )
 )
 
-(defun krunk_alice_handler_guess (SALT WORD DICTIONARY amount pre_state state move validation_info_hash mover_share)
+(defun krunk_alice_handler_guess (SALT WORD DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (assign
-        (bob_guesses alice_clues alice_commit) state
-        exclusion (assert_word_in_dictionary DICTIONARY move)
-        (if exclusion
-            (list 0 (li exclusion) 0)
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        lookup_result (dict_lookup MIN_WORD MAX_WORD move DICT_TREE)
+        (if lookup_result
+            (list 0 (li (concat (f lookup_result) (f (r lookup_result)))) 0)
             (assign
                 clue (make_clue WORD move)
                 (list
                     (li move (expand_clue clue))
                     0
-                    (curry krunk_alice_handler_clue SALT WORD clue DICTIONARY)
+                    (curry krunk_alice_handler_clue SALT WORD clue DICT_TREE)
                 )
             )
         )
     )
 )
 
-(defun krunk_alice_handler_clue (SALT WORD CLUE DICTIONARY local_move amount state mover_share entropy)
+(defun krunk_alice_handler_clue (SALT WORD CLUE DICT_TREE local_move amount state mover_share entropy)
     (assign
-        (bob_guesses alice_clues alice_commit) state
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
         num_guesses (len bob_guesses)
         latest_guess (f bob_guesses)
         (if (krunk_should_reveal latest_guess WORD num_guesses)
             (assign
                 reveal (krunk_reveal_move SALT WORD)
-                payout (krunk_reveal_mover_share amount bob_guesses WORD)
+                payout (krunk_reveal_mover_share base_unit bob_guesses WORD)
                 (list
                     "krunk_alice_handler_clue reveal"
                     reveal
@@ -130,7 +135,7 @@
                 guess_hash
                 5
                 0
-                (curry krunk_alice_handler_guess SALT WORD DICTIONARY)
+                (curry krunk_alice_handler_guess SALT WORD DICT_TREE)
                 0
             )
         )
@@ -139,55 +144,61 @@
 
 ; --- Bob handlers ---
 
-(defun krunk_bob_handler_commit (DICTIONARY amount pre_state state move validation_info_hash mover_share)
+(defun krunk_bob_handler_commit (DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (list
         0
         0
-        (curry krunk_bob_handler_guess DICTIONARY)
+        (curry krunk_bob_handler_guess DICT_TREE)
     )
 )
 
-(defun krunk_bob_handler_guess (DICTIONARY local_move amount state mover_share entropy)
+(defun krunk_bob_handler_guess (DICT_TREE local_move amount state mover_share entropy)
     (assign
-        (bob_guesses alice_clues alice_commit) state
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
         guess local_move
-        exclusion (assert_word_in_dictionary DICTIONARY guess)
-        (assert (not exclusion) (x "guess not in dictionary"))
-        (list
-            "krunk_bob_handler_guess"
-            guess
-            val_guess
-            guess_hash
-            val_clue
-            clue_hash
-            21
-            0
-            (curry krunk_bob_handler_clue DICTIONARY)
-            0
+        (assert
+            (not (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE))
+            (list
+                "krunk_bob_handler_guess"
+                guess
+                val_guess
+                guess_hash
+                val_clue
+                clue_hash
+                21
+                0
+                (curry krunk_bob_handler_clue DICT_TREE)
+                0
+            )
         )
     )
 )
 
 (defconst KRUNK_EVIDENCE_INDICES (li 0 1 2 3 4))
 
-(defun krunk_bob_handler_clue (DICTIONARY amount pre_state state move validation_info_hash mover_share)
+(defun krunk_bob_handler_clue (DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (assign
-        (bob_guesses alice_clues alice_commit) state
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
         (if (= (strlen move) 1)
             (list
                 (expand_clue move)
                 0
-                (curry krunk_bob_handler_guess DICTIONARY)
+                (curry krunk_bob_handler_guess DICT_TREE)
             )
             (assign
                 word (substr move 16 21)
-                exclusion (assert_word_in_dictionary DICTIONARY word)
-                (if exclusion
-                    (list 0 (li exclusion) 0)
+                lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+                (if lookup_result
                     (list
                         (li word (make_clue word (f bob_guesses)))
+                        (li (concat (f lookup_result) (f (r lookup_result))))
                         0
+                        0
+                    )
+                    (list
+                        (li word (make_clue word (f bob_guesses)))
                         KRUNK_EVIDENCE_INDICES
+                        0
                         0
                     )
                 )

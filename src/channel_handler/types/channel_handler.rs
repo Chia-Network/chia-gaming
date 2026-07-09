@@ -8,7 +8,7 @@ use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
+    Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -16,14 +16,30 @@ pub struct ChannelHandlerPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
     pub my_referee_private_key: PrivateKey,
+    pub my_dict_signing_private_key: PrivateKey,
 }
 
 impl Distribution<ChannelHandlerPrivateKeys> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ChannelHandlerPrivateKeys {
+        let my_channel_coin_private_key: PrivateKey = rng.random();
+        let my_unroll_coin_private_key: PrivateKey = rng.random();
+        let my_referee_private_key: PrivateKey = rng.random();
+        let referee_bytes = my_referee_private_key.bytes();
+        let mut dict_key_bytes = Sha256Input::Array(vec![
+            Sha256Input::Bytes(b"dict_signing_key"),
+            Sha256Input::Bytes(&referee_bytes),
+        ])
+        .hash()
+        .bytes()
+        .clone();
+        dict_key_bytes[0] &= 0x3f;
+        let my_dict_signing_private_key =
+            PrivateKey::from_bytes(&dict_key_bytes).expect("valid derived key");
         ChannelHandlerPrivateKeys {
-            my_channel_coin_private_key: rng.random(),
-            my_unroll_coin_private_key: rng.random(),
-            my_referee_private_key: rng.random(),
+            my_channel_coin_private_key,
+            my_unroll_coin_private_key,
+            my_referee_private_key,
+            my_dict_signing_private_key,
         }
     }
 }

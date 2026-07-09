@@ -23,6 +23,8 @@ program cost, argument checking), see `CLVM_DOS.md`.
 - [Validator Chaining](#validator-chaining)
 - [On-Chain vs Off-Chain](#on-chain-vs-off-chain)
 - [Message Parsers](#message-parsers)
+- [Nil Moves (Automatic Moves)](#nil-moves-automatic-moves)
+- [Messages as Pre-Reveals](#messages-as-pre-reveals)
 - [Worked Example: Calpoker](#worked-example-calpoker)
 
 ---
@@ -328,27 +330,61 @@ A validator takes the move and current state and returns a tagged result:
 ### Validator Return: Valid Move
 
 ```
-(new_validation_info_hash new_state max_move_size mover_share ...)
+(new_validation_info_hash new_state max_move_size)
 ```
 
-Tag `0` (`MAKE_MOVE`) means the move is legal. The returned values are used
-in two places:
+These three elements describe the new game state after the move. They are
+used in two places:
 
-- **On-chain**: The referee curries them into the new referee coin
-  (next validation hash, state, max move size, mover share).
+- **On-chain**: The referee checks that these values match the commitments
+  in the coin's curried state (infohash and max_move_size). If they align,
+  the move is valid and the slash attempt fails.
 - **Off-chain**: The Rust code extracts `new_state` so the handler can
   determine the next game state without duplicating that logic.
 
-### Validator Return: Invalid Move (SLASH)
+Note: `mover_share` is **not** in the validator's return value. It is part
+of the referee's curried arguments and is checked separately by the
+`if_any_fail` / `assert` logic within each validator.
+
+### Validator Return: Valid Move with Conditions (Conditional Slash)
+
+```
+(new_validation_info_hash new_state max_move_size condition1 condition2 ...)
+```
+
+Elements beyond the first three are **conditions** that the referee must
+emit for the slash to succeed. This enables "conditional slashing" where
+a move is provably invalid but the proof requires an external cryptographic
+check (e.g. verifying that a dictionary range was signed by both players).
+
+The referee prepends these conditions to its standard payout conditions.
+Example: a Krunk dictionary range slash returns
+`(AGG_SIG_UNSAFE dict_pubkey evidence)` as the 4th element, which the
+referee emits so the blockchain verifies the BLS signature on the range.
+
+If values align with commitments but no conditions are present (list ends
+at element 3), the move is valid and the slash attempt fails (assert
+aborts the spend).
+
+### Validator Return: Invalid Move (Unconditional Slash)
 
 ```
 ()
 ```
 
-Nil (`SLASH`) means the move is illegal. On-chain, the referee emits a reward coin giving
-the full game amount to the slasher. Off-chain, the Rust code represents
-validator results as `Option<Rc<Program>>` — `Some(new_state)` for
-valid payloads, `None` for slash — and initiates a slash when it gets `None`.
+Nil means the move is unconditionally illegal. On-chain, the referee emits
+payout conditions giving the full game amount to the slasher without
+requiring any additional cryptographic proof.
+
+Off-chain, the Rust code represents validator results as
+`Option<Rc<Program>>` — `Some(result)` for non-nil payloads,
+`None` for slash — and initiates a slash when it gets `None`.
+
+A slash also succeeds when the validator returns non-nil values that
+**don't align** with the referee's committed infohash or max_move_size.
+This covers cases where the validator deliberately returns mismatched
+values to signal fraud provable from game state alone (no external
+conditions needed).
 
 ### How the On-Chain Referee Uses Validators
 
@@ -363,10 +399,21 @@ can slash them. This avoids running validation logic on-chain during honest
 play, saving cost and complexity.
 
 **Slash path** -- A player submits evidence along with the previous move's
-validator. The referee runs the validator with the evidence. If the
-validator returns `SLASH` (does not raise), the slash succeeds and the
-slasher takes the full pot. If the validator raises, the slash attempt
-fails.
+validator. The referee runs the validator with the evidence. Slash succeeds
+in three cases:
+1. The validator returns nil — unconditional slash (move is definitely illegal).
+2. The validator returns non-nil values whose infohash or max_move_size
+   don't match the curried commitments — unconditional slash (misalignment
+   proves fraud from game state alone).
+3. The validator returns values that DO align with commitments AND includes
+   extra conditions beyond the 3rd element — conditional slash. The referee
+   emits these conditions (e.g. `AGG_SIG_UNSAFE` for signed range proofs)
+   alongside the payout conditions; the blockchain enforces them.
+
+If the validator returns aligned values with no extra conditions (list ends
+at element 3), the move was valid and the slash attempt fails (the spend
+aborts). If the validator raises (CLVM exception), the slash transaction
+fails to mine — validators must handle all inputs without raising.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover
@@ -491,6 +538,110 @@ her send Bob the card information right away, so he can start thinking about
 discards while Alice is still deciding her move. The message is purely
 advisory -- Bob will independently derive the same information when Alice's
 real move arrives.
+
+---
+
+## Nil Moves (Automatic Moves)
+
+A `local_move` of nil (null from JavaScript) means the player isn't providing
+any input -- the handler is fully responsible for computing the move. The
+frontend just triggers the handler; it doesn't supply data.
+
+### When to Use Nil Moves
+
+Nil moves are appropriate when:
+
+- **The move is deterministic and requires no user choice.** The handler
+  generates the move entirely from internal state and entropy. Example:
+  commit steps where the handler builds a hash chain from entropy and sends
+  the chain tip.
+
+- **The move involves secret data the handler manages internally.** The
+  handler knows the preimage/bitfield and constructs the reveal. The
+  frontend doesn't have this data and shouldn't need it. Example: the final
+  reveal in space poker, where the handler concatenates the base preimage
+  with the optimal card selection computed by `space_hand_calc`.
+
+- **The move is purely mechanical acknowledgment.** The handler auto-fills
+  a response that advances the protocol without any strategic decision.
+
+### Examples
+
+**Calpoker commitA** (step a): Alice's handler generates a preimage from
+entropy, hashes it, and sends the hash. The frontend calls
+`makeMove(gameId, null)` -- no user input is needed.
+
+**Calpoker commitB** (step b): Bob's handler generates his seed from
+entropy and sends it. Same nil pattern.
+
+**Space poker commitA/commitB**: Both handlers build a 5-element hash chain
+from 16 bytes of entropy and send the chain tip. The frontend auto-fires
+these during the "Shuffling..." phase.
+
+**Space poker end reveal**: The mover's handler has the base preimage from
+its curried chain and computes the optimal 5-card selection via
+`space_hand_calc`. It concatenates `preimage || bitfield` and sends it.
+The frontend calls `makeMove(gameId, null)` -- the handler fills in the
+actual 17-byte move. On-chain, this move is validated by `end.clsp` which
+independently derives all cards and checks the hand evaluation.
+
+### Frontend Pattern
+
+The frontend detects automatic moves by checking the game phase. During
+setup phases (commits), it calls `makeMove(gameId, null)` as soon as it's
+the player's turn, without waiting for user interaction. The UI shows a
+status message like "Shuffling..." while these automatic moves fire.
+
+```typescript
+// Auto-play commit steps
+if (phase === 'setup' && isMyTurn) {
+  gameObject.makeMove(gameId, null);
+}
+```
+
+---
+
+## Messages as Pre-Reveals
+
+Messages let a player pre-reveal a preimage they're committed to revealing
+on their next move anyway. The opponent can then derive information early
+rather than waiting for the formal move to arrive.
+
+### Why Pre-Reveal?
+
+In commit-reveal protocols, the reveal happens as part of a formal move.
+But after the commit step, the revealing player may need time to make a
+strategic decision (e.g. choosing discards in calpoker). Meanwhile, the
+opponent is waiting with no useful information to act on.
+
+If the revealer has no reason to withhold the preimage -- they're going to
+reveal it on their next move regardless, and there's no scenario where
+they'd fold instead -- they can send it ahead as a message. The opponent
+derives the information immediately and can start thinking about their
+response.
+
+### Calpoker Example
+
+After Bob sends his seed (step b), Alice processes it in her their-turn
+handler and can immediately derive the cards. She pre-reveals her preimage
+as a message. Bob's message parser decodes it and shows him the cards while
+Alice is still deciding her discards. When Alice's formal move (step c)
+arrives, Bob independently verifies the same information.
+
+### Mechanics
+
+1. A **my-turn handler** returns a `message_parser` at position 9. This
+   parser knows how to decode messages for the current game state.
+
+2. The **their-turn handler** processing the opponent's reply returns an
+   optional `message` at position 3. This message is sent out-of-band to
+   the opponent.
+
+3. The opponent's `message_parser` decodes the raw bytes into readable data
+   for the UI.
+
+Messages arrive as `GameMessage` events in the frontend, distinct from
+`OpponentMoved` events which come from the formal move protocol.
 
 ---
 

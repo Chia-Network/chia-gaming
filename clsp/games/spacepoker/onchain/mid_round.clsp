@@ -1,5 +1,6 @@
 (include *standard-cl-23*)
 
+(import games.spacepoker.onchain.begin_round exposing (program_hash as begin_hash))
 (import games.spacepoker.onchain.end exposing (program_hash as end_hash))
 (import games.game_codes)
 (import std.and)
@@ -7,28 +8,29 @@
 (import std.relops)
 (import std.li)
 
-; state is (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N begin_hash)
+; state is (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
 ;
-; begin_hash is begin_round's program hash, passed through the state to
-; avoid a circular import (begin_round imports mid_round, not vice versa).
-; mod_hash is mid_round's own hash, used for the raise self-loop.
+; begin_hash is imported directly (begin_round does not import mid_round,
+; so there is no circular dependency). mod_hash (mid_round's own hash) is
+; used for the raise self-loop and passed into begin_round's state on
+; callback so begin_round can transition here without importing mid_round.
 ;
 ; Image positions swap perspective each turn: begin_round outputs
 ; (waiter_image, mover_image) from its own view, which mid_round reads
 ; as (mover_image, waiter_image) since the mover/waiter roles alternate.
 ;
 ; MOVE is either:
-;   - a raise: >= 33 bytes, first 32 bytes ignored, rest is raise amount
-;   - a call: exactly 32 bytes, preimage that hashes to mover_image_N
+;   - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
+;   - a call: preimage that hashes to mover_image_N (16 bytes at N=1, 32 otherwise)
 ; evidence is empty
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N begin_hash)
-        previous_validation_program evidence output_conditions)
+        (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
+        previous_validation_program evidence)
 
-    (if (!= (strlen MOVE) 32)
-        ; raise branch
+    (if (> (strlen MOVE) 32)
+        ; raise branch — prior raise commits to pot for both players
         (assign
             new_raise_amount (substr MOVE 32 (strlen MOVE))
             (if_any_fail
@@ -36,26 +38,26 @@
                 (>= new_raise_amount 0)
                 (<= (+ half_pot last_raise_amount new_raise_amount) (/ AMOUNT 2))
                 0
-                ; swap image positions for next turn, carry begin_hash through
                 (list mod_hash
-                    (li bet_unit half_pot new_raise_amount
-                        waiter_image_N mover_image_N N begin_hash)
-                    42 "mid_round raise")
+                    (li bet_unit (+ half_pot last_raise_amount) new_raise_amount
+                        waiter_image_N mover_image_N N)
+                    42)
             )
         )
         ; call branch: MOVE is preimage that hashes to mover_image_N
         (if_any_fail
+            (= (strlen MOVE) (i (= N 1) 16 32))
             (= (sha256 MOVE) mover_image_N)
             (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
             0
             (if (= N 1)
                 (list end_hash
                     (li (+ half_pot last_raise_amount) waiter_image_N MOVE)
-                    33 "mid_round call final")
+                    17)
                 (list begin_hash
                     (li bet_unit (+ half_pot last_raise_amount)
-                        waiter_image_N MOVE (- N 1))
-                    42 "mid_round call")
+                        waiter_image_N MOVE (- N 1) mod_hash)
+                    42)
             )
         )
     )

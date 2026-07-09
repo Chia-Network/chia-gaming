@@ -1506,6 +1506,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 timeout: Timeout::new(15),
                                 my_turn,
                                 parameters: extras.clone(),
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
                             },
                         )?;
                         local_uis[*who]
@@ -1683,6 +1687,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 timeout: Timeout::new(15),
                                 my_turn: true,
                                 parameters: extras.clone(),
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
                             },
                         )?;
                         cradles[*who].flush_pending(allocator)?;
@@ -2094,6 +2102,34 @@ pub fn run_spacepoker_container_with_action_list(
     moves: &[GameAction],
 ) -> Result<GameRunOutcome, Error> {
     run_spacepoker_container_with_action_list_with_success_predicate(allocator, moves, None, None)
+}
+
+pub fn run_krunk_container_with_action_list_with_success_predicate(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    predicate: GameRunEarlySuccessPredicate,
+    per_player_balance: Option<u64>,
+) -> Result<GameRunOutcome, Error> {
+    let seed_data: [u8; 32] = [1; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let pk1: PrivateKey = rng.random();
+    let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
+    let pk2: PrivateKey = rng.random();
+    let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
+
+    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
+    let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
+    run_game_container_with_action_list_with_success_predicate(
+        allocator,
+        &mut rng,
+        private_keys,
+        &identities,
+        b"krunk",
+        &Program::from_hex("80")?,
+        moves,
+        predicate,
+        per_player_balance,
+    )
 }
 
 pub fn run_calpoker_proposal_only(
@@ -3432,6 +3468,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 timeout: Timeout::new(15),
                 my_turn: true,
                 parameters: borrowed.clone(),
+                initial_validation_program_hash: None,
+                initial_state: None,
+                initial_max_move_size: None,
+                initial_mover_share: None,
             },
         );
 
@@ -3446,6 +3486,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 timeout: Timeout::new(15),
                 my_turn: true,
                 parameters: borrowed.clone(),
+                initial_validation_program_hash: None,
+                initial_state: None,
+                initial_max_move_size: None,
+                initial_mover_share: None,
             },
         );
 

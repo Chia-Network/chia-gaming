@@ -6,7 +6,7 @@
     )
 )
 
-(defun expand_word word
+(defun expand_word (word)
     (list (substr word 0 1) (substr word 1 2) (substr word 2 3) (substr word 3 4) (substr word 4 5))
 )
 

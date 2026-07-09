@@ -346,36 +346,33 @@ impl BareDebugGameHandler {
         let (mover_pk, waiter_pk) = self.get_mover_and_waiter_pubkey();
 
         let update_args = InternalStateUpdateArgs {
-            referee_args: Rc::new(
-                RefereePuzzleArgs {
-                    nonce: self.nonce,
-                    validation_program: validation_program.clone(),
-                    previous_validation_info_hash,
-                    referee_coin_puzzle_hash: self.mod_hash.clone(),
-                    timeout: self.timeout.clone(),
-                    mover_pubkey: mover_pk.clone(),
-                    waiter_pubkey: waiter_pk.clone(),
-                    amount: self.start.amount.clone(),
-                    game_move: GameMoveDetails {
-                        basic: GameMoveStateInfo {
-                            move_made: move_to_check.to_vec(),
-                            mover_share: mover_share.clone(),
-                            max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
-                            max_move_size: self.max_move_size,
-                        },
-                        validation_program_hash: ValidationInfoHash::Hash(
-                            ValidationInfo::new_state_update(
-                                allocator,
-                                validation_program.clone(),
-                                self.state.p(),
-                            )
-                            .hash()
-                            .clone(),
-                        ),
+            referee_args: Rc::new(RefereePuzzleArgs {
+                nonce: self.nonce,
+                validation_program: validation_program.clone(),
+                previous_validation_info_hash,
+                referee_coin_puzzle_hash: self.mod_hash.clone(),
+                timeout: self.timeout.clone(),
+                mover_pubkey: mover_pk.clone(),
+                waiter_pubkey: waiter_pk.clone(),
+                amount: self.start.amount.clone(),
+                game_move: GameMoveDetails {
+                    basic: GameMoveStateInfo {
+                        move_made: move_to_check.to_vec(),
+                        mover_share: mover_share.clone(),
+                        max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
+                        max_move_size: self.max_move_size,
                     },
-                }
-                .off_chain(),
-            ),
+                    validation_program_hash: ValidationInfoHash::Hash(
+                        ValidationInfo::new_state_update(
+                            allocator,
+                            validation_program.clone(),
+                            self.state.p(),
+                        )
+                        .hash()
+                        .clone(),
+                    ),
+                },
+            }),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: self.state.p(),
