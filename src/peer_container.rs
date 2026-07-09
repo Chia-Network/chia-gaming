@@ -1438,12 +1438,7 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error> {
-        let (result, reported_effects) = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
-            self.peer.propose_game(&mut env, game)?
-        };
-        self.process_effects(reported_effects, allocator)?;
-        Ok(result)
+        self.propose_games(allocator, &[game.clone()])
     }
 
     fn propose_games(

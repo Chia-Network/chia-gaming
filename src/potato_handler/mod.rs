@@ -1531,64 +1531,7 @@ impl FromLocalUI for PotatoHandler {
         env: &mut ChannelHandlerEnv<'_>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        self.game_action_queue
-            .retain(|a| !matches!(a, GameAction::CleanShutdown));
-
-        // If a peer proposal is already pending, reject our local attempt
-        // immediately. We should not cancel peer proposals as a side effect
-        // of trying to propose while one is already pending.
-        let has_pending_peer = {
-            let ch = self.channel_handler()?;
-            !ch.pending_peer_proposal_ids().is_empty()
-        };
-        if has_pending_peer {
-            let cancelled_id = {
-                let ch = self.channel_handler_mut()?;
-                GameID(ch.allocate_my_nonce())
-            };
-            return Ok((
-                vec![cancelled_id],
-                vec![Effect::Notify(GameNotification::ProposalCancelled {
-                    id: cancelled_id,
-                    reason: CancelReason::PeerProposalPending,
-                })],
-            ));
-        }
-
-        let game_id = {
-            let ch = self.channel_handler_mut()?;
-            GameID(ch.allocate_my_nonce())
-        };
-
-        let (my_games, their_games) = self.get_games_by_start_type(env, true, &game_id, game)?;
-
-        let (my_games, their_games) = if game.my_turn {
-            (my_games, their_games)
-        } else {
-            (their_games, my_games)
-        };
-
-        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id).collect();
-
-        for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games).enumerate() {
-            let mut wire_start = game.clone();
-            wire_start.initial_validation_program_hash =
-                Some(mine.initial_validation_program.hash().clone());
-            wire_start.initial_state = Some(Program::from_bytes(mine.initial_state.pref().bytes()));
-            wire_start.initial_max_move_size = Some(mine.initial_max_move_size);
-            wire_start.initial_mover_share = Some(mine.initial_mover_share.clone());
-            let wire = WireProposeGame {
-                start: wire_start,
-                game_id,
-                start_index: index,
-                group_id: None,
-            };
-            self.push_action(GameAction::QueuedProposal(mine, wire));
-        }
-
-        let (_has_potato, effect) = self.send_potato_request_if_needed()?;
-        let effects: Vec<Effect> = effect.into_iter().collect();
-        Ok((game_id_list, effects))
+        FromLocalUI::propose_games(self, env, &[game.clone()])
     }
 
     fn propose_games(
@@ -1599,9 +1542,6 @@ impl FromLocalUI for PotatoHandler {
         if games.is_empty() {
             return Ok((vec![], vec![]));
         }
-        if games.len() == 1 {
-            return FromLocalUI::propose_game(self, env, &games[0]);
-        }
 
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
@@ -1624,6 +1564,7 @@ impl FromLocalUI for PotatoHandler {
             ));
         }
 
+        let is_group = games.len() > 1;
         let mut all_ids = Vec::new();
         let mut first_id: Option<GameID> = None;
 
@@ -1635,7 +1576,7 @@ impl FromLocalUI for PotatoHandler {
             if first_id.is_none() {
                 first_id = Some(game_id);
             }
-            let group_id = first_id;
+            let group_id = if is_group { first_id } else { None };
 
             let (my_games, their_games) =
                 self.get_games_by_start_type(env, true, &game_id, game)?;
@@ -1862,6 +1803,13 @@ impl PeerHandler for PotatoHandler {
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         <Self as FromLocalUI>::propose_game(self, env, game)
+    }
+    fn propose_games(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        games: &[GameStart],
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
+        <Self as FromLocalUI>::propose_games(self, env, games)
     }
     fn accept_proposal(
         &mut self,

@@ -963,19 +963,7 @@ export class SessionController implements PollingCradle {
   // --- Game actions (called by higher layer) ---
 
   proposeGame(params: ProposeGameParams): string[] {
-    if (!this.cradle) throw new Error('no cradle');
-    try {
-      const paramBytes = clvmToBytes(params.parameters);
-      const { parameters: _drop, ...wasmParams } = params;
-      const result = this.cradle.propose_game(wasmParams, paramBytes);
-      this.processResult(result);
-      return result?.ids || [];
-    } catch (e) {
-      const msg = extractErrorMessage(e);
-      console.error('[wasm] proposeGame failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
-      return [];
-    }
+    return this.proposeGames([params]);
   }
 
   proposeGames(paramsList: ProposeGameParams[]): string[] {

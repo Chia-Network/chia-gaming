@@ -944,40 +944,11 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn propose_game(cid: i32, game: JsValue, parameters: &[u8]) -> Result<JsValue, JsValue> {
-        let js_game_start =
-            serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
-        let parameters_program = Program::from_bytes(parameters);
-        with_game(cid, move |cradle: &mut JsCradle| {
-            let game_start = GameStart {
-                game_type: GameType(js_game_start.game_type.as_bytes().to_vec()),
-                timeout: Timeout::new(js_game_start.timeout),
-                amount: Amount::new(js_game_start.amount),
-                my_contribution: Amount::new(js_game_start.my_contribution),
-                my_turn: js_game_start.my_turn,
-                parameters: parameters_program,
-                initial_validation_program_hash: None,
-                initial_state: None,
-                initial_max_move_size: None,
-                initial_mover_share: None,
-            };
-            let ids = cradle.cradle.propose_game(
-                &mut cradle.allocator,
-                &game_start,
-            )?;
-            let dr = cradle
-                .cradle
-                .flush_and_collect(&mut cradle.allocator)?;
-
-            let events = collect_drain_events(&dr)?;
-            let ids_arr = js_sys::Array::new();
-            for id in &ids {
-                ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
-            }
-            let obj = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(&obj, &"ids".into(), &ids_arr);
-            let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
-            Ok(obj.into())
-        })
+        let games_arr = js_sys::Array::new();
+        games_arr.push(&game);
+        let params_arr = js_sys::Array::new();
+        params_arr.push(&js_sys::Uint8Array::from(parameters).into());
+        propose_games(cid, games_arr.into(), params_arr.into())
     }
 
     #[wasm_bindgen]
