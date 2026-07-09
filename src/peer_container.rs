@@ -189,19 +189,6 @@ pub trait PeerHandler {
         None
     }
 
-    /// Add or replace a game type in this handler's `game_types` map.
-    /// Default impl is a no-op: handlers that don't own game_types
-    /// (e.g. on-chain, spend-channel) ignore registration silently.
-    fn register_game_type(&mut self, _game_type: GameType, _factory: GameFactory) {}
-
-    /// Walk the handler's `game_types` map and call
-    /// `GameFactory::ensure_built` on each entry, reconstructing curried
-    /// programs from rebuild recipes after a cradle deserialize. Default
-    /// no-op for handlers that don't own a `game_types` map.
-    fn rehydrate_game_types(&mut self, _allocator: &mut AllocEncoder) -> Result<(), Error> {
-        Ok(())
-    }
-
     fn wallet_callback_failed(&mut self, _reason: String) {}
 
     fn has_active_on_chain_games(&self) -> bool {
@@ -692,23 +679,6 @@ impl SynchronousGameCradle {
         SynchronousGameCradle::new_with_keys(config, private_keys)
     }
 
-    /// Add or replace a game type in the underlying peer handler's game
-    /// types map. Used by hosts (e.g. WASM) that need to register games
-    /// whose factories depend on session-specific data (Krunk's dictionary
-    /// is curried at proposal time, so its factory can't be supplied at
-    /// cradle construction).
-    pub fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
-        self.peer.register_game_type(game_type, factory);
-    }
-
-    /// After deserializing the cradle, walk the active peer handler's
-    /// `game_types` map and reconstruct any curried programs that were
-    /// dropped during serialization (see `GameFactory::ensure_built`).
-    /// Hosts must call this once before using a freshly-deserialized
-    /// cradle, otherwise game starts will see `program = None`.
-    pub fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
-        self.peer.rehydrate_game_types(allocator)
-    }
 }
 
 impl BootstrapTowardWallet for SynchronousGameCradleState {
@@ -1653,129 +1623,6 @@ impl SynchronousGameCradle {
             return och.get_game_coin(game_id);
         }
         None
-    }
-}
-
-#[cfg(test)]
-mod cradle_rebuild_tests {
-    use super::*;
-    use crate::common::standard_coin::ChiaIdentity;
-    use crate::common::types::PrivateKey;
-    use crate::games::poker_collection;
-    use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
-    use rand::{Rng, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
-
-    /// Build a fresh `SynchronousGameCradle` whose `game_types` map contains
-    /// the standard registry (calpoker, spacepoker, krunk placeholder,
-    /// debug). Round-trip it through bencodex, call
-    /// `rehydrate_game_types` and verify the Krunk factory's curried
-    /// programs hash identically to the originals.
-    #[test]
-    fn cradle_round_trip_rebuilds_krunk_factory() {
-        let mut allocator = AllocEncoder::new();
-        let mut rng = ChaCha8Rng::from_seed([7u8; 32]);
-        let pk: PrivateKey = rng.random();
-        let identity = ChiaIdentity::new(&mut allocator, pk).expect("identity");
-        let private_keys: ChannelHandlerPrivateKeys = rng.random();
-        let game_types = poker_collection(&mut allocator);
-
-        let krunk_key = GameType(b"krunk".to_vec());
-        let original_program_hash = game_types
-            .get(&krunk_key)
-            .and_then(|f| f.program.as_ref())
-            .expect("krunk program present")
-            .sha256tree(&mut allocator);
-        let original_parser_hash = game_types
-            .get(&krunk_key)
-            .and_then(|f| f.parser_program.as_ref())
-            .expect("krunk parser present")
-            .sha256tree(&mut allocator);
-
-        let cradle = SynchronousGameCradle::new_with_keys(
-            SynchronousGameCradleConfig {
-                game_types,
-                have_potato: true,
-                identity: identity.clone(),
-                my_contribution: Amount::new(100),
-                their_contribution: Amount::new(100),
-                channel_timeout: Timeout::new(5),
-                unroll_timeout: Timeout::new(15),
-                reward_puzzle_hash: identity.puzzle_hash.clone(),
-            },
-            private_keys,
-        );
-
-        let bytes = bencodex::to_vec(&cradle).expect("serialize cradle");
-
-        // Sanity check the slim invariant: the serialized cradle stores
-        // only the rebuild recipe (dictionary words + reachable-position
-        // signatures + dict pubkey), not the full curried CLVM programs.
-        // The legacy path embedded both proposal and parser puzzles into
-        // serialization (millions of bytes each); this threshold is well
-        // below that and represents the size of just the recipe payload.
-        assert!(
-            bytes.len() < 2 * 1024 * 1024,
-            "serialized cradle should be slim (recipe only); got {} bytes",
-            bytes.len(),
-        );
-
-        let mut restored: SynchronousGameCradle =
-            bencodex::from_slice(&bytes).expect("deserialize cradle");
-
-        // Inspect game_types directly via the active handler. Before
-        // rehydrate, programs should be None for the Krunk entry that
-        // had a recipe.
-        {
-            let initiator = restored
-                .peer
-                .as_any()
-                .downcast_ref::<HandshakeInitiatorHandler>()
-                .expect("initiator handler");
-            let pre = initiator
-                .game_types_for_test()
-                .get(&krunk_key)
-                .expect("krunk in game_types");
-            assert!(
-                pre.program.is_none(),
-                "krunk program should be skipped during serde"
-            );
-            assert!(
-                pre.parser_program.is_none(),
-                "krunk parser should be skipped during serde"
-            );
-            assert!(
-                pre.rebuild.is_some(),
-                "krunk rebuild recipe should survive serde"
-            );
-        }
-
-        restored
-            .rehydrate_game_types(&mut allocator)
-            .expect("rehydrate");
-
-        let initiator = restored
-            .peer
-            .as_any()
-            .downcast_ref::<HandshakeInitiatorHandler>()
-            .expect("initiator handler");
-        let post = initiator
-            .game_types_for_test()
-            .get(&krunk_key)
-            .expect("krunk in game_types");
-        let rebuilt_program_hash = post
-            .program
-            .as_ref()
-            .expect("krunk program rebuilt")
-            .sha256tree(&mut allocator);
-        let rebuilt_parser_hash = post
-            .parser_program
-            .as_ref()
-            .expect("krunk parser rebuilt")
-            .sha256tree(&mut allocator);
-
-        assert_eq!(rebuilt_program_hash, original_program_hash);
-        assert_eq!(rebuilt_parser_hash, original_parser_hash);
     }
 }
 

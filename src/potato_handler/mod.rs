@@ -16,7 +16,7 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
     Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
@@ -609,23 +609,31 @@ impl PotatoHandler {
                         }));
                     }
 
-                    let (gsi, resolved_game_type) = self.hydrate_wire_proposal(env, wire)?;
-                    let ch = self.channel_handler_mut()?;
-                    ch.apply_received_proposal(env, &gsi)?;
-                    let game_id = gsi.game_id;
-                    let my_contribution = gsi.my_contribution_this_game.clone();
-                    let their_contribution = gsi.their_contribution_this_game.clone();
-                    let ivp_hash = gsi.initial_validation_program.hash().clone();
-                    let initial_state = gsi.initial_state.clone();
-                    effects.push(Effect::Notify(GameNotification::ProposalMade {
-                        id: game_id,
-                        my_contribution,
-                        their_contribution,
-                        timeout: gsi.timeout.clone(),
-                        initial_validation_program_hash: ivp_hash,
-                        initial_state,
-                        game_type: resolved_game_type,
-                    }));
+                    if !self.game_types.contains_key(&wire.start.game_type) {
+                        effects.push(Effect::Log(format!(
+                            "declining proposal for unknown game type {:?} (game {})",
+                            wire.start.game_type, wire.game_id,
+                        )));
+                    } else {
+                        let (gsi, resolved_game_type) =
+                            self.hydrate_wire_proposal(env, wire)?;
+                        let ch = self.channel_handler_mut()?;
+                        ch.apply_received_proposal(env, &gsi)?;
+                        let game_id = gsi.game_id;
+                        let my_contribution = gsi.my_contribution_this_game.clone();
+                        let their_contribution = gsi.their_contribution_this_game.clone();
+                        let ivp_hash = gsi.initial_validation_program.hash().clone();
+                        let initial_state = gsi.initial_state.clone();
+                        effects.push(Effect::Notify(GameNotification::ProposalMade {
+                            id: game_id,
+                            my_contribution,
+                            their_contribution,
+                            timeout: gsi.timeout.clone(),
+                            initial_validation_program_hash: ivp_hash,
+                            initial_state,
+                            game_type: resolved_game_type,
+                        }));
+                    }
                 }
                 BatchAction::AcceptProposal(game_id) => {
                     let ch = self.channel_handler_mut()?;
@@ -1097,8 +1105,7 @@ impl PotatoHandler {
         game_id: &GameID,
         game_start: &GameStart,
     ) -> Result<GameStartInfoPair, Error> {
-        let starter = if let Some(starter) = self.game_types.get_mut(&game_start.game_type) {
-            starter.ensure_built(env.allocator)?;
+        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
             starter
         } else {
             return Err(Error::StrErr(format!(
@@ -1113,7 +1120,7 @@ impl PotatoHandler {
             .program
             .as_ref()
             .ok_or_else(|| Error::StrErr(
-                "GameFactory program missing after ensure_built".to_string(),
+                "GameFactory program missing".to_string(),
             ))?
             .clone();
 
@@ -1765,15 +1772,6 @@ impl PeerHandler for PotatoHandler {
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         PotatoHandler::channel_handler(self)
-    }
-    fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
-        self.game_types.insert(game_type, factory);
-    }
-    fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
-        for factory in self.game_types.values_mut() {
-            factory.ensure_built(allocator)?;
-        }
-        Ok(())
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

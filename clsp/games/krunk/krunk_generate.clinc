@@ -8,6 +8,7 @@
 )
 (import games.krunk.krunk_dict_tree exposing dict_lookup)
 (import games.krunk.onchain.krunk_make_clue exposing make_clue)
+(import games.krunk.krunk_signed_dict exposing KRUNK_DICT_PUBKEY)
 
 (import std.li)
 (import std.curry)
@@ -17,10 +18,11 @@
 
 ; --- proposal factory / parser ---
 ;
-; DICT_TREE is a balanced BST of dictionary words curried into handlers at
-; registration time. DICT_PUBKEY is the aggregate BLS key for dictionary
-; range signing (both players' keys combined). The on-chain initial state
-; is (DICT_PUBKEY base_unit); the full tree stays off-chain.
+; DICT_TREE is curried into handlers at startup from a pre-signed hex file.
+; KRUNK_DICT_PUBKEY is the fixed BLS key whose signatures are in the tree,
+; imported as a compile-time constant.
+; The on-chain initial state is (KRUNK_DICT_PUBKEY base_unit); the full
+; tree stays off-chain.
 
 (import games.krunk.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
 (import games.krunk.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
@@ -29,7 +31,7 @@
 (defconstant MIN_WORD 0x8000000000)
 (defconstant MAX_WORD 0x7fffffffff)
 
-(defun krunk_make_proposal (DICT_TREE DICT_PUBKEY bet_size)
+(defun krunk_make_proposal (DICT_TREE bet_size)
     (assign
         base_unit (/ bet_size 50)
         (li
@@ -37,7 +39,7 @@
                 bet_size
                 bet_size
                 (li
-                    (li (* 2 bet_size) 1 commit_hash 0 32 (li DICT_PUBKEY base_unit) 0)
+                    (li (* 2 bet_size) 1 commit_hash 0 32 (li KRUNK_DICT_PUBKEY base_unit) 0)
                 )
             )
             (li
@@ -47,15 +49,13 @@
     )
 )
 
-; Parser is called as run_program(parser_clvm, wire_data) so wire_data is
-; the entire env. After currying with DICT_TREE and DICT_PUBKEY at
-; registration time, the env becomes (DICT_TREE DICT_PUBKEY . wire_data).
-(defun krunk_parser (DICT_TREE DICT_PUBKEY . wire_data)
+; Parser: curried with DICT_TREE at registration time, env is (DICT_TREE . wire_data).
+(defun krunk_parser (DICT_TREE . wire_data)
     (assign
         bet_size (f wire_data)
         base_unit (/ bet_size 50)
         (assert
-            (deep= wire_data (f (krunk_make_proposal DICT_TREE DICT_PUBKEY bet_size)))
+            (deep= wire_data (f (krunk_make_proposal DICT_TREE bet_size)))
             (li (list bet_size base_unit) (li (li val_commit (curry krunk_bob_handler_commit DICT_TREE))))
         )
     )

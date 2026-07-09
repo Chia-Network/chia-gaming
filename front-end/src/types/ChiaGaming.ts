@@ -194,7 +194,7 @@ export interface WasmConnection {
   create_rng: (seed: string) => number;
   create_game_cradle: (config: GameCradleCreateConfig) => { id: number; puzzle_hash: string };
   create_serialized_game: (serialized: Uint8Array, new_seed: string) => number;
-  deposit_file: (name: string, data: string) => void;
+  deposit_file: (name: string, data: Uint8Array) => void;
 
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => WasmResult | undefined;
@@ -235,13 +235,6 @@ export interface WasmConnection {
   propose_game: (cid: number, game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array) => WasmResult | undefined;
   accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
-  // Krunk: register a curried game type before proposing/accepting. Used
-  // when the game's CLVM factory depends on session-specific data (the
-  // dictionary) that isn't available at cradle construction.
-  register_game_type: (cid: number, name: string, hex: string, parser_hex?: string) => WasmResult | undefined;
-  // Curry a krunk dictionary into the raw make_proposal and parser hex.
-  // Returns the curried hex plus a sha256 of the canonicalised word list.
-  curry_krunk_programs: (words: string[]) => { proposal_hex: string; parser_hex: string; dict_hash: string; word_count: number };
   cancel_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -303,10 +296,6 @@ export class ChiaGame {
 
   cancel_proposal(game_id: string): WasmResult | undefined {
     return this.wasm.cancel_proposal(this.cradle, game_id);
-  }
-
-  register_game_type(name: string, hex: string, parser_hex?: string): WasmResult | undefined {
-    return this.wasm.register_game_type(this.cradle, name, hex, parser_hex);
   }
 
   amount(): bigint {

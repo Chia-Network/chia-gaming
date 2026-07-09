@@ -315,6 +315,8 @@ dependencies = [
  "chia-puzzles",
  "chia-traits 0.38.2",
  "chia_gaming",
+ "clvm-traits",
+ "clvm-utils",
  "clvmr",
  "flate2",
  "getrandom 0.3.4",

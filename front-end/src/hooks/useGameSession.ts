@@ -558,12 +558,6 @@ export interface UseGameSessionResult {
   submitComposedProposal: (perHandAmount: bigint, gameType: string, gameTimeout: bigint, spacepokerUnitSize?: bigint) => void;
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
-  // Curry the supplied krunk dictionary into the cradle's game type
-  // map and propose a new krunk game in one step.
-  registerKrunkAndPropose: (words: string[], perHandAmount: bigint, gameTimeout: bigint) => void;
-  // Same as acceptReviewedProposal but first registers the local
-  // krunk game type with the user's chosen dictionary.
-  acceptReviewedKrunkProposal: (words: string[]) => void;
   startCleanShutdown: () => void;
   cleanShutdownStarted: boolean;
   goOnChain: () => void;
@@ -1493,32 +1487,6 @@ export function useGameSession(
     setBetweenHandMode('decision');
   }, []);
 
-  // Krunk-specific helpers. The dictionary is curried into the raw
-  // make_proposal / parser hex via the WASM `curry_krunk_programs`
-  // export, then registered on the cradle as the 'krunk' game type
-  // (replacing any prior registration). Both peers must register the
-  // same curried programs; otherwise the parser's `(deep= wire_data ...)`
-  // assertion will reject the proposal on the receiving side.
-  const ensureKrunkRegistered = useCallback((words: string[]) => {
-    const sc = scRef.current;
-    if (!sc) throw new Error('no session controller');
-    const cradle = sc.cradle;
-    if (!cradle) throw new Error('cradle not available yet');
-    const curried = cradle.wasm.curry_krunk_programs(words);
-    cradle.register_game_type('krunk', curried.proposal_hex, curried.parser_hex);
-    return curried;
-  }, []);
-
-  const registerKrunkAndPropose = useCallback((words: string[], perHandAmount: bigint, gameTimeout: bigint) => {
-    ensureKrunkRegistered(words);
-    submitComposedProposal(perHandAmount, 'krunk', gameTimeout);
-  }, [ensureKrunkRegistered, submitComposedProposal]);
-
-  const acceptReviewedKrunkProposal = useCallback((words: string[]) => {
-    ensureKrunkRegistered(words);
-    acceptReviewedProposal();
-  }, [ensureKrunkRegistered, acceptReviewedProposal]);
-
   const rejectReviewedProposal = useCallback(() => {
     const review = reviewPeerProposalRef.current;
     if (review) {
@@ -1644,8 +1612,6 @@ export function useGameSession(
     submitComposedProposal,
     acceptReviewedProposal,
     rejectReviewedProposal,
-    registerKrunkAndPropose,
-    acceptReviewedKrunkProposal,
     startCleanShutdown,
     cleanShutdownStarted,
     goOnChain,

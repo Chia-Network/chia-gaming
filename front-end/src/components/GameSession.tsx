@@ -16,11 +16,6 @@ import {
 import SpacePoker from './SpacePoker';
 import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
-import {
-  countValidKrunkWords,
-  fetchDefaultKrunkDictionary,
-  normaliseKrunkWords,
-} from '../lib/krunkDictionary';
 import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog, type SessionModel } from '../lib/session/model';
 import type { ChannelState } from '../types/ChiaGaming';
 
@@ -551,64 +546,6 @@ function SpacePokerHand({
   );
 }
 
-function KrunkDictionaryEditor({
-  raw,
-  setRaw,
-  disabled,
-  status,
-}: {
-  raw: string;
-  setRaw: (s: string) => void;
-  disabled: boolean;
-  status: { wordCount: number; invalidCount: number; error?: string | null } | null;
-}) {
-  const loadDefault = useCallback(async () => {
-    try {
-      const text = await fetchDefaultKrunkDictionary();
-      setRaw(text);
-    } catch (e) {
-      console.error('failed to load default krunk dictionary', e);
-    }
-  }, [setRaw]);
-
-  return (
-    <div className='flex flex-col gap-1'>
-      <div className='flex items-center justify-between'>
-        <label className='text-xs font-medium text-canvas-text'>
-          Dictionary (one 5-letter word per line)
-        </label>
-        <Button
-          variant='outline'
-          color='neutral'
-          size='sm'
-          disabled={disabled}
-          onClick={loadDefault}
-        >
-          Use default
-        </Button>
-      </div>
-      <textarea
-        className='w-full h-32 rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-xs font-mono text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
-        value={raw}
-        spellCheck={false}
-        disabled={disabled}
-        onChange={(e) => setRaw(e.target.value)}
-        placeholder='CRANE&#10;SLATE&#10;TRAIN&#10;...'
-      />
-      {status && (
-        <div className='text-[11px] text-canvas-text flex flex-wrap gap-x-3'>
-          <span>Valid words: {status.wordCount}</span>
-          {status.invalidCount > 0 && (
-            <span className='text-alert-text'>
-              Ignored (non-5-letter / non-alpha): {status.invalidCount}
-            </span>
-          )}
-          {status.error && <span className='text-alert-text'>{status.error}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function ComposeProposalDialog({
   session,
@@ -619,7 +556,6 @@ function ComposeProposalDialog({
 }) {
   const defaultSpacePokerStackSize = 10;
   const isSpacepoker = session.composeGameType === 'spacepoker';
-  const isKrunk = session.composeGameType === 'krunk';
   const [spUnitSize, setSpUnitSize] = useState(() => {
     const remembered = session.lastHandTerms.gameType === 'spacepoker'
       ? session.lastHandTerms.spacepokerUnitSize
@@ -648,37 +584,6 @@ function ComposeProposalDialog({
   const gameTimeout = BigInt(timeoutStr || '0');
   const timeoutValid = gameTimeout > 0n;
 
-  const [krunkDictRaw, setKrunkDictRaw] = useState<string>('');
-  const [krunkError, setKrunkError] = useState<string | null>(null);
-
-  // Lazily load the default dictionary the first time the user picks
-  // krunk. We don't pre-fetch on mount because the user may never open
-  // the krunk option.
-  useEffect(() => {
-    if (!isKrunk || krunkDictRaw.length > 0) return;
-    let cancelled = false;
-    fetchDefaultKrunkDictionary()
-      .then((text) => {
-        if (!cancelled) setKrunkDictRaw(text);
-      })
-      .catch((e) => {
-        if (!cancelled)
-          setKrunkError(`Failed to load default dictionary: ${(e as Error).message}`);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isKrunk, krunkDictRaw.length]);
-
-  const krunkValidation = (() => {
-    if (!isKrunk) return null;
-    const normalised = normaliseKrunkWords(krunkDictRaw);
-    const { valid, invalid } = countValidKrunkWords(normalised);
-    return { words: valid, invalidCount: invalid.length };
-  })();
-
-  const krunkWordsValid = !isKrunk || (krunkValidation && krunkValidation.words.length > 0);
-
   const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
   const spTotalGame = spBetSize * 2n;
   const spExceedsBalance = maxPerHandMojos != null && spBetSize > maxPerHandMojos;
@@ -691,19 +596,6 @@ function ComposeProposalDialog({
 
   const submit = () => {
     if (perHandAmount <= 0n || !timeoutValid || session.composeProposalSent) return;
-    if (isKrunk) {
-      if (!krunkValidation || krunkValidation.words.length === 0) {
-        setKrunkError('Need at least one valid 5-letter word.');
-        return;
-      }
-      try {
-        session.registerKrunkAndPropose(krunkValidation.words, perHandAmount, gameTimeout);
-      } catch (e) {
-        setKrunkError((e as Error).message || 'Failed to register krunk game.');
-        return;
-      }
-      return;
-    }
     session.submitComposedProposal(
       perHandAmount,
       session.composeGameType,
@@ -776,19 +668,6 @@ function ComposeProposalDialog({
           />
         )}
 
-        {isKrunk && (
-          <KrunkDictionaryEditor
-            raw={krunkDictRaw}
-            setRaw={(s) => { setKrunkDictRaw(s); setKrunkError(null); }}
-            disabled={session.composeProposalSent}
-            status={
-              krunkValidation
-                ? { wordCount: krunkValidation.words.length, invalidCount: krunkValidation.invalidCount, error: krunkError }
-                : null
-            }
-          />
-        )}
-
         <div className='flex w-full flex-col items-center gap-1'>
           <label className='text-xs font-medium text-canvas-text'>Timeout (blocks)</label>
           <input
@@ -819,8 +698,7 @@ function ComposeProposalDialog({
             session.composeProposalSent ||
             perHandAmount <= 0n ||
             !timeoutValid ||
-            (isSpacepoker && !spValid) ||
-            (isKrunk && !krunkWordsValid)
+            (isSpacepoker && !spValid)
           }
           onClick={submit}
         >
@@ -837,51 +715,7 @@ function ReviewProposalDialog({
   session: import('../hooks/useGameSession').UseGameSessionResult;
 }) {
   const review = session.reviewPeerProposal;
-  const isKrunk = review?.terms.gameType === 'krunk';
-
-  const [krunkDictRaw, setKrunkDictRaw] = useState<string>('');
-  const [krunkError, setKrunkError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isKrunk || krunkDictRaw.length > 0) return;
-    let cancelled = false;
-    fetchDefaultKrunkDictionary()
-      .then((text) => {
-        if (!cancelled) setKrunkDictRaw(text);
-      })
-      .catch((e) => {
-        if (!cancelled)
-          setKrunkError(`Failed to load default dictionary: ${(e as Error).message}`);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isKrunk, krunkDictRaw.length]);
-
-  const krunkValidation = (() => {
-    if (!isKrunk) return null;
-    const normalised = normaliseKrunkWords(krunkDictRaw);
-    const { valid, invalid } = countValidKrunkWords(normalised);
-    return { words: valid, invalidCount: invalid.length };
-  })();
-
   if (!review) return null;
-
-  const accept = () => {
-    if (isKrunk) {
-      if (!krunkValidation || krunkValidation.words.length === 0) {
-        setKrunkError('Need at least one valid 5-letter word to accept.');
-        return;
-      }
-      try {
-        session.acceptReviewedKrunkProposal(krunkValidation.words);
-      } catch (e) {
-        setKrunkError((e as Error).message || 'Failed to register krunk game.');
-      }
-      return;
-    }
-    session.acceptReviewedProposal();
-  };
 
   return (
     <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
@@ -905,32 +739,12 @@ function ReviewProposalDialog({
             </p>
           ) : null;
         })()}
-        {isKrunk && (
-          <>
-            <p className='text-[11px] text-canvas-text'>
-              Both players must paste the same dictionary. If your list
-              differs from the proposer&apos;s, the protocol will reject the
-              proposal automatically.
-            </p>
-            <KrunkDictionaryEditor
-              raw={krunkDictRaw}
-              setRaw={(s) => { setKrunkDictRaw(s); setKrunkError(null); }}
-              disabled={false}
-              status={
-                krunkValidation
-                  ? { wordCount: krunkValidation.words.length, invalidCount: krunkValidation.invalidCount, error: krunkError }
-                  : null
-              }
-            />
-          </>
-        )}
         <div className='flex flex-wrap items-center gap-3'>
           <Button
             variant='solid'
             color='primary'
             size='sm'
-            disabled={isKrunk && (!krunkValidation || krunkValidation.words.length === 0)}
-            onClick={accept}
+            onClick={session.acceptReviewedProposal}
           >
             Yes
           </Button>

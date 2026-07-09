@@ -40,17 +40,21 @@ import { resolve } from 'path';
 // @ts-ignore
 import * as assert from 'assert';
 
-async function fetchHex(key: string): Promise<string> {
-  return fs.readFileSync(rooted(key), 'utf8');
-}
-
 function rooted(name: string) {
   // @ts-ignore
   return resolve(__dirname, '../../../..', name);
 }
 
+async function fetchPreset(key: string): Promise<Uint8Array> {
+  return new Uint8Array(fs.readFileSync(rooted(key)));
+}
+
+async function fetchHex(key: string): Promise<string> {
+  return fs.readFileSync(rooted(key), 'utf8');
+}
+
 function preset_file(name: string) {
-  deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
+  deposit_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
 }
 
 interface SimpleMessage { msgno: number; msg: Uint8Array };
@@ -463,7 +467,7 @@ it(
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init1 = new WasmStateInit(fetchHex);
+      let wasm_init1 = new WasmStateInit(fetchPreset);
       storeInitArgs(async () => {}, WholeWasmObject);
       let wasm_blob1 = await initSessionController(
         poller,
@@ -484,7 +488,7 @@ it(
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init2 = new WasmStateInit(fetchHex);
+      let wasm_init2 = new WasmStateInit(fetchPreset);
       let wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',

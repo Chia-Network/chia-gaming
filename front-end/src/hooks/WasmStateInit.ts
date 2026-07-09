@@ -30,13 +30,7 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   readyToInit.subscribe(subscriber);
 });
 
-export async function fetchHex(fetchUrl: string): Promise<string> {
-  const resp = await fetch(fetchUrl);
-  if (!resp.ok) {
-    throw new Error(`fetchHex ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
-  }
-  return resp.text();
-}
+
 
 //    gameStateInit.foo().then()
 export async function storeInitArgs(
@@ -53,13 +47,13 @@ const WASM_URL = 'chia_gaming_wasm_bg.wasm';
 
 export class WasmStateInit {
   wasmConnection: WasmConnection | undefined;
-  fetchHex: (key: string) => Promise<string>;
+  fetchPreset: (key: string) => Promise<Uint8Array>;
   deferredWasmConnection: Subject<WasmConnection>;
 
   constructor(
-    fetchHex: (key: string) => Promise<string>,
+    fetchPreset: (key: string) => Promise<Uint8Array>,
   ) {
-    this.fetchHex = fetchHex;
+    this.fetchPreset = fetchPreset;
     this.deferredWasmConnection = new Subject<WasmConnection>();
   }
 
@@ -80,11 +74,9 @@ export class WasmStateInit {
       'clsp/games/calpoker/calpoker_include_calpoker_parser.hex',
       'clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex',
       'clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex',
-      // Krunk hex is deposited so curry_krunk_programs (which calls
-      // read_hex_puzzle on these paths) can produce a dictionary-curried
-      // factory at proposal time.
       'clsp/games/krunk/krunk_include_krunk_make_proposal.hex',
       'clsp/games/krunk/krunk_include_krunk_parser.hex',
+      'clsp/games/krunk/krunk_signed_dict_tree.dat',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -114,10 +106,10 @@ export class WasmStateInit {
 
   loadPresets(presetFiles: string[]) {
     const presetFetches = presetFiles.map((partialUrl) => {
-      return this.fetchHex(partialUrl).then((text) => {
+      return this.fetchPreset(partialUrl).then((bytes) => {
         return {
           name: partialUrl,
-          content: text,
+          content: bytes,
         };
       });
     });
@@ -158,11 +150,13 @@ export class WasmStateInit {
   }
 
   async loadGameHexes(): Promise<GameHexes> {
+    const dec = new TextDecoder();
+    const fetchText = (url: string) => this.fetchPreset(url).then(b => dec.decode(b));
     const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
-      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
-      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
-      this.fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
-      this.fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
+      fetchText('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
+      fetchText('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+      fetchText('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
+      fetchText('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
     ]);
     return {
       calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },

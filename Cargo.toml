@@ -50,6 +50,10 @@ name = "chia-gaming-sim"
 path = "src/bin/simulator.rs"
 required-features = ["sim-server"]
 
+[[bin]]
+name = "gen-krunk-dict"
+path = "src/bin/gen_krunk_dict.rs"
+
 [lib]
 name = "chia_gaming"
 crate-type = ["rlib"]

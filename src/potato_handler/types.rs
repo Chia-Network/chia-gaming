@@ -236,39 +236,12 @@ impl std::fmt::Debug for GameAction {
     }
 }
 
-/// Recipe for rebuilding a `GameFactory`'s curried CLVM programs from a small
-/// amount of metadata. Stored in the cradle's serialized form instead of the
-/// fully-curried programs, which can be very large (e.g. Krunk bakes a signed
-/// dictionary tree into both proposal and parser, contributing the bulk of
-/// the cradle's serialized size).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GameFactoryRebuild {
-    /// Krunk: re-curry the proposal/parser from the dictionary words, the
-    /// flat aggregated reachable-gap signatures (96 bytes per sig) and the
-    /// aggregate dict pubkey (48 raw bytes).
-    Krunk {
-        words: Vec<Vec<u8>>,
-        aggregated_sigs: Vec<u8>,
-        dict_pubkey: Vec<u8>,
-    },
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameFactory {
-    /// The proposal (make_proposal) program. Skipped during serde so the
-    /// large curried CLVM doesn't bloat the serialized cradle. Reconstructed
-    /// from `rebuild` (when present) on deserialize via
-    /// `crate::games::ensure_factory_built`.
     #[serde(skip)]
     pub program: Option<Rc<Program>>,
-    /// The parser program used by the responder. Same serde treatment as
-    /// `program`.
     #[serde(skip)]
     pub parser_program: Option<Rc<Program>>,
-    /// Optional rebuild recipe. When present, `program` and `parser_program`
-    /// can be reconstructed lazily after deserialize.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rebuild: Option<GameFactoryRebuild>,
 }
 
 #[derive(Serialize, Deserialize)]

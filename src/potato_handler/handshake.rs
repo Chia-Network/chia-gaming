@@ -13,10 +13,6 @@ pub struct HandshakeB {
     pub reward_payout_signature: Aggsig,
     pub channel_key_pop: Aggsig,
     pub unroll_key_pop: Aggsig,
-    pub dict_signing_pubkey: PublicKey,
-    pub dict_signing_key_pop: Aggsig,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dict_partial_signatures: Option<Vec<u8>>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -26,7 +22,6 @@ pub type HandshakeA = HandshakeB;
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakeC {
     pub launcher_coin: CoinString,
-    pub dict_partial_signatures: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

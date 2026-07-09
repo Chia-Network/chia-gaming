@@ -40,10 +40,18 @@ export function destroySessionController(): void {
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
 
-async function fetchHex(fetchUrl: string): Promise<string> {
+async function fetchPreset(fetchUrl: string): Promise<Uint8Array> {
     const resp = await fetch(fetchUrl);
     if (!resp.ok) {
-        throw new Error(`fetchHex ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+        throw new Error(`fetchPreset ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+    }
+    return new Uint8Array(await resp.arrayBuffer());
+}
+
+async function fetchHexString(fetchUrl: string): Promise<string> {
+    const resp = await fetch(fetchUrl);
+    if (!resp.ok) {
+        throw new Error(`fetchHexString ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
     }
     return resp.text();
 }
@@ -134,7 +142,7 @@ export function getOrCreateSessionController(
     return { sessionController };
   }
 
-  const wasmStateInit = new WasmStateInit(fetchHex);
+  const wasmStateInit = new WasmStateInit(fetchPreset);
 
   sessionController = new SessionController(
     blockchain,
@@ -198,7 +206,7 @@ export function getOrCreateSessionController(
           throw new Error('Cannot start a new session without a blockchain connection');
         }
         startNewSession();
-        const gameHexes = await loadGameHexes(fetchHex);
+        const gameHexes = await loadGameHexes(fetchHexString);
         await configSessionController(
           sessionController!,
           iStarted,

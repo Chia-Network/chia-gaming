@@ -489,13 +489,15 @@ puzzle hash and combined amount.
 
 ## Reference Games
 
-The repository includes two reference games. **Calpoker** was implemented first
+The repository includes three reference games. **Calpoker** was implemented first
 and is the simpler example: a five-step commit-reveal poker variant with one
 main hand-evaluation payoff and one optional advisory pre-reveal. **Space Poker**
-is also a reference game; it illustrates a more involved multi-round poker flow,
-repeated betting/open states, and heavier use of advisory message parsers.
-Together they show different ways to structure validators and off-chain handlers
-on the same channel/referee foundation.
+illustrates a more involved multi-round poker flow with repeated betting/open
+states and heavier use of advisory message parsers. **Krunk** is a Wordle-style
+word-guessing game that demonstrates BLS-signed dictionary enforcement and
+on-chain slashing for out-of-dictionary plays. Together they show different ways
+to structure validators and off-chain handlers on the same channel/referee
+foundation.
 
 The Rust game collection also registers `debug` for simulator tests only. It is
 not a user-facing reference game.
@@ -607,6 +609,77 @@ dispatches incoming messages via `received_message`
 - `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
 - `src/test_support/spacepoker.rs` — Rust-side Space Poker helpers
 
+### Krunk
+
+Krunk is a Wordle-style word-guessing game. Alice picks a secret 5-letter word,
+commits to it (salted hash), and Bob has up to 5 guesses. After each wrong
+guess Alice gives a Wordle-style clue (correct/present/absent per letter).
+Bob either guesses correctly (winning a payout that decreases with each guess)
+or exhausts all 5 guesses (Alice keeps everything).
+
+Payouts are expressed as multiples of `base_unit = bet_size / 50`:
+
+| Guess # | Payout (× base_unit) |
+|---------|---------------------|
+| 1       | 100                 |
+| 2       | 100                 |
+| 3       | 20                  |
+| 4       | 5                   |
+| 5       | 1                   |
+
+#### Dictionary enforcement
+
+Both players must play words from a fixed dictionary (`krunkwords.txt`, 4775
+five-letter words). The dictionary is enforced via **BLS signatures over gap
+ranges**: the sorted dictionary has gaps between consecutive words (byte ranges
+where no valid word exists). Each gap is signed with a BLS key, and the
+signatures are arranged in a binary tree alongside the words. When Bob guesses a
+word not in the dictionary, Alice can produce a signed gap range proving the word
+falls between two adjacent dictionary entries — an `AGG_SIG_UNSAFE` condition
+the blockchain can verify.
+
+#### Pre-signed dictionary tree
+
+The dictionary tree and its signatures are generated once at build time by
+`cargo run --bin gen-krunk-dict`. This binary:
+
+1. Generates an ephemeral BLS keypair (never written to disk)
+2. Signs every gap range in the sorted dictionary
+3. Writes two files:
+   - `clsp/games/krunk/krunk_signed_dict.clinc` — exports the public key as
+     `KRUNK_DICT_PUBKEY`, compiled into the CLVM programs as a constant
+   - `clsp/games/krunk/krunk_signed_dict_tree.dat` — the signed dictionary
+     tree as binary-serialized CLVM, curried into handler programs at runtime
+
+**Both generated files are checked in.** They only need regeneration if the
+dictionary changes. Regenerating requires rebuilding chialisp afterward
+(`./cb.sh`) since the public key is compiled into the handler programs and must
+match the signatures in the tree.
+
+The `.dat` file uses a `.dat` extension (not `.hex`) because the chialisp build
+script deletes all `*.hex` files under `clsp/` before rebuilding.
+
+#### On-chain validators
+
+| Validator | Move | Validates |
+|-----------|------|-----------|
+| `commit.clsp` | `sha256(salt ‖ word)` (32 bytes) | Move is 32 bytes; initializes state with `(dict_pubkey, base_unit)` |
+| `guess.clsp` | 5-letter guess | Word is 5 bytes; evidence = signed gap range for out-of-dictionary slash |
+| `clue.clsp` | clue byte (1 byte) or `salt ‖ word` (21 bytes, reveal) | Clue correctness; reveal verifies `sha256(salt ‖ word) == commit`; wrong-clue slash via evidence index |
+
+**Key code:**
+
+- `clsp/games/krunk/krunk_generate.clinc` — off-chain handlers (Alice/Bob)
+- `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` — on-chain validators
+- `clsp/games/krunk/krunk_helpers.clinc` — clue encoding, payout tables
+- `clsp/games/krunk/krunk_signed_dict.clinc` — generated pubkey constant
+- `clsp/games/krunk/krunk_signed_dict_tree.dat` — generated signed tree (binary)
+- `src/games/krunk_dict_tree.rs` — tree construction and gap signing logic
+- `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
+- `src/tests/krunk_handlers.rs` — handler tests
+- `src/tests/krunk_validation.rs` — on-chain validation tests
+- `src/test_support/krunk.rs` — Krunk test registration and helpers
+
 ---
 
 ## Handler Architecture
@@ -697,6 +770,10 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
 | `clsp/games/spacepoker/onchain/*.clsp`       | Space Poker validation programs                           |
 | `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
+| `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
+| `clsp/games/krunk/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
+| `clsp/games/krunk/krunk_signed_dict.clinc`   | Generated: dict signing pubkey (see [Krunk](#krunk))      |
+| `clsp/games/krunk/krunk_signed_dict_tree.dat`| Generated: signed dict tree, binary CLVM (see [Krunk](#krunk)) |
 | `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
@@ -708,6 +785,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | ------------------------------------------- | -------------------------------------------------------- |
 | `src/test_support/calpoker.rs`              | Calpoker test registration and helpers                   |
 | `src/test_support/spacepoker.rs`            | Space Poker test registration and helpers                |
+| `src/test_support/krunk.rs`                 | Krunk test registration and helpers                      |
 | `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
 | `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/potato_handler.rs`   | Test peer helper                                         |

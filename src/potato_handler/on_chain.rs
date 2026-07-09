@@ -167,7 +167,6 @@ impl OnChainGameHandler {
                     my_channel_coin_private_key: PrivateKey::default(),
                     my_unroll_coin_private_key: PrivateKey::default(),
                     my_referee_private_key: PrivateKey::default(),
-                    my_dict_signing_private_key: PrivateKey::default(),
                 },
                 PuzzleHash::default(),
                 PuzzleHash::default(),
