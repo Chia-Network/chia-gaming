@@ -203,6 +203,20 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const FALLBACK_AMOUNT = 100n;
 
+const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
+  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
+  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+]);
+
+const MIN_TIMEOUT_BLOCKS = 3;
+const MAX_TIMEOUT_BLOCKS = 30;
+
+function isValidTimeoutString(v: string | undefined): boolean {
+  if (v === undefined) return true;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
+}
+
 const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   connected: 'Connected',
   reconnecting: 'Reconnecting',
@@ -722,6 +736,7 @@ const Shell = () => {
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
+  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -817,6 +832,7 @@ const Shell = () => {
     setSessionError(false);
     setSessionConfig(null);
     setPeerConn(null);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
@@ -853,6 +869,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(true);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     destroySessionController();
     clearSessionPreservingHistory();
@@ -1064,6 +1081,11 @@ const Shell = () => {
             sendSessionReject(params.peer_id);
             return;
           }
+          if (!isValidTimeoutString(params.channel_timeout) || !isValidTimeoutString(params.unroll_timeout)) {
+            console.log('[Shell] advisory_start declined: timeout out of range channel=%s unroll=%s', params.channel_timeout, params.unroll_timeout);
+            sendSessionReject(params.peer_id);
+            return;
+          }
           setPendingAdvisoryState(params);
           setActiveTab('game');
         },
@@ -1085,6 +1107,11 @@ const Shell = () => {
               sendSessionReject(fromId);
               return;
             }
+            if (!isValidTimeoutString(msg.channel_timeout) || !isValidTimeoutString(msg.unroll_timeout)) {
+              console.log('[Shell] session_proposal declined: timeout out of range channel=%s unroll=%s', msg.channel_timeout, msg.unroll_timeout);
+              sendSessionReject(fromId);
+              return;
+            }
             const proposalSessionId = msg.game_session_id ?? generateSessionId();
             peerSessionRef.current?.destroy();
             peerSessionRef.current = new PeerSession(fromId, proposalSessionId, conn);
@@ -1102,7 +1129,9 @@ const Shell = () => {
             console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, ps?.peerId, ps?.peerId === fromId);
             if (ps?.peerId === fromId) {
               markPeerDead();
-              if (sessionPhaseRef.current === 'none') {
+              const channelState = dashboardSessionModelRef.current?.channel.status.state;
+              const isPreActive = !channelState || PRE_ACTIVE_CHANNEL_STATES.has(channelState);
+              if (sessionPhaseRef.current === 'none' || isPreActive) {
                 cancelAttemptedSession();
               }
             }
@@ -1359,6 +1388,7 @@ const Shell = () => {
   }, []);
 
   const handleSessionModelChange = useCallback((model: SessionModel) => {
+    dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
   }, []);
 
@@ -1597,6 +1627,8 @@ const Shell = () => {
 
   const cancelDashboardSession = useCallback(() => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+    if (peerId) sendSessionReject(peerId);
     resetPeerRelayState();
     destroySessionController();
     clearSessionPreservingHistory();
@@ -1608,13 +1640,13 @@ const Shell = () => {
     setSessionError(false);
     setSessionConfig(null);
     setPeerConn(null);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(false);
-    setActiveTab('tracker');
     trackerConnRef.current?.setBusy(false, alias);
-  }, [clearSessionPreservingHistory, resetPeerRelayState, setActiveTab]);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, sendSessionReject]);
 
   const requestDashboardCleanShutdown = useCallback(() => {
     startCleanShutdownGrace();

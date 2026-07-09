@@ -465,6 +465,20 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     return;
   }
 
+  const MIN_TIMEOUT_BLOCKS = 3;
+  const MAX_TIMEOUT_BLOCKS = 30;
+  for (const field of ['channel_timeout', 'unroll_timeout'] as const) {
+    const raw = msg[field];
+    if (raw !== undefined) {
+      const val = Number(raw);
+      if (!Number.isInteger(val) || val < MIN_TIMEOUT_BLOCKS || val > MAX_TIMEOUT_BLOCKS) {
+        sendWs(ws, 'error', { error: `Invalid ${field}: must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.` });
+        sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+        return;
+      }
+    }
+  }
+
   const challenge = lobby.createChallenge(
     fromPlayer.id,
     target_id,
