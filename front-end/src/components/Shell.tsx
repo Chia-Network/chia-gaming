@@ -626,7 +626,7 @@ const Shell = () => {
           setAbandonEnabled(true);
         }, Number(ABANDON_DELAY_MS));
       }
-    } else {
+    } else if (channelState !== null) {
       if (abandonTimerRef.current !== null) {
         clearTimeout(abandonTimerRef.current);
         abandonTimerRef.current = null;
