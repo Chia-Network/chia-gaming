@@ -202,8 +202,8 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
-const ABANDON_DELAY_MS = 120_000;
-const GRACE_DELAY_MS = 10_000;
+const ABANDON_DELAY_MS = 120_000n;
+const GRACE_DELAY_MS = 10_000n;
 
 const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   connected: 'Connected',
@@ -461,7 +461,7 @@ const Shell = () => {
 
   const [abandonEnabled, setAbandonEnabled] = useState(false);
   const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const waitingEnteredAtRef = useRef<number | null>(null);
+  const waitingEnteredAtRef = useRef<bigint | null>(null);
 
   // Consent prompt state for the new tracker protocol
   const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
@@ -618,13 +618,13 @@ const Shell = () => {
   useEffect(() => {
     if (channelState && ABANDON_WAITING_STATES.has(channelState)) {
       if (waitingEnteredAtRef.current === null) {
-        const now = Date.now();
+        const now = BigInt(Date.now());
         waitingEnteredAtRef.current = now;
         saveSession({ waitingStateEnteredAt: now });
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
           setAbandonEnabled(true);
-        }, ABANDON_DELAY_MS);
+        }, Number(ABANDON_DELAY_MS));
       }
     } else {
       if (abandonTimerRef.current !== null) {
@@ -1462,7 +1462,7 @@ const Shell = () => {
 
     // Restore abandon timer from persisted timestamp
     if (save.waitingStateEnteredAt != null) {
-      const elapsed = Date.now() - save.waitingStateEnteredAt;
+      const elapsed = BigInt(Date.now()) - save.waitingStateEnteredAt;
       waitingEnteredAtRef.current = save.waitingStateEnteredAt;
       if (elapsed >= ABANDON_DELAY_MS) {
         setAbandonEnabled(true);
@@ -1470,19 +1470,19 @@ const Shell = () => {
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
           setAbandonEnabled(true);
-        }, ABANDON_DELAY_MS - elapsed);
+        }, Number(ABANDON_DELAY_MS - elapsed));
       }
     }
 
     // Restore clean shutdown grace from persisted timestamp
     if (save.cleanShutdownGraceStartedAt != null) {
-      const elapsed = Date.now() - save.cleanShutdownGraceStartedAt;
+      const elapsed = BigInt(Date.now()) - save.cleanShutdownGraceStartedAt;
       if (elapsed < GRACE_DELAY_MS) {
         setCleanShutdownGraceActive(true);
         cleanShutdownGraceTimerRef.current = setTimeout(() => {
           cleanShutdownGraceTimerRef.current = null;
           setCleanShutdownGraceActive(false);
-        }, GRACE_DELAY_MS - elapsed);
+        }, Number(GRACE_DELAY_MS - elapsed));
       }
     }
 
@@ -1647,12 +1647,12 @@ const Shell = () => {
       clearTimeout(cleanShutdownGraceTimerRef.current);
     }
     setCleanShutdownGraceActive(true);
-    saveSession({ cleanShutdownGraceStartedAt: Date.now() });
+    saveSession({ cleanShutdownGraceStartedAt: BigInt(Date.now()) });
     cleanShutdownGraceTimerRef.current = setTimeout(() => {
       cleanShutdownGraceTimerRef.current = null;
       setCleanShutdownGraceActive(false);
       saveSession({ cleanShutdownGraceStartedAt: undefined });
-    }, GRACE_DELAY_MS);
+    }, Number(GRACE_DELAY_MS));
   }, []);
 
   const cancelDashboardSession = useCallback(() => {

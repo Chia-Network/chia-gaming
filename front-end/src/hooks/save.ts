@@ -205,8 +205,8 @@ export interface SessionState {
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 
   // Timer persistence (epoch ms timestamps)
-  waitingStateEnteredAt?: number;
-  cleanShutdownGraceStartedAt?: number;
+  waitingStateEnteredAt?: bigint;
+  cleanShutdownGraceStartedAt?: bigint;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
