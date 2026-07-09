@@ -809,11 +809,9 @@ fn test_krunk_reveal_wrong_clue_slash() {
     let salt = [0x77; 16];
     let commit = make_commit_for(&salt, word);
 
-    // State: 2 guesses. Bob's guesses are ["slate", "crane"] (latest first).
-    // Alice gave clues for both. The clue for "slate" (at index 1) is wrong.
-    // Correct clue for make_clue("crane", "slate") would be some value X.
-    // We store 0x01 which is definitely wrong.
-    let bob_guesses = words_to_list(&mut allocator, &[b"slate", b"crane"]);
+    // Reveal-time state: latest guess has no clue yet, so clues are offset by
+    // one from guesses. Evidence index 1 checks the prior "crane" guess.
+    let bob_guesses = words_to_list(&mut allocator, &[b"crane", b"slate", b"crane"]);
     let wrong_clue = allocator.allocator().new_atom(&[0x01]).unwrap();
     let some_clue = allocator.allocator().new_atom(&[0x42]).unwrap();
     let a = allocator.allocator();
@@ -835,8 +833,8 @@ fn test_krunk_reveal_wrong_clue_slash() {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
-    // Evidence = index 1 (second clue is wrong).
-    // make_clue("crane", bob_guesses[1]) = make_clue("crane", "crane") = 0x72
+    // Evidence = index 1 (second prior clue is wrong).
+    // make_clue("crane", bob_guesses[2]) = make_clue("crane", "crane") = 0x72
     // alice_clues[1] = 0x01 ≠ 0x72 → slash succeeds
     let evidence = allocator.allocator().new_atom(&[0x01]).unwrap();
 
@@ -868,10 +866,9 @@ fn test_krunk_reveal_correct_clue_no_slash() {
     let salt = [0x88; 16];
     let commit = make_commit_for(&salt, word);
 
-    // State: 2 guesses. Bob guessed ["slate", "crane"] (latest first).
-    // Alice gave correct clue for "crane" at index 1.
-    // make_clue("crane", "crane") = 0x72
-    let bob_guesses = words_to_list(&mut allocator, &[b"slate", b"crane"]);
+    // Reveal-time state: latest guess has no clue yet, so clues are offset by
+    // one from guesses. Evidence index 1 checks the prior "crane" guess.
+    let bob_guesses = words_to_list(&mut allocator, &[b"crane", b"slate", b"crane"]);
     let correct_clue = allocator.allocator().new_atom(&[0x72]).unwrap();
     let some_clue = allocator.allocator().new_atom(&[0x42]).unwrap();
     let a = allocator.allocator();

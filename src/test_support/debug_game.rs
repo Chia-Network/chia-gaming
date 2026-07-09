@@ -538,8 +538,8 @@ impl BareDebugGameHandler {
                     &move_to_check,
                     &inputs.opponent_mover_share,
                     evidence.clone(),
-                )?;
-                if validator_response.is_none() {
+                );
+                if matches!(validator_response, Ok(None)) {
                     self.slash_detected = Some(evidence.clone());
                     return Ok(Some(evidence.to_program()));
                 }

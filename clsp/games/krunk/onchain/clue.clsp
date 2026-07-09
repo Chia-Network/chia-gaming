@@ -57,10 +57,13 @@
                 )
             )
             (if (= (strlen evidence) 1)
-                ; Slash: Alice gave a provably wrong clue at index evidence.
+                ; Slash: Alice gave a provably wrong prior clue. At reveal
+                ; time bob_guesses has one extra latest guess with no clue,
+                ; so evidence indexes alice_clues and bob_guesses is offset.
                 (assert
+                    (< evidence (len alice_clues))
                     (!= (make_clue (substr MOVE 16 21)
-                            (f (drop evidence bob_guesses)))
+                            (f (drop (+ evidence 1) bob_guesses)))
                         (f (drop evidence alice_clues)))
                     0
                 )

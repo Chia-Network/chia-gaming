@@ -386,14 +386,15 @@ impl TheirTurnReferee {
         )?;
 
         for evidence in result.slash_evidence.iter() {
-            if self
-                .run_state_update(
+            if matches!(
+                self.run_state_update(
                     allocator,
                     offchain_puzzle_args.clone(),
                     state.clone(),
                     evidence.clone(),
-                )?
-                .is_none()
+                ),
+                Ok(None)
+            )
             {
                 return Ok((
                     None,

@@ -628,7 +628,7 @@ fn test_krunk_multi_guess_game() {
     assert_eq!(alice_reveal.new_mover_share, 10, "4th guess payout = 5% of 200 = 10");
 
     // Bob receives the reveal. The framework passes nil state for terminal moves.
-    let _bob_reveal_receive = call_their_turn_handler(
+    let bob_reveal_receive = call_their_turn_handler(
         &mut allocator,
         bob_move.their_turn_handler,
         AMOUNT,
@@ -638,6 +638,9 @@ fn test_krunk_multi_guess_game() {
         alice_reveal.validator_for_my_move_hash,
         alice_reveal.new_mover_share,
     );
+    let evidence_items =
+        proper_list(allocator.allocator(), bob_reveal_receive.evidence_list, true).unwrap();
+    assert_eq!(evidence_items.len(), 5, "bob should return all plausible clue evidence indices");
 }
 
 fn test_krunk_5_wrong_guesses_alice_wins() {
@@ -805,12 +808,15 @@ fn test_krunk_bob_detects_wrong_clue() {
     let dict_pubkey = allocator.allocator().new_atom(&[0xAA; 48]).unwrap();
     let base_unit_node = (BET_SIZE / 50).to_clvm(&mut allocator).unwrap();
 
-    // 2 guesses: ["slate", "crane"] (latest first). Wrong clue at index 1.
+    // Reveal-time state: latest guess has no clue yet, so clues are offset by
+    // one from guesses. Wrong clue at evidence index 1 checks "crane".
     let bob_guesses = {
+        let latest = allocator.allocator().new_atom(b"world").unwrap();
         let w1 = allocator.allocator().new_atom(b"slate").unwrap();
         let w2 = allocator.allocator().new_atom(b"crane").unwrap();
         let t = allocator.allocator().new_pair(w2, NodePtr::NIL).unwrap();
-        allocator.allocator().new_pair(w1, t).unwrap()
+        let t = allocator.allocator().new_pair(w1, t).unwrap();
+        allocator.allocator().new_pair(latest, t).unwrap()
     };
     let wrong_clue = allocator.allocator().new_atom(&[0x01]).unwrap();
     let some_clue = allocator.allocator().new_atom(&[0x42]).unwrap();

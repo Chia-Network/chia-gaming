@@ -107,11 +107,13 @@ Their-turn return (normal move, 2-4 elements):
     tests each candidate by running the validator with that evidence;
     if the validator returns nil (slash) rather than a valid payload, the
     slash succeeds. If none of the candidates trigger a slash, the game
-    continues normally. Nil evidence is always tried automatically
-    before the handler is called, so the handler never needs to
-    include it. When the handler is certain the move is fraudulent, it
-    puts the evidence in the list and can return junk for the other
-    fields (they are ignored when a slash succeeds).
+    continues normally. Evidence candidates that do not apply must be
+    rejected by the validator as non-slashes (a non-nil result), not by
+    requiring the handler to pre-filter them. Nil evidence is always
+    tried automatically before the handler is called, so the handler
+    never needs to include it. When the handler is certain the move is
+    fraudulent, it puts the evidence in the list and can return junk for
+    the other fields (they are ignored when a slash succeeds).
   - message is optional (element may be absent). When present and non-empty,
     it is sent out-of-band to the opponent and parsed by their message_parser.
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Observable } from 'rxjs';
 import { SessionController } from '../hooks/SessionController';
 import {
@@ -11,7 +11,6 @@ import { GameplayEvent } from '../hooks/useGameSession';
 export interface KrunkProps {
   gameObject: SessionController;
   gameIds: string[];
-  iStarted: boolean;
   iProposedHand: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: bigint;
@@ -22,18 +21,42 @@ export interface KrunkProps {
 
 const MAX_GUESSES = 5;
 const TILE = 'w-12 h-12 text-xl';
+const FLIP_HALF_MS = 400;
+const FLIP_STAGGER_MS = 200;
 
-function tileColor(value: number): string {
-  if (value === 2) return 'bg-[#00875f] text-white border-[#00875f]';
-  if (value === 1) return 'bg-[#e89f00] text-white border-[#e89f00]';
-  if (value === 0) return 'bg-[#787c7e] text-white border-[#787c7e]';
-  return 'bg-canvas-bg text-canvas-text-contrast border-canvas-line';
-}
+const CLUE_COLORS: Record<number, { bg: string; border: string }> = {
+  2: { bg: '#00875f', border: '#00875f' },
+  1: { bg: '#e89f00', border: '#e89f00' },
+  0: { bg: '#787c7e', border: '#787c7e' },
+};
 
-function LetterCell({ letter, clueValue }: { letter: string; clueValue: number }) {
+function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValue: number; flipDelay?: number }) {
+  // 3 phases: 'idle' (neutral), 'half' (edge-on, swap color), 'done' (revealed)
+  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(flipDelay == null ? 'done' : 'idle');
+
+  useEffect(() => {
+    if (flipDelay == null) return;
+    setPhase('idle');
+    const t1 = setTimeout(() => setPhase('half'), flipDelay);
+    const t2 = setTimeout(() => setPhase('done'), flipDelay + FLIP_HALF_MS);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [flipDelay, clueValue, letter]);
+
+  const showColor = phase === 'done';
+  const color = CLUE_COLORS[clueValue];
+  const style: React.CSSProperties = {
+    transition: `transform ${FLIP_HALF_MS}ms ease-in-out`,
+    transform: phase === 'half' ? 'rotateX(90deg)' : 'rotateX(0deg)',
+    perspective: '600px',
+    ...(showColor && color
+      ? { backgroundColor: color.bg, borderColor: color.border, color: 'white' }
+      : {}),
+  };
+
   return (
     <div
-      className={`inline-flex items-center justify-center rounded border font-bold uppercase tabular-nums select-none ${TILE} ${tileColor(clueValue)}`}
+      className={`inline-flex items-center justify-center rounded border border-canvas-line bg-canvas-bg font-bold uppercase tabular-nums select-none text-canvas-text-contrast ${TILE}`}
+      style={style}
     >
       {letter}
     </div>
@@ -42,7 +65,7 @@ function LetterCell({ letter, clueValue }: { letter: string; clueValue: number }
 
 function EmptyCell({ letter }: { letter?: string }) {
   return (
-    <div className={`inline-flex items-center justify-center rounded border border-dashed border-canvas-line font-bold uppercase text-canvas-text-contrast ${TILE}`}>
+    <div className={`inline-flex items-center justify-center rounded border border-dashed border-canvas-line bg-canvas-bg font-bold uppercase text-canvas-text-contrast ${TILE}`}>
       {letter ?? ''}
     </div>
   );
@@ -56,11 +79,28 @@ function TargetCell({ letter }: { letter: string }) {
   );
 }
 
-function GuessRow({ guess }: { guess: KrunkGuess }) {
+function PendingGuessRow({ word }: { word: string }) {
   return (
     <div className='flex gap-1'>
       {[0, 1, 2, 3, 4].map(i => (
-        <LetterCell key={i} letter={guess.word.charAt(i)} clueValue={guess.clue[i]} />
+        <EmptyCell key={i} letter={word.charAt(i)} />
+      ))}
+    </div>
+  );
+}
+
+function GuessRow({ guess, animate }: { guess: KrunkGuess; animate?: boolean }) {
+  const pending = guess.clue.every(v => v === -1);
+  if (pending) return <PendingGuessRow word={guess.word} />;
+  return (
+    <div className='flex gap-1'>
+      {[0, 1, 2, 3, 4].map(i => (
+        <LetterCell
+          key={i}
+          letter={guess.word.charAt(i)}
+          clueValue={guess.clue[i]}
+          flipDelay={animate ? i * FLIP_STAGGER_MS : undefined}
+        />
       ))}
     </div>
   );
@@ -70,16 +110,18 @@ function Grid({
   guesses,
   draft,
   showDraftRow,
+  latestAnimateIndex,
 }: {
   guesses: KrunkGuess[];
   draft?: string;
   showDraftRow?: boolean;
+  latestAnimateIndex?: number;
 }) {
   const draftLetters = (draft ?? '').split('').slice(0, 5);
   const rows = [];
   for (let i = 0; i < MAX_GUESSES; i++) {
     if (i < guesses.length) {
-      rows.push(<GuessRow key={i} guess={guesses[i]} />);
+      rows.push(<GuessRow key={i} guess={guesses[i]} animate={latestAnimateIndex === i} />);
     } else if (showDraftRow && i === guesses.length) {
       rows.push(
         <div key={i} className='flex gap-1'>
@@ -112,7 +154,6 @@ function TargetRow({ word }: { word: string }) {
 const Krunk: React.FC<KrunkProps> = ({
   gameObject,
   gameIds,
-  iStarted,
   iProposedHand,
   gameplayEvent$,
   betSize: _betSize,
@@ -156,12 +197,41 @@ const Krunk: React.FC<KrunkProps> = ({
   const [wordDraft, setWordDraft] = useState('');
   const [guessDraft, setGuessDraft] = useState('');
 
-  // Clear guess draft when a guess is recorded.
+  const wordInputRef = useRef<HTMLInputElement>(null);
+  const guessInputRef = useRef<HTMLInputElement>(null);
+
+  // Track the index of the most recently resolved guess for animation.
+  // Detect new clues synchronously to avoid a flash frame, but persist
+  // the value in state so it survives re-renders while the animation plays.
+  const prevResolvedCountRef = useRef(0);
+  const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
+  const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
+  if (resolvedCount > prevResolvedCountRef.current) {
+    prevResolvedCountRef.current = resolvedCount;
+    setAnimateIndex(resolvedCount - 1);
+  }
+
+  // Auto-focus word input on mount.
   useEffect(() => {
-    if (bobHand.gameState.handler === KrunkHandler.BobGuess) {
-      setGuessDraft('');
+    if (!wordCommitted) {
+      wordInputRef.current?.focus();
     }
-  }, [bobHand.gameState.guesses.length, bobHand.gameState.handler]);
+  }, [wordCommitted]);
+
+  // Auto-focus guess input when guess phase starts.
+  const isBobGuessPhase =
+    wordCommitted &&
+    bobHand.gameState.role === 'bob' &&
+    bobHand.gameState.handler === KrunkHandler.BobGuess;
+
+  useEffect(() => {
+    if (isBobGuessPhase) {
+      setGuessDraft('');
+      guessInputRef.current?.focus();
+    }
+  }, [isBobGuessPhase]);
+
+  const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
 
   const onWordDraftChange = (raw: string) => {
     setWordDraft(raw.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 5));
@@ -180,15 +250,10 @@ const Krunk: React.FC<KrunkProps> = ({
   const submitGuess = () => {
     if (guessDraft.length !== 5) return;
     bobHand.submitGuess(guessDraft);
+    setGuessDraft('');
   };
 
-  const youLabel = myName ?? 'You';
   const themLabel = opponentName ?? 'Opponent';
-
-  const isBobGuessPhase =
-    wordCommitted &&
-    bobHand.gameState.role === 'bob' &&
-    bobHand.gameState.handler === KrunkHandler.BobGuess;
 
   const bobStatus = useMemo(() => {
     const gs = bobHand.gameState;
@@ -214,6 +279,9 @@ const Krunk: React.FC<KrunkProps> = ({
     return `Waiting for ${themLabel}…`;
   }, [aliceHand.gameState, themLabel]);
 
+  const guessInputDisabled = !isBobGuessPhase;
+  const showGuessInput = wordCommitted && !bobGameOver;
+
   return (
     <div className='flex flex-col gap-4 items-center py-4'>
       <div className='flex gap-6 items-start justify-center'>
@@ -225,32 +293,33 @@ const Krunk: React.FC<KrunkProps> = ({
           <Grid
             guesses={bobHand.gameState.guesses}
             draft={guessDraft}
-            showDraftRow={isBobGuessPhase}
+            showDraftRow={showGuessInput}
+            latestAnimateIndex={animateIndex}
           />
 
-          {isBobGuessPhase && (
-            <div className='flex flex-col items-center gap-2 mt-1'>
-              <input
-                type='text'
-                inputMode='text'
-                spellCheck={false}
-                autoCapitalize='characters'
-                className='w-40 rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-lg font-mono uppercase tracking-widest text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
-                value={guessDraft}
-                placeholder='_____'
-                onChange={e => onGuessDraftChange(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') submitGuess(); }}
-              />
-              <button
-                type='button'
-                className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-                disabled={guessDraft.length !== 5}
-                onClick={submitGuess}
-              >
-                Submit guess
-              </button>
-            </div>
-          )}
+          <div className={`flex flex-col items-center gap-2 mt-1 ${showGuessInput ? '' : 'hidden'}`}>
+            <input
+              ref={guessInputRef}
+              type='text'
+              inputMode='text'
+              spellCheck={false}
+              autoCapitalize='characters'
+              className='w-40 rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-lg font-mono uppercase tracking-widest text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid disabled:opacity-40 disabled:cursor-not-allowed'
+              value={guessDraft}
+              placeholder='_____'
+              disabled={guessInputDisabled}
+              onChange={e => onGuessDraftChange(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitGuess(); }}
+            />
+            <button
+              type='button'
+              className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+              disabled={guessInputDisabled || guessDraft.length !== 5}
+              onClick={submitGuess}
+            >
+              Submit guess
+            </button>
+          </div>
 
           <p className='text-xs text-canvas-text mt-1'>{bobStatus}</p>
         </div>
@@ -266,29 +335,28 @@ const Krunk: React.FC<KrunkProps> = ({
             <TargetRow word={aliceHand.gameState.secretWord} />
           )}
 
-          {!wordCommitted && (
-            <div className='flex flex-col items-center gap-2 mt-1'>
-              <input
-                type='text'
-                inputMode='text'
-                spellCheck={false}
-                autoCapitalize='characters'
-                className='w-40 rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-lg font-mono uppercase tracking-widest text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
-                value={wordDraft}
-                placeholder='_____'
-                onChange={e => onWordDraftChange(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') commitWord(); }}
-              />
-              <button
-                type='button'
-                className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-                disabled={wordDraft.length !== 5}
-                onClick={commitWord}
-              >
-                Commit secret word
-              </button>
-            </div>
-          )}
+          <div className={`flex flex-col items-center gap-2 mt-1 ${wordCommitted ? 'hidden' : ''}`}>
+            <input
+              ref={wordInputRef}
+              type='text'
+              inputMode='text'
+              spellCheck={false}
+              autoCapitalize='characters'
+              className='w-40 rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-lg font-mono uppercase tracking-widest text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+              value={wordDraft}
+              placeholder='_____'
+              onChange={e => onWordDraftChange(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitWord(); }}
+            />
+            <button
+              type='button'
+              className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+              disabled={wordDraft.length !== 5}
+              onClick={commitWord}
+            >
+              Commit secret word
+            </button>
+          </div>
 
           <p className='text-xs text-canvas-text mt-1'>{aliceStatus}</p>
         </div>

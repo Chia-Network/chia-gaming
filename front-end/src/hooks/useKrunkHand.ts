@@ -85,12 +85,31 @@ function programToClue(prog: Program): KrunkGuess['clue'] | null {
   return vals as KrunkGuess['clue'];
 }
 
-// Parse a readable that may be either a clue list `[c0..c4]` or a
-// reveal pair `(word, [c0..c4])`.
+function packedClueToClue(prog: Program): KrunkGuess['clue'] | null {
+  let clueByte: number;
+  try {
+    clueByte = Number(prog.toInt());
+  } catch {
+    return null;
+  }
+  let val = clueByte + 128;
+  if (val < 0 || val >= 3 ** 5) return null;
+  const clue: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    clue.push(val % 3);
+    val = Math.floor(val / 3);
+  }
+  if (clue.some((v) => v < 0 || v > 2)) return null;
+  return clue as KrunkGuess['clue'];
+}
+
+// Readables from Krunk handlers:
+//   nil                      — no info (commit)
+//   [c0..c4]                 — expanded clue list (non-terminal clue)
+//   (word, clue)             — word + clue, clue is expanded list or packed byte
 type KrunkReadable =
   | { kind: 'nil' }
   | { kind: 'clue'; clue: KrunkGuess['clue'] }
-  | { kind: 'reveal'; word: string; clue: KrunkGuess['clue'] }
   | { kind: 'guess'; word: string; clue: KrunkGuess['clue'] }
   | { kind: 'unknown' };
 
@@ -112,7 +131,7 @@ function parseKrunkReadable(prog: Program | null): KrunkReadable {
     }
     if (items.length === 2) {
       const word = atomToWord(items[0]);
-      const clue = programToClue(items[1]);
+      const clue = programToClue(items[1]) ?? packedClueToClue(items[1]);
       if (word && clue) {
         return { kind: 'guess', word: word.toUpperCase(), clue };
       }
@@ -288,11 +307,17 @@ export function useKrunkHand(
     if (!go || !gid) return;
     try {
       go.makeMove(gid, null);
+      const latest = gs.guesses[gs.guesses.length - 1];
+      const isReveal = !!latest && (latest.clue.every(v => v === 2) || gs.guesses.length >= MAX_GUESSES);
+      if (isReveal) {
+        finishGame(gs.secretWord, latest.clue);
+        return;
+      }
       transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false });
     } catch (e) {
       console.error('[krunk] alice auto-clue failed', e);
     }
-  }, [gs, transition]);
+  }, [gs, transition, finishGame]);
 
   const setSecretWord = useCallback((word: string) => {
     const go = gameObjectRef.current;
