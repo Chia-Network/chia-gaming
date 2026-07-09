@@ -434,7 +434,7 @@ mod sim_tests {
         party
             .player(1)
             .ch
-            .apply_received_proposal(env, &their_start)?;
+            .apply_received_proposal(env, &their_start, None)?;
         let recv_propose = party
             .player(1)
             .ch

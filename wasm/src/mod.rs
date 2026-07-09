@@ -981,6 +981,51 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
+        let js_games: Vec<JsGameStart> =
+            serde_wasm_bindgen::from_value(games).into_js()?;
+        let params_arr: Vec<Vec<u8>> =
+            serde_wasm_bindgen::from_value(parameters_list).into_js()?;
+        if js_games.len() != params_arr.len() {
+            return Err(JsValue::from_str("games and parameters_list must have the same length"));
+        }
+        with_game(cid, move |cradle: &mut JsCradle| {
+            let game_starts: Vec<GameStart> = js_games
+                .iter()
+                .zip(params_arr.iter())
+                .map(|(g, p)| GameStart {
+                    game_type: GameType(g.game_type.as_bytes().to_vec()),
+                    timeout: Timeout::new(g.timeout),
+                    amount: Amount::new(g.amount),
+                    my_contribution: Amount::new(g.my_contribution),
+                    my_turn: g.my_turn,
+                    parameters: Program::from_bytes(p),
+                    initial_validation_program_hash: None,
+                    initial_state: None,
+                    initial_max_move_size: None,
+                    initial_mover_share: None,
+                })
+                .collect();
+            let ids = cradle.cradle.propose_games(
+                &mut cradle.allocator,
+                &game_starts,
+            )?;
+            let dr = cradle
+                .cradle
+                .flush_and_collect(&mut cradle.allocator)?;
+            let events = collect_drain_events(&dr)?;
+            let ids_arr = js_sys::Array::new();
+            for id in &ids {
+                ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
+            }
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &"ids".into(), &ids_arr);
+            let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
+            Ok(obj.into())
+        })
+    }
+
+    #[wasm_bindgen]
     pub fn accept_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(game_id)?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {

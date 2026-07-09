@@ -589,6 +589,35 @@ impl PotatoHandler {
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
 
+        // Validate group consistency: if a peer accepted one member of a
+        // group we proposed, they must accept all members in the same batch.
+        {
+            let accepted_ids: Vec<GameID> = actions
+                .iter()
+                .filter_map(|a| match a {
+                    BatchAction::AcceptProposal(id) => Some(*id),
+                    _ => None,
+                })
+                .collect();
+            let ch = self.channel_handler()?;
+            for id in &accepted_ids {
+                if !ch.is_our_nonce_parity(id) {
+                    continue;
+                }
+                let members = ch.group_member_ids(id);
+                if members.len() > 1 {
+                    for member in &members {
+                        if !accepted_ids.contains(member) {
+                            return Err(Error::StrErr(format!(
+                                "peer accepted group member {id:?} but not {member:?} \
+                                 — partial group acceptance is a protocol violation"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
         for action in actions.iter() {
             match action {
                 BatchAction::ProposeGame(wire) => {
@@ -618,14 +647,30 @@ impl PotatoHandler {
                         let (gsi, resolved_game_type) =
                             self.hydrate_wire_proposal(env, wire)?;
                         let ch = self.channel_handler_mut()?;
-                        ch.apply_received_proposal(env, &gsi)?;
+                        ch.apply_received_proposal(env, &gsi, wire.group_id)?;
                         let game_id = gsi.game_id;
                         let my_contribution = gsi.my_contribution_this_game.clone();
                         let their_contribution = gsi.their_contribution_this_game.clone();
                         let ivp_hash = gsi.initial_validation_program.hash().clone();
                         let initial_state = gsi.initial_state.clone();
+                        let group_ids = if wire.group_id.is_some() {
+                            actions
+                                .iter()
+                                .filter_map(|a| match a {
+                                    BatchAction::ProposeGame(w)
+                                        if w.group_id == wire.group_id =>
+                                    {
+                                        Some(w.game_id)
+                                    }
+                                    _ => None,
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        };
                         effects.push(Effect::Notify(GameNotification::ProposalMade {
                             id: game_id,
+                            group_ids,
                             my_contribution,
                             their_contribution,
                             timeout: gsi.timeout.clone(),
@@ -958,9 +1003,10 @@ impl PotatoHandler {
                     batch_actions.push(BatchAction::AcceptTimeout(game_id, amount));
                 }
                 GameAction::QueuedProposal(my_gsi, their_wire) => {
+                    let gid = their_wire.group_id;
                     {
                         let ch = self.channel_handler_mut()?;
-                        ch.send_propose_game(env, &my_gsi)?;
+                        ch.send_propose_game(env, &my_gsi, gid)?;
                     }
                     batch_actions.push(BatchAction::ProposeGame(their_wire));
                 }
@@ -1535,6 +1581,7 @@ impl FromLocalUI for PotatoHandler {
                 start: wire_start,
                 game_id,
                 start_index: index,
+                group_id: None,
             };
             self.push_action(GameAction::QueuedProposal(mine, wire));
         }
@@ -1544,14 +1591,103 @@ impl FromLocalUI for PotatoHandler {
         Ok((game_id_list, effects))
     }
 
+    fn propose_games(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        games: &[GameStart],
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
+        if games.is_empty() {
+            return Ok((vec![], vec![]));
+        }
+        if games.len() == 1 {
+            return FromLocalUI::propose_game(self, env, &games[0]);
+        }
+
+        self.game_action_queue
+            .retain(|a| !matches!(a, GameAction::CleanShutdown));
+
+        let has_pending_peer = {
+            let ch = self.channel_handler()?;
+            !ch.pending_peer_proposal_ids().is_empty()
+        };
+        if has_pending_peer {
+            let cancelled_id = {
+                let ch = self.channel_handler_mut()?;
+                GameID(ch.allocate_my_nonce())
+            };
+            return Ok((
+                vec![cancelled_id],
+                vec![Effect::Notify(GameNotification::ProposalCancelled {
+                    id: cancelled_id,
+                    reason: CancelReason::PeerProposalPending,
+                })],
+            ));
+        }
+
+        let mut all_ids = Vec::new();
+        let mut first_id: Option<GameID> = None;
+
+        for game in games {
+            let game_id = {
+                let ch = self.channel_handler_mut()?;
+                GameID(ch.allocate_my_nonce())
+            };
+            if first_id.is_none() {
+                first_id = Some(game_id);
+            }
+            let group_id = first_id;
+
+            let (my_games, their_games) =
+                self.get_games_by_start_type(env, true, &game_id, game)?;
+            let (my_games, their_games) = if game.my_turn {
+                (my_games, their_games)
+            } else {
+                (their_games, my_games)
+            };
+
+            for gsi in my_games.iter() {
+                all_ids.push(gsi.game_id);
+            }
+
+            for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games).enumerate() {
+                let mut wire_start = game.clone();
+                wire_start.initial_validation_program_hash =
+                    Some(mine.initial_validation_program.hash().clone());
+                wire_start.initial_state =
+                    Some(Program::from_bytes(mine.initial_state.pref().bytes()));
+                wire_start.initial_max_move_size = Some(mine.initial_max_move_size);
+                wire_start.initial_mover_share = Some(mine.initial_mover_share.clone());
+                let wire = WireProposeGame {
+                    start: wire_start,
+                    game_id,
+                    start_index: index,
+                    group_id,
+                };
+                self.push_action(GameAction::QueuedProposal(mine, wire));
+            }
+        }
+
+        let (_has_potato, effect) = self.send_potato_request_if_needed()?;
+        let effects: Vec<Effect> = effect.into_iter().collect();
+        Ok((all_ids, effects))
+    }
+
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) =
-            self.do_game_action(GameAction::QueuedAcceptProposal(*game_id))?;
-        Ok(effects)
+        let group_ids = {
+            let ch = self.channel_handler()?;
+            ch.group_member_ids(game_id)
+        };
+        let mut all_effects = Vec::new();
+        for gid in group_ids {
+            let (_continued, effects) =
+                self.do_game_action(GameAction::QueuedAcceptProposal(gid))?;
+            all_effects.extend(effects);
+        }
+        Ok(all_effects)
     }
 
     fn cancel_proposal(
@@ -1559,9 +1695,17 @@ impl FromLocalUI for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) =
-            self.do_game_action(GameAction::QueuedCancelProposal(*game_id))?;
-        Ok(effects)
+        let group_ids = {
+            let ch = self.channel_handler()?;
+            ch.group_member_ids(game_id)
+        };
+        let mut all_effects = Vec::new();
+        for gid in group_ids {
+            let (_continued, effects) =
+                self.do_game_action(GameAction::QueuedCancelProposal(gid))?;
+            all_effects.extend(effects);
+        }
+        Ok(all_effects)
     }
 
     fn make_move(

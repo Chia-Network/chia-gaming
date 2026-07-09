@@ -922,7 +922,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                 <Krunk
                   key={session.handKey}
                   gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                  gameIds={session.activeGameIds}
                   iStarted={session.iStarted}
                   gameplayEvent$={session.gameplayEvent$}
                   betSize={session.currentHandAmount}

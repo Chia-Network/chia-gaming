@@ -110,6 +110,9 @@ export async function restoreSession(
   sc.history = [...(save.history ?? [])];
   sc.logHistory = [...(save.log ?? [])];
   sc.activeGameId = save.activeGameId ?? null;
+  sc.activeGameIds = save.activeGameIds && save.activeGameIds.length > 0
+    ? [...save.activeGameIds]
+    : save.activeGameId ? [save.activeGameId] : [];
   sc.handState = save.handState ?? null;
   sc.lastChannelStatus = save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }

@@ -233,6 +233,7 @@ export interface WasmConnection {
 
   // Game
   propose_game: (cid: number, game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array) => WasmResult | undefined;
+  propose_games: (cid: number, games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]) => WasmResult | undefined;
   accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
   cancel_proposal: (cid: number, game_id: string) => WasmResult | undefined;
@@ -284,6 +285,10 @@ export class ChiaGame {
 
   propose_game(game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array): WasmResult | undefined {
     return this.wasm.propose_game(this.cradle, game, parameters);
+  }
+
+  propose_games(games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]): WasmResult | undefined {
+    return this.wasm.propose_games(this.cradle, games, parameters_list);
   }
 
   accept_proposal(game_id: string): WasmResult | undefined {

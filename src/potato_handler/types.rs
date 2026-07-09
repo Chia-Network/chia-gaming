@@ -21,6 +21,8 @@ pub struct WireProposeGame {
     pub start: GameStart,
     pub game_id: GameID,
     pub start_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<GameID>,
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -110,6 +112,12 @@ pub trait FromLocalUI {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         game: &GameStart,
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
+
+    fn propose_games(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        games: &[GameStart],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
     fn accept_proposal(

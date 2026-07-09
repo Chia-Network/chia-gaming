@@ -887,6 +887,7 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
+        group_id: Option<GameID>,
     ) -> Result<(), Error> {
         let new_game_nonce = start_info.game_id.0;
 
@@ -914,6 +915,7 @@ impl ChannelHandler {
 
         self.proposed_games.push(ProposedGame::new(
             start_info.game_id,
+            group_id,
             ph,
             Rc::new(r),
             start_info.my_contribution_this_game.clone(),
@@ -929,7 +931,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<PotatoSignatures, Error> {
-        self.send_propose_game(env, start_info)?;
+        self.send_propose_game(env, start_info, None)?;
         self.update_cached_unroll_state(env)
     }
 
@@ -938,6 +940,7 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
+        group_id: Option<GameID>,
     ) -> Result<(), Error> {
         let new_game_nonce = start_info.game_id.0;
         let expected_parity = self.their_next_nonce % 2;
@@ -1026,6 +1029,7 @@ impl ChannelHandler {
 
         self.proposed_games.push(ProposedGame::new(
             start_info.game_id,
+            group_id,
             ph,
             Rc::new(r),
             start_info.my_contribution_this_game.clone(),
@@ -1124,6 +1128,31 @@ impl ChannelHandler {
 
     pub fn find_proposal(&self, game_id: &GameID) -> Option<&ProposedGame> {
         self.proposed_games.iter().find(|p| p.game_id == *game_id)
+    }
+
+    /// Return all GameIDs that share a group_id with the given game.
+    /// If the game has no group_id, returns just the game itself.
+    pub fn group_member_ids(&self, game_id: &GameID) -> Vec<GameID> {
+        let group = self
+            .proposed_games
+            .iter()
+            .find(|p| p.game_id == *game_id)
+            .and_then(|p| p.group_id);
+        match group {
+            Some(gid) => self
+                .proposed_games
+                .iter()
+                .filter(|p| p.group_id == Some(gid))
+                .map(|p| p.game_id)
+                .collect(),
+            None => {
+                if self.is_game_proposed(game_id) {
+                    vec![*game_id]
+                } else {
+                    vec![]
+                }
+            }
+        }
     }
 
     pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {

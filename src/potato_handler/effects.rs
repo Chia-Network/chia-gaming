@@ -122,6 +122,8 @@ pub enum GameNotification {
 
     ProposalMade {
         id: GameID,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        group_ids: Vec<GameID>,
         my_contribution: Amount,
         their_contribution: Amount,
         timeout: Timeout,

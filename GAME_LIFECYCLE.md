@@ -116,6 +116,32 @@ conflicting terms (different amounts) require user intervention.
 See `UX_NOTIFICATIONS.md` for the full `CancelReason` table and frontend
 behavior for each variant.
 
+### Grouped (Atomic) Proposals
+
+Multiple games can be proposed as a single atomic group by calling
+`propose_games` (plural) instead of `propose_game`. All games in the group
+share a `group_id` equal to the first game's nonce. This is used by Krunk,
+which always proposes two games as a pair (one where each player is Alice).
+
+**Wire format:** Each `ProposeGame` in the batch carries a `group_id` field.
+`ProposedGame` records in `proposed_games` store the same field.
+
+**Accept/cancel expansion:** When `accept_proposal` or `cancel_proposal` is
+called with a game ID that belongs to a group, the potato handler
+automatically expands the operation to all group members. The individual
+`AcceptProposal` / `CancelProposal` batch actions remain per-ID on the wire;
+the expansion happens in the potato handler before serialization.
+
+**Receive-side validation:** When a peer batch contains `AcceptProposal` for
+one member of a group we proposed, all other members of that group must also
+be accepted in the same batch. Partial group acceptance is a protocol
+violation that triggers batch rejection and go-on-chain.
+
+**Notification:** `ProposalMade` includes a `group_ids` field listing all game
+IDs in the group. The frontend uses this to present grouped proposals as one
+logical proposal and to skip duplicate `ProposalMade` notifications for
+secondary group members.
+
 ### WASM Accept-and-Move Convenience
 
 The WASM layer exposes an `accept_proposal_and_move` function that atomically accepts
@@ -123,8 +149,9 @@ a proposal and makes the first move. Internally this translates into two
 distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
 batch.
 
-**Key code:** `src/potato_handler/mod.rs` — `propose_game`, `accept_proposal`,
-`cancel_proposal`; `wasm/src/mod.rs` — `accept_proposal_and_move`
+**Key code:** `src/potato_handler/mod.rs` — `propose_game`, `propose_games`,
+`accept_proposal`, `cancel_proposal`;
+`wasm/src/mod.rs` — `propose_games`, `accept_proposal_and_move`
 
 ---
 

@@ -190,6 +190,8 @@ export function useKrunkHand(
         if (handFinishedRef.current) return;
 
         if ('OpponentMoved' in evt) {
+          const evtGameId = evt.OpponentMoved.gameId;
+          if (evtGameId && evtGameId !== gameIdRef.current) return;
           const prog = readableToProgram(evt.OpponentMoved.readable);
           const parsed = parseKrunkReadable(prog);
           const cur = gsRef.current;

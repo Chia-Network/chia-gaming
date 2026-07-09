@@ -89,6 +89,7 @@ export interface HandTermsModel {
 
 export interface BetweenHandProposalModel {
   id: string;
+  groupIds: string[];
   terms: HandTermsModel;
 }
 
@@ -724,6 +725,7 @@ export interface GameSessionViewModel {
   gameTerminal: GameTerminalModel;
   currentHandAmount: bigint;
   activeGameId: string | null;
+  activeGameIds: string[];
   activeGameType: string;
   displayGameId: string | null;
   betweenHands: boolean;
@@ -738,6 +740,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
     gameTerminal: model.game.terminal,
     currentHandAmount: model.betweenHand.lastTerms.myContribution,
     activeGameId: model.game.activeIds[0] ?? null,
+    activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,
     displayGameId: selectDisplayGameId(model),
     betweenHands: selectBetweenHands(model),
@@ -797,7 +800,7 @@ type SavedHandTerms = {
   spacepoker_unit_size?: string;
 };
 
-type SavedProposal = SavedHandTerms & { id: string };
+type SavedProposal = SavedHandTerms & { id: string; groupIds?: string[] };
 
 function parseTermsSnapshot(
   saved: SavedHandTerms | null | undefined,
@@ -831,6 +834,7 @@ function parseProposalSnapshot(
   if (!saved) return null;
   return {
     id: saved.id,
+    groupIds: saved.groupIds ?? [],
     terms: parseTermsSnapshot(saved, fallbackTerms),
   };
 }
@@ -867,7 +871,9 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  const activeIds = save.activeGameId ? [save.activeGameId] : [];
+  const activeIds = save.activeGameIds && save.activeGameIds.length > 0
+    ? save.activeGameIds
+    : save.activeGameId ? [save.activeGameId] : [];
 
   return createSessionModel({
     restore: {
@@ -914,9 +920,9 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
             cleanEnd: save.gameTerminalCleanEnd,
           }
         : INITIAL_GAME_TERMINAL_MODEL,
-      handKey: (save.activeGameId || save.handState || save.betweenHandLastTerms) ? 1 : 0,
+      handKey: (activeIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
       activeIds,
-      lastDisplayedId: save.activeGameId ?? null,
+      lastDisplayedId: activeIds[0] ?? null,
       activeGameType: save.activeGameType ?? 'calpoker',
       handState: save.handState ?? null,
       queue: parseQueuedNotifications(save.gameNotifQueue),
@@ -999,12 +1005,14 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     betweenHandCachedPeerProposal: model.betweenHand.cachedPeerProposal
       ? {
           id: model.betweenHand.cachedPeerProposal.id,
+          groupIds: model.betweenHand.cachedPeerProposal.groupIds,
           ...termsSnapshot(model.betweenHand.cachedPeerProposal.terms),
         }
       : undefined,
     betweenHandReviewPeerProposal: model.betweenHand.reviewPeerProposal
       ? {
           id: model.betweenHand.reviewPeerProposal.id,
+          groupIds: model.betweenHand.reviewPeerProposal.groupIds,
           ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
       : undefined,

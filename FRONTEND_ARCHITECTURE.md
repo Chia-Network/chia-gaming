@@ -1112,6 +1112,13 @@ a multiplexer (game ID → component mapping) and the JS-side guards are relaxed
 `gameIdsRef.current.length > 0` (a game is active). This prevents the user
 from proposing a new hand while one is in progress.
 
+**Grouped proposals** — For games that require multiple concurrent games per
+hand (e.g. Krunk), `proposeNewGame` calls `proposeGames` (plural) with all
+games in a single call. The Rust layer tags them with a shared `group_id` so
+accepts and cancels are atomic. On the receive side, the `ProposalMade`
+notification carries `group_ids`; the frontend skips secondary group members
+and presents one logical proposal to the user.
+
 **Receive guard** — When a `ProposalMade` notification arrives while a game is
 active (`handKeyRef.current > 0 && gameIdsRef.current.length === 0` is false),
 the handler calls `cancel_proposal` to reject it outright, rather than caching

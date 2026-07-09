@@ -517,6 +517,7 @@ describe('session model selectors', () => {
         cachedPeerProposal: null,
         reviewPeerProposal: {
           id: '42',
+          groupIds: [],
           terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n, gameTimeout: 31n, spacepokerUnitSize: 2n },
         },
         rejectedOnceTerms: null,
@@ -726,7 +727,7 @@ describe('session model selectors', () => {
 
     const terminalEvent = { Timeout: { byUs: false, forfeited: true } };
     expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
-      { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]) } },
+      { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7' } },
       { Timeout: { byUs: false, forfeited: true } },
     ]);
   });

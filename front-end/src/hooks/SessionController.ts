@@ -38,6 +38,7 @@ export interface WasmFields {
   history: string[];
   log: string[];
   activeGameId: string | null;
+  activeGameIds: string[];
   handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
@@ -130,6 +131,7 @@ export class SessionController implements PollingCradle {
   private pendingAcks: bigint[] = [];
   private pendingEffects = new Set<Promise<void>>();
   activeGameId: string | null = null;
+  activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
@@ -646,12 +648,20 @@ export class SessionController implements PollingCradle {
         }
       }
       if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
-        this.activeGameId = String(n.ProposalAccepted.id);
+        const acceptedId = String(n.ProposalAccepted.id);
+        this.activeGameId = acceptedId;
+        if (!this.activeGameIds.includes(acceptedId)) {
+          this.activeGameIds.push(acceptedId);
+        }
       }
       if (tag === 'GameStatus') {
         const gs = (n as Record<string, Record<string, unknown>>).GameStatus;
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
-          this.activeGameId = null;
+          const endedId = gs.id != null ? String(gs.id) : null;
+          this.activeGameIds = this.activeGameIds.filter(id => id !== endedId);
+          if (this.activeGameIds.length === 0) {
+            this.activeGameId = null;
+          }
         }
       }
       this.history.push(jsonStringify(n));
@@ -908,6 +918,7 @@ export class SessionController implements PollingCradle {
         history: [...this.history],
         log: [...this.logHistory],
         activeGameId: this.activeGameId,
+        activeGameIds: [...this.activeGameIds],
         handState: this.handState,
         channelStatus: this.lastChannelStatus,
         myAlias: this.myAlias,
@@ -962,6 +973,25 @@ export class SessionController implements PollingCradle {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] proposeGame failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      return [];
+    }
+  }
+
+  proposeGames(paramsList: ProposeGameParams[]): string[] {
+    if (!this.cradle) throw new Error('no cradle');
+    try {
+      const wasmParamsList = paramsList.map(p => {
+        const { parameters: _drop, ...rest } = p;
+        return rest;
+      });
+      const paramBytesList = paramsList.map(p => clvmToBytes(p.parameters));
+      const result = this.cradle.propose_games(wasmParamsList, paramBytesList);
+      this.processResult(result);
+      return result?.ids || [];
+    } catch (e) {
+      const msg = extractErrorMessage(e);
+      console.error('[wasm] proposeGames failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
       return [];
     }

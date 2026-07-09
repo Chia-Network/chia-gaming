@@ -659,6 +659,16 @@ match the signatures in the tree.
 The `.dat` file uses a `.dat` extension (not `.hex`) because the chialisp build
 script deletes all `*.hex` files under `clsp/` before rebuilding.
 
+#### Atomic paired proposals
+
+A Krunk hand always involves two simultaneous games — one where each player is
+Alice (word-picker) and one where each is Bob (guesser). These two games are
+proposed as a single atomic group using `propose_games` (plural). Both games
+share a `group_id` equal to the first game's nonce, so accepting or cancelling
+either game automatically applies to both. See
+[Grouped Proposals](GAME_LIFECYCLE.md#grouped-atomic-proposals) for the
+general mechanism.
+
 #### On-chain validators
 
 | Validator | Move | Validates |
@@ -810,12 +820,12 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `PotatoHandler`                 | `potato_handler/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
 | `OnChainGameHandler`            | `potato_handler/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
 | `LiveGame`                      | `channel_handler/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
-| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | Pending game proposal (stored in `proposed_games`)                                                           |
+| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | Pending game proposal (stored in `proposed_games`); carries optional `group_id` for atomic grouped proposals |
 | `UnrollCoin`                    | `channel_handler/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameCradle`                    | `peer_container.rs`                            | Trait for synchronous game interaction (tests/UI)                                                            |
 | `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
-| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
+| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: `ProposeGame` (with optional `group_id`), `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
 | `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposal`, `CleanShutdown`, `Cheat`                   |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |

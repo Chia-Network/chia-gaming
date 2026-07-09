@@ -143,6 +143,15 @@ pub trait PeerHandler {
             "propose_game: not in off-chain phase".to_string(),
         ))
     }
+    fn propose_games(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _games: &[GameStart],
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
+        Err(Error::StrErr(
+            "propose_games: not in off-chain phase".to_string(),
+        ))
+    }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -355,6 +364,14 @@ pub trait GameCradle {
         &mut self,
         allocator: &mut AllocEncoder,
         game: &GameStart,
+    ) -> Result<Vec<GameID>, Error>;
+
+    /// Propose multiple games as an atomic group. All games share
+    /// a group_id equal to the first game's nonce.
+    fn propose_games(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        games: &[GameStart],
     ) -> Result<Vec<GameID>, Error>;
 
     /// Explicitly accept a proposed game. Moves it from proposed to live,
@@ -1424,6 +1441,19 @@ impl GameCradle for SynchronousGameCradle {
         let (result, reported_effects) = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
             self.peer.propose_game(&mut env, game)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(result)
+    }
+
+    fn propose_games(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        games: &[GameStart],
+    ) -> Result<Vec<GameID>, Error> {
+        let (result, reported_effects) = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.propose_games(&mut env, games)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)
