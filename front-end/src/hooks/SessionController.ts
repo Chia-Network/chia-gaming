@@ -151,6 +151,8 @@ export class SessionController implements PollingCradle {
   constructor(
     blockchain: BlockchainPoller | null,
     uniqueId: string,
+    myContribution: bigint,
+    theirContribution: bigint,
     peer_conn: PeerConnectionResult,
   ) {
     Object.defineProperty(this, '_handState', {
@@ -166,8 +168,8 @@ export class SessionController implements PollingCradle {
     this.remoteNumber = 0n;
     this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
     this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
-    this.myContribution = 0n;
-    this.theirContribution = 0n;
+    this.myContribution = myContribution;
+    this.theirContribution = theirContribution;
     this.perGameAmount = 0n;
     this.iStarted = false;
     this.channelReady = false;

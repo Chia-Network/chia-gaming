@@ -140,10 +140,10 @@ export function getOrCreateSessionController(
   sessionController = new SessionController(
     blockchain,
     uniqueId,
+    myContribution,
+    theirContribution,
     peerConn,
   );
-  sessionController.myContribution = myContribution;
-  sessionController.theirContribution = theirContribution;
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;
