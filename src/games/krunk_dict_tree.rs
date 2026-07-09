@@ -72,7 +72,9 @@ pub fn generate_gap_evidence(sorted_words: &[&[u8]]) -> Vec<[u8; 10]> {
 
     // Interior gaps: (word[i-1] + 1) || (word[i] - 1)
     for i in 1..n {
-        let prev: [u8; 5] = sorted_words[i - 1].try_into().expect("word must be 5 bytes");
+        let prev: [u8; 5] = sorted_words[i - 1]
+            .try_into()
+            .expect("word must be 5 bytes");
         let curr: [u8; 5] = sorted_words[i].try_into().expect("word must be 5 bytes");
         let left = word_add_one(&prev);
         let right = word_sub_one(&curr);
@@ -87,7 +89,9 @@ pub fn generate_gap_evidence(sorted_words: &[&[u8]]) -> Vec<[u8; 10]> {
 
     // Last gap: (last_word + 1) || MAX_WORD
     {
-        let last: [u8; 5] = sorted_words[n - 1].try_into().expect("word must be 5 bytes");
+        let last: [u8; 5] = sorted_words[n - 1]
+            .try_into()
+            .expect("word must be 5 bytes");
         if last != MAX_WORD {
             let mut gap = [0u8; 10];
             gap[..5].copy_from_slice(&word_add_one(&last));
@@ -117,7 +121,9 @@ pub fn reachable_gap_mask(sorted_words: &[&[u8]]) -> Vec<bool> {
 
     // Interior gaps
     for i in 1..n {
-        let prev: [u8; 5] = sorted_words[i - 1].try_into().expect("word must be 5 bytes");
+        let prev: [u8; 5] = sorted_words[i - 1]
+            .try_into()
+            .expect("word must be 5 bytes");
         let curr: [u8; 5] = sorted_words[i].try_into().expect("word must be 5 bytes");
         let left = word_add_one(&prev);
         let right = word_sub_one(&curr);
@@ -125,7 +131,9 @@ pub fn reachable_gap_mask(sorted_words: &[&[u8]]) -> Vec<bool> {
     }
 
     // Gap n: reachable unless last word == MAX_WORD
-    let last: [u8; 5] = sorted_words[n - 1].try_into().expect("word must be 5 bytes");
+    let last: [u8; 5] = sorted_words[n - 1]
+        .try_into()
+        .expect("word must be 5 bytes");
     mask.push(last != MAX_WORD);
 
     mask
@@ -164,7 +172,7 @@ pub fn sigs_to_bytes(sigs: &[Aggsig]) -> Vec<u8> {
 /// Deserialize a flat byte blob back into individual signatures.
 /// Returns an error if the blob length is not a multiple of 96.
 pub fn sigs_from_bytes(blob: &[u8]) -> Result<Vec<Aggsig>, Error> {
-    if blob.len() % 96 != 0 {
+    if !blob.len().is_multiple_of(96) {
         return Err(Error::StrErr(format!(
             "dict sig blob length {} not a multiple of 96",
             blob.len()
@@ -437,7 +445,10 @@ mod tests {
         assert_eq!(word_add_one(&[0, 0, 0, 0, 0xff]), [0, 0, 0, 1, 0]);
         assert_eq!(word_add_one(&[0, 0, 0, 0xff, 0xff]), [0, 0, 1, 0, 0]);
         // "crane" = [99, 114, 97, 110, 101]
-        assert_eq!(word_add_one(&[99, 114, 97, 110, 101]), [99, 114, 97, 110, 102]);
+        assert_eq!(
+            word_add_one(&[99, 114, 97, 110, 101]),
+            [99, 114, 97, 110, 102]
+        );
     }
 
     #[test]
@@ -446,7 +457,10 @@ mod tests {
         assert_eq!(word_sub_one(&[0, 0, 0, 1, 0]), [0, 0, 0, 0, 0xff]);
         assert_eq!(word_sub_one(&[0, 0, 1, 0, 0]), [0, 0, 0, 0xff, 0xff]);
         // "crane" = [99, 114, 97, 110, 101] - 1 = [99, 114, 97, 110, 100]
-        assert_eq!(word_sub_one(&[99, 114, 97, 110, 101]), [99, 114, 97, 110, 100]);
+        assert_eq!(
+            word_sub_one(&[99, 114, 97, 110, 101]),
+            [99, 114, 97, 110, 100]
+        );
     }
 
     #[test]

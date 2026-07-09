@@ -695,7 +695,6 @@ impl SynchronousGameCradle {
         let private_keys: ChannelHandlerPrivateKeys = rng.random();
         SynchronousGameCradle::new_with_keys(config, private_keys)
     }
-
 }
 
 impl BootstrapTowardWallet for SynchronousGameCradleState {
@@ -1438,7 +1437,7 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error> {
-        self.propose_games(allocator, &[game.clone()])
+        self.propose_games(allocator, std::slice::from_ref(game))
     }
 
     fn propose_games(

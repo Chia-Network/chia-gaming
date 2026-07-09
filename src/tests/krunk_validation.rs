@@ -82,7 +82,13 @@ fn run_validator_step(
     let tail = a.new_pair(curry_args, tail).unwrap();
     let args = a.new_pair(vh_node, tail).unwrap();
 
-    match run_program(allocator.allocator(), &chia_dialect(), program_clvm, args, 0) {
+    match run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        program_clvm,
+        args,
+        0,
+    ) {
         Ok(reduction) => {
             let result = reduction.1;
             let items = proper_list(allocator.allocator(), result, true).unwrap();
@@ -97,7 +103,11 @@ fn run_validator_step(
 }
 
 /// Build state: (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
-fn make_state_after_commit(allocator: &mut AllocEncoder, dict_pubkey: NodePtr, commit: [u8; 32]) -> NodePtr {
+fn make_state_after_commit(
+    allocator: &mut AllocEncoder,
+    dict_pubkey: NodePtr,
+    commit: [u8; 32],
+) -> NodePtr {
     let base_unit_node = BASE_UNIT.to_clvm(allocator).unwrap();
     let a = allocator.allocator();
     let commit_node = a.new_atom(&commit).unwrap();
@@ -164,7 +174,8 @@ fn test_krunk_commit_happy() {
         0,
         initial_state,
         NodePtr::NIL,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(int_from_atom(&mut allocator, items[2]), 5);
@@ -199,18 +210,15 @@ fn test_krunk_guess_happy() {
     let guess = read_hex_puzzle(&mut allocator, "clsp/games/krunk/onchain/guess.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
     let state = make_state_after_commit(&mut allocator, dict_pubkey, [0xCD; 32]);
-    let (code, result) = run_validator_step(
-        &mut allocator,
-        &guess,
-        b"crane",
-        5,
-        0,
-        state,
-        NodePtr::NIL,
-    ).unwrap();
+    let (code, result) =
+        run_validator_step(&mut allocator, &guess, b"crane", 5, 0, state, NodePtr::NIL).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 3, "valid guess returns 3 elements (no conditions)");
+    assert_eq!(
+        items.len(),
+        3,
+        "valid guess returns 3 elements (no conditions)"
+    );
     assert_eq!(int_from_atom(&mut allocator, items[2]), 21);
 }
 
@@ -230,21 +238,22 @@ fn test_krunk_guess_slash_bob_out_of_dict() {
     evidence_bytes.extend_from_slice(end_range);
     let evidence = allocator.allocator().new_atom(&evidence_bytes).unwrap();
 
-    let (code, result) = run_validator_step(
-        &mut allocator,
-        &guess,
-        b"xyzzy",
-        5,
-        0,
-        state,
-        evidence,
-    ).unwrap();
+    let (code, result) =
+        run_validator_step(&mut allocator, &guess, b"xyzzy", 5, 0, state, evidence).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 4, "slash with evidence returns 4 elements (vh state mms condition)");
+    assert_eq!(
+        items.len(),
+        4,
+        "slash with evidence returns 4 elements (vh state mms condition)"
+    );
     // 4th element should be the AGG_SIG_UNSAFE condition
     let condition = proper_list(allocator.allocator(), items[3], true).unwrap();
-    assert_eq!(int_from_atom(&mut allocator, condition[0]), 49, "AGG_SIG_UNSAFE code");
+    assert_eq!(
+        int_from_atom(&mut allocator, condition[0]),
+        49,
+        "AGG_SIG_UNSAFE code"
+    );
 }
 
 fn test_krunk_guess_bad_range_doesnt_bracket() {
@@ -260,16 +269,11 @@ fn test_krunk_guess_bad_range_doesnt_bracket() {
     evidence_bytes.extend_from_slice(b"denom");
     let evidence = allocator.allocator().new_atom(&evidence_bytes).unwrap();
 
-    let result = run_validator_step(
-        &mut allocator,
-        &guess,
-        b"crane",
-        5,
-        0,
-        state,
-        evidence,
+    let result = run_validator_step(&mut allocator, &guess, b"crane", 5, 0, state, evidence);
+    assert!(
+        result.is_err(),
+        "should fail when evidence range doesn't bracket the move"
     );
-    assert!(result.is_err(), "should fail when evidence range doesn't bracket the move");
 }
 
 // --- clue.clsp tests ---
@@ -289,19 +293,16 @@ fn test_krunk_clue_nonterminal_happy() {
     );
 
     // 1-byte clue move (any byte value for the encoded clue)
-    let (code, result) = run_validator_step(
-        &mut allocator,
-        &clue,
-        &[0x42],
-        21,
-        0,
-        state,
-        NodePtr::NIL,
-    ).unwrap();
+    let (code, result) =
+        run_validator_step(&mut allocator, &clue, &[0x42], 21, 0, state, NodePtr::NIL).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(items.len(), 3, "clue returns 3 elements");
-    assert_eq!(int_from_atom(&mut allocator, items[2]), 5, "next max_move_size = 5 (guess)");
+    assert_eq!(
+        int_from_atom(&mut allocator, items[2]),
+        5,
+        "next max_move_size = 5 (guess)"
+    );
 }
 
 fn test_krunk_clue_blocks_5th_clue() {
@@ -310,7 +311,10 @@ fn test_krunk_clue_blocks_5th_clue() {
     let dict_pubkey = make_dict_pubkey(&mut allocator);
 
     // 4 clues already given (alice_clues has 4 elements)
-    let bob_guesses = words_to_list(&mut allocator, &[b"crane", b"slate", b"mango", b"plumb", b"toast"]);
+    let bob_guesses = words_to_list(
+        &mut allocator,
+        &[b"crane", b"slate", b"mango", b"plumb", b"toast"],
+    );
     let clue_a = allocator.allocator().new_atom(&[0x01]).unwrap();
     let clue_b = allocator.allocator().new_atom(&[0x02]).unwrap();
     let clue_c = allocator.allocator().new_atom(&[0x03]).unwrap();
@@ -332,17 +336,11 @@ fn test_krunk_clue_blocks_5th_clue() {
     );
 
     // Try giving a 5th clue — should fail (< 4 check fails)
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &[0x05],
-        21,
-        0,
-        state,
-        NodePtr::NIL,
+    let result = run_validator_step(&mut allocator, &clue, &[0x05], 21, 0, state, NodePtr::NIL);
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "5th clue should be rejected (enforces reveal)"
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "5th clue should be rejected (enforces reveal)");
 }
 
 fn test_krunk_reveal_slash_alice_out_of_dict() {
@@ -372,21 +370,22 @@ fn test_krunk_reveal_slash_alice_out_of_dict() {
     evidence_bytes.extend_from_slice(b"xyzzz");
     let evidence = allocator.allocator().new_atom(&evidence_bytes).unwrap();
 
-    let (code, result) = run_validator_step(
-        &mut allocator,
-        &clue,
-        &reveal_move,
-        21,
-        0,
-        state,
-        evidence,
-    ).unwrap();
+    let (code, result) =
+        run_validator_step(&mut allocator, &clue, &reveal_move, 21, 0, state, evidence).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 4, "reveal slash returns 4 elements (terminal + condition)");
+    assert_eq!(
+        items.len(),
+        4,
+        "reveal slash returns 4 elements (terminal + condition)"
+    );
     // Check the condition is AGG_SIG_UNSAFE
     let condition = proper_list(allocator.allocator(), items[3], true).unwrap();
-    assert_eq!(int_from_atom(&mut allocator, condition[0]), 49, "AGG_SIG_UNSAFE code");
+    assert_eq!(
+        int_from_atom(&mut allocator, condition[0]),
+        49,
+        "AGG_SIG_UNSAFE code"
+    );
 }
 
 fn test_krunk_reveal_bad_range_doesnt_bracket() {
@@ -415,16 +414,11 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
     evidence_bytes.extend_from_slice(b"denom");
     let evidence = allocator.allocator().new_atom(&evidence_bytes).unwrap();
 
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &reveal_move,
-        21,
-        0,
-        state,
-        evidence,
+    let result = run_validator_step(&mut allocator, &clue, &reveal_move, 21, 0, state, evidence);
+    assert!(
+        result.is_err(),
+        "should fail when evidence range doesn't bracket the revealed word"
     );
-    assert!(result.is_err(), "should fail when evidence range doesn't bracket the revealed word");
 }
 
 fn test_krunk_reveal_valid() {
@@ -435,7 +429,7 @@ fn test_krunk_reveal_valid() {
     let word = b"crane";
     let salt = [0x22; 16];
     let commit = {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&salt);
         hasher.update(word);
@@ -468,7 +462,8 @@ fn test_krunk_reveal_valid() {
         mover_share,
         state,
         NodePtr::NIL,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(items.len(), 3, "valid reveal returns terminal (0 0 0)");
@@ -494,17 +489,11 @@ fn test_krunk_clue_all_correct_byte_rejected() {
     );
 
     // 0x72 = "all correct" clue — should be rejected
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &[0x72],
-        21,
-        0,
-        state,
-        NodePtr::NIL,
+    let result = run_validator_step(&mut allocator, &clue, &[0x72], 21, 0, state, NodePtr::NIL);
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "all-correct clue byte 0x72 should be rejected"
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "all-correct clue byte 0x72 should be rejected");
 }
 
 fn test_krunk_clue_above_range_rejected() {
@@ -522,17 +511,11 @@ fn test_krunk_clue_above_range_rejected() {
     );
 
     // 0x73 is above the valid range — should be rejected
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &[0x73],
-        21,
-        0,
-        state,
-        NodePtr::NIL,
+    let result = run_validator_step(&mut allocator, &clue, &[0x73], 21, 0, state, NodePtr::NIL);
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "clue byte 0x73 (above valid range) should be rejected"
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "clue byte 0x73 (above valid range) should be rejected");
 }
 
 fn test_krunk_clue_nonzero_mover_share_rejected() {
@@ -550,17 +533,11 @@ fn test_krunk_clue_nonzero_mover_share_rejected() {
     );
 
     // Valid clue byte but nonzero mover_share
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &[0x42],
-        21,
-        50,
-        state,
-        NodePtr::NIL,
+    let result = run_validator_step(&mut allocator, &clue, &[0x42], 21, 50, state, NodePtr::NIL);
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "clue with nonzero mover_share should be rejected"
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "clue with nonzero mover_share should be rejected");
 }
 
 // --- New guess path tests ---
@@ -572,17 +549,11 @@ fn test_krunk_guess_wrong_length_rejected() {
     let state = make_state_after_commit(&mut allocator, dict_pubkey, [0xCD; 32]);
 
     // 4-byte guess (too short)
-    let result = run_validator_step(
-        &mut allocator,
-        &guess,
-        b"cran",
-        5,
-        0,
-        state,
-        NodePtr::NIL,
+    let result = run_validator_step(&mut allocator, &guess, b"cran", 5, 0, state, NodePtr::NIL);
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "4-byte guess should be rejected"
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "4-byte guess should be rejected");
 
     // 6-byte guess (too long)
     let state2 = make_state_after_commit(&mut allocator, dict_pubkey, [0xCD; 32]);
@@ -595,8 +566,10 @@ fn test_krunk_guess_wrong_length_rejected() {
         state2,
         NodePtr::NIL,
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "6-byte guess should be rejected");
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "6-byte guess should be rejected"
+    );
 }
 
 fn test_krunk_guess_nonzero_mover_share_rejected() {
@@ -606,23 +579,17 @@ fn test_krunk_guess_nonzero_mover_share_rejected() {
     let state = make_state_after_commit(&mut allocator, dict_pubkey, [0xCD; 32]);
 
     // Valid 5-byte guess but nonzero mover_share
-    let result = run_validator_step(
-        &mut allocator,
-        &guess,
-        b"crane",
-        5,
-        50,
-        state,
-        NodePtr::NIL,
+    let result = run_validator_step(&mut allocator, &guess, b"crane", 5, 50, state, NodePtr::NIL);
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "guess with nonzero mover_share should be rejected"
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "guess with nonzero mover_share should be rejected");
 }
 
 // --- Reveal path: mover_share mismatch tests ---
 
 fn make_commit_for(salt: &[u8; 16], word: &[u8; 5]) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(salt);
     hasher.update(word);
@@ -642,7 +609,10 @@ fn test_krunk_reveal_claims_won_but_latest_guess_wrong() {
     let commit = make_commit_for(&salt, word);
 
     // 5 guesses, none correct (latest = "crane")
-    let bob_guesses = words_to_list(&mut allocator, &[b"crane", b"slate", b"trace", b"plumb", b"mango"]);
+    let bob_guesses = words_to_list(
+        &mut allocator,
+        &[b"crane", b"slate", b"trace", b"plumb", b"mango"],
+    );
     let clue_a = allocator.allocator().new_atom(&[0x01]).unwrap();
     let a = allocator.allocator();
     let alice_clues = {
@@ -674,8 +644,10 @@ fn test_krunk_reveal_claims_won_but_latest_guess_wrong() {
         state,
         NodePtr::NIL,
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "claiming high mover_share with wrong latest guess should fail");
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "claiming high mover_share with wrong latest guess should fail"
+    );
 }
 
 fn test_krunk_reveal_claims_won_but_not_terminal() {
@@ -757,8 +729,10 @@ fn test_krunk_reveal_wrong_mover_share_amount() {
         state,
         NodePtr::NIL,
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "wrong mover_share amount should be rejected");
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "wrong mover_share amount should be rejected"
+    );
 }
 
 // --- Reveal path: commit mismatch ---
@@ -794,8 +768,10 @@ fn test_krunk_reveal_bad_commit() {
         state,
         NodePtr::NIL,
     );
-    assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash,
-        "reveal with wrong commit should be rejected");
+    assert!(
+        result.is_err() || result.unwrap().0 == MoveCode::Slash,
+        "reveal with wrong commit should be rejected"
+    );
 }
 
 // --- Reveal path: evidence slash (wrong clue) ---
@@ -838,20 +814,14 @@ fn test_krunk_reveal_wrong_clue_slash() {
     // alice_clues[1] = 0x01 ≠ 0x72 → slash succeeds
     let evidence = allocator.allocator().new_atom(&[0x01]).unwrap();
 
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &reveal_move,
-        21,
-        0,
-        state,
-        evidence,
-    );
+    let result = run_validator_step(&mut allocator, &clue, &reveal_move, 21, 0, state, evidence);
     match result {
         Ok((code, node)) => {
             let items = proper_list(allocator.allocator(), node, true).unwrap();
-            assert!(items.is_empty() || code == MoveCode::Slash,
-                "wrong clue evidence should produce unconditional slash (nil)");
+            assert!(
+                items.is_empty() || code == MoveCode::Slash,
+                "wrong clue evidence should produce unconditional slash (nil)"
+            );
         }
         Err(e) => panic!("wrong clue slash should succeed, got error: {e}"),
     }
@@ -891,16 +861,11 @@ fn test_krunk_reveal_correct_clue_no_slash() {
     // Evidence = index 1 — but the clue is correct, so slash should fail
     let evidence = allocator.allocator().new_atom(&[0x01]).unwrap();
 
-    let result = run_validator_step(
-        &mut allocator,
-        &clue,
-        &reveal_move,
-        21,
-        0,
-        state,
-        evidence,
+    let result = run_validator_step(&mut allocator, &clue, &reveal_move, 21, 0, state, evidence);
+    assert!(
+        result.is_err(),
+        "slash attempt with correct clue should fail (assert raises)"
     );
-    assert!(result.is_err(), "slash attempt with correct clue should fail (assert raises)");
 }
 
 // --- Reveal path: mover_share at various depths ---
@@ -953,10 +918,15 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
         expected_mover_share,
         state,
         NodePtr::NIL,
-    ).unwrap_or_else(|e| panic!("depth {depth} reveal failed: {e}"));
+    )
+    .unwrap_or_else(|e| panic!("depth {depth} reveal failed: {e}"));
     assert_eq!(code, MoveCode::MakeMove, "depth {depth} should succeed");
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 3, "depth {depth} should return terminal (0 0 0)");
+    assert_eq!(
+        items.len(),
+        3,
+        "depth {depth} should return terminal (0 0 0)"
+    );
 }
 
 fn test_krunk_reveal_payout_depth_1() {

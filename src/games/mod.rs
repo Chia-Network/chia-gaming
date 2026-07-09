@@ -77,16 +77,11 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
     )
     .expect("should load krunk make_proposal");
-    let krunk_parser_raw = read_hex_puzzle(
-        allocator,
-        "clsp/games/krunk/krunk_include_krunk_parser.hex",
-    )
-    .expect("should load krunk parser");
-    let dict_tree = read_binary_puzzle(
-        allocator,
-        "clsp/games/krunk/krunk_signed_dict_tree.dat",
-    )
-    .expect("should load krunk dict tree");
+    let krunk_parser_raw =
+        read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")
+            .expect("should load krunk parser");
+    let dict_tree = read_binary_puzzle(allocator, "clsp/games/krunk/krunk_signed_dict_tree.dat")
+        .expect("should load krunk dict tree");
     let krunk_make_proposal_node = CurriedProgram {
         program: krunk_make_proposal_raw,
         args: clvm_curried_args!(dict_tree),

@@ -16,8 +16,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
+    ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
@@ -644,8 +644,7 @@ impl PotatoHandler {
                             wire.start.game_type, wire.game_id,
                         )));
                     } else {
-                        let (gsi, resolved_game_type) =
-                            self.hydrate_wire_proposal(env, wire)?;
+                        let (gsi, resolved_game_type) = self.hydrate_wire_proposal(env, wire)?;
                         let ch = self.channel_handler_mut()?;
                         ch.apply_received_proposal(env, &gsi, wire.group_id)?;
                         let game_id = gsi.game_id;
@@ -657,9 +656,7 @@ impl PotatoHandler {
                             actions
                                 .iter()
                                 .filter_map(|a| match a {
-                                    BatchAction::ProposeGame(w)
-                                        if w.group_id == wire.group_id =>
-                                    {
+                                    BatchAction::ProposeGame(w) if w.group_id == wire.group_id => {
                                         Some(w.game_id)
                                     }
                                     _ => None,
@@ -1165,9 +1162,7 @@ impl PotatoHandler {
         let starter_program = starter
             .program
             .as_ref()
-            .ok_or_else(|| Error::StrErr(
-                "GameFactory program missing".to_string(),
-            ))?
+            .ok_or_else(|| Error::StrErr("GameFactory program missing".to_string()))?
             .clone();
 
         if let Some(parser_prog) = &starter.parser_program {
@@ -1531,7 +1526,7 @@ impl FromLocalUI for PotatoHandler {
         env: &mut ChannelHandlerEnv<'_>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        FromLocalUI::propose_games(self, env, &[game.clone()])
+        FromLocalUI::propose_games(self, env, std::slice::from_ref(game))
     }
 
     fn propose_games(

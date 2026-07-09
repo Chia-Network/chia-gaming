@@ -13,8 +13,8 @@ use crate::common::standard_coin::{
     private_to_public_key, sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
-    Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash,
-    IntoErr, Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
+    Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, IntoErr,
+    Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{

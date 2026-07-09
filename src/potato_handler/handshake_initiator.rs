@@ -15,9 +15,9 @@ use crate::common::standard_coin::{
     verify_reward_payout_signature,
 };
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType,
-    GetCoinStringParts, Hash, IntoErr, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
-    SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, GetCoinStringParts,
+    Hash, IntoErr, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle,
+    Timeout,
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{

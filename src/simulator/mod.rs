@@ -54,11 +54,11 @@ use crate::tests::channel_handler::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
 #[cfg(test)]
+use crate::tests::dict_tree_lookup::test_funs as dict_tree_lookup_tests;
+#[cfg(test)]
 use crate::tests::krunk_handlers::test_funs as krunk_handler_tests;
 #[cfg(test)]
 use crate::tests::krunk_validation::test_funs as krunk_validation_tests;
-#[cfg(test)]
-use crate::tests::dict_tree_lookup::test_funs as dict_tree_lookup_tests;
 #[cfg(test)]
 use crate::tests::referee_conditions::test_funs as referee_conditions_tests;
 #[cfg(test)]

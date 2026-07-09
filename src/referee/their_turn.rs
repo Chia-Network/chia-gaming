@@ -394,8 +394,7 @@ impl TheirTurnReferee {
                     evidence.clone(),
                 ),
                 Ok(None)
-            )
-            {
+            ) {
                 return Ok((
                     None,
                     TheirTurnMoveResult {

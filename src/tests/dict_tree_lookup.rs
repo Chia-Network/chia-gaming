@@ -10,11 +10,7 @@ use clvmr::run_program;
 const MIN_SENTINEL: &[u8; 5] = b"\x80\x00\x00\x00\x00";
 const MAX_SENTINEL: &[u8; 5] = b"\x7f\xff\xff\xff\xff";
 
-fn run_dict_lookup(
-    allocator: &mut AllocEncoder,
-    tree: NodePtr,
-    word: &[u8],
-) -> NodePtr {
+fn run_dict_lookup(allocator: &mut AllocEncoder, tree: NodePtr, word: &[u8]) -> NodePtr {
     let program = read_hex_puzzle(allocator, "clsp/test/test_dict_lookup.hex")
         .expect("load test_dict_lookup.hex");
 
@@ -30,15 +26,9 @@ fn run_dict_lookup(
     let args = a.new_pair(tree, t2).unwrap();
 
     let prog_node = program.to_clvm(allocator).expect("puzzle to nodeptr");
-    run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        prog_node,
-        args,
-        0,
-    )
-    .expect("dict_lookup CLVM run failed")
-    .1
+    run_program(allocator.allocator(), &chia_dialect(), prog_node, args, 0)
+        .expect("dict_lookup CLVM run failed")
+        .1
 }
 
 fn is_nil(allocator: &mut AllocEncoder, node: NodePtr) -> bool {
@@ -170,9 +160,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "test_dict_lookup_gap_between_words",
             &test_dict_lookup_gap_between_words,
         ),
-        (
-            "test_dict_lookup_gap_xyzzy",
-            &test_dict_lookup_gap_xyzzy,
-        ),
+        ("test_dict_lookup_gap_xyzzy", &test_dict_lookup_gap_xyzzy),
     ]
 }
