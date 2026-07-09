@@ -620,6 +620,7 @@ const Shell = () => {
       if (waitingEnteredAtRef.current === null) {
         const now = BigInt(Date.now());
         waitingEnteredAtRef.current = now;
+        setAbandonEnabled(false);
         saveSession({ waitingStateEnteredAt: now });
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
