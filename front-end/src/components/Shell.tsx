@@ -888,6 +888,17 @@ const Shell = () => {
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
+    }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    setAbandonEnabled(false);
+    setCleanShutdownGraceActive(false);
 
     setSessionPhase('none');
     setSessionError(false);
