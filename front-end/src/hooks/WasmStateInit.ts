@@ -152,15 +152,22 @@ export class WasmStateInit {
   async loadGameHexes(): Promise<GameHexes> {
     const dec = new TextDecoder();
     const fetchText = (url: string) => this.fetchPreset(url).then(b => dec.decode(b));
-    const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
+    const [
+      calpokerProposal, calpokerParser,
+      spacepokerProposal, spacepokerParser,
+      krunkProposal, krunkParser,
+    ] = await Promise.all([
       fetchText('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
       fetchText('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
       fetchText('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
       fetchText('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
+      fetchText('clsp/games/krunk/krunk_include_krunk_make_proposal.hex'),
+      fetchText('clsp/games/krunk/krunk_include_krunk_parser.hex'),
     ]);
     return {
       calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },
       spacepoker: { proposalHex: spacepokerProposal, parserHex: spacepokerParser },
+      krunk: { proposalHex: krunkProposal, parserHex: krunkParser },
     };
   }
 
@@ -209,14 +216,21 @@ export class WasmStateInit {
 }
 
 export async function loadGameHexes(fetchHex: (filename: string) => Promise<string>): Promise<GameHexes> {
-  const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
+  const [
+    calpokerProposal, calpokerParser,
+    spacepokerProposal, spacepokerParser,
+    krunkProposal, krunkParser,
+  ] = await Promise.all([
     fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
     fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
     fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
     fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
+    fetchHex('clsp/games/krunk/krunk_include_krunk_make_proposal.hex'),
+    fetchHex('clsp/games/krunk/krunk_include_krunk_parser.hex'),
   ]);
   return {
     calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },
     spacepoker: { proposalHex: spacepokerProposal, parserHex: spacepokerParser },
+    krunk: { proposalHex: krunkProposal, parserHex: krunkParser },
   };
 }

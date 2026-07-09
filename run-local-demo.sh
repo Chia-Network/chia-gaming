@@ -115,7 +115,7 @@ cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
 echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"
 echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_NONCE_DIR/urls"
-(cd "$CLSP_DIR" && find . -name '*.hex' | while read -r f; do
+(cd "$CLSP_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
     mkdir -p "$GAME_NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$GAME_NONCE_DIR/clsp/$f"
 done)

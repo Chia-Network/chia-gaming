@@ -56,9 +56,12 @@ function readableToProgram(raw: number[] | Uint8Array): Program | null {
 
 function programIsNil(prog: Program | null): boolean {
   if (!prog) return true;
-  const atom = prog.atom;
-  if (atom && atom.length === 0) return true;
-  return false;
+  try {
+    const atom = prog.atom;
+    return atom.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 function atomToWord(prog: Program): string | null {
@@ -92,31 +95,33 @@ type KrunkReadable =
   | { kind: 'unknown' };
 
 function parseKrunkReadable(prog: Program | null): KrunkReadable {
-  if (programIsNil(prog)) return { kind: 'nil' };
-  if (!prog) return { kind: 'unknown' };
-
-  // First try as a pure 5-int clue list.
-  const asClue = programToClue(prog);
-  if (asClue) return { kind: 'clue', clue: asClue };
-
-  // Otherwise expect (word, clue_list).
-  let items: Program[];
   try {
-    items = prog.toList();
-  } catch {
+    if (programIsNil(prog)) return { kind: 'nil' };
+    if (!prog) return { kind: 'unknown' };
+
+    // First try as a pure 5-int clue list.
+    const asClue = programToClue(prog);
+    if (asClue) return { kind: 'clue', clue: asClue };
+
+    // Otherwise expect (word, clue_list).
+    let items: Program[];
+    try {
+      items = prog.toList();
+    } catch {
+      return { kind: 'unknown' };
+    }
+    if (items.length === 2) {
+      const word = atomToWord(items[0]);
+      const clue = programToClue(items[1]);
+      if (word && clue) {
+        return { kind: 'guess', word: word.toUpperCase(), clue };
+      }
+    }
+    return { kind: 'unknown' };
+  } catch (e) {
+    console.error('parseKrunkReadable failed:', e);
     return { kind: 'unknown' };
   }
-  if (items.length === 2) {
-    const word = atomToWord(items[0]);
-    const clue = programToClue(items[1]);
-    if (word && clue) {
-      // We can't tell from shape alone whether this is alice receiving
-      // bob's guess vs bob receiving alice's reveal. Caller has more
-      // context (role + phase) to disambiguate.
-      return { kind: 'guess', word: word.toUpperCase(), clue };
-    }
-  }
-  return { kind: 'unknown' };
 }
 
 function wordToProgram(word: string): Program {
