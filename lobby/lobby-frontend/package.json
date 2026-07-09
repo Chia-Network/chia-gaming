@@ -6,7 +6,8 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "build": "pnpm exec tsc --project . && NODE_PATH=./node_modules pnpm exec esbuild dist/js/index.js --bundle --outfile=./public/index.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
+    "build": "pnpm exec tsc --project . && NODE_PATH=./node_modules pnpm exec esbuild dist/js/index.js --bundle --minify --outfile=./public/index.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
+    "build:deploy": "rm -rf dist/app && pnpm exec tsc --project . && NODE_PATH=./node_modules pnpm exec esbuild dist/js/index.js --bundle --minify --outdir=dist/app && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
     "test": "pnpm exec tsc -p tsconfig.json --noEmit",
     "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'"

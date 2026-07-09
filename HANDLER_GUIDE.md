@@ -25,7 +25,7 @@ program cost, argument checking), see `CLVM_DOS.md`.
 - [Message Parsers](#message-parsers)
 - [Nil Moves (Automatic Moves)](#nil-moves-automatic-moves)
 - [Messages as Pre-Reveals](#messages-as-pre-reveals)
-- [Worked Example: Calpoker](#worked-example-calpoker)
+- [Worked Examples: Reference Games](#worked-examples-reference-games)
 
 ---
 
@@ -85,7 +85,7 @@ move format.
 | `mover_share` | Current mover's share if timeout occurs |
 | `entropy` | 32 bytes of randomness for this turn |
 
-### Return: Success (10 elements)
+### Return: Success (9-10 elements)
 
 ```
 (
@@ -98,7 +98,7 @@ move format.
   max_move_size            ; int, max bytes the opponent may send
   mover_share              ; int, our share if opponent times out
   their_turn_handler       ; program for processing opponent's response (nil if game over)
-  message_parser           ; program or nil (see Message Parsers)
+  message_parser           ; optional program or nil (see Message Parsers)
 )
 ```
 
@@ -108,6 +108,9 @@ move format.
   This is passed forward so the referee knows how to validate the reply.
 - When `their_turn_handler` is nil, this is the final move of the game.
   `incoming_validator_hash` should also be nil in this case.
+- `message_parser` is optional. It is the 10th element of the return list
+  (zero-based index 9 in Rust/vector access). If the element is absent or nil,
+  the game does not accept out-of-band readable messages for this state.
 
 ### Return: Rejection (2 elements)
 
@@ -132,10 +135,20 @@ A CLVM raise -- the handler crashed. The Rust side raises `ClvmErr`.
 
 Called when the opponent has moved and we need to interpret their move.
 
+Their-turn handlers run on adversarial peer input. A handler crash, expensive
+loop, or allocation blowup caused by a peer-supplied move is a security bug by
+default, not a normal parse failure. Generic referee-envelope checks such as
+`max_move_size` happen before the handler, so handlers may assume those bounds,
+but game-rule failures must be represented through validator/slash behavior and
+evidence candidates, not CLVM raises. The framework tries nil evidence before
+calling the handler, including for terminal moves; if that succeeds as a slash,
+the handler is skipped. Handlers are responsible for safely processing the
+peer-controlled moves that survive that precheck.
+
 ### Parameters
 
 ```
-(curried_args... amount pre_state state move validation_info_hash mover_share)
+(curried_args... amount pre_state state move validation_program_hash mover_share)
 ```
 
 | Parameter | Description |
@@ -144,17 +157,26 @@ Called when the opponent has moved and we need to interpret their move.
 | `pre_state` | On-chain state BEFORE the opponent's move |
 | `state` | On-chain state AFTER the opponent's move |
 | `move` | Opponent's move bytes |
-| `validation_info_hash` | Hash of the validation program + state for this move |
+| `validation_program_hash` | Tree hash of the validation program for this move |
 | `mover_share` | Opponent's declared share of the pot |
 
-### Return: Normal Move (3-4 elements)
+`validation_program_hash` is not the same thing as a validation info hash. The
+program hash identifies a validator program by itself. A validation info hash is
+the referee commitment `sha256(validation_program_hash, shatree(state))`, which
+binds a validator program to a particular state. Some existing handler code may
+still name this argument `validation_info_hash`, but the value passed to
+their-turn handlers is the raw validation program hash because the framework has
+the validation program available at that call site. Referee coins commit to the
+validation info hash instead.
+
+### Return: Normal Move (2-4 elements)
 
 ```
 (
   readable_move    ; clvm value, UI-displayable interpretation
   evidence_list    ; list of fraud proofs (may be empty/nil)
-  next_handler     ; my-turn handler, or nil if game over
-  message          ; bytes, optional out-of-band message
+  next_handler     ; optional my-turn handler, or nil if game over
+  message          ; optional bytes, out-of-band message
 )
 ```
 
@@ -170,8 +192,8 @@ Called when the opponent has moved and we need to interpret their move.
   handler is certain the move is fraudulent, it puts the evidence in the
   list and can return junk for the other fields (`readable_move`,
   `next_handler`, etc.) since they will never be used.
-- `message` is optional (the fourth element may be absent). When present,
-  it is sent out-of-band to the opponent and parsed by their
+- `message` is optional (the fourth element may be absent). When present and
+  non-empty, it is sent out-of-band to the opponent and parsed by their
   `message_parser`.
 
 ---
@@ -325,12 +347,13 @@ the game protocol. They run both **on-chain** (inside the referee puzzle
 during disputes) and **off-chain** (called by the Rust code during normal
 play).
 
-A validator takes the move and current state and returns a tagged result:
+A validator takes the move, current state, and optional evidence and returns an
+untagged result:
 
 ### Validator Return: Valid Move
 
 ```
-(new_validation_info_hash new_state max_move_size)
+(next_validation_program_hash new_state max_move_size)
 ```
 
 These three elements describe the new game state after the move. They are
@@ -413,7 +436,26 @@ in three cases:
 If the validator returns aligned values with no extra conditions (list ends
 at element 3), the move was valid and the slash attempt fails (the spend
 aborts). If the validator raises (CLVM exception), the slash transaction
-fails to mine — validators must handle all inputs without raising.
+fails to mine.
+
+Validators have a two-sided security contract:
+
+- Every malicious move that the referee move path can accept optimistically must
+  be slashable. For those inputs the validator must return nil, or another
+  slash-triggering result, without raising. This includes malformed lengths,
+  bad popcounts, bad preimage reveals, wrong mover shares, and invalid
+  next-state commitments.
+- Every invalid slash attempt against a valid move must fail. The validator may
+  fail that slash by returning the valid move payload or, for malformed
+  evidence, by raising so the slash transaction cannot be mined. Evidence
+  assertions are only safe after the move itself has already been classified as
+  valid; otherwise malformed evidence could mask a malicious move by causing an
+  exception instead of a slash.
+
+In practice, validators should cheaply classify move shape before any
+length-sensitive `substr`, hand-evaluation helper, or evidence processing.
+Only after the move is known to be valid should the validator inspect evidence
+that might intentionally reject an invalid slash.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover
@@ -476,8 +518,9 @@ Both players independently run the same validators and arrive at the same
 state. If they disagree, one of them will detect fraud when they try to
 validate the opponent's move.
 
-The validator's `MAKE_MOVE` return includes the new state, so the handler
-uses this directly rather than duplicating state-transition logic.
+The validator's non-nil return includes the new state, so the handler uses
+this directly rather than duplicating state-transition logic when there is a
+follow-on state to derive.
 
 ### On-Chain (Dispute)
 
@@ -492,9 +535,14 @@ state. From that point:
 - On the **move path**, the referee does **not** re-run the validator. It
   trusts the submitted state transition and advances the game. The
   enforcement mechanism is the threat of slashing: if a player cheats, the
-  opponent can submit evidence to the validator and take the full pot.
+  opponent can submit evidence to the validator and take the full pot. This
+  keeps honest moves small: they carry the next validation info hash, not the
+  full validation program and state.
 - On the **slash path**, the referee runs the validator with the provided
-  evidence. If it returns `SLASH`, the slasher wins.
+  evidence. If it returns nil, or returns values that do not match the
+  committed next-state fields, or returns extra conditions, the slasher wins.
+  The slash spend reveals the previous validation program and state so the
+  referee can recompute and check the committed infohash.
 
 The same validator programs are used both off-chain (by the Rust code, to
 verify moves as they happen) and on-chain (by the referee, for slash
@@ -510,12 +558,13 @@ turn-taking protocol. The **message parser** mechanism enables this.
 
 ### How It Works
 
-1. A my-turn handler returns a `message_parser` program (element 10 of the
-   return list). This program knows how to decode advisory messages for the
-   current game state.
+1. A my-turn handler may return a `message_parser` program (element 10 of the
+   return list, zero-based index 9). This program knows how to decode advisory
+   messages for the current game state. If the element is absent or nil, no
+   parser is installed.
 2. When the their-turn handler processes the opponent's reply, it can return
-   an optional `message` (element 4 of the normal return). This message is
-   sent to the opponent out-of-band.
+   an optional `message` (element 4 of the normal return, zero-based index 3).
+   This message is sent to the opponent out-of-band.
 3. The opponent's `message_parser` decodes the raw bytes into a
    `readable_info` value that the UI can display.
 
@@ -630,12 +679,14 @@ arrives, Bob independently verifies the same information.
 
 ### Mechanics
 
-1. A **my-turn handler** returns a `message_parser` at position 9. This
-   parser knows how to decode messages for the current game state.
+1. A **my-turn handler** may return a `message_parser` as element 10 of the
+   return list (zero-based index 9). This parser knows how to decode messages
+   for the current game state. If the element is absent or nil, no parser is
+   installed.
 
-2. The **their-turn handler** processing the opponent's reply returns an
-   optional `message` at position 3. This message is sent out-of-band to
-   the opponent.
+2. The **their-turn handler** processing the opponent's reply may return an
+   optional `message` as element 4 of the normal return list (zero-based index
+   3). A non-empty message is sent out-of-band to the opponent.
 
 3. The opponent's `message_parser` decodes the raw bytes into readable data
    for the UI.
@@ -645,7 +696,19 @@ Messages arrive as `GameMessage` events in the frontend, distinct from
 
 ---
 
-## Worked Example: Calpoker
+## Worked Examples: Reference Games
+
+Calpoker and Space Poker are both reference games. Calpoker is the smaller,
+earlier example and is easiest to follow end-to-end. Space Poker exercises a
+different part of the API: multi-round poker state and repeated
+betting/open transitions, including advisory message parsers for pre-revealed
+card information.
+
+The `debug` game is registered for simulator tests only. It exists to exercise
+channel/on-chain mechanics with controlled `mover_share` values and is not a
+user-facing reference game.
+
+### Calpoker
 
 Calpoker uses 5 protocol steps (a through e), each with a validator and
 corresponding handlers on both sides.
@@ -696,3 +759,24 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
 - Handler API reference: `clsp/handler_api.md`
+
+### Space Poker
+
+Space Poker is a Texas Hold'em-style reference game. It demonstrates how a game
+can keep more complex state across multiple rounds while keeping the formal move
+protocol authoritative. It also uses advisory message parsers: a my-turn handler
+can install a parser for the current state, and the opponent's their-turn handler
+can return an optional fourth `message` element to pre-reveal information that is
+already implied by, or will be independently derivable from, the formal move
+sequence. Calpoker uses this once for Alice's seed pre-reveal; Space Poker uses it
+at the beginning of each street for deal/open pre-reveals. Since there is no
+reason to fold before at least checking there, the player can preemptively send
+the reveal that will show the next street's cards, improving pacing without
+changing the authoritative move flow.
+
+**Key code:**
+
+- Handlers: `clsp/games/spacepoker/spacepoker_generate.clinc`
+- Validators: `clsp/games/spacepoker/onchain/*.clsp`
+- Rust tests: `src/test_support/spacepoker.rs`, `src/tests/spacepoker_handlers.rs`,
+  `src/tests/spacepoker_validation.rs`

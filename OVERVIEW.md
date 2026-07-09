@@ -13,10 +13,11 @@ be expected.
 ## Table of Contents
 
 - [Overview](#overview)
+- [Design Philosophy: Fail Fast](#design-philosophy-fail-fast)
 - [State Channels: The Core Idea](#state-channels-the-core-idea)
 - [Coin Hierarchy](#coin-hierarchy)
 - [The Potato Protocol](#the-potato-protocol)
-- [Calpoker: The Reference Game](#calpoker-the-reference-game)
+- [Reference Games](#reference-games)
 - [Handler Architecture](#handler-architecture)
 - [Code Organization](#code-organization)
 - [Key Types](#key-types)
@@ -39,6 +40,45 @@ blockchain is only needed in two cases:
 This design means most games never touch the blockchain at all. The on-chain
 path exists purely as a **threat** that keeps both players honest: if you cheat,
 your opponent can prove it on-chain and take your money.
+
+---
+
+## Design Philosophy: Fail Fast
+
+This codebase **fails fast**: when something is wrong, it surfaces the error at
+the point of detection rather than papering over it. The goal is that bugs get
+diagnosed and fixed at their source, not masked by defensive code that lets a
+corrupted state limp along and produce a confusing failure somewhere else later.
+
+Concretely, this means **no belt-and-suspenders backstops** — no silently
+swallowing an unexpected event, no "just in case" idempotency guard around a
+call that should only happen once, no defaulting a value that should never be
+absent. Such backstops trade a loud, locatable failure for a quiet, mislocated
+one; they hide the very bug that needs fixing and tend to accumulate into a
+system nobody fully understands. When you are tempted to add a guard, first ask
+whether the condition it guards against can actually occur in correct operation.
+If it cannot, assert instead — don't tolerate it.
+
+The one essential distinction is the **trust boundary**:
+
+- **Untrusted input** — data from a peer or the blockchain — is validated and
+  rejected gracefully. A peer sending a bad batch is a protocol violation we
+  expect and handle (reject the batch, go on-chain); it is not a bug in our
+  code, so it must never crash us.
+- **Internal invariants** — conditions that can only be false if *our own* code
+  is wrong — fail loudly. These use `game_assert!` / `game_assert_eq!`, which
+  panic in debug/test builds (so the bug is impossible to miss) and return an
+  `Err` in release builds (so a deployed process degrades into an error
+  notification rather than corrupting state). The simulator applies the same
+  principle on the chain side via strict mode. See
+  [Invariant Assertions](INTERNALS.md#invariant-assertions-game_assert--game_assert_eq)
+  and [Simulator Strictness](INTERNALS.md#simulator-strictness).
+
+For example, an attempt to make a game move after a terminal move (one whose
+validation program is nil) can only happen if a caller is buggy — so the move
+handler asserts rather than silently discarding the move. Discarding it would
+hide the bug and leave the broken caller in place to cause subtler problems
+later.
 
 ---
 
@@ -223,13 +263,15 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    complete `CoinSpend` ready for on-chain submission.
 
 The receiver processes actions sequentially and rejects the entire batch if any
-action fails validation. Rejection uses a **rollback mechanism**: the
-`ChannelHandler` (which derives `Clone`) is snapshot-cloned before processing
-begins. If any action or signature verification fails, the snapshot is restored,
-undoing all intermediate mutations from earlier actions in the batch — including
-changes to `live_games`, `pending_accept_timeouts`, balances, `state_number`,
-`cached_last_actions`, and every other `ChannelHandler` field. The error then
-triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
+action fails validation. Rejection uses a **rollback mechanism**: before peer
+batch processing begins, `PotatoHandler` snapshots both the `ChannelHandler` and
+the local `game_action_queue`. If any action or signature verification fails,
+both snapshots are restored. This makes a peer batch atomic across all state that
+could otherwise affect dispute recovery: intermediate mutations to `live_games`,
+`pending_accept_timeouts`, balances, `state_number`, `cached_last_actions`, and
+queued local actions are not allowed to leak out of a failed peer batch. The
+error then triggers go-on-chain (the peer sent a bad batch, so we dispute
+on-chain).
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
@@ -268,14 +310,17 @@ unified pattern:
 This ensures that multiple user actions between potato receives are
 automatically batched together.
 
-The `game_action_queue` is populated only by local API calls (user/UI
-actions), never by received peer messages. `drain_queue_into_batch` processes
-this local queue when the potato is held; any errors during draining reflect
-bugs in our own queued actions, not adversarial peer data.
+The `game_action_queue` is populated only by local API calls (user/UI actions),
+never directly by received peer messages. Received batches can still make queued
+local actions stale as a side effect of valid peer state changes, so failed peer
+batch handling snapshots the queue as part of the atomic boundary. Separately,
+`drain_queue_into_batch` processes the local queue when we hold the potato; any
+errors during local draining reflect bugs or stale local intents, not a normal
+peer-data recovery path.
 
 ### Non-Potato Messages
 
-`PeerMessage::Message` (for in-game readable messages) remains a separate type
+`PeerMessage::Message` (for advisory game messages) remains a separate type
 that does not carry the potato and can be sent at any time.
 
 **Key code:** `src/potato_handler/mod.rs` (`PotatoHandler`, `PotatoState`)
@@ -359,7 +404,11 @@ handlers, not in `PotatoHandler` monolithic handshake state.
 The transition to `PotatoHandler` is driven by `coin_created` — the channel
 coin appearing on-chain. Since the coin cannot exist before E is sent, this
 is the ground truth for "the channel is live." A late-arriving `HandshakeF`
-after the transition is silently ignored by `PotatoHandler`.
+after the transition is silently ignored by `PotatoHandler`. Internally, the
+split handshake handlers move from `Finished` to `Done` during this handoff:
+`Finished` means the handshake's own protocol work is complete, while `Done`
+means the replacement `PotatoHandler` has been created and the old handshake
+handler no longer reports channel status.
 
 #### Security properties
 
@@ -438,10 +487,23 @@ puzzle hash and combined amount.
 ---
 ---
 
-## Calpoker: The Reference Game
+## Reference Games
 
-Calpoker is a poker variant used as the primary test game. Two players are dealt
-cards from a shared random deck and select hands through a commit-reveal
+The repository includes two reference games. **Calpoker** was implemented first
+and is the simpler example: a five-step commit-reveal poker variant with one
+main hand-evaluation payoff and one optional advisory pre-reveal. **Space Poker**
+is also a reference game; it illustrates a more involved multi-round poker flow,
+repeated betting/open states, and heavier use of advisory message parsers.
+Together they show different ways to structure validators and off-chain handlers
+on the same channel/referee foundation.
+
+The Rust game collection also registers `debug` for simulator tests only. It is
+not a user-facing reference game.
+
+### Calpoker
+
+Calpoker is a poker variant used as the simplest reference game. Two players are
+dealt cards from a shared random deck and select hands through a commit-reveal
 protocol that prevents either player from cheating.
 
 ### Commit-Reveal Protocol
@@ -514,10 +576,23 @@ anyway, sending it early does no strategic damage to the sender — it simply
 lets the opponent start thinking sooner, making the UX feel simultaneous
 even though the underlying protocol is turn-based.
 
-The same mechanism is available to any game, not just calpoker. The
-`my_turn_handler` returns a `message_parser` (or nil if the game doesn't use
-advisory messages), and the `their_turn_handler` returns `message_data` as an
-optional fourth element of its result.
+The same mechanism is available to any game, not just Calpoker. In the current
+reference games, Calpoker uses it at one specific point where Alice can
+pre-reveal information Bob will derive from the next formal move anyway. Space
+Poker uses the same optional channel for deal/open pre-reveals that make newly
+derivable card information visible earlier. In Space Poker this happens at the
+beginning of each street: there is no reason to fold before at least checking,
+so the player preemptively sends the reveal that will show the next street's
+cards. The `my_turn_handler` returns a `message_parser` (or omits it / returns
+nil if the game doesn't use advisory messages), and the `their_turn_handler`
+returns `message_data` as an optional fourth element of its result.
+
+### Space Poker
+
+Space Poker is a Texas Hold'em-style reference game. It exercises a different
+part of the handler API than Calpoker: multi-round state and betting/open
+actions. It is registered alongside Calpoker in the Rust game collection and has
+dedicated handler and validation tests.
 
 **Key code:**
 
@@ -528,6 +603,9 @@ dispatches incoming messages via `received_message`
 - `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
 - `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
 - `src/test_support/calpoker.rs` — Rust-side calpoker registration/helpers
+- `clsp/games/spacepoker/onchain/*.clsp`
+- `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
+- `src/test_support/spacepoker.rs` — Rust-side Space Poker helpers
 
 ---
 
@@ -617,6 +695,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement             |
 | `clsp/games/calpoker/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step)      |
 | `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
+| `clsp/games/spacepoker/onchain/*.clsp`       | Space Poker validation programs                           |
+| `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
 | `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
@@ -627,6 +707,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | File                                        | Purpose                                                  |
 | ------------------------------------------- | -------------------------------------------------------- |
 | `src/test_support/calpoker.rs`              | Calpoker test registration and helpers                   |
+| `src/test_support/spacepoker.rs`            | Space Poker test registration and helpers                |
 | `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
 | `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/potato_handler.rs`   | Test peer helper                                         |
@@ -678,7 +759,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptTimeout lifecycle |
 | [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
 | [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |
-| [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, test infrastructure, `game_assert!` |
+| [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!` |
+| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `GameAction` reference, trigger semantics, test-writing conventions |
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |

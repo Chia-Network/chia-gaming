@@ -195,12 +195,34 @@ fn nested_struct() {
 }
 
 #[test]
-fn vec_u8_as_list() {
-    // Plain Vec<u8> serializes as a list of integers, not bytes
+fn vec_u8_as_bytestring() {
+    // A Vec<u8> is a byte string in bencodex, not a list of integers.
     let v: Vec<u8> = vec![1, 2, 3];
     let encoded = to_vec(&v).unwrap();
-    assert_eq!(encoded, b"li1ei2ei3ee");
+    assert_eq!(encoded, b"3:\x01\x02\x03");
     assert_eq!(from_slice::<Vec<u8>>(&encoded).unwrap(), v);
+    // The list encoding still deserializes into Vec<u8> for backward compat.
+    assert_eq!(from_slice::<Vec<u8>>(b"li1ei2ei3ee").unwrap(), v);
+}
+
+#[test]
+fn empty_vec_u8_is_list() {
+    // Empty sequences stay lists so empty Vec<NonByte> keeps its encoding.
+    let v: Vec<u8> = vec![];
+    let encoded = to_vec(&v).unwrap();
+    assert_eq!(encoded, b"le");
+    assert_eq!(from_slice::<Vec<u8>>(&encoded).unwrap(), v);
+    // And an empty byte string also reads back as an empty Vec<u8>.
+    assert_eq!(from_slice::<Vec<u8>>(b"0:").unwrap(), v);
+}
+
+#[test]
+fn vec_u16_stays_list() {
+    // Sequences of non-u8 integers remain integer lists.
+    let v: Vec<u16> = vec![1, 2, 300];
+    let encoded = to_vec(&v).unwrap();
+    assert_eq!(encoded, b"li1ei2ei300ee");
+    assert_eq!(from_slice::<Vec<u16>>(&encoded).unwrap(), v);
 }
 
 #[test]

@@ -160,6 +160,17 @@ receiving side:
 The peer cannot send a CLVM program for us to evaluate. They send data, and
 we run our own programs against it.
 
+Their-turn handlers are still security-sensitive. They run after the generic
+referee envelope has bounded the move bytes, but the bytes are still malicious
+peer input. A peer-triggered handler raise, expensive loop, or allocation blowup
+is a security bug by default because it can prevent the honest side from
+constructing or recording the slash path. Game-rule failures must be expressed
+as validator `SLASH` outcomes and handler evidence candidates, not handler
+crashes. The framework tries nil evidence before calling the handler, including
+for terminal moves; if that succeeds as a slash, the handler is skipped. Handler
+audits should focus on peer-controlled inputs that survive the generic envelope
+and nil-evidence precheck.
+
 ---
 
 ## Allocator Resource Limits
@@ -243,11 +254,26 @@ evaluation. Individual games must uphold their part:
   for seeds, 48 bytes for reveals, 1 byte for discards, 18 bytes for the
   final step).
 
+- **Validation programs must separate malicious moves from invalid slashes.**
+  Any move the referee can accept optimistically must be slashable if it is
+  malformed or dishonest, and the validator must report that without raising.
+  Invalid slash attempts against valid moves must fail, either by returning the
+  valid payload or, for malformed evidence, by raising so the slash transaction
+  cannot be mined. Evidence checks that can raise must therefore happen only
+  after move-shape and move-validity checks have already decided the move is
+  not slashable.
+
 - **`max_move_size` should be tight.** Games should set `max_move_size` to
   the smallest value that accommodates legitimate moves for that step.
 
 - **Validation programs should be cheap.** They run on every received move.
   Stick to byte-length checks, hashing, and simple arithmetic. Avoid
   patterns that could have super-linear cost in the input size.
+
+- **Their-turn handlers must not raise on peer-controlled game-rule failures.**
+  They should cheaply guard any shape assumptions not enforced by the generic
+  referee envelope, then return evidence candidates or nil evidence as
+  appropriate. A malicious move that can crash or DoS a receive handler is a
+  security bug unless the framework rejects it before the handler is called.
 
 New game implementations should be reviewed for these properties.

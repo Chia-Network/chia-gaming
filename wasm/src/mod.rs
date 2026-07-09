@@ -32,8 +32,9 @@ mod gaming_wasm {
     use flate2::Decompress;
     use flate2::FlushDecompress;
     use chia_gaming::peer_container::{
-        DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
+        GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
+    use chia_gaming::transaction_manager::{CoinStateRecord, ManagerDrain, TransactionManager};
     use chia_gaming::potato_handler::effects::{CradleEvent, GameNotification};
     use chia_gaming::potato_handler::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::potato_handler::start::GameStart;
@@ -88,6 +89,7 @@ mod gaming_wasm {
     };
 
     export type SpendBundle = {
+        "name"?: string,
         "spends": Array<CoinSpend>
     };
 
@@ -113,11 +115,11 @@ mod gaming_wasm {
             "coin_id"?: string,
             "max_height"?: bigint,
           } }
-        | { NeedLauncherCoin: boolean }
-        | { WatchCoin: { coin_name: string, coin_string: string } };
+        | { NeedLauncherCoin: boolean };
 
     export type DrainResult = {
         "events": Array<CradleEvent>,
+        "watchCoins": Array<{ coin_name: string, coin_string: string }>,
     };
 
     export type GameCradleConfig = {
@@ -149,14 +151,13 @@ mod gaming_wasm {
         allocator: AllocEncoder,
         #[serde(skip)]
         rng: ChaCha8SerializationWrapper,
-        cradle: SynchronousGameCradle,
+        cradle: TransactionManager<SynchronousGameCradle>,
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsWatchReport {
         created_watched: Vec<String>,
         deleted_watched: Vec<String>,
-        timed_out: Vec<String>,
     }
 
     #[derive(Serialize)]
@@ -531,7 +532,7 @@ mod gaming_wasm {
             let cradle = JsCradle {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng.clone()),
-                cradle: game_cradle,
+                cradle: TransactionManager::new(game_cradle),
             };
             insert_cradle(new_id, cradle);
 
@@ -592,20 +593,99 @@ mod gaming_wasm {
         })
     }
 
+    fn watch_coin_entries(cradle: &JsCradle) -> Vec<JsWatchCoinEntry> {
+        watch_coin_entries_from_coins(&cradle.cradle.snapshot_watched_coins())
+    }
+
+    fn watch_coin_entries_from_coins(coins: &[CoinString]) -> Vec<JsWatchCoinEntry> {
+        coins
+            .iter()
+            .map(|cs| JsWatchCoinEntry {
+                coin_name: hex::encode(cs.to_coin_id().bytes()),
+                coin_string: coin_string_to_hex(cs),
+            })
+            .collect()
+    }
+
     #[wasm_bindgen]
     pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
+        let result = with_game(cid, move |cradle: &mut JsCradle| Ok(watch_coin_entries(cradle)))?;
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Durable watched-coin snapshot for seeding host polling after attach or
+    /// restore. Same shape as [`get_watching_coins`]; both delegate to the
+    /// manager.
+    #[wasm_bindgen]
+    pub fn snapshot_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
+        let result = with_game(cid, move |cradle: &mut JsCradle| Ok(watch_coin_entries(cradle)))?;
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Spend bundles the manager captured and the hosting layer should submit to
+    /// the wallet/network.  Returns the same `SpendBundle` shape that the old
+    /// `OutboundTransaction` events carried; the manager intercepts those events
+    /// into its submission buffer, so the host should call this after each drain
+    /// to pick up newly captured transactions.
+    #[wasm_bindgen]
+    pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsCradle| {
-            let coins = cradle.cradle.get_watching_coins();
-            let entries: Vec<JsWatchCoinEntry> = coins
+            Ok(cradle
+                .cradle
+                .drain_submissions()
                 .iter()
-                .map(|cs| JsWatchCoinEntry {
-                    coin_name: hex::encode(cs.to_coin_id().bytes()),
-                    coin_string: coin_string_to_hex(cs),
-                })
-                .collect();
-            Ok(entries)
+                .map(spend_bundle_to_js)
+                .collect::<Vec<_>>())
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Re-queue every transaction the manager has retained for resubmission.
+    /// Called on session restore so transactions that were drained but may not
+    /// have reached the network before a reload are submitted again.  The host
+    /// should call `drain_submissions` afterwards to pick them up.
+    #[wasm_bindgen]
+    pub fn resubmit_submitted(cid: i32) -> Result<(), JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.requeue_submitted();
+            Ok(())
+        })
+    }
+
+    #[derive(Deserialize)]
+    struct JsCoinStateRecord {
+        /// Full coin string, hex-encoded.
+        coin: String,
+        created_height: Option<u64>,
+        spent_height: Option<u64>,
+    }
+
+    /// Report the latest confirmed height and raw per-coin chain state to the
+    /// manager, which computes the created/deleted diff internally and feeds the
+    /// inner cradle.  Replaces the JS-side `WatchReport` computation that
+    /// `new_block` consumed.
+    #[wasm_bindgen]
+    pub fn report_coin_states(
+        cid: i32,
+        height: u64,
+        records_json: &str,
+    ) -> Result<JsValue, JsValue> {
+        let js_records: Vec<JsCoinStateRecord> = serde_json::from_str(records_json)
+            .map_err(|e| JsValue::from_str(&format!("bad coin state records json: {e}")))?;
+        let mut records = Vec::with_capacity(js_records.len());
+        for r in &js_records {
+            records.push(CoinStateRecord {
+                coin: hex_to_coinstring(&r.coin).into_js()?,
+                created_height: r.created_height,
+                spent_height: r.spent_height,
+            });
+        }
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .report_coin_states(&mut cradle.allocator, height, &records)
+        })?;
+        with_game_drain(cid, |_| Ok(()))
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
@@ -761,8 +841,26 @@ mod gaming_wasm {
     }
 
     fn decode_offer_to_spend_bundle(offer_bech32: &str) -> Result<SpendBundle, String> {
-        let (_hrp, raw_bytes) = bech32::decode(offer_bech32)
-            .map_err(|e| format!("bech32m decode error: {e}"))?;
+        // Chia offers are bech32m-encoded but routinely exceed the bech32 crate's
+        // 1023-character CODE_LENGTH cap. bech32::decode rejects them on that cap
+        // before validating the checksum (surfacing as the misleading "no valid
+        // bech32 or bech32m checksum"). Decode with a bech32m checksum whose
+        // length cap is lifted, matching chia's own offer decoding which raises
+        // bech32_decode's max_length.
+        enum OfferBech32m {}
+        impl bech32::Checksum for OfferBech32m {
+            type MidstateRepr = u32;
+            const CODE_LENGTH: usize = usize::MAX;
+            const CHECKSUM_LENGTH: usize = 6;
+            const GENERATOR_SH: [u32; 5] =
+                [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+            const TARGET_RESIDUE: u32 = 0x2bc8_30a3;
+        }
+
+        let checked =
+            bech32::primitives::decode::CheckedHrpstring::new::<OfferBech32m>(offer_bech32)
+                .map_err(|e| format!("bech32m decode error: {e}"))?;
+        let raw_bytes: Vec<u8> = checked.byte_iter().collect();
 
         if raw_bytes.len() < 3 {
             return Err(format!("offer data too short ({} bytes)", raw_bytes.len()));
@@ -817,6 +915,23 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn wallet_callback_failed(cid: i32, reason: &str) -> Result<JsValue, JsValue> {
+        let reason = reason.to_string();
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .wallet_callback_failed(&mut cradle.allocator, reason)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn convert_offer_to_coinset_org(offer_bech32: &str) -> Result<JsValue, JsValue> {
+        let bundle = decode_offer_to_spend_bundle(offer_bech32)
+            .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
+        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
+    }
+
+    #[wasm_bindgen]
     pub fn get_channel_puzzle_hash(cid: i32) -> Result<JsValue, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
             let ph = cradle.cradle.channel_puzzle_hash();
@@ -830,7 +945,6 @@ mod gaming_wasm {
     fn watch_report_from_params(
         additions: Vec<String>,
         removals: Vec<String>,
-        timed_out: Vec<String>,
     ) -> Result<WatchReport, types::Error> {
         Ok(WatchReport {
             created_watched: map_m(|s| hex_to_coinstring(s), &additions)?
@@ -838,10 +952,6 @@ mod gaming_wasm {
                 .cloned()
                 .collect(),
             deleted_watched: map_m(|s| hex_to_coinstring(s), &removals)?
-                .iter()
-                .cloned()
-                .collect(),
-            timed_out: map_m(|s| hex_to_coinstring(s), &timed_out)?
                 .iter()
                 .cloned()
                 .collect(),
@@ -855,11 +965,6 @@ mod gaming_wasm {
 
     fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
         JsWatchReport {
-            timed_out: watch_report
-                .timed_out
-                .iter()
-                .map(coin_string_to_hex)
-                .collect(),
             created_watched: watch_report
                 .created_watched
                 .iter()
@@ -907,12 +1012,8 @@ mod gaming_wasm {
         height: u64,
         additions: Vec<String>,
         removals: Vec<String>,
-        timed_out: Vec<String>,
     ) -> Result<JsValue, JsValue> {
-        let height: usize = std::convert::TryInto::try_into(height)
-            .map_err(|_| types::Error::StrErr(format!("block height {} exceeds usize", height)))
-            .into_js()?;
-        let watch_report = watch_report_from_params(additions, removals, timed_out).into_js()?;
+        let watch_report = watch_report_from_params(additions, removals).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.new_block(
                 &mut cradle.allocator,
@@ -968,10 +1069,7 @@ mod gaming_wasm {
                 .cradle
                 .flush_and_collect(&mut cradle.allocator)?;
 
-            let events = js_sys::Array::new();
-            for event in &dr.events {
-                events.push(&cradle_event_to_js(event)?);
-            }
+            let events = collect_drain_events(&dr)?;
             let ids_arr = js_sys::Array::new();
             for id in &ids {
                 ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
@@ -1078,6 +1176,35 @@ mod gaming_wasm {
                 entropy,
             )
         })
+    }
+
+    /// Pull the protocol-level peer state, rendered as indented text for the
+    /// dashboard. This reads directly out of Rust (borrow-safe) rather than
+    /// being pushed through notifications.
+    #[wasm_bindgen]
+    pub fn protocol_state_pretty(cid: i32) -> Result<String, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.protocol_state_pretty()
+        })
+    }
+
+    #[derive(Serialize)]
+    struct JsCoinOfInterest {
+        label: String,
+        id: String,
+    }
+
+    /// Labeled coin ids (hex) to show above the protocol state. 0-2 entries.
+    #[wasm_bindgen]
+    pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
+        let coins = with_game(cid, move |cradle: &mut JsCradle| {
+            Ok(cradle.cradle.coins_of_interest())
+        })?;
+        let entries: Vec<JsCoinOfInterest> = coins
+            .into_iter()
+            .map(|(label, id)| JsCoinOfInterest { label, id })
+            .collect();
+        serde_wasm_bindgen::to_value(&entries).into_js()
     }
 
     #[wasm_bindgen]
@@ -1198,6 +1325,8 @@ mod gaming_wasm {
 
     #[derive(Serialize)]
     struct JsSpendBundle {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         spends: Vec<JsCoinSpend>,
     }
 
@@ -1249,6 +1378,7 @@ mod gaming_wasm {
 
     fn spend_bundle_to_js(spend_bundle: &SpendBundle) -> JsSpendBundle {
         JsSpendBundle {
+            name: spend_bundle.name.clone(),
             spends: spend_bundle.spends.iter().map(coin_spend_to_js).collect(),
         }
     }
@@ -1286,6 +1416,16 @@ mod gaming_wasm {
             .into_e()
     }
 
+    fn notification_event_to_js(notification: &GameNotification) -> Result<JsValue, types::Error> {
+        let serializer = serde_wasm_bindgen::Serializer::new()
+            .serialize_missing_as_null(true)
+            .serialize_large_number_types_as_bigints(true);
+        let obj = js_sys::Object::new();
+        let value = notification.serialize(&serializer).into_e()?;
+        js_sys::Reflect::set(&obj, &"Notification".into(), &value).into_e()?;
+        Ok(obj.into())
+    }
+
     fn cradle_event_to_js(event: &CradleEvent) -> Result<JsValue, types::Error> {
         match event {
             CradleEvent::OutboundMessage(data) => {
@@ -1294,14 +1434,10 @@ mod gaming_wasm {
                 let _ = js_sys::Reflect::set(&obj, &"OutboundMessage".into(), &arr);
                 Ok(obj.into())
             }
-            CradleEvent::OutboundTransaction(bundle) => {
+            CradleEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
-            CradleEvent::Notification(n) => {
-                let val = serde_json::to_value(n)
-                    .unwrap_or_else(|_| serde_json::json!(format!("{n:?}")));
-                json_event_to_js(serde_json::json!({ "Notification": val }))
-            }
+            CradleEvent::Notification(n) => notification_event_to_js(n),
             CradleEvent::Log(line) => {
                 json_event_to_js(serde_json::json!({ "Log": line }))
             }
@@ -1317,27 +1453,37 @@ mod gaming_wasm {
             CradleEvent::NeedLauncherCoin => {
                 json_event_to_js(serde_json::json!({ "NeedLauncherCoin": true }))
             }
-            CradleEvent::WatchCoin {
-                coin_name,
-                coin_string,
-            } => {
-                json_event_to_js(serde_json::json!({
-                    "WatchCoin": {
-                        "coin_name": hex::encode(coin_name.bytes()),
-                        "coin_string": coin_string_to_hex(coin_string),
-                    }
-                }))
-            }
+            CradleEvent::WatchCoin { .. } => Err(types::Error::StrErr(
+                "WatchCoin should be intercepted before JS event serialization".to_string(),
+            )),
         }
     }
 
-    fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
+    /// Build the JS-facing event array for a drained [`ManagerDrain`].
+    ///
+    /// The [`TransactionManager`] intercepts `OutboundTransaction` and
+    /// `WatchCoin` events; the hosting layer retrieves those via
+    /// [`drain_submissions`] and `watchCoins` respectively. Only the remaining
+    /// events (notifications, messages, coin-solution requests, etc.) are
+    /// surfaced in `events`.
+    fn collect_drain_events(drain: &ManagerDrain) -> Result<js_sys::Array, types::Error> {
         let events = js_sys::Array::new();
-        for event in &dr.events {
+        for event in &drain.events {
             events.push(&cradle_event_to_js(event)?);
         }
+        Ok(events)
+    }
+
+    fn manager_drain_to_js(drain: &ManagerDrain) -> Result<JsValue, types::Error> {
+        let events = collect_drain_events(drain)?;
+        let watch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.watch_coins))
+            .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
+        let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
+        if drain.terminal {
+            let _ = js_sys::Reflect::set(&obj, &"terminal".into(), &true.into());
+        }
         Ok(obj.into())
     }
 
@@ -1355,7 +1501,7 @@ mod gaming_wasm {
                 ));
             }
             let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            drain_result_to_js(&dr)
+            manager_drain_to_js(&dr)
         })
     }
 

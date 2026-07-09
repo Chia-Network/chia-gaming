@@ -1,5 +1,5 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
-import { jsonParse, jsonStringify } from '../util/jsonSafe';
+import { jsonParseLossless, jsonStringifyLossless } from '../util/jsonSafe';
 
 export function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -104,36 +104,38 @@ interface SavedGame {
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
-  playerCardIds: number[];
-  opponentCardIds: number[];
-  cardSelections: number[];
   winner: string | null;
-  playerBestHandCardIds: number[];
-  opponentBestHandCardIds: number[];
-  playerHaloCardIds: number[];
-  opponentHaloCardIds: number[];
+  playerBestHandCardIds: bigint[];
+  opponentBestHandCardIds: bigint[];
+  playerHaloCardIds: bigint[];
+  opponentHaloCardIds: bigint[];
   playerDisplayText: string;
   opponentDisplayText: string;
 }
 
 export interface CalpokerHandState {
-  playerHand: number[];
-  opponentHand: number[];
-  moveNumber: number;
+  playerHand: bigint[];
+  opponentHand: bigint[];
+  moveNumber: bigint;
   isPlayerTurn: boolean;
-  cardSelections?: number[];
+  cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+}
+
+export interface PersistedGameState<T = unknown> {
+  gameType: string;
+  version: bigint;
+  state: T;
 }
 
 type BlockchainType = 'simulator' | 'walletconnect';
 
 /**
- * Single flat state object stored in localStorage. Stale nonce = wipe
+ * Single flat state object stored in localStorage. Stale version = wipe
  * everything. No nesting, no migration — alpha-mode simplicity.
  */
 export interface SessionState {
-  version: number;
-  buildNonce?: string;
+  version: bigint;
 
   // Identity (regenerated on wipe)
   playerId: string;
@@ -149,7 +151,6 @@ export interface SessionState {
 
   // UI state
   activeTab?: string;
-  unreadChat?: boolean;
   unreadGame?: boolean;
   walletAlert?: boolean;
   trackerAlert?: boolean;
@@ -158,63 +159,89 @@ export interface SessionState {
   blockchainType?: BlockchainType;
   serializedCradle?: string;
   pairingToken?: string;
-  messageNumber?: number;
-  remoteNumber?: number;
+  sessionPeerId?: string;
+  gameSessionId?: string;
+  messageNumber?: bigint;
+  remoteNumber?: bigint;
   channelReady?: boolean;
   iStarted?: boolean;
   amount?: string;
   perGameAmount?: string;
-  pendingTransactions?: string[];
-  unackedMessages?: Array<{ msgno: number; msg: string }>;
+  unackedMessages?: Array<{ msgno: bigint; msg: string }>;
   history?: string[];
   log?: string[];
+  humanHistory?: string[];
+  wasmNotificationHistory?: string[];
+  diagnosticLog?: string[];
   activeGameId?: string | null;
   activeGameType?: string;
-  handState?: CalpokerHandState | null;
+  handState?: PersistedGameState | null;
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
-  chatMessages?: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
   gameCoinHex?: string | null;
   gameTurnState?: string;
+  gameHandStatus?: string;
   gameTerminalType?: string;
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
   gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
-  channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
-  gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
+  channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
+  gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   dismissedChannelState?: string;
+  goOnChainPressed?: boolean;
+  cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
+  betweenHandComposeGameTimeout?: string;
   betweenHandComposeGameType?: string;
-  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_type?: string } | null;
+  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
 export type SessionSave = SessionState;
 
 const STATE_KEY = 'appState';
-const CURRENT_VERSION = 3;
+const RESET_KEY = 'appState_hardReset';
+const CURRENT_VERSION = 3n;
+
+// IndexedDB databases to delete when the browser can't enumerate them via
+// `indexedDB.databases()` (notably Safari).  These are the databases the app
+// and its dependencies are known to create; deleting a nonexistent one is a
+// harmless no-op.
+const KNOWN_INDEXED_DB_NAMES = [
+  'WALLET_CONNECT_V2_INDEXED_DB',
+  'walletconnect',
+  'walletconnect-v2',
+];
 
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
   return lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect');
 }
 
-function deleteIndexedDb(name: string): Promise<void> {
+function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<void> {
   return new Promise((resolve) => {
     try {
       const request = indexedDB.deleteDatabase(name);
       request.onsuccess = () => resolve();
-      request.onerror = () => resolve();
-      request.onblocked = () => resolve();
-    } catch {
+      request.onerror = () => {
+        console.error(`[save] ${context}: failed to delete IndexedDB database "${name}":`, request.error);
+        resolve();
+      };
+      request.onblocked = () => {
+        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"`);
+        resolve();
+      };
+    } catch (e) {
+      console.error(`[save] ${context}: failed to start IndexedDB database deletion for "${name}":`, e);
       resolve();
     }
   });
@@ -246,19 +273,63 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
       const toDelete = databases
         .map((db) => db.name)
         .filter((name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name));
-      await Promise.all(toDelete.map((name) => deleteIndexedDb(name)));
+      await Promise.all(toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')));
       return;
     } catch {
       // Fall through to known database names.
     }
   }
 
-  const knownDbNames = [
-    'WALLET_CONNECT_V2_INDEXED_DB',
-    'walletconnect',
-    'walletconnect-v2',
-  ];
-  await Promise.all(knownDbNames.map((name) => deleteIndexedDb(name)));
+  await Promise.all(
+    KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+  );
+}
+
+function stopPersistenceForHardReset(): void {
+  cached = null;
+  fenced = true;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+}
+
+function signalHardResetToOtherTabs(): void {
+  try {
+    localStorage.setItem(RESET_KEY, `${Date.now()}:${randomHex()}`);
+  } catch (e) {
+    console.error('[save] failed to signal hard reset to other tabs:', e);
+  }
+}
+
+function clearAllIndexedDbForHardReset(): void {
+  try {
+    if (typeof indexedDB === 'undefined') return;
+    const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+    if (typeof dynamicDatabaseLookup.databases !== 'function') {
+      // Browsers without `indexedDB.databases()` (notably Safari) can't be
+      // enumerated, so fall back to deleting the databases we know about (e.g.
+      // WalletConnect's) rather than leaving them behind.
+      console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
+      void Promise.all(
+        KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
+      );
+      return;
+    }
+
+    void dynamicDatabaseLookup.databases()
+      .then((databases) => Promise.all(
+        databases
+          .map((db) => db.name)
+          .filter((name): name is string => typeof name === 'string' && name.length > 0)
+          .map((name) => deleteIndexedDb(name, 'hard reset')),
+      ))
+      .catch((e) => {
+        console.error('[save] failed to enumerate IndexedDB databases during hard reset:', e);
+      });
+  } catch (e) {
+    console.error('[save] failed to start IndexedDB cleanup during hard reset:', e);
+  }
 }
 
 // --- In-memory cache + debounced persistence ---
@@ -325,6 +396,29 @@ export function isFenced(): boolean {
   return fenced;
 }
 
+function assertNoNumbers(obj: unknown, path: string): void {
+  if (obj === null || obj === undefined) return;
+  if (typeof obj === 'number') {
+    const msg = `[save] BUG: found number where bigint expected at "${path}" (value=${obj})`;
+    console.error(msg);
+    if (typeof window !== 'undefined' && window.alert) {
+      window.alert(msg);
+    }
+    throw new Error(msg);
+  }
+  if (ArrayBuffer.isView(obj)) return;
+  if (typeof obj !== 'object') return;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      assertNoNumbers(obj[i], `${path}[${i}]`);
+    }
+  } else {
+    for (const key of Object.keys(obj as Record<string, unknown>)) {
+      assertNoNumbers((obj as Record<string, unknown>)[key], `${path}.${key}`);
+    }
+  }
+}
+
 function flushToLocalStorage(): void {
   if (!cached || fenced) return;
   if (persistTimer) {
@@ -332,10 +426,15 @@ function flushToLocalStorage(): void {
     persistTimer = null;
   }
   try {
-    localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(cached)));
+    assertNoNumbers(cached, 'SessionState');
+    localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(cached)));
   } catch (e) {
     console.error('[save] failed to persist state:', e);
   }
+}
+
+export function flushSessionState(): void {
+  flushToLocalStorage();
 }
 
 function schedulePersist(): void {
@@ -354,6 +453,11 @@ if (typeof window !== 'undefined') {
   });
 
   window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key === RESET_KEY) {
+      stopPersistenceForHardReset();
+      window.location.reload();
+      return;
+    }
     if (e.key === LEASE_KEY && e.newValue !== tabId && !fenced) {
       fenced = true;
       fireFenced();
@@ -371,7 +475,7 @@ if (typeof window !== 'undefined') {
 
 /** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
 export function _writeRawState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(obj)));
+  localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(obj)));
 }
 
 /** @internal — reset module state between test cases */
@@ -381,6 +485,7 @@ export function _resetForTests(): void {
   fenced = false;
   fencedListeners.clear();
   try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(RESET_KEY); } catch { /* ignore */ }
 }
 
 function freshState(): SessionState {
@@ -393,7 +498,7 @@ export function loadState(): SessionState {
     const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
       const json = deobfuscate(raw);
-      const parsed = jsonParse(json);
+      const parsed = jsonParseLossless(json);
       if (parsed.version == CURRENT_VERSION) {
         cached = parsed as SessionState;
         return cached;
@@ -431,20 +536,24 @@ export function getSessionId(): string {
   return state.sessionId;
 }
 
-export function getBlockchainType(): BlockchainType | undefined {
-  return loadState().blockchainType;
+export function regenerateSessionId(): string {
+  const state = loadState();
+  state.sessionId = randomHex();
+  schedulePersist();
+  return state.sessionId;
 }
 
-export function getBuildNonce(): string | undefined {
-  if (typeof window !== 'undefined') return window.__buildNonce;
-  if (typeof globalThis !== 'undefined') return (globalThis as any).__buildNonce;
-  return undefined;
+export function clearSessionId(): void {
+  mutate(s => { s.sessionId = undefined; });
+}
+
+export function getBlockchainType(): BlockchainType | undefined {
+  return loadState().blockchainType;
 }
 
 export function saveSession(fields: Partial<SessionState>): void {
   mutate(s => {
     Object.assign(s, fields);
-    s.buildNonce = getBuildNonce();
   });
 }
 
@@ -462,7 +571,7 @@ function hasWalletConnectStorage(): boolean {
  * Returns the current state if there's anything worth resuming — a
  * serialized cradle or leftover WalletConnect storage from a partial
  * connection. `blockchainType` alone (preserved across session clears)
- * does not count as resumable. Callers check buildNonce themselves.
+ * does not count as resumable.
  */
 export function peekSession(): SessionState | null {
   const state = loadState();
@@ -475,7 +584,6 @@ export function clearSession(): void {
   const prev = loadState();
   cached = {
     version: prev.version,
-    buildNonce: prev.buildNonce,
     playerId: prev.playerId,
     sessionId: prev.sessionId,
     alias: prev.alias,
@@ -485,7 +593,6 @@ export function clearSession(): void {
     trackerUrl: prev.trackerUrl,
     savedGames: prev.savedGames,
     activeTab: prev.activeTab,
-    unreadChat: prev.unreadChat,
     unreadGame: prev.unreadGame,
     walletAlert: prev.walletAlert,
     trackerAlert: prev.trackerAlert,
@@ -494,17 +601,20 @@ export function clearSession(): void {
   flushToLocalStorage();
 }
 
-export async function hardReset(): Promise<void> {
-  cached = null;
-  fenced = false;
-  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+export function hardReset(): void {
+  signalHardResetToOtherTabs();
+  stopPersistenceForHardReset();
   try {
     localStorage.clear();
+  } catch (e) {
+    console.error('[save] failed to clear localStorage during hard reset:', e);
+  }
+  try {
     sessionStorage.clear();
   } catch (e) {
-    console.error('[save] failed to clear browser storage during hard reset:', e);
+    console.error('[save] failed to clear sessionStorage during hard reset:', e);
   }
-  await clearWalletConnectIndexedDb();
+  clearAllIndexedDbForHardReset();
 }
 
 // --- Alias ---
@@ -561,14 +671,6 @@ export function setActiveTab(tab: string): void {
 }
 
 // --- Notification badges ---
-
-export function getUnreadChat(): boolean {
-  return loadState().unreadChat ?? false;
-}
-
-export function setUnreadChat(v: boolean): void {
-  mutate(s => { s.unreadChat = v || undefined; });
-}
 
 export function getUnreadGame(): boolean {
   return loadState().unreadGame ?? false;

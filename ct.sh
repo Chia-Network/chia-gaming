@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export CI=true
 SECONDS=0
 trap 'echo "Total time: ${SECONDS} seconds"' EXIT
 

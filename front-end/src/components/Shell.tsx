@@ -4,12 +4,14 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase } from '../types/ChiaGaming';
-import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
+import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
+import { TrackerConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/TrackerConnection';
+import { PeerSession, generateSessionId } from '../services/PeerSession';
 import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
   getSessionId,
+  clearSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
@@ -17,8 +19,6 @@ import {
   saveSession,
   clearSession,
   hardReset,
-  getBuildNonce,
-  clearWalletConnectStorage,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -26,8 +26,6 @@ import {
   setFeeUnit as saveFeeUnit,
   getActiveTab as getSavedTab,
   setActiveTab as saveActiveTab,
-  getUnreadChat as getSavedUnreadChat,
-  setUnreadChat as saveUnreadChat,
   getUnreadGame as getSavedUnreadGame,
   setUnreadGame as saveUnreadGame,
   getWalletAlert as getSavedWalletAlert,
@@ -38,42 +36,301 @@ import {
   setTrackerUrl as saveTrackerUrl,
   isLeaseConflict,
   claimLease,
-  clearLease,
   onFenced,
   offFenced,
+  getAlias,
 } from '../hooks/save';
-import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
+import { sessionController, destroySessionController } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
+import {
+  BALANCE_POLL_INTERVAL_MS,
+  CHAIN_POLL_INTERVAL_MS,
+  type BlockchainPoller,
+} from '../hooks/BlockchainPoller';
+import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
+import { isRestoreBlocked, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import {
+  selectGameDashboardView,
+  selectStatusBarBalances,
+  sessionAmountsFromSave,
+  DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
+  DEFAULT_UNROLL_TIMEOUT_BLOCKS,
+  type GameDashboardActionKind,
+  type GameDashboardViewModel,
+  type SessionModel,
+  type StatusBarBalanceSegment,
+} from '../lib/session/model';
+import { gameDisplayName } from '../lib/gameRegistry';
 import { log } from '../services/log';
+import { formatMojos } from '../util';
 import { Button } from './button';
 
-import ChatPanel from './ChatPanel';
 import { TrackerPicker } from './TrackerPicker';
 
-type TabId = 'wallet' | 'tracker' | 'game' | 'chat' | 'history' | 'log';
+type TabId = 'wallet' | 'tracker' | 'game' | 'history' | 'log';
 
 const MOJOS_PER_XCH = 1_000_000_000_000;
 
 function getInterface(bcType: 'simulator' | 'walletconnect') {
   return bcType === 'walletconnect'
-    ? { iface: realBlockchainInfo, pollMs: 10000 }
+    ? { iface: realBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS }
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
+
+function normalizeTrackerOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    if (url.hostname === '127.0.0.1' && url.port === '3003') {
+      url.hostname = 'localhost';
+      return url.origin;
+    }
+  } catch {
+    return origin;
+  }
+  return origin;
+}
+
+function humanHistoryFromSave(save: SessionState): string[] | undefined {
+  return save.humanHistory ?? save.history;
+}
+
+function diagnosticLogFromSave(save: SessionState): string[] | undefined {
+  return save.diagnosticLog ?? save.log;
+}
+
+function reactPropSafeValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const copy = value.map(reactPropSafeValue);
+    value.forEach((item, index) => {
+      if (typeof item === 'bigint') {
+        Object.defineProperty(copy, index, {
+          value: item,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+    });
+    return copy as T;
+  }
+
+  const copy = { ...(value as Record<string, unknown>) };
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === 'bigint') {
+      Object.defineProperty(copy, key, {
+        value: nested,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    } else if (nested !== null && typeof nested === 'object') {
+      copy[key] = reactPropSafeValue(nested);
+    }
+  }
+  return copy as T;
+}
+
+function sessionSaveForReactProps(save: SessionState | null): SessionState | undefined {
+  if (!save) return undefined;
+  const propSafeSave = reactPropSafeValue(save);
+  if (Object.prototype.hasOwnProperty.call(save, 'handState')) {
+    Object.defineProperty(propSafeSave, 'handState', {
+      value: save.handState,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return propSafeSave;
+}
+
+type PendingSessionProposal = {
+  from_id: string;
+  from_alias: string;
+  amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
+  game_session_id?: string;
+};
+
+type SessionStartRequest = {
+  peerId: string;
+  opponentAlias?: string;
+  amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
+  iStarted: boolean;
+};
+
+function parseSessionAmount(raw: string): bigint {
+  try {
+    return BigInt(raw);
+  } catch {
+    return FALLBACK_AMOUNT;
+  }
+}
+
+function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
+  if (!raw) return undefined;
+  try {
+    return BigInt(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+const IDLE_PEER_CONNECTION: PeerConnectionResult = {
+  sendMessage: () => {},
+  sendAck: () => {},
+  sendKeepalive: () => {},
+  hostLog: () => {},
+  close: () => {},
+};
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
   { id: 'game', label: 'Game' },
-  { id: 'chat', label: 'Chat' },
   { id: 'history', label: 'History' },
   { id: 'log', label: 'Log' },
 ];
 
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
+
+const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+  inactive: 'Inactive',
+  disconnected: 'Disconnected',
+};
+
+function formatBalanceValue(raw: string): string {
+  try {
+    return formatMojos(BigInt(raw));
+  } catch {
+    // Non-numeric sentinel (e.g. the '?' error convention) — show as-is.
+    return raw;
+  }
+}
+
+function GameDashboard({
+  view,
+  balances,
+  onAction,
+  getProtocolState,
+  getCoins,
+}: {
+  view: GameDashboardViewModel;
+  balances: StatusBarBalanceSegment[] | null;
+  onAction: (kind: GameDashboardActionKind) => void;
+  getProtocolState: () => string | null;
+  getCoins: () => CoinOfInterestEntry[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [protocolText, setProtocolText] = useState<string | null>(null);
+  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
+  const refreshProtocolState = useCallback(() => {
+    setProtocolText(getProtocolState());
+    setCoins(getCoins());
+  }, [getProtocolState, getCoins]);
+  useEffect(() => {
+    if (expanded) refreshProtocolState();
+  }, [expanded, refreshProtocolState]);
+
+  return (
+    <div className='flex-shrink-0 border-b border-canvas-border bg-canvas-bg-subtle px-4 py-2 text-canvas-text sm:px-6 md:px-8'>
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+        <div className='flex min-w-0 items-center gap-2 text-sm'>
+          <button
+            type='button'
+            onClick={() => setExpanded(prev => !prev)}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Hide dashboard details' : 'Show dashboard details'}
+            className='flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-solid'
+          >
+            <span
+              aria-hidden='true'
+              className={`text-sm leading-none transition-transform ${expanded ? 'rotate-90' : ''}`}
+            >
+              ▶
+            </span>
+          </button>
+          <div className='flex min-w-0 flex-col gap-y-0.5'>
+            <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+              <span className='flex min-w-0 flex-wrap gap-x-1'>
+                <span className='text-canvas-solid'>Channel:</span>
+                <span className='font-medium text-canvas-text-contrast'>{view.channelStatusLabel}</span>
+                {view.channelDetail && (
+                  <span className='text-canvas-text'>{view.channelDetail}</span>
+                )}
+              </span>
+              <span className='flex min-w-0 flex-wrap gap-x-1'>
+                <span className='text-canvas-solid'>Hand:</span>
+                <span className='font-medium text-canvas-text-contrast'>{view.handStatusLabel}</span>
+                {view.handDetail && (
+                  <span className='text-canvas-text'>{view.handDetail}</span>
+                )}
+              </span>
+            </div>
+            {balances && (
+              <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>
+                {balances.map(seg => (
+                  <span key={seg.label} className='flex min-w-0 flex-wrap gap-x-1'>
+                    <span className='text-canvas-solid'>{seg.label}:</span>
+                    <span className='font-medium text-canvas-text-contrast'>
+                      {formatBalanceValue(seg.value)}
+                      {seg.value2 !== undefined ? ` / ${formatBalanceValue(seg.value2)}` : ''}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Button
+            variant='solid'
+            color='primary'
+            size='sm'
+            className='min-w-40'
+            disabled={!view.actionEnabled}
+            onClick={() => onAction(view.actionKind)}
+          >
+            {view.actionLabel}
+          </Button>
+        </div>
+      </div>
+      {expanded && (
+        <div className='mt-2'>
+          {coins.length > 0 && (
+            <div className='mb-2 flex flex-col gap-y-0.5 text-xs'>
+              {coins.map(coin => (
+                <span key={`${coin.label}:${coin.id}`} className='flex min-w-0 flex-wrap gap-x-1'>
+                  <span className='text-canvas-solid'>{coin.label}:</span>
+                  <span className='break-all font-mono text-canvas-text-contrast select-text cursor-text'>{coin.id}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className='mb-1 flex items-center justify-between'>
+            <span className='text-xs text-canvas-solid'>Protocol state</span>
+            <Button variant='ghost' color='neutral' size='sm' onClick={refreshProtocolState}>
+              Refresh
+            </Button>
+          </div>
+          <pre className='max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text'>
+            {protocolText ?? 'No active channel.'}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HistoryPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -178,62 +435,80 @@ function LogPanel({ lines }: { lines: string[] }) {
 }
 
 const Shell = () => {
-  // Wipe stale saves before any useState reads from localStorage, so that
-  // hooks like activeTab don't latch values from an old session.
-  const staleWipeRef = useRef(false);
-  if (!staleWipeRef.current) {
-    staleWipeRef.current = true;
-    const save = peekSession();
-    const currentNonce = getBuildNonce();
-    if (save && save.buildNonce !== currentNonce) {
-      console.log(
-        '[Shell] boot: stale save (build %s != %s), wiping',
-        save.buildNonce ?? 'none',
-        currentNonce ?? 'none',
-      );
-      clearSession();
-      clearLease();
-      void clearWalletConnectStorage();
-    }
-  }
-
   const uniqueId = getPlayerId();
-  const sessionId = getSessionId();
+  const [, setSessionId] = useState(() => getSessionId());
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
     if (saved === 'session') return 'game';
-    const valid: TabId[] = ['wallet', 'tracker', 'game', 'chat', 'history', 'log'];
+    const valid: TabId[] = ['wallet', 'tracker', 'game', 'history', 'log'];
     return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
   });
   const setActiveTab = useCallback((tab: TabId) => {
     setActiveTabRaw(tab);
     saveActiveTab(tab);
   }, []);
-  const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
+  const [sessionConfig, setSessionConfig] = useState<GameSessionParams | null>(null);
+  const sessionConfigRef = useRef<GameSessionParams | null>(null);
+  sessionConfigRef.current = sessionConfig;
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
+  const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
+  const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const peerConnTargetRef = useRef<PeerConnectionResult>({
-    sendMessage: () => {},
-    sendAck: () => {},
-    sendKeepalive: () => {},
-    hostLog: (msg) => console.log('[peer-stub]', msg),
-    close: () => {},
-  });
+  // Consent prompt state for the new tracker protocol
+  const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
+  const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
+  const setPendingAdvisoryState = useCallback((next: AdvisoryStartParams | null) => {
+    pendingAdvisoryRef.current = next;
+    setPendingAdvisory(next);
+  }, []);
+  const [pendingProposal, setPendingProposal] = useState<PendingSessionProposal | null>(null);
+  const pendingProposalRef = useRef<PendingSessionProposal | null>(null);
+  const setPendingProposalState = useCallback((next: PendingSessionProposal | null) => {
+    pendingProposalRef.current = next;
+    setPendingProposal(next);
+  }, []);
+  const peerSessionRef = useRef<PeerSession | null>(null);
+
+  // The dashboard pulls the protocol-state pretty-print on demand (when its
+  // detail view is expanded) rather than having it pushed on every change. The
+  // live session registers a getter here; the dashboard reads through it.
+  const protocolStateGetterRef = useRef<(() => string | null) | null>(null);
+  const handleProtocolStateProviderChange = useCallback(
+    (getter: (() => string | null) | null) => {
+      protocolStateGetterRef.current = getter;
+    },
+    [],
+  );
+  const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
+
+  const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
+  const handleCoinsProviderChange = useCallback(
+    (getter: (() => CoinOfInterestEntry[]) | null) => {
+      coinsGetterRef.current = getter;
+    },
+    [],
+  );
+  const getCoins = useCallback(() => coinsGetterRef.current?.() ?? [], []);
+
   const stablePeerConn: PeerConnectionResult = useMemo(() => ({
-    sendMessage: (n, m) => peerConnTargetRef.current.sendMessage(n, m),
-    sendAck: (n) => peerConnTargetRef.current.sendAck(n),
-    sendKeepalive: () => peerConnTargetRef.current.sendKeepalive(),
-    hostLog: (m) => peerConnTargetRef.current.hostLog(m),
-    close: () => peerConnTargetRef.current.close(),
+    sendMessage: (n, m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
+    sendAck: (n) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendAck(n),
+    sendKeepalive: () => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendKeepalive(),
+    hostLog: (m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).hostLog(m),
+    close: () => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).close(),
   }), []);
 
   const [walletConnected, setWalletConnected] = useState(false);
   const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
-  const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
+  const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
   const [sessionError, setSessionError] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreTrackerReconciled, setRestoreTrackerReconciled] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
   const trackerWsUpRef = useRef(false);
   const lastTrackerActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
@@ -243,10 +518,8 @@ const Shell = () => {
   // to localStorage, which fences any existing tab via the storage event.
   // We must not do that until the user has made a conscious choice.
   //
-  //   1. Save exists with matching nonce → 'resumeDialog'.
-  //   2. Save exists but nonce is stale → clearSession(), then fall through
-  //      to "no save" logic.
-  //   3. No save → if another tab holds the lease, 'tabConflict'
+  //   1. Save exists → 'resumeDialog'.
+  //   2. No save → if another tab holds the lease, 'tabConflict'
   //      (the other tab is live even if we don't have its save locally);
   //      otherwise claim the lease and go 'ready'.
   //
@@ -289,8 +562,12 @@ const Shell = () => {
     const handler = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
-      activeBlockchainRef.current?.disconnect().catch(() => {});
+      if (blockchainTypeRef.current !== 'walletconnect') {
+        activeBlockchainRef.current?.disconnect().catch(() => {});
+      }
+      deactivate();
       activeBlockchainRef.current = null;
+      setActiveBlockchainPoller(null);
       setBootState(prev => {
         if (prev.kind !== 'ready') return prev;
         return { kind: 'tabConflict', save: peekSession(), midSession: true };
@@ -305,18 +582,28 @@ const Shell = () => {
   useEffect(() => {
     const cleanup = () => {
       trackerConnRef.current?.disconnect();
-      activeBlockchainRef.current?.disconnect().catch(() => {});
+      // WalletConnect sessions are intentionally durable across reloads.
+      // Calling disconnect() here sends a protocol-level session_delete.
+      if (blockchainTypeRef.current !== 'walletconnect') {
+        activeBlockchainRef.current?.disconnect().catch(() => {});
+      }
     };
     window.addEventListener('beforeunload', cleanup);
     return () => { window.removeEventListener('beforeunload', cleanup); };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (cleanShutdownGraceTimerRef.current !== null) {
+        clearTimeout(cleanShutdownGraceTimerRef.current);
+        cleanShutdownGraceTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const [history, setHistory] = useState<string[]>([]);
   const [logLines, setLogLines] = useState<string[]>([]);
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [unreadChat, setUnreadChatRaw] = useState(() => getSavedUnreadChat());
-  const setUnreadChat = useCallback((v: boolean) => { setUnreadChatRaw(v); saveUnreadChat(v); }, []);
   const [unreadGame, setUnreadGameRaw] = useState(() => getSavedUnreadGame());
   const setUnreadGame = useCallback((v: boolean) => { setUnreadGameRaw(v); saveUnreadGame(v); }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
@@ -327,7 +614,13 @@ const Shell = () => {
   const [balance, setBalance] = useState<bigint | undefined>();
 
   const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
+  const blockchainTypeRef = useRef<'simulator' | 'walletconnect' | undefined>(blockchainType);
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
+  const [activeBlockchainPoller, setActiveBlockchainPoller] = useState<BlockchainPoller | null>(null);
+
+  useEffect(() => {
+    blockchainTypeRef.current = blockchainType;
+  }, [blockchainType]);
 
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
@@ -423,9 +716,11 @@ const Shell = () => {
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionState | null>(null);
+  const historyRef = useRef<string[]>(history);
+  historyRef.current = history;
   const sessionStartedRef = useRef(false);
-  const activePairingTokenRef = useRef<string | null>(null);
-  const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionFinishedCleanupRef = useRef(false);
+  const sessionPhaseRef = useRef<SessionPhase>('none');
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -437,41 +732,199 @@ const Shell = () => {
 
   const appendHistory = useCallback((line: string) => {
     deferStateUpdate(() => {
-      setHistory(prev => [...prev, line]);
+      setHistory(prev => {
+        const next = [...prev, line];
+        historyRef.current = next;
+        saveSession({ humanHistory: next });
+        return next;
+      });
     });
   }, [deferStateUpdate]);
 
-  const pendingMsgHandlerRef = useRef<{
-    handler: (msgno: number, msg: Uint8Array) => void;
-    ackHandler: (ack: number) => void;
-    keepaliveHandler: () => void;
-  } | null>(null);
+  const clearSessionPreservingHistory = useCallback(() => {
+    const humanHistory = historyRef.current;
+    const peerId = peerSessionRef.current?.peerId ?? null;
+    clearSession();
+    const preserved: Record<string, unknown> = {};
+    if (humanHistory.length > 0) preserved.humanHistory = humanHistory;
+    if (peerId) preserved.sessionPeerId = peerId;
+    if (Object.keys(preserved).length > 0) saveSession(preserved as any);
+  }, []);
+
+
+
+  const syncPeerLiveness = useCallback(() => {
+    setPeerLiveness(peerSessionRef.current?.liveness ?? null);
+  }, []);
 
   const markPeerActive = useCallback(() => {
-    lastPeerActivityRef.current = Date.now();
-    setPeerConnected(true);
-  }, []);
+    peerSessionRef.current?.notePeerActivity();
+    syncPeerLiveness();
+  }, [syncPeerLiveness]);
 
   const markPeerInactive = useCallback(() => {
-    lastPeerActivityRef.current = 0;
-    setPeerConnected(false);
-  }, []);
+    peerSessionRef.current?.markInactive();
+    syncPeerLiveness();
+  }, [syncPeerLiveness]);
+
+  const markPeerDead = useCallback(() => {
+    peerSessionRef.current?.markDead();
+    syncPeerLiveness();
+  }, [syncPeerLiveness]);
 
   const registerMessageHandler = useCallback((handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
-    pendingMsgHandlerRef.current = { handler, ackHandler, keepaliveHandler };
-    if (trackerConnRef.current) {
-      trackerConnRef.current.registerMessageHandler(
-        (msgno, msg) => { markPeerActive(); handler(msgno, msg); },
-        (ack) => { markPeerActive(); ackHandler(ack); },
-        () => { markPeerActive(); keepaliveHandler(); },
-      );
+    peerSessionRef.current?.registerMessageHandler({ handler, ackHandler, keepaliveHandler });
+  }, []);
+
+  const isAvailableForNewSessionPrompt = useCallback(() => {
+    const phase = sessionPhaseRef.current;
+    return (phase === 'none' || phase === 'resolved') &&
+      pendingAdvisoryRef.current === null &&
+      pendingProposalRef.current === null &&
+      peerSessionRef.current === null &&
+      !sessionSaveRef.current?.sessionPeerId;
+  }, []);
+
+  const sendSessionReject = useCallback((peerId: string) => {
+    trackerConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
+  }, []);
+
+  const resetPeerRelayState = useCallback(() => {
+    peerSessionRef.current?.destroy();
+    peerSessionRef.current = null;
+    saveSession({ sessionPeerId: undefined, gameSessionId: undefined });
+    setPeerLiveness(null);
+  }, []);
+
+  const cancelAttemptedSession = useCallback(() => {
+    setPendingAdvisoryState(null);
+    setPendingProposalState(null);
+    resetPeerRelayState();
+    destroySessionController();
+    clearSessionPreservingHistory();
+    try { getActiveBlockchain().stop(); } catch { /* not connected */ }
+    sessionSaveRef.current = null;
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
     }
-  }, [markPeerActive]);
+    setCleanShutdownGraceActive(false);
+    setSessionPhase('none');
+    setSessionError(false);
+    setSessionConfig(null);
+    setPeerConn(null);
+    setDashboardSessionModel(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    trackerConnRef.current?.setBusy(false);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+
+  const startFreshSessionWithPeer = useCallback((request: SessionStartRequest & { gameSessionId?: string }) => {
+    const conn = trackerConnRef.current;
+    if (!conn) return;
+
+    const amount = parseSessionAmount(request.amount);
+    const perGame = amount / 10n || 1n;
+    const sessionId = request.gameSessionId ?? generateSessionId();
+    const token = `peer_${request.peerId}_${Date.now()}`;
+
+    const existing = peerSessionRef.current;
+    if (existing && !existing.isDestroyed() && existing.peerId === request.peerId && existing.sessionId === sessionId) {
+      // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
+    } else {
+      existing?.destroy();
+      peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
+    }
+    saveSession({ sessionPeerId: request.peerId, gameSessionId: sessionId });
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+
+    setSessionPhase('none');
+    setSessionError(false);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(true);
+    setDashboardSessionModel(null);
+    destroySessionController();
+    clearSessionPreservingHistory();
+    try { getActiveBlockchain().start(); } catch { /* not connected */ }
+    setSessionConfig({
+      iStarted: request.iStarted,
+      amount,
+      perGameAmount: perGame,
+      restoring: false,
+      pairingToken: token,
+      myAlias: undefined,
+      opponentAlias: request.opponentAlias,
+      channelTimeout: parseOptionalBigInt(request.channel_timeout),
+      unrollTimeout: parseOptionalBigInt(request.unroll_timeout),
+    });
+    setPeerConn(stablePeerConn);
+    setPeerLiveness(null);
+    conn.setBusy(true);
+  }, [clearSessionPreservingHistory, stablePeerConn]);
+
+  const acceptPendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
+    const conn = trackerConnRef.current;
+    if (!conn) return;
+    setPendingAdvisoryState(null);
+    const gameSessionId = generateSessionId();
+    conn.sendPeerAppMessage(advisory.peer_id, {
+      type: 'session_proposal',
+      amount: advisory.amount,
+      from_alias: getAlias(),
+      channel_timeout: advisory.channel_timeout,
+      unroll_timeout: advisory.unroll_timeout,
+      game_session_id: gameSessionId,
+    });
+    startFreshSessionWithPeer({
+      peerId: advisory.peer_id,
+      opponentAlias: advisory.peer_alias,
+      amount: advisory.amount,
+      channel_timeout: advisory.channel_timeout,
+      unroll_timeout: advisory.unroll_timeout,
+      iStarted: true,
+      gameSessionId,
+    });
+  }, [setPendingAdvisoryState, startFreshSessionWithPeer]);
+
+  const declinePendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
+    setPendingAdvisoryState(null);
+    sendSessionReject(advisory.peer_id);
+  }, [sendSessionReject, setPendingAdvisoryState]);
+
+  const acceptPendingProposal = useCallback((proposal: PendingSessionProposal) => {
+    setPendingProposalState(null);
+    startFreshSessionWithPeer({
+      peerId: proposal.from_id,
+      opponentAlias: proposal.from_alias,
+      amount: proposal.amount,
+      channel_timeout: proposal.channel_timeout,
+      unroll_timeout: proposal.unroll_timeout,
+      iStarted: false,
+      gameSessionId: proposal.game_session_id,
+    });
+  }, [setPendingProposalState, startFreshSessionWithPeer]);
+
+  const declinePendingProposal = useCallback((proposal: PendingSessionProposal) => {
+    setPendingProposalState(null);
+    resetPeerRelayState();
+    sendSessionReject(proposal.from_id);
+  }, [resetPeerRelayState, sendSessionReject, setPendingProposalState]);
 
   useEffect(() => {
     return subscribeLog((line) => {
       deferStateUpdate(() => {
-        setLogLines(prev => [...prev, line]);
+        setLogLines(prev => {
+          const next = [...prev, line];
+          saveSession({ diagnosticLog: next });
+          return next;
+        });
       });
     });
   }, [deferStateUpdate]);
@@ -485,8 +938,14 @@ const Shell = () => {
         if (!trackerWsUpRef.current) return 'reconnecting';
         return activityFresh ? 'connected' : 'inactive';
       });
-      const peerLive = lastPeerActivityRef.current > 0 && now - lastPeerActivityRef.current <= 60_000;
-      setPeerConnected(peerLive);
+      const ps = peerSessionRef.current;
+      if (ps && ps.liveness !== 'dead' && ps.liveness !== null) {
+        const stale = ps.lastActivity > 0 && now - ps.lastActivity > 30_000;
+        if (stale && ps.liveness === 'connected') {
+          ps.markDegraded();
+          setPeerLiveness('degraded');
+        }
+      }
     }, 5_000);
     return () => clearInterval(id);
   }, []);
@@ -494,28 +953,33 @@ const Shell = () => {
   const [userReady, setUserReady] = useState(false);
 
   // Balance polling
-  const requestBalance = useCallback(() => {
+  const stopBalancePolling = useCallback(() => {
     try {
-      getActiveBlockchain().rpc.getBalance()
-        .then((bal) => {
-          setBalance(bal);
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          balanceTimerRef.current = setTimeout(requestBalance, 15000);
-        })
-        .catch(() => {
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          balanceTimerRef.current = setTimeout(requestBalance, 15000);
-        });
+      getActiveBlockchain().stopBalanceInterest();
     } catch {
       // blockchain not set yet
     }
   }, []);
 
+  const startBalancePolling = useCallback((_bcType: 'simulator' | 'walletconnect') => {
+    stopBalancePolling();
+    try {
+      getActiveBlockchain().startBalanceInterest(BALANCE_POLL_INTERVAL_MS, {
+        onBalance: (bal) => setBalance(bal),
+        onError: () => {
+          // Keep balance polling best-effort; the coordinator schedules the next attempt.
+        },
+      });
+    } catch {
+      // blockchain not set yet
+    }
+  }, [stopBalancePolling]);
+
   useEffect(() => {
     return () => {
-      if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+      stopBalancePolling();
     };
-  }, []);
+  }, [stopBalancePolling]);
 
   // QR code generation (inline in wallet tab, type-agnostic)
   useEffect(() => {
@@ -544,179 +1008,128 @@ const Shell = () => {
       if (connected) {
         setWalletAlert(false);
         setWalletConnected(true);
+        const poller = activeBlockchainPoller;
+        if (poller && sessionController) {
+          sessionController.attachBlockchain(poller);
+        }
+        if (blockchainTypeRef.current) {
+          startBalancePolling(blockchainTypeRef.current);
+        }
       } else {
         setWalletConnected(false);
       }
     });
-  }, [blockchainType]);
+  }, [activeBlockchainPoller, blockchainType, startBalancePolling]);
 
   const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
 
   // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
-  const connectToTracker = useCallback((origin: string) => {
+  const connectToTracker = useCallback((rawOrigin: string, options: { resetSession?: boolean } = {}) => {
+    const origin = normalizeTrackerOrigin(rawOrigin);
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
+    if (options.resetSession) {
+      clearSessionId();
+    }
+    const initialSave = peekSession();
+    const trackerSessionId = getSessionId();
+    setSessionId(trackerSessionId);
 
     setTrackerOrigin(origin);
     saveTrackerUrl(origin);
-    const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
+    const lobbyUrl = `${origin}/?lobby=true&session=${trackerSessionId}&uniqueId=${uniqueId}`;
     setIframeUrl(lobbyUrl);
-
-    const startSession = (
-      conn: TrackerConnection,
-      iStarted: boolean,
-      amount: bigint,
-      perGame: bigint,
-      token: string,
-      save: SessionState | null,
-      myAlias?: string,
-      opponentAlias?: string,
-    ) => {
-      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
-      activePairingTokenRef.current = token;
-      peerConnTargetRef.current = conn.getPeerConnection();
-
-      const alreadyHydrated = !!sessionSaveRef.current;
-      if (!alreadyHydrated) {
-        sessionSaveRef.current = save;
-        const resolvedMyAlias = myAlias ?? save?.myAlias;
-        const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
-        setGameParams({
-          iStarted,
-          amount,
-          perGameAmount: perGame,
-          restoring: save !== null,
-          pairingToken: token,
-          myAlias: resolvedMyAlias,
-          opponentAlias: resolvedOpponentAlias,
-        });
-        setPeerConn(stablePeerConn);
-        if (save) {
-          if (save.history) setHistory(save.history);
-          if (save.log) setLogLines(save.log);
-          if (save.chatMessages) setChatMessages(save.chatMessages);
-        } else {
-          destroyBlobSingleton();
-          clearSession();
-          setHistory([]);
-          setChatMessages([]);
-          setActiveTab('game');
-        }
-      } else {
-        console.log('[Shell] startSession: state already hydrated by handleResume, upgrading peer connection only');
-        setPeerConn(stablePeerConn);
-      }
-    };
 
     setTrackerLiveness('reconnecting');
 
     let conn: TrackerConnection;
     try {
-      conn = new TrackerConnection(origin, sessionId, {
-        onMatched: (matched: MatchedParams) => {
+      conn = new TrackerConnection(origin, trackerSessionId, {
+        onAdvisoryStart: (params: AdvisoryStartParams) => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          // Treat successful tracker match as immediate peer activity for UX.
-          markPeerActive();
-          let amount: bigint;
-          try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
-          const perGame = amount / 10n || 1n;
-          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
-        },
-        onConnectionStatus: (status: ConnectionStatus) => {
-          console.log('[Shell] onConnectionStatus: has_pairing=%s token=%s peer_connected=%s activeToken=%s',
-            status.has_pairing, status.token ?? 'none', status.peer_connected, activePairingTokenRef.current ?? 'null');
-          trackerWsUpRef.current = true;
-          lastTrackerActivityRef.current = Date.now();
-          setTrackerLiveness('connected');
-          if (!status.has_pairing || status.peer_connected === false) {
-            markPeerInactive();
-          } else if (status.peer_connected === true) {
-            markPeerActive();
-          } else {
-            setPeerConnected(null);
-          }
-          if (activePairingTokenRef.current !== null) {
-            if (status.has_pairing && status.token === activePairingTokenRef.current) {
-              console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
-              blobSingleton?.resendUnacked();
-            } else {
-              console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
-              markPeerInactive();
-            }
+          console.log('[Shell] advisory_start: peer=%s alias=%s amount=%s', params.peer_id, params.peer_alias, params.amount);
+          if (!isAvailableForNewSessionPrompt()) {
+            console.log('[Shell] advisory_start declined: client unavailable for new session');
+            sendSessionReject(params.peer_id);
             return;
           }
-
-          const save = peekSession();
-
-          if (status.has_pairing && status.token) {
-            if (save && save.pairingToken === status.token) {
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
-              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
-            } else if (!save) {
-              console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
-              conn.close();
-              clearSession();
-            } else if (save.serializedCradle) {
-              console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
-              conn.close();
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
-              sessionSaveRef.current = save;
-              setGameParams({
-                iStarted: save.iStarted ?? false,
-                amount,
-                perGameAmount: perGame,
-                restoring: true,
-                pairingToken: save.pairingToken ?? '',
-                myAlias: save.myAlias,
-                opponentAlias: save.opponentAlias,
-              });
-              setPeerConn(conn.getPeerConnection());
-              if (save.history) setHistory(save.history);
-              if (save.log) setLogLines(save.log);
-              if (save.chatMessages) setChatMessages(save.chatMessages);
+          setPendingAdvisoryState(params);
+          setActiveTab('game');
+        },
+        onPeerMessage: (fromId: string, _fromAlias: string, payload: Uint8Array) => {
+          peerSessionRef.current?.deliverRawPeerMessage(fromId, payload);
+          syncPeerLiveness();
+        },
+        onPeerAppMessage: (fromId: string, fromAlias: string, msg: PeerAppMessage) => {
+          const ps = peerSessionRef.current;
+          if (ps && ps.liveness === 'dead') return;
+          if (ps) ps.notePeerActivity();
+          syncPeerLiveness();
+          console.log('[Shell] onPeerAppMessage type=%s from=%s', msg.type, fromId);
+          if (msg.type === 'session_proposal') {
+            const peerAlias = fromAlias || msg.from_alias || fromId;
+            console.log('[Shell] session_proposal from=%s alias=%s amount=%s', fromId, peerAlias, msg.amount);
+            if (!isAvailableForNewSessionPrompt()) {
+              console.log('[Shell] session_proposal declined: client unavailable for new session');
+              sendSessionReject(fromId);
+              return;
             }
-          } else {
-            if (save && save.serializedCradle) {
-              console.warn('[Shell] connection_status: no pairing but have full save, going on-chain');
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
-              sessionSaveRef.current = save;
-              setGameParams({
-                iStarted: save.iStarted ?? false,
-                amount,
-                perGameAmount: perGame,
-                restoring: true,
-                pairingToken: save.pairingToken ?? '',
-                myAlias: save.myAlias,
-                opponentAlias: save.opponentAlias,
-              });
-              setPeerConn(conn.getPeerConnection());
-              if (save.history) setHistory(save.history);
-              if (save.log) setLogLines(save.log);
-              if (save.chatMessages) setChatMessages(save.chatMessages);
+            const proposalSessionId = msg.game_session_id ?? generateSessionId();
+            peerSessionRef.current?.destroy();
+            peerSessionRef.current = new PeerSession(fromId, proposalSessionId, conn);
+            setPendingProposalState({
+              from_id: fromId,
+              from_alias: peerAlias,
+              amount: msg.amount,
+              channel_timeout: msg.channel_timeout,
+              unroll_timeout: msg.unroll_timeout,
+              game_session_id: proposalSessionId,
+            });
+            setActiveTab('game');
+          } else if (msg.type === 'session_reject') {
+            console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, ps?.peerId, ps?.peerId === fromId);
+            if (ps?.peerId === fromId) {
+              markPeerDead();
+              if (sessionPhaseRef.current === 'none') {
+                cancelAttemptedSession();
+              }
             }
           }
         },
-        onPeerReconnected: () => {
-          markPeerActive();
-          blobSingleton?.resendUnacked();
+        onDeliveryFailure: (to: string) => {
+          console.warn('[Shell] delivery_failure to=%s', to);
+          const ps = peerSessionRef.current;
+          if (ps && to === ps.peerId) {
+            ps.markDegraded();
+            syncPeerLiveness();
+          }
         },
-        onMessage: (_data: unknown) => { markPeerActive(); },
-        onAck: (_ack: number) => { markPeerActive(); },
-        onKeepalive: () => { markPeerActive(); },
+        onRegistered: (playerId: string) => {
+          trackerWsUpRef.current = true;
+          lastTrackerActivityRef.current = Date.now();
+          setTrackerLiveness('connected');
+          console.log('[Shell] registered as player_id=%s', playerId);
+          const save = sessionSaveRef.current;
+          if (!peerSessionRef.current && save?.sessionPeerId && conn) {
+            peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
+            setRestoreTrackerReconciled(true);
+          }
+          if (peerSessionRef.current && sessionController) {
+            sessionController.resendUnacked();
+          }
+        },
+        onLobbyAttention: () => {
+          if (activeTabRef.current !== 'tracker') {
+            setTrackerAlert(true);
+          }
+        },
         onClosed: () => {
-          console.log('[Shell] peer pairing ended');
+          console.log('[Shell] tracker connection ended');
+          trackerWsUpRef.current = false;
           markPeerInactive();
+          setTrackerLiveness('disconnected');
         },
         onTrackerDisconnected: () => {
           console.log('[Shell] tracker disconnected');
@@ -732,21 +1145,10 @@ const Shell = () => {
         onTrackerActivity: () => {
           lastTrackerActivityRef.current = Date.now();
         },
-        onChat: (msg: ChatMessage) => {
-          setChatMessages(prev => {
-            const next = [...prev, msg];
-            if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
-            return next;
-          });
-          if (activeTabRef.current !== 'chat') {
-            setUnreadChat(true);
-          }
-        },
-        onLobbyAttention: () => {
-          if (activeTabRef.current !== 'tracker') {
-            setTrackerAlert(true);
-          }
-        },
+        getPresence: () => ({
+          busy: shouldReportTrackerBusy(sessionPhaseRef.current),
+          alias: sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
+        }),
       });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
@@ -757,94 +1159,69 @@ const Shell = () => {
     }
     trackerConnRef.current = conn;
 
-    if (pendingMsgHandlerRef.current) {
-      const { handler, ackHandler, keepaliveHandler } = pendingMsgHandlerRef.current;
-      conn.registerMessageHandler(
-        (msgno, msg) => { markPeerActive(); handler(msgno, msg); },
-        (ack) => { markPeerActive(); ackHandler(ack); },
-        () => { markPeerActive(); keepaliveHandler(); },
-      );
-    }
-
-    const initialSave = peekSession();
-    if (initialSave && initialSave.pairingToken) {
-      let amount: bigint;
-      let perGame: bigint;
-      try { amount = BigInt(initialSave.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-      try { perGame = BigInt(initialSave.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
-      startSession(
-        conn,
-        initialSave.iStarted ?? false,
-        amount,
-        perGame,
-        initialSave.pairingToken,
-        initialSave,
-      );
-      markPeerInactive();
-    }
-  }, [uniqueId, sessionId, markPeerActive, markPeerInactive]);
+  }, [uniqueId, syncPeerLiveness, markPeerActive, markPeerInactive, markPeerDead, cancelAttemptedSession, clearSessionPreservingHistory, isAvailableForNewSessionPrompt, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const requestTrackerConnect = useCallback((origin: string) => {
-    if (peerConnected && sessionPhase === 'off-chain') {
+    if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
-        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
+        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
+        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
       });
-    } else if (peerConnected) {
+    } else if (peerLiveness === 'connected' || peerLiveness === 'degraded') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'This will end your peer connection.',
-        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
+        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
       });
     } else {
-      connectToTracker(origin);
+      connectToTracker(origin, { resetSession: true });
     }
-  }, [peerConnected, sessionPhase, connectToTracker]);
+  }, [peerLiveness, sessionPhase, connectToTracker]);
 
-  // Auto-connect to saved tracker on reload; otherwise wait for user selection
+  // Auto-connect to saved tracker once this tab owns the app lease. Tracker
+  // identity is independent of wallet restore, so do not gate this on userReady.
   useEffect(() => {
-    if (!userReady) { console.log('[Shell] tracker-reconnect effect: userReady=false, skipping'); return; }
+    if (bootState.kind !== 'ready') {
+      trackerConnRef.current?.disconnect();
+      trackerConnRef.current = null;
+      return;
+    }
     const url = getTrackerUrl();
-    console.log('[Shell] tracker-reconnect effect: userReady=true trackerUrl=%s', url ?? 'none');
-    if (url) {
+    console.log('[Shell] tracker-reconnect effect: ready trackerUrl=%s', url ?? 'none');
+    if (url && !trackerConnRef.current) {
       connectToTracker(url);
     }
     return () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
     };
-  }, [userReady, connectToTracker]);
-
-  // Disconnect tracker when we're not in the 'ready' state; reconnect when we become ready again.
-  useEffect(() => {
-    if (bootState.kind !== 'ready') {
-      trackerConnRef.current?.disconnect();
-      trackerConnRef.current = null;
-    } else if (userReady) {
-      const url = getTrackerUrl();
-      if (url && !trackerConnRef.current) {
-        connectToTracker(url);
-      }
-    }
-  }, [bootState.kind, userReady, connectToTracker]);
+  }, [bootState.kind, connectToTracker]);
 
   // Shared connection completion
-  const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
+  const completeConnection = useCallback((
+    iface: InternalBlockchainInterface,
+    bcType: 'simulator' | 'walletconnect',
+    pollMs: number,
+    options: { switchToTracker?: boolean } = {},
+  ) => {
     console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
-    activate(iface, pollMs);
+    const poller = activate(iface, pollMs);
     saveSession({ blockchainType: bcType });
     activeBlockchainRef.current = iface;
+    setActiveBlockchainPoller(poller);
     setBlockchainType(bcType);
     setWalletConnected(true);
     setConnecting(false);
     setConnectionSetup(null);
     setUserReady(true);
-    setActiveTabRaw(prev => prev === 'wallet' ? 'tracker' : prev);
-    requestBalance();
+    if (options.switchToTracker) {
+      setActiveTab('tracker');
+    }
+    startBalancePolling(bcType);
     log(`${bcType} wallet connected`);
-  }, [requestBalance, setConnecting]);
+  }, [startBalancePolling, setConnecting, setActiveTab]);
 
   // --- Unified connection flow ---
   // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
@@ -859,27 +1236,47 @@ const Shell = () => {
       setConnecting(true);
       const setup = await iface.beginConnect(uniqueId, fresh);
       if (wcAbortRef.current) return;
+      const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+      if (needsWalletPairing) {
+        setConnectionSetup(setup);
+        setWalletConnected(false);
+        setConnecting(false);
+        if (silent) {
+          setWalletAlert(true);
+          return;
+        }
+      }
       if (!setup.skipQr) setConnectionSetup(setup);
       if (setup.fields && !silent) {
         setShowSimModal(true);
         setConnecting(false);
         return;
       }
+      if (silent && !setup.skipQr && !setup.fields) {
+        return;
+      }
       log(`[Shell] handleConnect: calling finalize`);
       await setup.finalize();
       if (wcAbortRef.current) return;
       log(`[Shell] handleConnect: finalize complete`);
-      completeConnection(iface, bcType, pollMs);
+      completeConnection(iface, bcType, pollMs, { switchToTracker: !silent });
     } catch (err) {
       if (!wcAbortRef.current) {
         console.error(`[Shell] ${bcType} connect failed`, err);
       }
-      setBlockchainType(undefined);
-      clearSession();
-      setConnectionSetup(null);
-      setConnecting(false);
+      if (silent) {
+        // beginConnect may have failed before completeConnection ran.
+        if (bcType !== 'walletconnect') {
+          completeConnection(iface, bcType, pollMs);
+        }
+      } else {
+        setBlockchainType(undefined);
+        clearSessionPreservingHistory();
+        setConnectionSetup(null);
+        setConnecting(false);
+      }
     }
-  }, [uniqueId, completeConnection, setConnecting]);
+  }, [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting]);
 
   const handleFinalize = useCallback(async () => {
     if (!connectionSetup || !blockchainType) return;
@@ -890,7 +1287,7 @@ const Shell = () => {
       await connectionSetup.finalize();
       log(`[Shell] handleFinalize: finalize complete`);
       setShowSimModal(false);
-      completeConnection(iface, blockchainType, pollMs);
+      completeConnection(iface, blockchainType, pollMs, { switchToTracker: true });
     } catch (err) {
       console.error(`[Shell] ${blockchainType} finalize failed`, err);
     } finally {
@@ -900,6 +1297,7 @@ const Shell = () => {
 
   const handleCancelConnect = useCallback(async () => {
     wcAbortRef.current = true;
+    stopBalancePolling();
     if (activeBlockchainRef.current) {
       try { await activeBlockchainRef.current.disconnect(); } catch { /* ignore */ }
     } else if (blockchainType) {
@@ -908,23 +1306,14 @@ const Shell = () => {
     }
     deactivate();
     activeBlockchainRef.current = null;
+    setActiveBlockchainPoller(null);
     setConnectionSetup(null);
     setBlockchainType(undefined);
-    clearSession();
+    clearSessionPreservingHistory();
     setConnecting(false);
     setWalletConnected(false);
     setShowSimModal(false);
-  }, [blockchainType]);
-
-  const sendChat = useCallback((text: string) => {
-    const myAlias = gameParams?.myAlias ?? 'You';
-    trackerConnRef.current?.sendChat(text);
-    setChatMessages(prev => {
-      const next = [...prev, { text, fromAlias: myAlias, timestamp: Date.now(), isMine: true }];
-      if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
-      return next;
-    });
-  }, [gameParams?.myAlias]);
+  }, [blockchainType, clearSessionPreservingHistory, stopBalancePolling]);
 
   const onGameActivity = useCallback(() => {
     if (activeTabRef.current !== 'game') {
@@ -935,46 +1324,52 @@ const Shell = () => {
   }, [deferStateUpdate]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
+    const previousPhase = sessionPhaseRef.current;
+    sessionPhaseRef.current = phase;
     setSessionPhase(phase);
     setSessionError(!!hasError);
+
+    if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
+    sessionFinishedCleanupRef.current = true;
+
+    if (shouldSwitchToTrackerOnResolved(previousPhase, !!hasError)) {
+      setActiveTab('tracker');
+    }
+  }, [setActiveTab]);
+
+  const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
+    setRestoreStatus(status);
+    setRestoreError(error);
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, restore: { ...prev.restore, status, error } }
+      : prev
+    );
+    if (status === 'failed') {
+      setSessionError(true);
+    }
   }, []);
 
-  useEffect(() => {
-    trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
-  }, [sessionPhase]);
+  const handleSessionModelChange = useCallback((model: SessionModel) => {
+    setDashboardSessionModel(model);
+  }, []);
 
-  // Cascade rule: off-chain session without a peer must immediately go on-chain.
-  // Suppress during restoration: the WASM cradle isn't ready yet, and the
-  // peerConnected=false / off-chain combo is a transient artifact of resume,
-  // not a real peer loss.
-  useEffect(() => {
-    if (peerConnected === false && sessionPhase === 'off-chain' && !gameParams?.restoring) {
-      console.log('[Shell] peer lost while off-chain, auto going on-chain');
-      blobSingleton?.goOnChain();
-    }
-  }, [peerConnected, sessionPhase, gameParams?.restoring]);
+  const handleTerminal = useCallback(() => {
+    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    trackerConnRef.current?.setBusy(false, alias);
+    stopBalancePolling();
+    resetPeerRelayState();
+    sessionPhaseRef.current = 'resolved';
+    setSessionPhase('resolved');
+    sessionFinishedCleanupRef.current = true;
+    sessionSaveRef.current = null;
+    setPendingAdvisoryState(null);
+    setPendingProposalState(null);
+  }, [stopBalancePolling, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
-  // Clear `restoring` once the WASM cradle has been (re)attached. After this
-  // moment the cascade rule above is safe to fire on a genuine peer loss.
-  useEffect(() => {
-    if (!gameParams?.restoring) return;
-    const clearIfReady = () => {
-      if (blobSingleton?.hasCradle()) {
-        setGameParams(prev => (prev ? { ...prev, restoring: false } : prev));
-        return true;
-      }
-      return false;
-    };
-    if (clearIfReady()) return;
-    const id = setInterval(() => {
-      if (clearIfReady()) clearInterval(id);
-    }, 200);
-    return () => clearInterval(id);
-  }, [gameParams?.restoring]);
+  const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreTrackerReconciled);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
-    if (tabId === 'chat') setUnreadChat(false);
     if (tabId === 'game') setUnreadGame(false);
     if (tabId === 'wallet') setWalletAlert(false);
     if (tabId === 'tracker') setTrackerAlert(false);
@@ -986,18 +1381,21 @@ const Shell = () => {
 
   // Hydrate local UI state from a SessionState and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
-  const performResume = useCallback(async (save: SessionState) => {
+  const performResume = useCallback((save: SessionState) => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
+    setActiveTab('game');
     setResuming(true);
+    setRestoreStatus('restoring');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setSessionPhase('none');
+    setSessionError(false);
 
     sessionSaveRef.current = save;
-    let amount: bigint;
-    let perGame: bigint;
-    try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
-    try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+    const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
     if (save.pairingToken) {
-      setGameParams({
+      setSessionConfig({
         iStarted: save.iStarted ?? false,
         amount,
         perGameAmount: perGame,
@@ -1008,24 +1406,45 @@ const Shell = () => {
       });
       setPeerConn(stablePeerConn);
     }
-    if (save.history) setHistory(save.history);
-    if (save.log) setLogLines(save.log);
-    if (save.chatMessages) setChatMessages(save.chatMessages);
-
+    const savedHistory = humanHistoryFromSave(save);
+    const savedLog = diagnosticLogFromSave(save);
+    if (savedHistory) setHistory(savedHistory);
+    if (savedLog) setLogLines(savedLog);
     setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
-    try {
-      const setup = await iface.beginConnect(uniqueId);
-      await setup.finalize();
-      completeConnection(iface, bcType, pollMs);
-    } catch (err) {
-      console.warn('[Shell] performResume connect failed, falling back', err);
-      setUserReady(true);
-    }
-    console.log('[Shell] performResume: done');
+    activeBlockchainRef.current = iface;
+    setWalletConnected(iface.isConnected());
     setResuming(false);
-  }, [uniqueId, completeConnection, stablePeerConn]);
+
+    // For WalletConnect restores, finalize performs the first wallet RPC
+    // (address lookup). Keep it in the background so local restore can render
+    // while the simulator/wallet is unavailable.
+    void (async () => {
+      try {
+        const setup = await iface.beginConnect(uniqueId);
+        const needsWalletPairing = bcType === 'walletconnect' && !setup.skipQr && !setup.fields;
+        if (needsWalletPairing) {
+          setConnectionSetup(setup);
+          setWalletConnected(false);
+          setConnecting(false);
+          setWalletAlert(true);
+          return;
+        }
+        if (setup.skipQr || setup.fields) {
+          await setup.finalize();
+        }
+        completeConnection(iface, bcType, pollMs);
+      } catch (err) {
+        console.warn('[Shell] performResume connect failed, falling back', err);
+        // beginConnect may have failed before completeConnection ran.
+        if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
+          completeConnection(iface, bcType, pollMs);
+        }
+      }
+      console.log('[Shell] performResume: blockchain connect task done');
+    })();
+  }, [uniqueId, completeConnection, stablePeerConn, setActiveTab]);
 
   // User clicked "Resume Session" in the resumeDialog.
   // If another tab holds the lease, ask to take over first; otherwise proceed.
@@ -1074,31 +1493,38 @@ const Shell = () => {
   }, [performResume, handleConnect]);
 
   const handleCloseTab = useCallback(() => {
+    stopBalancePolling();
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
     activeBlockchainRef.current?.disconnect().catch(() => {});
     activeBlockchainRef.current = null;
+    setActiveBlockchainPoller(null);
+    deactivate();
     setBootState({ kind: 'tabDead' });
-  }, []);
+  }, [stopBalancePolling]);
 
-  const handleStartOver = useCallback(async () => {
-    if (activeBlockchainRef.current) {
-      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
+  const handleStartOver = useCallback(() => {
+    try {
+      hardReset();
+    } catch (e) {
+      console.error('[Shell] start over hard reset failed:', e);
+    } finally {
+      window.location.reload();
     }
-    await hardReset();
-    window.location.reload();
   }, []);
 
   const doDisconnectWallet = useCallback(async () => {
+    stopBalancePolling();
     if (activeBlockchainRef.current) {
       try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
     }
     deactivate();
     activeBlockchainRef.current = null;
+    setActiveBlockchainPoller(null);
     setWalletConnected(false);
     setBlockchainType(undefined);
     setBalance(undefined);
-  }, []);
+  }, [stopBalancePolling]);
 
   const handleDisconnectWallet = useCallback(() => {
     if (sessionPhase !== 'none') {
@@ -1115,6 +1541,8 @@ const Shell = () => {
   const doDisconnectTracker = useCallback(() => {
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
+    clearSessionId();
+    setSessionId('');
     saveTrackerUrl(undefined);
     setTrackerOrigin(null);
     setIframeUrl('about:blank');
@@ -1123,13 +1551,13 @@ const Shell = () => {
   }, [markPeerInactive]);
 
   const handleDisconnectTracker = useCallback(() => {
-    if (peerConnected && sessionPhase === 'off-chain') {
+    if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
         onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
       });
-    } else if (peerConnected) {
+    } else if (peerLiveness === 'connected' || peerLiveness === 'degraded') {
       setConfirmDialog({
         title: 'Disconnect from tracker?',
         body: 'This will end your peer connection.',
@@ -1138,11 +1566,98 @@ const Shell = () => {
     } else {
       doDisconnectTracker();
     }
-  }, [peerConnected, sessionPhase, doDisconnectTracker]);
+  }, [peerLiveness, sessionPhase, doDisconnectTracker]);
 
   const handleEndPeerConnection = useCallback(() => {
-    trackerConnRef.current?.close();
+    resetPeerRelayState();
+    trackerConnRef.current?.setBusy(shouldReportTrackerBusy(sessionPhaseRef.current));
+  }, [resetPeerRelayState]);
+
+  const startCleanShutdownGrace = useCallback(() => {
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+    }
+    setCleanShutdownGraceActive(true);
+    cleanShutdownGraceTimerRef.current = setTimeout(() => {
+      cleanShutdownGraceTimerRef.current = null;
+      setCleanShutdownGraceActive(false);
+    }, 10_000);
   }, []);
+
+  const cancelDashboardSession = useCallback(() => {
+    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    resetPeerRelayState();
+    destroySessionController();
+    clearSessionPreservingHistory();
+    sessionSaveRef.current = null;
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = false;
+    sessionPhaseRef.current = 'none';
+    setSessionPhase('none');
+    setSessionError(false);
+    setSessionConfig(null);
+    setPeerConn(null);
+    setDashboardSessionModel(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setActiveTab('tracker');
+    trackerConnRef.current?.setBusy(false, alias);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, setActiveTab]);
+
+  const requestDashboardCleanShutdown = useCallback(() => {
+    startCleanShutdownGrace();
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, channel: { ...prev.channel, cleanShutdownStarted: true } }
+      : prev
+    );
+    sessionController?.cleanShutdown();
+  }, [startCleanShutdownGrace]);
+
+  const performDashboardGoOnChain = useCallback(() => {
+    sessionController?.goOnChain();
+    sessionPhaseRef.current = 'on-chain';
+    setSessionPhase('on-chain');
+    trackerConnRef.current?.setBusy(shouldReportTrackerBusy('on-chain'));
+    peerSessionRef.current?.markDead();
+    syncPeerLiveness();
+    setDashboardSessionModel(prev => prev
+      ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
+      : prev
+    );
+  }, [syncPeerLiveness]);
+
+  const requestDashboardGoOnChain = useCallback(() => {
+    const channelState = dashboardSessionModel?.channel.status.state;
+    const isShutdownEscalation = channelState === 'ShuttingDown';
+    setConfirmDialog({
+      title: isShutdownEscalation ? 'Go on-chain?' : 'Resolve on-chain?',
+      body: isShutdownEscalation
+        ? 'Clean shutdown is waiting for your opponent. Going on-chain abandons the cooperative close and resolves the session on-chain.'
+        : 'You are in the middle of a hand. Going on-chain will force moves to happen but they may be much slower. Do you wish to proceed?',
+      confirmLabel: 'Go On Chain',
+      onConfirm: () => {
+        setConfirmDialog(null);
+        performDashboardGoOnChain();
+      },
+    });
+  }, [dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
+
+  const handleDashboardAction = useCallback((kind: GameDashboardActionKind) => {
+    switch (kind) {
+      case 'cancel':
+        cancelDashboardSession();
+        break;
+      case 'clean-shutdown':
+        requestDashboardCleanShutdown();
+        break;
+      case 'go-on-chain':
+        requestDashboardGoOnChain();
+        break;
+      case 'none':
+        break;
+    }
+  }, [cancelDashboardSession, requestDashboardCleanShutdown, requestDashboardGoOnChain]);
 
   const handleReconnect = useCallback(() => {
     if (!blockchainType) return;
@@ -1264,16 +1779,69 @@ const Shell = () => {
     );
   }
 
-  const sessionCanMount = gameParams !== null && peerConn !== null;
-  const hasActiveBlockchain = activeBlockchainRef.current !== null;
-  const sessionReadyToStart =
-    sessionCanMount &&
-    hasActiveBlockchain &&
-    (walletConnected || !!gameParams?.restoring);
+  const sessionCanMount = sessionConfig !== null && peerConn !== null;
+  const { startSession: sessionReadyToStart, keepSession } = shouldMountGameSession(
+    sessionCanMount,
+    walletConnected,
+    !!sessionConfig?.restoring,
+    sessionStartedRef.current,
+  );
   if (sessionReadyToStart) sessionStartedRef.current = true;
-  const keepSession = sessionCanMount && hasActiveBlockchain && sessionStartedRef.current;
-  console.log('[Shell] render: gameParams=%s peerConn=%s activeBlockchain=%s walletConnected=%s restoring=%s → keepSession=%s',
-    !!gameParams, !!peerConn, hasActiveBlockchain, walletConnected, !!gameParams?.restoring, keepSession);
+  console.log('[Shell] render: sessionConfig=%s peerConn=%s poller=%s walletConnected=%s restoring=%s → keepSession=%s',
+    !!sessionConfig, !!peerConn, !!activeBlockchainPoller, walletConnected, !!sessionConfig?.restoring, keepSession);
+
+  const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
+    hasSession: dashboardSessionModel !== null,
+    cleanShutdownGraceActive,
+  });
+  const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
+  const sessionConsentOverlay = pendingAdvisory ? (
+    <div className='absolute inset-0 flex items-center justify-center bg-canvas-bg/80 backdrop-blur-sm z-50'>
+      <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
+        <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
+        <p className='text-sm text-canvas-text mb-4'>
+          <strong>{pendingAdvisory.peer_alias}</strong> would like to play for <strong>{pendingAdvisory.amount}</strong> mojos.
+        </p>
+        <div className='flex gap-3 justify-center'>
+          <button
+            onClick={() => acceptPendingAdvisory(pendingAdvisory)}
+            className='px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+          >
+            Accept
+          </button>
+          <button
+            onClick={() => declinePendingAdvisory(pendingAdvisory)}
+            className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : pendingProposal ? (
+    <div className='absolute inset-0 flex items-center justify-center bg-canvas-bg/80 backdrop-blur-sm z-50'>
+      <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
+        <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
+        <p className='text-sm text-canvas-text mb-4'>
+          <strong>{pendingProposal.from_alias}</strong> is proposing a session for <strong>{pendingProposal.amount}</strong> mojos.
+        </p>
+        <div className='flex gap-3 justify-center'>
+          <button
+            onClick={() => acceptPendingProposal(pendingProposal)}
+            className='px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+          >
+            Accept
+          </button>
+          <button
+            onClick={() => declinePendingProposal(pendingProposal)}
+            className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // --- Main tabbed app ---
   return (
@@ -1286,7 +1854,6 @@ const Shell = () => {
         {TAB_DEFS.map((tab) => {
           const active = activeTab === tab.id;
           const showDot = !active && (
-            (tab.id === 'chat' && unreadChat) ||
             (tab.id === 'game' && unreadGame) ||
             (tab.id === 'wallet' && walletAlert) ||
             (tab.id === 'tracker' && trackerAlert)
@@ -1313,18 +1880,15 @@ const Shell = () => {
                 dotColor = 'var(--color-canvas-text-subtle)';
               } else if (sessionError) {
                 dotColor = 'var(--color-alert-solid)';
-              } else if (sessionPhase === 'on-chain') {
-                dotColor = 'var(--color-warning-solid)';
-              } else if (sessionPhase === 'off-chain' && !peerConnected) {
+              } else if (peerLiveness === 'dead') {
                 dotColor = 'var(--color-alert-solid)';
-              } else if (sessionPhase === 'off-chain' && peerConnected) {
+              } else if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') {
+                dotColor = 'var(--color-warning-solid)';
+              } else if (peerLiveness === 'connected') {
                 dotColor = 'var(--color-success-solid)';
               } else {
                 dotColor = 'var(--color-canvas-text-subtle)';
               }
-              break;
-            case 'chat':
-              dotColor = peerConnected ? 'var(--color-success-solid)' : 'var(--color-canvas-text-subtle)';
               break;
           }
 
@@ -1612,44 +2176,63 @@ const Shell = () => {
 
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
+          <GameDashboard
+            view={dashboardView}
+            balances={statusBarBalances}
+            onAction={handleDashboardAction}
+            getProtocolState={getProtocolState}
+            getCoins={getCoins}
+          />
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-            {keepSession ? (
-              <GameSessionErrorBoundary>
-                <GameSession
-                  key={gameParams.pairingToken}
-                  params={gameParams}
-                  peerConn={peerConn}
-                  trackerLiveness={trackerLiveness}
-                  peerConnected={peerConnected}
-                  registerMessageHandler={registerMessageHandler}
-                  appendGameLog={appendHistory}
-                  sessionSave={sessionSaveRef.current ?? undefined}
-                  onGameActivity={onGameActivity}
-                  onSessionPhaseChange={handleSessionPhaseChange}
-                />
-              </GameSessionErrorBoundary>
+            {keepSession && restoreStatus === 'failed' ? (
+              <div className='w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8'>
+                <h2 className='text-lg font-semibold text-alert-text'>Restore failed</h2>
+                <p className='max-w-lg text-sm text-center select-text cursor-text'>
+                  {restoreError ?? 'The saved session could not be restored.'}
+                </p>
+                <button
+                  onClick={handleStartOver}
+                  className='px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                >
+                  Start over
+                </button>
+              </div>
+            ) : keepSession ? (
+              <div className='relative w-full h-full'>
+                <GameSessionErrorBoundary>
+                  <GameSession
+                    key={sessionConfig!.pairingToken}
+                    params={sessionConfig!}
+                    peerConn={peerConn!}
+                    registerMessageHandler={registerMessageHandler}
+                    appendGameLog={appendHistory}
+                    sessionSave={sessionSaveForReactProps(sessionSaveRef.current)}
+                    blockchain={activeBlockchainPoller}
+                    onGameActivity={onGameActivity}
+                    onSessionPhaseChange={handleSessionPhaseChange}
+                    onRestoreStatusChange={handleRestoreStatusChange}
+                    onSessionModelChange={handleSessionModelChange}
+                    onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                    onCoinsProviderChange={handleCoinsProviderChange}
+                    suppressPhaseReporting={restoreBlocked}
+                    onTerminal={handleTerminal}
+                  />
+                </GameSessionErrorBoundary>
+                {sessionConsentOverlay}
+              </div>
             ) : sessionCanMount ? (
               <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
                 Restoring session...
               </div>
             ) : (
-              <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-                No active game session
+              <div className='relative w-full h-full'>
+                <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+                  No active game session
+                </div>
+                {sessionConsentOverlay}
               </div>
             )}
           </div>
-        </div>
-
-        {/* Chat tab */}
-        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'chat' ? 'flex' : 'none', flexDirection: 'column' }}>
-          <ChatPanel
-            messages={chatMessages}
-            onSend={sendChat}
-            myAlias={gameParams?.myAlias ?? 'You'}
-            peerConnected={!!peerConnected}
-            onEndPeer={handleEndPeerConnection}
-            opponentAlias={gameParams?.opponentAlias}
-          />
         </div>
 
         {/* History tab */}
@@ -1680,9 +2263,9 @@ const Shell = () => {
             <p className='text-canvas-text text-sm text-center'>{confirmDialog.body}</p>
             <button
               onClick={confirmDialog.onConfirm}
-              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-alert-solid text-primary-on-primary hover:bg-alert-solid-hover transition-colors'
+              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
             >
-              Proceed
+              {confirmDialog.confirmLabel ?? 'Proceed'}
             </button>
             <button
               onClick={() => setConfirmDialog(null)}

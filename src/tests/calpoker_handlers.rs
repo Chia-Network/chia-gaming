@@ -209,28 +209,7 @@ struct TheirTurnResult {
     message: NodePtr,
 }
 
-fn call_their_turn_handler(
-    allocator: &mut AllocEncoder,
-    handler: NodePtr,
-    amount: i64,
-    pre_state: NodePtr,
-    state: NodePtr,
-    move_bytes: NodePtr,
-    validation_program_hash: NodePtr,
-    mover_share: i64,
-) -> TheirTurnResult {
-    let amount_node = amount.to_clvm(allocator).unwrap();
-    let ms_node = mover_share.to_clvm(allocator).unwrap();
-    let a = allocator.allocator();
-    let tail = a.new_pair(ms_node, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(validation_program_hash, tail).unwrap();
-    let tail = a.new_pair(move_bytes, tail).unwrap();
-    let tail = a.new_pair(state, tail).unwrap();
-    let tail = a.new_pair(pre_state, tail).unwrap();
-    let args = a.new_pair(amount_node, tail).unwrap();
-
-    let result = run_clvm(allocator, handler, args);
-
+fn parse_their_turn_result(allocator: &mut AllocEncoder, result: NodePtr) -> TheirTurnResult {
     // Check if result is a proper list, or an improper list (cons chain)
     let items = match proper_list(allocator.allocator(), result, true) {
         Some(items) => items,
@@ -282,6 +261,55 @@ fn call_their_turn_handler(
             NodePtr::NIL
         },
     }
+}
+
+fn try_call_their_turn_handler(
+    allocator: &mut AllocEncoder,
+    handler: NodePtr,
+    amount: i64,
+    pre_state: NodePtr,
+    state: NodePtr,
+    move_bytes: NodePtr,
+    validation_program_hash: NodePtr,
+    mover_share: i64,
+) -> Result<TheirTurnResult, String> {
+    let amount_node = amount.to_clvm(allocator).unwrap();
+    let ms_node = mover_share.to_clvm(allocator).unwrap();
+    let a = allocator.allocator();
+    let tail = a.new_pair(ms_node, NodePtr::NIL).unwrap();
+    let tail = a.new_pair(validation_program_hash, tail).unwrap();
+    let tail = a.new_pair(move_bytes, tail).unwrap();
+    let tail = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(pre_state, tail).unwrap();
+    let args = a.new_pair(amount_node, tail).unwrap();
+
+    match run_program(allocator.allocator(), &chia_dialect(), handler, args, 0) {
+        Ok(reduction) => Ok(parse_their_turn_result(allocator, reduction.1)),
+        Err(e) => Err(format!("CLVM error: {e:?}")),
+    }
+}
+
+fn call_their_turn_handler(
+    allocator: &mut AllocEncoder,
+    handler: NodePtr,
+    amount: i64,
+    pre_state: NodePtr,
+    state: NodePtr,
+    move_bytes: NodePtr,
+    validation_program_hash: NodePtr,
+    mover_share: i64,
+) -> TheirTurnResult {
+    try_call_their_turn_handler(
+        allocator,
+        handler,
+        amount,
+        pre_state,
+        state,
+        move_bytes,
+        validation_program_hash,
+        mover_share,
+    )
+    .expect("their_turn handler failed")
 }
 
 #[allow(dead_code)]
@@ -722,6 +750,230 @@ fn build_evil_moves(allocator: &mut AllocEncoder) -> Vec<HandlerMove> {
     moves
 }
 
+struct BobTerminalContext {
+    pre_state: NodePtr,
+    validation_program: NodePtr,
+    validation_program_hash: NodePtr,
+    max_move_size: i64,
+}
+
+fn bob_terminal_context_after_step_d(
+    allocator: &mut AllocEncoder,
+    setup: &GameSetup,
+) -> BobTerminalContext {
+    let moves = build_happy_path_moves(allocator);
+
+    let mut alice_my_turn_handler = setup.alice_handler;
+    let mut alice_their_turn_handler: NodePtr = NodePtr::NIL;
+    let mut bob_my_turn_handler: NodePtr = NodePtr::NIL;
+    let mut bob_their_turn_handler = setup.bob_handler;
+
+    let mut alice_state = setup.initial_state;
+    let mut bob_state = setup.initial_state;
+    let mut alice_mover_share = setup.initial_mover_share;
+    let mut bob_mover_share = setup.initial_mover_share;
+    let mut alice_max_move_size = setup.initial_max_move_size;
+    let mut bob_max_move_size = setup.initial_max_move_size;
+
+    let mut alice_their_turn_validator = setup.alice_validator;
+    let mut bob_their_turn_validator = setup.bob_validator;
+    let mut alice_their_turn_vp_hash = setup.initial_validator_hash;
+    let mut bob_their_turn_vp_hash = setup.initial_validator_hash;
+
+    let mut whose_move: usize = 0; // 0=alice, 1=bob
+
+    for hm in moves.iter().take(4) {
+        let is_alice = whose_move == 0;
+        let (handler, state, mover_share) = if is_alice {
+            (alice_my_turn_handler, alice_state, alice_mover_share)
+        } else {
+            (bob_my_turn_handler, bob_state, bob_mover_share)
+        };
+
+        let my_turn = call_my_turn_handler(
+            allocator,
+            handler,
+            hm.input_move,
+            AMOUNT,
+            state,
+            mover_share,
+            hm.entropy,
+        );
+
+        let actual_move_bytes = atom_bytes(allocator, my_turn.move_bytes_node);
+        assert_eq!(actual_move_bytes, hm.expected_move_bytes);
+        assert_eq!(my_turn.new_mover_share, hm.expected_mover_share);
+
+        let (code, validator_result) = run_validator(
+            allocator,
+            my_turn.validator_for_my_move_hash,
+            my_turn.move_bytes_node,
+            hm.expected_mover_share,
+            my_turn.max_move_size,
+            state,
+            my_turn.validator_for_my_move,
+            NodePtr::NIL,
+        );
+        assert_eq!(code, MoveCode::MakeMove);
+        let validator_items = proper_list(allocator.allocator(), validator_result, true).unwrap();
+        let new_state = validator_items[1];
+
+        if is_alice {
+            alice_state = new_state;
+            alice_mover_share = my_turn.new_mover_share;
+            alice_max_move_size = my_turn.max_move_size;
+            alice_their_turn_vp_hash = my_turn.validator_for_their_move_hash;
+            alice_their_turn_validator = my_turn.validator_for_their_next_move;
+            alice_their_turn_handler = my_turn.their_turn_handler;
+        } else {
+            bob_state = new_state;
+            bob_mover_share = my_turn.new_mover_share;
+            bob_max_move_size = my_turn.max_move_size;
+            bob_their_turn_vp_hash = my_turn.validator_for_their_move_hash;
+            bob_their_turn_validator = my_turn.validator_for_their_next_move;
+            bob_their_turn_handler = my_turn.their_turn_handler;
+        }
+
+        whose_move ^= 1;
+        let is_alice_waiter = whose_move == 0;
+        let (waiter_handler, waiter_state, waiter_vp_hash) = if is_alice_waiter {
+            (
+                alice_their_turn_handler,
+                alice_state,
+                alice_their_turn_vp_hash,
+            )
+        } else {
+            (bob_their_turn_handler, bob_state, bob_their_turn_vp_hash)
+        };
+
+        let waiter_validator_result = run_validator(
+            allocator,
+            waiter_vp_hash,
+            my_turn.move_bytes_node,
+            hm.expected_mover_share,
+            if is_alice_waiter {
+                alice_max_move_size
+            } else {
+                bob_max_move_size
+            },
+            waiter_state,
+            if is_alice_waiter {
+                alice_their_turn_validator
+            } else {
+                bob_their_turn_validator
+            },
+            NodePtr::NIL,
+        )
+        .1;
+        let waiter_items =
+            proper_list(allocator.allocator(), waiter_validator_result, true).unwrap();
+        let waiter_new_state = waiter_items[1];
+
+        let their_turn = call_their_turn_handler(
+            allocator,
+            waiter_handler,
+            AMOUNT,
+            waiter_state,
+            waiter_new_state,
+            my_turn.move_bytes_node,
+            waiter_vp_hash,
+            hm.expected_mover_share,
+        );
+
+        if is_alice_waiter {
+            alice_state = waiter_new_state;
+            alice_mover_share = hm.expected_mover_share;
+            alice_my_turn_handler = their_turn.my_turn_handler;
+        } else {
+            bob_state = waiter_new_state;
+            bob_mover_share = hm.expected_mover_share;
+            bob_my_turn_handler = their_turn.my_turn_handler;
+        }
+    }
+
+    BobTerminalContext {
+        pre_state: bob_state,
+        validation_program: bob_their_turn_validator,
+        validation_program_hash: bob_their_turn_vp_hash,
+        max_move_size: bob_max_move_size,
+    }
+}
+
+fn calpoker_make_proposal_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
+    let make_proposal = read_hex_puzzle(
+        allocator,
+        "clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex",
+    )
+    .expect("load make_proposal");
+    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        make_proposal_clvm,
+        args,
+        0,
+    )
+    .is_ok()
+}
+
+fn calpoker_parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
+    let parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/calpoker/calpoker_include_calpoker_parser.hex",
+    )
+    .expect("load parser");
+    let parser_clvm = parser.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        parser_clvm,
+        wire_data,
+        0,
+    )
+    .is_ok()
+}
+
+#[test]
+fn test_calpoker_proposal_rejects_zero_stake() {
+    let mut allocator = AllocEncoder::new();
+
+    let valid_args = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    assert!(
+        calpoker_make_proposal_succeeds(&mut allocator, valid_args),
+        "positive per-player stake should be accepted"
+    );
+
+    let zero_args = (0i64, ()).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !calpoker_make_proposal_succeeds(&mut allocator, zero_args),
+        "Calpoker should reject zero-stake proposals in game code"
+    );
+}
+
+#[test]
+fn test_calpoker_parser_rejects_zero_stake_peer_wire_data() {
+    let mut allocator = AllocEncoder::new();
+
+    let peer_wire_data = (
+        0i64,
+        (
+            0i64,
+            (
+                vec![(0i64, (1i64, (0i64, (0i64, (32i64, (0i64, (0i64, ())))))))],
+                (),
+            ),
+        ),
+    )
+        .to_clvm(&mut allocator)
+        .unwrap();
+
+    assert!(
+        !calpoker_parser_succeeds(&mut allocator, peer_wire_data),
+        "peer wire proposals with zero Calpoker stake should make the parser throw"
+    );
+}
+
+#[test]
 fn test_calpoker_handlers_happy_path() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -729,6 +981,7 @@ fn test_calpoker_handlers_happy_path() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
 fn test_calpoker_handlers_evil_path() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -736,8 +989,48 @@ fn test_calpoker_handlers_evil_path() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
+fn test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+    let ctx = bob_terminal_context_after_step_d(&mut allocator, &setup);
+    let good_final_move = build_happy_path_moves(&mut allocator)[4]
+        .expected_move_bytes
+        .clone();
+    let short_final_move = &good_final_move[..17];
+    assert!(
+        short_final_move.len() <= ctx.max_move_size as usize,
+        "test move must satisfy referee max_move_size envelope"
+    );
+
+    let short_move_node = allocator.allocator().new_atom(short_final_move).unwrap();
+    let (code, _) = run_validator(
+        &mut allocator,
+        ctx.validation_program_hash,
+        short_move_node,
+        100,
+        ctx.max_move_size,
+        ctx.pre_state,
+        ctx.validation_program,
+        NodePtr::NIL,
+    );
+    assert_eq!(
+        code,
+        MoveCode::Slash,
+        "the step-e validator should classify the short final move as slashable"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
+        (
+            "test_calpoker_proposal_rejects_zero_stake",
+            &test_calpoker_proposal_rejects_zero_stake,
+        ),
+        (
+            "test_calpoker_parser_rejects_zero_stake_peer_wire_data",
+            &test_calpoker_parser_rejects_zero_stake_peer_wire_data,
+        ),
         (
             "test_calpoker_handlers_happy_path",
             &test_calpoker_handlers_happy_path,
@@ -745,6 +1038,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_calpoker_handlers_evil_path",
             &test_calpoker_handlers_evil_path,
+        ),
+        (
+            "test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move",
+            &test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move,
         ),
     ]
 }

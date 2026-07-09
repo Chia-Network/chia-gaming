@@ -202,13 +202,21 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     }
 
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        if self.peek()? == b'l' {
-            self.advance(1);
-            let result = visitor.visit_seq(ListAccess { de: self })?;
-            self.consume_end()?;
-            Ok(result)
-        } else {
-            self.deserialize_any(visitor)
+        match self.peek()? {
+            b'l' => {
+                self.advance(1);
+                let result = visitor.visit_seq(ListAccess { de: self })?;
+                self.consume_end()?;
+                Ok(result)
+            }
+            // A `Vec<u8>`/`&[u8]` target encoded as a byte string: present the
+            // raw bytes as a sequence of `u8` elements. This is the read side of
+            // the serializer's byte-string encoding for `u8` sequences.
+            b'0'..=b'9' => {
+                let bytes = self.parse_bytestring()?;
+                visitor.visit_seq(BytesSeqAccess { bytes, pos: 0 })
+            }
+            _ => self.deserialize_any(visitor),
         }
     }
 
@@ -297,6 +305,30 @@ impl<'a, 'de> SeqAccess<'de> for ListAccess<'a, 'de> {
             return Ok(None);
         }
         seed.deserialize(&mut *self.de).map(Some)
+    }
+}
+
+// --- Byte string presented as a sequence of u8 ---
+
+struct BytesSeqAccess<'de> {
+    bytes: &'de [u8],
+    pos: usize,
+}
+
+impl<'de> SeqAccess<'de> for BytesSeqAccess<'de> {
+    type Error = Error;
+
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Error> {
+        if self.pos >= self.bytes.len() {
+            return Ok(None);
+        }
+        let byte = self.bytes[self.pos];
+        self.pos += 1;
+        seed.deserialize(de::value::U8Deserializer::new(byte)).map(Some)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.bytes.len() - self.pos)
     }
 }
 

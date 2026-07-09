@@ -3,7 +3,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 export interface Player {
   id: string;
   alias: string;
-  session_id: string;
   walletAddress?: string;
   status: 'waiting' | 'playing' | 'busy';
   opponent_alias?: string;
@@ -15,11 +14,14 @@ export interface ChallengeReceived {
   from_id: string;
   from_alias: string;
   amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
 }
 
 type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
-  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; amount: string }
+  | { type: 'joined'; id: string; alias: string }
+  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
   | { type: 'alias_result'; alias: string | null }
   | { type: 'keepalive' }
@@ -66,6 +68,7 @@ export function useLobbySocket(
   const [reconnectBlocked, setReconnectBlocked] = useState(false);
   const [savedAlias, setSavedAlias] = useState<string | null>(null);
   const [aliasLoaded, setAliasLoaded] = useState(false);
+  const [publicId, setPublicId] = useState<string | null>(null);
   const uniqueIdRef = useRef(uniqueId);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingWsRef = useRef<WebSocket | null>(null);
@@ -74,6 +77,7 @@ export function useLobbySocket(
   const reconnectAttemptRef = useRef(0);
   const closingRef = useRef(false);
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
+  const joinedAliasRef = useRef<string | null>(null);
 
   useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
 
@@ -151,12 +155,25 @@ export function useLobbySocket(
         });
         setIsConnected(true);
         setHasConnected(true);
-        ws.send(JSON.stringify({ type: 'get_alias', id: uniqueIdRef.current }));
+        ws.send(JSON.stringify({ type: 'get_alias', session_id: sessionId }));
         lobbyHsLog('get_alias_send', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           unique_id: uniqueIdRef.current,
         });
+        if (joinedAliasRef.current) {
+          const payload = {
+            type: 'join',
+            session_id: sessionId,
+            alias: joinedAliasRef.current,
+          };
+          lobbyHsLog('join_resend_on_open', {
+            conn_id: connIdRef.current,
+            session_id: sessionId,
+            alias_len: joinedAliasRef.current.length,
+          });
+          ws.send(JSON.stringify(payload));
+        }
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
           lobbyHsLog('flush_buffered_outbound', {
@@ -186,6 +203,10 @@ export function useLobbySocket(
         }
         if (!msg || typeof msg !== 'object' || !('type' in msg)) return;
         switch (msg.type) {
+          case 'joined':
+            setPublicId(msg.id);
+            setSavedAlias(msg.alias);
+            break;
           case 'lobby_update':
             lobbyHsLog('lobby_update_recv', {
               conn_id: connIdRef.current,
@@ -283,7 +304,14 @@ export function useLobbySocket(
 
     connect();
 
+    const onBeforeUnload = () => {
+      try { wsRef.current?.close(); } catch { /* ignore */ }
+      try { pendingWsRef.current?.close(); } catch { /* ignore */ }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
       closingRef.current = true;
       lobbyHsLog('connection_cleanup', {
         conn_id: connIdRef.current,
@@ -309,36 +337,40 @@ export function useLobbySocket(
 
   const joinLobby = useCallback(
     (alias: string) => {
+      const trimmed = alias.trim();
+      if (!trimmed) return;
+      joinedAliasRef.current = trimmed;
       lobbyHsLog('join_call', {
         conn_id: connIdRef.current,
         session_id: sessionId,
-        alias_len: alias.trim().length,
+        alias_len: trimmed.length,
       });
       send({
         type: 'join',
-        id: uniqueIdRef.current,
         session_id: sessionId,
-        alias: alias.trim(),
-      });
+        alias: trimmed,
+      }, false);
     },
     [send, sessionId],
   );
 
   const setAlias = useCallback(
     (alias: string) => {
-      send({ type: 'set_alias', id: uniqueIdRef.current, alias });
+      send({ type: 'set_alias', session_id: sessionId, alias });
     },
-    [send],
+    [send, sessionId],
   );
 
   const sendChallenge = useCallback(
-    (targetId: string, amount: string) => {
-      send({
+    (targetId: string, amount: string, channelTimeout?: string, unrollTimeout?: string) => {
+      const payload: Record<string, unknown> = {
         type: 'challenge',
-        from_id: uniqueIdRef.current,
         target_id: targetId,
         amount,
-      });
+      };
+      if (channelTimeout) payload.channel_timeout = channelTimeout;
+      if (unrollTimeout) payload.unroll_timeout = unrollTimeout;
+      send(payload);
       setChallengeSent(true);
     },
     [send],
@@ -349,7 +381,6 @@ export function useLobbySocket(
       send({
         type: 'challenge_accept',
         challenge_id: challengeId,
-        accepter_id: uniqueIdRef.current,
       });
       setPendingChallenge(null);
     },
@@ -368,21 +399,26 @@ export function useLobbySocket(
   );
 
   const cancelChallenge = useCallback(() => {
-    send({ type: 'challenge_cancel', from_id: uniqueIdRef.current });
+    send({ type: 'challenge_cancel' });
     setChallengeSent(false);
   }, [send]);
 
   const setLobbyAlias = useCallback(
     async (id: string, newAlias: string) => {
-      send({ type: 'change_alias', id, newAlias });
+      const trimmed = newAlias.trim();
+      if (id === publicId && trimmed) {
+        joinedAliasRef.current = trimmed;
+      }
+      send({ type: 'change_alias', newAlias: trimmed });
     },
-    [send],
+    [send, publicId],
   );
 
   const isReconnecting = hasConnected && !isConnected;
 
   return {
     players,
+    publicId,
     lobbyUpdateReceived,
     pendingChallenge,
     challengeSent,

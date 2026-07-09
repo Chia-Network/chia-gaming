@@ -8,13 +8,15 @@ import {
   getSaveList,
   getPlayerId,
   getSessionId,
+  clearSessionId,
   getBlockchainType,
   loadAppState,
   getAlias,
   setAlias,
   getTheme,
   setTheme,
-  getBuildNonce,
+  hardReset,
+  flushSessionState,
   getTrackerAlert,
   setTrackerAlert,
   SessionState,
@@ -34,37 +36,54 @@ function makeStorage(): Storage {
   };
 }
 
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function clearTestGlobal(key: string) {
+  Reflect.deleteProperty(globalThis, key);
+}
+
 const sampleSession: Partial<SessionState> = {
   serializedCradle: '{"some":"data"}',
   pairingToken: 'tok-123',
-  messageNumber: 5,
-  remoteNumber: 3,
+  messageNumber: 5n,
+  remoteNumber: 3n,
   channelReady: true,
   iStarted: true,
   amount: '100',
   perGameAmount: '10',
-  pendingTransactions: ['tx1'],
-  unackedMessages: [{ msgno: 4, msg: 'hello' }],
+  unackedMessages: [{ msgno: 4n, msg: 'hello' }],
   history: ['log1'],
   log: ['dbg1'],
 };
 
 beforeEach(() => {
   _resetForTests();
-  (global as any).localStorage = makeStorage();
-  (global as any).__buildNonce = '/app/test-nonce/';
+  setTestGlobal('localStorage', makeStorage());
+  setTestGlobal('sessionStorage', makeStorage());
 });
 
 afterEach(() => {
-  delete (global as any).localStorage;
-  delete (global as any).__buildNonce;
+  clearTestGlobal('localStorage');
+  clearTestGlobal('sessionStorage');
+  clearTestGlobal('indexedDB');
 });
 
 describe('session persistence', () => {
   it('round-trips session fields through save and peek', () => {
     saveSession(sampleSession);
     const loaded = peekSession();
-    expect(loaded).toMatchObject({ ...sampleSession, buildNonce: '/app/test-nonce/' });
+    expect(loaded).toMatchObject(sampleSession);
   });
 
   it('returns null when nothing is saved', () => {
@@ -75,18 +94,6 @@ describe('session persistence', () => {
     saveSession(sampleSession);
     clearSession();
     expect(peekSession()).toBeNull();
-  });
-
-  it('peekSession returns stale saves as-is; callers check buildNonce', () => {
-    saveSession(sampleSession);
-    const first = peekSession();
-    expect(first?.buildNonce).toBe('/app/test-nonce/');
-
-    (global as any).__buildNonce = '/app/different-nonce/';
-    const stale = peekSession();
-    expect(stale).not.toBeNull();
-    expect(stale!.buildNonce).toBe('/app/test-nonce/');
-    expect(stale!.buildNonce).not.toBe(getBuildNonce());
   });
 
   it('saveSession preserves blockchainType', () => {
@@ -104,7 +111,7 @@ describe('session persistence', () => {
       firstCall = false;
       origSetItem(key, value);
     };
-    (global as any).localStorage = storage;
+    setTestGlobal('localStorage', storage);
     getPlayerId();
     expect(() => saveSession(sampleSession)).not.toThrow();
     spy.mockRestore();
@@ -122,6 +129,18 @@ describe('flat state', () => {
     const id = getSessionId();
     expect(id).toBeTruthy();
     expect(getSessionId()).toBe(id);
+  });
+
+  it('clearSessionId wipes only the tracker session ID', () => {
+    const id = getSessionId();
+    setAlias('MyName');
+
+    clearSessionId();
+
+    expect(loadAppState().sessionId).toBeUndefined();
+    expect(loadAppState().alias).toBe('MyName');
+    expect(getSessionId()).toBeTruthy();
+    expect(getSessionId()).not.toBe(id);
   });
 
   it('clearSession preserves playerId', () => {
@@ -157,19 +176,196 @@ describe('flat state', () => {
     const state = loadAppState();
     expect(state.serializedCradle).toBe(sampleSession.serializedCradle);
     expect(state.pairingToken).toBe(sampleSession.pairingToken);
-    expect(state.buildNonce).toBe('/app/test-nonce/');
   });
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(3);
+    expect(state.version).toBe(3n);
   });
 
   it('old version data is treated as fresh start', () => {
     _writeRawState({ version: 2, playerId: 'old-player' });
     const state = loadAppState();
     expect(state.playerId).not.toBe('old-player');
-    expect(state.version).toBe(3);
+    expect(state.version).toBe(3n);
+  });
+
+  it('preserves bigint types through lossless JSON round-trip', () => {
+    _writeRawState({
+      version: 3,
+      playerId: 'p1',
+      messageNumber: 5,
+      remoteNumber: 3,
+      unackedMessages: [{ msgno: 4, msg: 'hello' }],
+      handState: {
+        gameType: 'calpoker',
+        version: 1,
+        state: {
+          playerHand: [1, 2],
+          opponentHand: [3, 4],
+          moveNumber: 2,
+          isPlayerTurn: true,
+          cardSelections: [1],
+          displaySnapshot: {
+            gameState: 'selecting',
+            winner: null,
+            playerBestHandCardIds: [1],
+            opponentBestHandCardIds: [3],
+            playerHaloCardIds: [2],
+            opponentHaloCardIds: [4],
+            playerDisplayText: 'player',
+            opponentDisplayText: 'opponent',
+          },
+        },
+      },
+    });
+
+    const state = loadAppState();
+    const handState = state.handState?.state as any;
+
+    expect(typeof state.messageNumber).toBe('bigint');
+    expect(typeof state.remoteNumber).toBe('bigint');
+    expect(typeof state.unackedMessages?.[0].msgno).toBe('bigint');
+    expect(state.handState?.gameType).toBe('calpoker');
+    expect(typeof state.handState?.version).toBe('bigint');
+    expect(typeof handState.moveNumber).toBe('bigint');
+    expect(typeof handState.playerHand[0]).toBe('bigint');
+    expect(typeof handState.displaySnapshot.playerBestHandCardIds[0]).toBe('bigint');
+  });
+
+  it('round-trips large bigint values through persisted state without precision loss', () => {
+    const huge = 9_007_199_254_740_993n;
+    saveSession({
+      defaultFee: huge,
+      handState: {
+        gameType: 'spacepoker',
+        version: 1n,
+        state: {
+          gameState: { handler: 2n, myTurn: true, N: huge },
+          playerHoleCards: [huge, huge + 1n],
+          halfPot: huge + 2n,
+        },
+      },
+    });
+    flushSessionState();
+    _resetForTests();
+
+    const state = loadAppState();
+    const handState = state.handState?.state as any;
+
+    expect(state.defaultFee).toBe(huge);
+    expect(handState.gameState.N).toBe(huge);
+    expect(handState.playerHoleCards[1]).toBe(huge + 1n);
+    expect(handState.halfPot).toBe(huge + 2n);
+  });
+
+  it('preserves Calpoker hand arrays as bigint through round-trip', () => {
+    _writeRawState({
+      version: 3,
+      playerId: 'p1',
+      handState: {
+        gameType: 'calpoker',
+        version: 1,
+        state: {
+          playerHand: [8, 7, 6, 5],
+          opponentHand: [4, 3, 2, 1],
+          moveNumber: 1,
+          isPlayerTurn: true,
+          cardSelections: [8, 7],
+          displaySnapshot: {
+            gameState: 'selecting',
+            winner: null,
+            playerBestHandCardIds: [],
+            opponentBestHandCardIds: [],
+            playerHaloCardIds: [],
+            opponentHaloCardIds: [],
+            playerDisplayText: '',
+            opponentDisplayText: '',
+          },
+        },
+      },
+    });
+
+    const handState = loadAppState().handState?.state as any;
+
+    expect(handState.playerHand).toEqual([8n, 7n, 6n, 5n]);
+    expect(handState.opponentHand).toEqual([4n, 3n, 2n, 1n]);
+    expect(handState.cardSelections).toEqual([8n, 7n]);
+  });
+});
+
+describe('hard reset', () => {
+  it('clears localStorage, sessionStorage, and cached session state', () => {
+    saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
+    sessionStorage.setItem('appState_tabId', 'tab-1');
+
+    hardReset();
+
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+    expect(peekSession()).toBeNull();
+  });
+
+  it('starts deletion for every IndexedDB database returned by the browser', async () => {
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([
+        { name: 'app-state' },
+        { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
+        { name: undefined },
+      ]),
+      deleteDatabase,
+    });
+
+    hardReset();
+    await flushPromises();
+
+    expect(deleteDatabase).toHaveBeenCalledWith('app-state');
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(deleteDatabase).toHaveBeenCalledTimes(2);
+  });
+
+  it('deletes known IndexedDB databases when enumeration is unavailable (e.g. Safari)', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    // No `databases` function: mimics browsers that can't enumerate.
+    setTestGlobal('indexedDB', { deleteDatabase });
+
+    hardReset();
+    await flushPromises();
+
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
+    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
+    spy.mockRestore();
+  });
+
+  it('logs but does not throw when hard reset storage APIs fail', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const local = makeStorage();
+    local.clear = () => { throw new Error('local clear failed'); };
+    const session = makeStorage();
+    session.clear = () => { throw new Error('session clear failed'); };
+    setTestGlobal('localStorage', local);
+    setTestGlobal('sessionStorage', session);
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockRejectedValue(new Error('database list failed')),
+      deleteDatabase: jest.fn(),
+    });
+
+    expect(() => hardReset()).not.toThrow();
+    await flushPromises();
+
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

@@ -8,7 +8,9 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outfile=dist/js/index-rollup.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
-    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --useStderr --ci"
+    "build:deploy": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outdir=dist/app && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
+    "bundle": "rm -rf dist/app && pnpm run build:deploy && node scripts/assemble-bundle.mjs",
+    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.15",
@@ -19,6 +21,7 @@
     "@walletconnect/sign-client": "2.23.9",
     "@walletconnect/types": "2.23.9",
     "bech32": "^2.0.0",
+    "chia-gaming-bencodex": "file:../shared/bencodex",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "clvm-lib": "1.0.1",
@@ -42,14 +45,11 @@
     "ts-jest": "29.4.1",
     "typescript": "5.9.3"
   },
-  "pnpm": {
-    "patchedDependencies": {
-      "@walletconnect/sign-client@2.23.9": "patches/@walletconnect__sign-client@2.23.9.patch",
-      "@walletconnect/safe-json@1.0.2": "patches/@walletconnect__safe-json@1.0.2.patch"
-    }
-  },
   "jest": {
     "preset": "ts-jest",
+    "setupFilesAfterEnv": [
+      "<rootDir>/scripts/jestDiagSetup.ts"
+    ],
     "testMatch": [
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
     ],

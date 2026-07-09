@@ -22,19 +22,17 @@ import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../ut
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
   PeerConnectionResult,
-  BlockchainReport,
-  CoinsetOrgBlockSpend,
-  WatchReport,
   WasmEvent,
 } from '../../types/ChiaGaming';
-import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_WS_URL } from '../../settings';
+import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
 import { _resetForTests as resetSaveState } from '../../hooks/save';
+import { setDiagSink } from '../../services/log';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { configGameObject } from '../../hooks/blobSingleton';
-import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
+import { configSessionController } from '../../hooks/blobSingleton';
+import { SessionController } from '../../hooks/SessionController';
 // @ts-ignore
 import * as fs from 'fs';
 // @ts-ignore
@@ -69,16 +67,114 @@ function makeStorage(): Storage {
   };
 }
 
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function clearTestGlobal(key: string) {
+  Reflect.deleteProperty(globalThis, key);
+}
+
+function describeThrown(e: unknown): string {
+  if (e instanceof Error) {
+    return `${e.name}: ${e.message}\n${e.stack ?? ''}`;
+  }
+  // Empty/undefined/non-Error rejections are exactly the opaque case that
+  // produced blank CI failures, so record the shape explicitly.
+  const shape = `typeof=${typeof e} ctor=${
+    e && typeof e === 'object' ? ((e as { constructor?: { name?: string } }).constructor?.name ?? '?') : 'n/a'
+  }`;
+  try {
+    return `non-Error thrown (${shape}): ${JSON.stringify(e)}`;
+  } catch {
+    return `non-Error thrown (${shape}): ${String(e)}`;
+  }
+}
+
+// Durable diagnostic file.  Everything in CI dies the moment the test process
+// is torn down, and a dying jest worker loses its buffered stderr -- so the one
+// error we care about never reaches the GitHub log.  A *synchronous* file
+// append lands on disk immediately and survives the worker dying; a later shell
+// step `cat`s this file into the live Actions log.  The path is overridable so
+// the workflow and the test agree on it.
+const DIAG_FILE = process.env.LOAD_WASM_DIAG_FILE
+  || resolve(__dirname, '../../..', 'load_wasm_diag.log');
+
+function diagFileWrite(line: string): void {
+  try {
+    fs.appendFileSync(DIAG_FILE, line.endsWith('\n') ? line : line + '\n');
+  } catch { /* never let logging throw */ }
+}
+
+// Write to the durable file first (must survive teardown), then to stderr for
+// live visibility during the test.
+function diagAll(line: string): void {
+  diagFileWrite(line);
+  try { process.stderr.write(line + '\n'); } catch { /* ignore */ }
+}
+
+function testLog(message: string): void {
+  diagAll(`[load_wasm] ${message}`);
+}
+
+let lateRejection: string | null = null;
+
+function onUnhandledRejection(reason: unknown): void {
+  const desc = describeThrown(reason);
+  diagAll(`DIAG_LOADWASM unhandledRejection: ${desc}`);
+  lateRejection = desc;
+}
+
+function onUncaughtException(error: unknown): void {
+  const desc = describeThrown(error);
+  diagAll(`DIAG_LOADWASM uncaughtException: ${desc}`);
+  lateRejection = desc;
+}
+
+// Records the final exit code so a hard worker crash (e.g. a wasm abort that
+// throws no catchable JS error) is distinguishable from a clean exit -- the
+// last lines in the diag file then show exactly how far execution got.
+function onProcessExit(code: number): void {
+  diagFileWrite(`DIAG_LOADWASM process exit code=${code}`);
+}
+
 beforeAll(() => {
-  (global as any).localStorage = makeStorage();
+  // Truncate any stale file from a previous run so the cat shows only this run.
+  try { fs.writeFileSync(DIAG_FILE, `DIAG_LOADWASM diag file start ${new Date().toISOString()}\n`); } catch { /* ignore */ }
+  // Route the cradle/poller/blockchain diagnostics (which go through the shared
+  // log module's diagStack/diagNote) into the same durable file.
+  setDiagSink(diagFileWrite);
+  setTestGlobal('localStorage', makeStorage());
+  process.on('unhandledRejection', onUnhandledRejection);
+  process.on('uncaughtException', onUncaughtException);
+  process.on('exit', onProcessExit);
 });
 
-afterAll(() => {
-  delete (global as any).localStorage;
+afterAll(async () => {
+  // Deliberately DO NOT remove the rejection handlers here.  The CI failure we
+  // are chasing is a late async rejection that fires *after* afterAll runs;
+  // with the handlers removed it reached jest's framework handler and produced
+  // an opaque empty-message failure.  Leaving them installed (with the loud
+  // DIAG_LOADWASM logging above) means the actual reason + stack always lands
+  // in the CI output.  These are process-global handlers in a short-lived test
+  // process, so leaving them attached is harmless.
+  //
+  // Drain a little here so a late rejection has a chance to fire and be logged
+  // before the test process exits.
+  await new Promise<void>((r) => setTimeout(r, 500));
+  if (lateRejection) {
+    diagAll(`DIAG_LOADWASM late rejection captured during run:\n${lateRejection}`);
+  }
+  diagAll('DIAG_LOADWASM afterAll complete');
+  clearTestGlobal('localStorage');
 });
 
 const activeSubscriptions: Subscription[] = [];
-const activeCradles: WasmBlobWrapperAdapter[] = [];
+const activeCradles: SessionControllerAdapter[] = [];
 let testPoller: BlockchainPoller | null = null;
 
 function addActiveSubscription(sub: Subscription): Subscription {
@@ -86,12 +182,12 @@ function addActiveSubscription(sub: Subscription): Subscription {
   return sub;
 }
 
-function addActiveCradle(cradle: WasmBlobWrapperAdapter): WasmBlobWrapperAdapter {
+function addActiveCradle(cradle: SessionControllerAdapter): SessionControllerAdapter {
   activeCradles.push(cradle);
   return cradle;
 }
 
-function cleanupActiveResources() {
+async function cleanupActiveResources() {
   while (activeSubscriptions.length > 0) {
     activeSubscriptions.pop()?.unsubscribe();
   }
@@ -100,44 +196,63 @@ function cleanupActiveResources() {
   }
   testPoller?.stop();
   testPoller = null;
-  void fakeBlockchainInfo.disconnect();
+  await fakeBlockchainInfo.disconnect();
 }
 
-afterEach(() => {
-  cleanupActiveResources();
-  resetSaveState();
+afterEach(async () => {
+  try {
+    testLog('cleanup start');
+    await cleanupActiveResources();
+    testLog('cleanup after resources');
+    resetSaveState();
+    testLog('cleanup done');
+    // Drain microtask queue to catch late async errors.  Widened from 50ms to
+    // give in-flight teardown async (poller RPCs rejecting on disconnect, the
+    // submit queue, reconnect loop) time to settle inside the test boundary so
+    // it fails here with a real message instead of escaping past afterAll.
+    await new Promise<void>((r) => setTimeout(r, 300));
+    if (lateRejection) {
+      const msg = lateRejection;
+      lateRejection = null;
+      throw new Error(`[load_wasm late async error]\n${msg}`);
+    }
+  } catch (e) {
+    const desc = describeThrown(e);
+    testLog(`CLEANUP FAILURE: ${desc}`);
+    throw new Error(`[load_wasm cleanup failed]\n${desc}`);
+  }
 });
 
-class WasmBlobWrapperAdapter {
-  blob: WasmBlobWrapper | undefined;
+class SessionControllerAdapter {
+  blob: SessionController | undefined;
   waiting_messages: Array<SimpleMessage>;
 
   constructor() {
     this.waiting_messages = [];
   }
 
-  take_block(peak: bigint, blocks: CoinsetOrgBlockSpend[], block_report: WatchReport | undefined) {
-    this.blob?.blockNotification(peak, blocks, block_report);
-  }
-
   getObservable() {
     if (!this.blob) {
-      throw 'WasmBlobWrapperAdapter.getObservable() called before set_blob';
+      throw 'SessionControllerAdapter.getObservable() called before set_blob';
     }
     return this.blob.getObservable();
   }
 
-  set_blob(blob: WasmBlobWrapper) {
+  set_blob(blob: SessionController) {
     this.blob = blob;
     this.blob.kickSystem(2);
   }
 
   deliver_message(msgno: number, msg: Uint8Array) {
-    this.blob?.deliverMessage(msgno, msg);
+    this.blob?.deliverMessage(BigInt(msgno), msg);
   }
 
   handshaked(): boolean {
     return !!this.blob?.isChannelReady();
+  }
+
+  observedActiveStatus(): boolean {
+    return this.blob?.lastChannelStatus?.state === 'Active';
   }
 
   outbound_messages(): Array<SimpleMessage> {
@@ -155,7 +270,7 @@ class WasmBlobWrapperAdapter {
   }
 }
 
-function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
+function all_handshaked(cradles: Array<SessionControllerAdapter>) {
   for (let c = 0; c < 2; c++) {
     if (!cradles[c].handshaked()) {
       return false;
@@ -164,27 +279,43 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
   return true;
 }
 
+function debugCradleState(cradle: SessionControllerAdapter): string {
+  const blob = cradle.blob as any;
+  if (!blob) return 'no-blob';
+  return [
+    `ready=${cradle.handshaked()}`,
+    `active=${cradle.observedActiveStatus()}`,
+    `outbound=${cradle.waiting_messages.length}`,
+    `system=${blob.systemState?.()}`,
+    `queue=${blob.eventQueue?.length}`,
+    `drain=${blob.drainScheduled}`,
+    `launcher=${blob.launcherProvided}`,
+    `pendingSends=${blob.pendingOutboundSends?.length}`,
+  ].join('/');
+}
+
+async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
+  await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+}
+
+async function pollOnce(poller: BlockchainPoller): Promise<void> {
+  await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+}
+
 async function action_with_messages(
   poller: BlockchainPoller,
-  cradle1: WasmBlobWrapperAdapter,
-  cradle2: WasmBlobWrapperAdapter,
+  cradle1: SessionControllerAdapter,
+  cradle2: SessionControllerAdapter,
 ) {
   let cradles = [cradle1, cradle2];
   let subscriptions: Subscription[] = [];
 
-  subscriptions.push(addActiveSubscription(poller.getObservable().subscribe({
-    next: (evt: BlockchainReport) => {
-      cradles.forEach((c, i) => {
-        let block_array = [];
-        if (evt.block) {
-          block_array = evt.block;
-        }
-        c.take_block(evt.peak, block_array, evt.report);
-      });
-    },
-  })));
+  // The poller drives each cradle's coin polling directly via report_coin_states.
+  cradles.forEach((c) => {
+    if (c.blob) poller.attachCradle(c.blob);
+  });
 
-  let evt_results: Array<boolean> = [false, false];
+  let evt_results: Array<boolean> = cradles.map((c) => c.observedActiveStatus());
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
       next: (evt: WasmEvent) => {
@@ -201,27 +332,54 @@ async function action_with_messages(
     })));
   });
   try {
+    let iterations = 0;
+    const startedAt = Date.now();
     while (!all_handshaked(cradles)) {
+      iterations++;
+      let deliveredOutbound = false;
       for (let c = 0; c < 2; c++) {
         let outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
+          deliveredOutbound = true;
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
         }
       }
-      // Yield to async handlers without arbitrary sleep.
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await flushWrapperDrain(cradles);
+      if (!deliveredOutbound && !all_handshaked(cradles)) {
+        await pollOnce(poller);
+        await flushWrapperDrain(cradles);
+      }
+      if (!deliveredOutbound && !all_handshaked(cradles)) {
+        await fakeBlockchainInfo.waitForNextBlock();
+        await pollOnce(poller);
+        await flushWrapperDrain(cradles);
+      }
+      evt_results = evt_results.map((seen, index) => seen || cradles[index].observedActiveStatus());
+      if (Date.now() - startedAt > 30_000) {
+        throw new Error(
+          `handshake loop timed out after ${iterations} iterations` +
+          ` connected=${fakeBlockchainInfo.isConnected()}` +
+          ` ready=${cradles.map((c) => c.handshaked()).join(',')}` +
+          ` active=${cradles.map((c) => c.observedActiveStatus()).join(',')}` +
+          ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}` +
+          ` states=${cradles.map(debugCradleState).join(' | ')}`,
+        );
+      }
     }
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
-      throw 'we expected running state in both cradles';
+      throw new Error(`we expected running state in both cradles, got active=${evt_results.join(',')} ready=${cradles.map((c) => c.handshaked()).join(',')}`);
     }
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
+    cradles.forEach((c) => {
+      if (c.blob) poller.detachCradle(c.blob);
+    });
   }
 }
 
-async function initWasmBlobWrapper(
+async function initSessionController(
   blockchain: BlockchainPoller,
   uniqueId: string,
   iStarted: boolean,
@@ -231,7 +389,7 @@ async function initWasmBlobWrapper(
   const amount = 100n;
 
   await fakeBlockchainInfo.registerUser(uniqueId);
-  let gameObject = new WasmBlobWrapper(
+  let gameObject = new SessionController(
     blockchain,
     uniqueId,
     amount,
@@ -239,7 +397,7 @@ async function initWasmBlobWrapper(
   );
 
   let gameHexes = await loadGameHexes(fetchHex);
-  await configGameObject(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
+  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
 
   return gameObject;
 }
@@ -257,14 +415,6 @@ async function isSimulatorAvailable(): Promise<boolean> {
     }
     try {
       await fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' });
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const WS = (globalThis as any).WebSocket ?? require('ws');
-      await new Promise<void>((resolve, reject) => {
-        const ws = new WS(BLOCKCHAIN_WS_URL);
-        const timeout = setTimeout(() => { try { ws.close(); } catch { /* ignore */ } reject(new Error('timeout')); }, 2000);
-        ws.onopen = () => { clearTimeout(timeout); try { ws.close(); } catch { /* ignore */ } resolve(); };
-        ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
-      });
       return true;
     } catch {
       // Retry; simulator may still be starting up.
@@ -276,19 +426,34 @@ async function isSimulatorAvailable(): Promise<boolean> {
 it(
   'loads',
   async () => {
-    if (!(await isSimulatorAvailable())) {
-      console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
-      return;
-    }
-    const setup = await fakeBlockchainInfo.beginConnect('block-producer');
-    await setup.finalize();
-    testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
-    testPoller.start();
-    const poller = testPoller;
-
-    const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
-    const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
+    lateRejection = null;
+    const offConnectionLog = fakeBlockchainInfo.onConnectionChange((connected) => {
+      testLog(`sim connection=${connected}`);
+    });
     try {
+      if (!(await isSimulatorAvailable())) {
+        // In CI the sim is supposed to be up; treating "no sim" as a silent skip
+        // means a broken harness reports green.  When LOAD_WASM_REQUIRE_SIM is
+        // set (the workflow sets it), make it a hard failure instead.
+        const msg = `Simulator not running at ${BLOCKCHAIN_SERVICE_URL}`;
+        if (process.env.LOAD_WASM_REQUIRE_SIM) {
+          testLog(`FATAL: ${msg} but LOAD_WASM_REQUIRE_SIM is set`);
+          throw new Error(`[load_wasm] ${msg} (LOAD_WASM_REQUIRE_SIM set)`);
+        }
+        console.warn(msg, '- skipping load_wasm test. Run ./ct.sh for full suite.');
+        return;
+      }
+      testLog('simulator available');
+      const setup = await fakeBlockchainInfo.beginConnect('block-producer');
+      await setup.finalize();
+      testLog(`after finalize connected=${fakeBlockchainInfo.isConnected()}`);
+      testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
+      testPoller.start();
+      testLog(`after poller start connected=${fakeBlockchainInfo.isConnected()}`);
+      const poller = testPoller;
+
+      const cradle1 = addActiveCradle(new SessionControllerAdapter());
+      const cradle2 = addActiveCradle(new SessionControllerAdapter());
       let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
@@ -300,7 +465,7 @@ it(
       };
       let wasm_init1 = new WasmStateInit(fetchHex);
       storeInitArgs(async () => {}, WholeWasmObject);
-      let wasm_blob1 = await initWasmBlobWrapper(
+      let wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
         true,
@@ -308,6 +473,7 @@ it(
         wasm_init1
       );
       cradle1.set_blob(wasm_blob1);
+      testLog('after cradle1 init');
 
       let peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
@@ -319,7 +485,7 @@ it(
         close: () => {},
       };
       let wasm_init2 = new WasmStateInit(fetchHex);
-      let wasm_blob2 = await initWasmBlobWrapper(
+      let wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',
         false,
@@ -327,11 +493,17 @@ it(
         wasm_init2
       );
       cradle2.set_blob(wasm_blob2);
+      testLog('after cradle2 init');
 
+      testLog('before action_with_messages');
       await action_with_messages(poller, cradle1, cradle2);
+      testLog('after action_with_messages');
+    } catch (e) {
+      const desc = describeThrown(e);
+      testLog(`TEST FAILURE: ${desc}`);
+      throw new Error(`[load_wasm loads failed]\n${desc}`);
     } finally {
-      cradle1.shutdown();
-      cradle2.shutdown();
+      offConnectionLog();
     }
   },
   120 * 1000,

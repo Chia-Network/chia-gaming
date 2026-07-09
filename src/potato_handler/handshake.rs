@@ -17,6 +17,8 @@ pub struct HandshakeB {
     pub dict_signing_key_pop: Aggsig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dict_partial_signatures: Option<Vec<u8>>,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
 }
 
 pub type HandshakeA = HandshakeB;

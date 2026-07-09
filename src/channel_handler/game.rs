@@ -117,14 +117,23 @@ pub struct Game {
 }
 
 impl Game {
-    /// Run calpoker_make_proposal(bet_size) and parse the result into
+    /// Run make_proposal(my_contribution[, parameters]) and parse the result into
     /// (wire_data, handler, validator, game_spec fields).
     fn run_make_proposal(
         allocator: &mut AllocEncoder,
         proposal_program: Puzzle,
-        bet_size: &Amount,
+        my_contribution: &Amount,
+        parameters: &Program,
     ) -> Result<(NodePtr, GameHandler, NodePtr, ProposalGameSpec), Error> {
-        let args = (bet_size.clone(), ()).to_clvm(allocator).into_gen()?;
+        let args = if parameters.bytes() == [0x80] {
+            (my_contribution.clone(), ())
+                .to_clvm(allocator)
+                .into_gen()?
+        } else {
+            (my_contribution.clone(), (parameters.clone(), ()))
+                .to_clvm(allocator)
+                .into_gen()?
+        };
         let proposal_clvm = proposal_program.to_clvm(allocator).into_gen()?;
         let result = run_program(
             allocator.allocator(),
@@ -136,13 +145,13 @@ impl Game {
         .into_gen()
         .map_err(|e| {
             Error::StrErr(format!(
-                "make_proposal failed: bet_size={bet_size:?} error={e:?}"
+                "make_proposal failed: my_contribution={my_contribution:?} error={e:?}"
             ))
         })?
         .1;
 
         // Result is (wire_data local_data)
-        // wire_data = (bet_size bet_size ((amount we_go_first vh im mms is ms)))
+        // wire_data = (my_contribution their_contribution ((amount we_go_first vh im mms is ms)))
         // local_data = ((handler validator))
         let result_list = proper_list(allocator.allocator(), result, true)
             .ok_or_else(|| Error::StrErr("make_proposal didn't return a list".to_string()))?;
@@ -155,7 +164,8 @@ impl Game {
         let wire_data = result_list[0];
         let local_data = result_list[1];
 
-        // Parse wire_data to extract game_spec: (bet bet ((amount we_go_first vh im mms is ms)))
+        // Parse wire_data to extract game_spec:
+        // (my_contribution their_contribution ((amount we_go_first vh im mms is ms)))
         let wire_list = proper_list(allocator.allocator(), wire_data, true)
             .ok_or_else(|| Error::StrErr("wire_data not a list".to_string()))?;
         if wire_list.len() < 3 {
@@ -176,7 +186,7 @@ impl Game {
         }
 
         let spec = ProposalGameSpec {
-            // game_spec_list[0] is amount (= 2 * bet_size), game_spec_list[1] is we_go_first
+            // game_spec_list[0] is amount, game_spec_list[1] is we_go_first
             initial_validation_program_hash: Hash::from_nodeptr(allocator, game_spec_list[2])?,
             initial_move: atom_from_clvm(allocator, game_spec_list[3]).unwrap_or_default(),
             initial_max_move_size: atom_from_clvm(allocator, game_spec_list[4])
@@ -257,9 +267,10 @@ impl Game {
         proposal_program: Puzzle,
         parser_program: Option<Puzzle>,
         my_contribution: &Amount,
+        parameters: &Program,
     ) -> Result<Game, Error> {
         let (wire_data, alice_handler, alice_validator_node, spec) =
-            Self::run_make_proposal(allocator, proposal_program, my_contribution)?;
+            Self::run_make_proposal(allocator, proposal_program, my_contribution, parameters)?;
 
         let (handler, validator_node) = if as_alice {
             (alice_handler, alice_validator_node)

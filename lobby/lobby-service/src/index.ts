@@ -1,10 +1,19 @@
 import { createServer } from 'http';
+import crypto from 'node:crypto';
 
 import cors from 'cors';
 import express from 'express';
-import helmet from 'helmet';
 import minimist from 'minimist';
-import { WebSocketServer, WebSocket } from 'ws';
+import {
+  decode as decodeBencodex,
+  encode as encodeBencodex,
+  getBoolean,
+  getText,
+  isDictionary,
+  type BencodexKey,
+  type BencodexValue,
+} from 'chia-gaming-bencodex';
+import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Lobby } from './lobbyState';
 
@@ -22,43 +31,36 @@ function parseArgs() {
 }
 
 const args = parseArgs();
-const selfWs = String(args.self).replace(/^http/i, 'ws');
-const simUrl = String(args.sim || 'http://localhost:5800');
-const simWsUrl = simUrl.replace(/^http/i, 'ws').replace(/:5800\b/, ':5801');
 const verbose = Boolean(args.verbose);
 
-type RelayPayload =
-  | { ack: number }
-  | { keepalive: true };
-
 type LobbyInboundMessage =
-  | { type: 'join'; id: string; alias?: string; session_id?: string }
-  | { type: 'leave'; id: string }
-  | { type: 'challenge'; from_id: string; target_id: string; amount?: string }
-  | { type: 'challenge_accept'; challenge_id: string; accepter_id: string }
+  | { type: 'join'; id?: string; alias?: string; session_id?: string }
+  | { type: 'leave'; id?: string }
+  | { type: 'challenge'; from_id?: string; target_id: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'challenge_accept'; challenge_id: string; accepter_id?: string }
   | { type: 'challenge_decline'; challenge_id: string }
-  | { type: 'challenge_cancel'; from_id: string }
-  | { type: 'change_alias'; id: string; newAlias: string }
-  | { type: 'get_alias'; id: string }
-  | { type: 'set_alias'; id: string; alias: string }
+  | { type: 'challenge_cancel'; from_id?: string }
+  | { type: 'change_alias'; id?: string; newAlias: string }
+  | { type: 'get_alias'; id?: string; session_id?: string }
+  | { type: 'set_alias'; id?: string; session_id?: string; alias: string }
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; available?: boolean }
-  | { type: 'message'; session_id: string; data: RelayPayload }
-  | { type: 'chat'; session_id: string; text: string }
+  | { type: 'identify'; session_id: string; busy?: boolean; alias?: string }
+  | { type: 'send'; to: string }
   | { type: 'close'; session_id: string }
-  | { type: 'set_status'; session_id: string; available: boolean }
+  | { type: 'set_busy'; session_id: string; busy: boolean; alias?: string }
   | { type: 'keepalive' };
 
 interface LobbyConnMeta {
   playerId: string;
+  sessionId: string;
 }
 
 interface GameConnMeta {
   sessionId: string;
-  playerId?: string;
-  available?: boolean;
+  playerId: string;
+  busy?: boolean;
 }
 
 const LOBBY_DISCONNECT_GRACE_MS = 3000;
@@ -82,8 +84,7 @@ httpServer.on('upgrade', (req, socket, head) => {
 });
 
 const lobbyConnections = new Map<string, WebSocket>();
-const gameConnections = new Map<string, WebSocket>(); // keyed by session_id
-const pendingGameIdentifies = new Map<string, WebSocket>(); // session_id -> ws
+const gameConnections = new Map<string, WebSocket>();
 const wsLobbyMeta = new WeakMap<WebSocket, LobbyConnMeta>();
 const wsGameMeta = new WeakMap<WebSocket, GameConnMeta>();
 
@@ -114,39 +115,23 @@ function logTrackerVerbose(event: string, fields?: Record<string, unknown>): voi
   logTracker(event, fields);
 }
 
-function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' {
-  if ('keepalive' in data) return 'keepalive';
-  return 'ack';
+function randomPublicId(): string {
+  let id: string;
+  do {
+    id = `p_${crypto.randomBytes(16).toString('hex')}`;
+  } while (lobby.players[id] || playerToSession.has(id));
+  return id;
 }
 
-app.use(
-  helmet({
-    frameguard: false,
-    crossOriginOpenerPolicy: false,
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com'],
-        scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'"],
-        connectSrc: [
-          "'self'",
-          'https://explorer-api.walletconnect.com',
-          'wss://relay.walletconnect.com',
-          'https://verify.walletconnect.org',
-          'https://api.coinset.org',
-          'wss://api.coinset.org',
-          simUrl,
-          simWsUrl,
-          'wss://relay.walletconnect.org',
-          args.self,
-          selfWs,
-        ],
-        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.self],
-        frameAncestors: ["'self'", '*'],
-        upgradeInsecureRequests: null,
-      },
-    },
-  }),
-);
+function ensureSession(sessionId: string): string {
+  const existing = sessionToPlayer.get(sessionId);
+  if (existing) return existing;
+  const playerId = randomPublicId();
+  sessionToPlayer.set(sessionId, playerId);
+  playerToSession.set(playerId, sessionId);
+  logTracker('session_created', { player_id: playerId, session_id: sessionId });
+  return playerId;
+}
 
 app.use(
   cors({
@@ -155,13 +140,7 @@ app.use(
   }),
 );
 
-// Prevent HTTP keep-alive from exhausting the browser's per-host connection
-// pool (typically 6 for HTTP/1.1), which would block WebSocket upgrades when
-// multiple tabs connect to the same tracker origin.
-// Assets under /app/<nonce>/ are immutable (cache-busted by build nonce);
-// everything else (index.html, build-meta.json, favicon) uses no-store.
 app.use((req, res, next) => {
-  res.set('Connection', 'close');
   res.set('Cache-Control',
     req.path.startsWith('/app/')
       ? 'public, max-age=31536000, immutable'
@@ -174,13 +153,6 @@ if (args.dir) {
   app.use(express.static(args.dir));
 }
 
-function isRelayPayload(data: unknown): data is RelayPayload {
-  if (!data || typeof data !== 'object') return false;
-  if ('keepalive' in data) return (data as { keepalive?: unknown }).keepalive === true;
-  if ('ack' in data) return typeof (data as { ack?: unknown }).ack === 'number';
-  return false;
-}
-
 function sendWs(ws: WebSocket, type: string, payload: unknown): void {
   if (ws.readyState !== WebSocket.OPEN) {
     logTracker('send_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
@@ -188,6 +160,39 @@ function sendWs(ws: WebSocket, type: string, payload: unknown): void {
   }
   ws.send(JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }));
   logTrackerVerbose('send_ws_ok', { ws_id: wsId(ws), type });
+}
+
+function definedBencodexFields(payload: unknown): Record<string, BencodexValue> {
+  const out: Record<string, BencodexValue> = {};
+  if (!payload || typeof payload !== 'object') return out;
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (value === undefined) continue;
+    if (
+      value === null ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint' ||
+      typeof value === 'string' ||
+      value instanceof Uint8Array
+    ) {
+      out[key] = value;
+      continue;
+    }
+    if (typeof value === 'number' && Number.isSafeInteger(value)) {
+      out[key] = BigInt(value);
+      continue;
+    }
+    throw new Error(`unsupported bencodex payload field ${key}`);
+  }
+  return out;
+}
+
+function sendGameWs(ws: WebSocket, type: string, payload: unknown): void {
+  if (ws.readyState !== WebSocket.OPEN) {
+    logTracker('send_game_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
+    return;
+  }
+  ws.send(encodeBencodex({ type, ...definedBencodexFields(payload) }));
+  logTrackerVerbose('send_game_ws_ok', { ws_id: wsId(ws), type });
 }
 
 function sendLobbyEvent(playerId: string, type: string, payload: unknown): void {
@@ -200,15 +205,33 @@ function sendLobbyEvent(playerId: string, type: string, payload: unknown): void 
   sendWs(ws, type, payload);
 }
 
+function aliasForPlayer(playerId: string): string {
+  const liveAlias = lobby.players[playerId]?.alias;
+  if (liveAlias) return liveAlias;
+  const sessionId = playerToSession.get(playerId);
+  return sessionId ? knownAliases.get(sessionId) ?? playerId : playerId;
+}
+
+function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
+  if (!alias) return;
+  knownAliases.set(sessionId, alias);
+  const player = lobby.players[playerId];
+  if (player) {
+    player.alias = alias;
+  }
+}
+
 function replayPendingChallengesToPlayer(playerId: string): void {
   for (const challenge of lobby.challenges.values()) {
     if (challenge.target_id !== playerId) continue;
-    const fromAlias = lobby.players[challenge.from_id]?.alias ?? knownAliases.get(challenge.from_id) ?? challenge.from_id;
+    const fromAlias = aliasForPlayer(challenge.from_id);
     sendLobbyEvent(playerId, 'challenge_received', {
       challenge_id: challenge.id,
       from_id: challenge.from_id,
       from_alias: fromAlias,
       amount: challenge.amount,
+      channel_timeout: challenge.channel_timeout,
+      unroll_timeout: challenge.unroll_timeout,
     });
   }
 }
@@ -225,7 +248,16 @@ function sendGameEvent(playerId: string, type: string, payload: unknown): void {
     return;
   }
   logTrackerVerbose('send_game_event', { player_id: playerId, session_id: sessionId, ws_id: wsId(ws), type });
-  sendWs(ws, type, payload);
+  sendGameWs(ws, type, payload);
+}
+
+function sendGameBinary(playerId: string, data: Buffer): boolean {
+  const sessionId = playerToSession.get(playerId);
+  if (!sessionId) return false;
+  const ws = gameConnections.get(sessionId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(data);
+  return true;
 }
 
 function broadcastLobbyUpdate(): void {
@@ -249,52 +281,6 @@ function leaveLobby(playerId: string): boolean {
     return true;
   }
   return false;
-}
-
-function bindSessionToPlayer(playerId: string, sessionId: string): boolean {
-  const previousSession = playerToSession.get(playerId);
-  if (previousSession && previousSession !== sessionId) {
-    sessionToPlayer.delete(previousSession);
-    pendingGameIdentifies.delete(previousSession);
-    const previousConn = gameConnections.get(previousSession);
-    if (previousConn) {
-      try { previousConn.close(); } catch {}
-      gameConnections.delete(previousSession);
-    }
-    logTracker('bind_session_replace_previous_player_session', {
-      player_id: playerId,
-      old_session_id: previousSession,
-      new_session_id: sessionId,
-    });
-    console.log(`[tracker] session replaced player=${playerId} old=${previousSession} new=${sessionId}`);
-  }
-
-  const previousPlayer = sessionToPlayer.get(sessionId);
-  if (previousPlayer && previousPlayer !== playerId) {
-    logTracker('bind_session_reject_reuse', {
-      session_id: sessionId,
-      owner_player_id: previousPlayer,
-      requester_player_id: playerId,
-    });
-    console.warn(`[tracker] rejected session reuse session=${sessionId} owner=${previousPlayer} requester=${playerId}`);
-    return false;
-  }
-
-  sessionToPlayer.set(sessionId, playerId);
-  playerToSession.set(playerId, sessionId);
-  logTracker('bind_session_ok', { player_id: playerId, session_id: sessionId });
-  return true;
-}
-
-function computePeerConnected(playerId: string): boolean {
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (!peerId) return false;
-  const sessionId = playerToSession.get(peerId);
-  if (!sessionId) return false;
-  const ws = gameConnections.get(sessionId);
-  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-  const lastSeen = wsLastActivity.get(ws) ?? 0;
-  return Date.now() - lastSeen <= CONNECTION_TTL_MS;
 }
 
 function hasActiveGameConnection(playerId: string): boolean {
@@ -321,94 +307,68 @@ function cancelPlayerChallenges(playerId: string): void {
   }
 }
 
-function completeGameRegistration(playerId: string): void {
-  const sessionId = playerToSession.get(playerId);
-  const gameWs = sessionId ? gameConnections.get(sessionId) : undefined;
-  const gameMeta = gameWs ? wsGameMeta.get(gameWs) : undefined;
-  if (gameMeta?.available === false) {
-    lobby.setPlayerStatus(playerId, 'busy');
-    broadcastLobbyUpdate();
-  }
-  const pairing = lobby.getPairingForPlayer(playerId);
-  if (pairing) {
-    const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
-    const peerSessionId = playerToSession.get(peerId);
-    const peerConn = peerSessionId ? gameConnections.get(peerSessionId) : undefined;
-    const myAlias = lobby.players[playerId]?.alias ?? knownAliases.get(playerId) ?? playerId;
-    const peerAlias = lobby.players[peerId]?.alias ?? knownAliases.get(peerId) ?? peerId;
-    const peerConnected = computePeerConnected(playerId) && !!peerConn;
-    logTracker('game_registration_status_pairing', {
-      player_id: playerId,
-      peer_id: peerId,
-      has_peer_conn: !!peerConn,
-      peer_connected: peerConnected,
-      token: pairing.token,
-    });
-    sendGameEvent(playerId, 'connection_status', {
-      has_pairing: true,
-      token: pairing.token,
-      amount: pairing.amount,
-      i_am_initiator: pairing.playerA_id === playerId,
-      peer_connected: peerConnected,
-      my_alias: myAlias,
-      peer_alias: peerAlias,
-    });
-    if (peerConn) {
-      logTracker('game_registration_notify_peer_reconnected', { player_id: playerId, peer_id: peerId });
-      sendGameEvent(peerId, 'peer_reconnected', {});
-    }
-  } else {
-    logTracker('game_registration_status_no_pairing', { player_id: playerId });
-    sendGameEvent(playerId, 'connection_status', { has_pairing: false });
+function applyPlayerBusy(playerId: string, busy: boolean): void {
+  const status = busy ? 'busy' : 'waiting';
+  lobby.setPlayerStatus(playerId, status);
+  if (busy) {
+    cancelPlayerChallenges(playerId);
   }
 }
 
-function onLobbyJoin(msg: Extract<LobbyInboundMessage, { type: 'join' }>): void {
-  const { id, alias, session_id } = msg;
-  logTracker('lobby_join', { player_id: id, session_id: session_id ?? null, alias: alias ?? null });
-  cancelPendingLobbyLeave(id);
-  if (session_id && !bindSessionToPlayer(id, session_id)) {
-    sendLobbyEvent(id, 'error', { error: 'Session ID does not belong to this player.' });
+// --- Lobby channel handlers ---
+
+function onLobbyJoin(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'join' }>): void {
+  const { alias, session_id } = msg;
+  logTracker('lobby_join', { ws_id: wsId(ws), session_id: session_id ?? null, alias: alias ?? null });
+  if (!session_id) {
+    sendWs(ws, 'error', { error: 'Missing tracker session.' });
     return;
   }
 
-  const resolvedAlias = alias || knownAliases.get(id) || id;
-  if (!lobby.players[id]) {
+  const playerId = ensureSession(session_id);
+  const resolvedAlias = alias || knownAliases.get(session_id) || playerId;
+
+  wsLobbyMeta.set(ws, { playerId, sessionId: session_id });
+  cancelPendingLobbyLeave(playerId);
+  const previous = lobbyConnections.get(playerId);
+  if (previous && previous !== ws) {
+    try { previous.close(4001, 'replaced_by_new_connection'); } catch {}
+  }
+  lobbyConnections.set(playerId, ws);
+
+  if (!lobby.players[playerId]) {
     lobby.addPlayer({
-      id,
+      id: playerId,
       alias: resolvedAlias,
-      session_id: session_id || '',
       status: 'waiting',
       parameters: {},
     });
   } else {
-    lobby.players[id].alias = resolvedAlias;
-    if (session_id) lobby.players[id].session_id = session_id;
+    lobby.players[playerId].alias = resolvedAlias;
   }
-  knownAliases.set(id, resolvedAlias);
+  knownAliases.set(session_id, resolvedAlias);
+  sendWs(ws, 'joined', { id: playerId, alias: resolvedAlias });
   broadcastLobbyUpdate();
-  replayPendingChallengesToPlayer(id);
+  replayPendingChallengesToPlayer(playerId);
 
-  if (session_id) {
-    const pendingIdentify = pendingGameIdentifies.get(session_id);
-    if (pendingIdentify) {
-      pendingGameIdentifies.delete(session_id);
-      const meta = wsGameMeta.get(pendingIdentify);
-      if (meta) meta.playerId = id;
-      logTracker('lobby_join_flush_pending_identify', {
-        player_id: id,
-        session_id,
-        ws_id: wsId(pendingIdentify),
-      });
-      completeGameRegistration(id);
+  // If the game channel was already identified, apply busy status
+  const gameWs = gameConnections.get(session_id);
+  if (gameWs) {
+    const meta = wsGameMeta.get(gameWs);
+    if (meta) meta.playerId = playerId;
+    if (meta?.busy !== undefined) {
+      applyPlayerBusy(playerId, meta.busy);
+      broadcastLobbyUpdate();
     }
   }
 }
 
-function onLobbyLeave(msg: Extract<LobbyInboundMessage, { type: 'leave' }>): void {
-  logTracker('lobby_leave', { player_id: msg.id });
-  cancelPendingLobbyLeave(msg.id);
-  leaveLobby(msg.id);
+function onLobbyLeave(ws: WebSocket, _msg: Extract<LobbyInboundMessage, { type: 'leave' }>): void {
+  const playerId = getLobbySenderId(ws);
+  if (!playerId) return;
+  logTracker('lobby_leave', { player_id: playerId });
+  cancelPendingLobbyLeave(playerId);
+  leaveLobby(playerId);
 }
 
 function getLobbySenderId(ws: WebSocket): string | undefined {
@@ -416,7 +376,7 @@ function getLobbySenderId(ws: WebSocket): string | undefined {
 }
 
 function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge' }>): void {
-  const senderId = getLobbySenderId(ws) ?? msg.from_id;
+  const senderId = getLobbySenderId(ws);
   const { target_id, amount } = msg;
   logTracker('challenge_received', {
     ws_id: wsId(ws),
@@ -427,8 +387,15 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   const fromPlayer = senderId ? lobby.players[senderId] : undefined;
   if (!fromPlayer) {
     logTracker('challenge_drop_unknown_sender', { sender_id: senderId ?? null, target_id });
-    console.warn('[tracker] challenge dropped: unknown sender', { senderId, target: target_id });
     sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin lobby and retry.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+  const targetPlayer = lobby.players[target_id];
+  if (!targetPlayer) {
+    logTracker('challenge_drop_unknown_target', { sender_id: senderId, target_id });
+    sendWs(ws, 'error', { error: 'Unknown target.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
   if (!hasActiveGameConnection(target_id)) {
@@ -437,15 +404,27 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
-  if (fromPlayer.status === 'busy') {
-    logTracker('challenge_drop_sender_busy', { sender_id: senderId, target_id });
+  if (fromPlayer.status !== 'waiting') {
+    logTracker('challenge_drop_sender_unavailable', { sender_id: senderId, target_id, status: fromPlayer.status });
     sendWs(ws, 'error', { error: 'You are in an active session. Finish it first.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
-  const targetPlayer = lobby.players[target_id];
-  if (targetPlayer?.status === 'busy') {
-    logTracker('challenge_drop_target_busy', { sender_id: senderId, target_id });
+  if (targetPlayer.status !== 'waiting') {
+    logTracker('challenge_drop_target_unavailable', { sender_id: senderId, target_id, status: targetPlayer.status });
     sendWs(ws, 'error', { error: 'That player is in an active session.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+
+  if (!amount || !/^[1-9][0-9]{0,18}$/.test(amount)) {
+    sendWs(ws, 'error', { error: 'Invalid amount: must be a positive integer.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+  const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n;
+  if (BigInt(amount) > MAX_AMOUNT_MOJOS) {
+    sendWs(ws, 'error', { error: 'Amount exceeds maximum (1,000,000 XCH).' });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
@@ -453,7 +432,9 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   const challenge = lobby.createChallenge(
     fromPlayer.id,
     target_id,
-    amount || '100',
+    amount,
+    msg.channel_timeout,
+    msg.unroll_timeout,
   );
 
   sendLobbyEvent(target_id, 'challenge_received', {
@@ -461,12 +442,14 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     from_id: fromPlayer.id,
     from_alias: fromPlayer.alias,
     amount: challenge.amount,
+    channel_timeout: challenge.channel_timeout,
+    unroll_timeout: challenge.unroll_timeout,
   });
   sendGameEvent(target_id, 'lobby_attention', {});
 }
 
 function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge_accept' }>): void {
-  const accepter_id = getLobbySenderId(ws) ?? msg.accepter_id;
+  const accepter_id = getLobbySenderId(ws);
   const { challenge_id } = msg;
   const challenge = lobby.getChallenge(challenge_id);
   if (!challenge || !accepter_id || accepter_id !== challenge.target_id) {
@@ -476,7 +459,20 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
       accepter_id: accepter_id ?? null,
       expected_target_id: challenge?.target_id ?? null,
     });
-    console.warn('[tracker] challenge_accept dropped: invalid accepter', { challenge_id, accepter_id });
+    return;
+  }
+  const challenger = lobby.players[challenge.from_id];
+  const accepter = lobby.players[challenge.target_id];
+  if (challenger?.status !== 'waiting' || accepter?.status !== 'waiting') {
+    logTracker('challenge_accept_drop_player_unavailable', {
+      challenge_id,
+      challenger_status: challenger?.status ?? null,
+      accepter_status: accepter?.status ?? null,
+    });
+    lobby.removeChallenge(challenge_id);
+    sendWs(ws, 'error', { error: 'One or both players are no longer available.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id, accepted: false });
+    sendLobbyEvent(challenge.from_id, 'challenge_resolved', { challenge_id, accepted: false });
     return;
   }
   if (!hasActiveGameConnection(challenge.from_id) || !hasActiveGameConnection(accepter_id)) {
@@ -495,64 +491,41 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
   }
 
   lobby.removeChallenge(challenge_id);
-  for (const pid of [challenge.from_id, challenge.target_id]) {
-    const old = lobby.getPairingForPlayer(pid);
-    if (old) {
-      const oldPeer = old.playerA_id === pid ? old.playerB_id : old.playerA_id;
-      sendGameEvent(oldPeer, 'closed', {});
-      sendGameEvent(pid, 'closed', {});
-      lobby.removePairing(old.token);
-      logTracker('pairing_removed_on_rematch', { token: old.token, player_id: pid, old_peer_id: oldPeer });
-    }
-  }
-  const pairing = lobby.createPairing(
-    challenge.from_id,
-    challenge.target_id,
-    challenge.amount,
-  );
-  logTracker('pairing_created', {
+  // The clients are authoritative for busy state. The tracker only cleans up
+  // challenge records it knows are now stale.
+  cancelPlayerChallenges(challenge.target_id);
+  cancelPlayerChallenges(challenge.from_id);
+  broadcastLobbyUpdate();
+  logTracker('challenge_accepted_advisory', {
     challenge_id,
-    token: pairing.token,
-    challenger_id: challenge.from_id,
-    accepter_id: challenge.target_id,
+    initiator_id: challenge.from_id,
+    target_id: challenge.target_id,
     amount: challenge.amount,
   });
 
   const challengerAlias = lobby.players[challenge.from_id]?.alias ?? challenge.from_id;
-  const accepterAlias = lobby.players[challenge.target_id]?.alias ?? challenge.target_id;
 
-  lobby.setPlayerStatus(challenge.from_id, 'playing', accepterAlias);
-  lobby.setPlayerStatus(challenge.target_id, 'playing', challengerAlias);
-  cancelPlayerChallenges(challenge.from_id);
-  cancelPlayerChallenges(challenge.target_id);
-  broadcastLobbyUpdate();
-
+  // Notify the lobby of the challenger that the challenge was accepted
   sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
     challenge_id,
     accepted: true,
   });
-  const matchedBase = {
-    token: pairing.token,
+
+  // Send advisory_start to the ACCEPTER (target) who becomes the initiator
+  const advisoryPayload: Record<string, unknown> = {
+    peer_id: challenge.from_id,
+    peer_alias: challengerAlias,
     amount: challenge.amount,
   };
-
-  sendGameEvent(challenge.from_id, 'matched', {
-    ...matchedBase,
-    i_am_initiator: true,
-    my_alias: challengerAlias,
-    peer_alias: accepterAlias,
-  });
-  sendGameEvent(challenge.target_id, 'matched', {
-    ...matchedBase,
-    i_am_initiator: false,
-    my_alias: accepterAlias,
-    peer_alias: challengerAlias,
-  });
+  if (challenge.channel_timeout) advisoryPayload.channel_timeout = challenge.channel_timeout;
+  if (challenge.unroll_timeout) advisoryPayload.unroll_timeout = challenge.unroll_timeout;
+  sendGameEvent(challenge.target_id, 'advisory_start', advisoryPayload);
 }
 
-function onChallengeDecline(msg: Extract<LobbyInboundMessage, { type: 'challenge_decline' }>): void {
+function onChallengeDecline(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge_decline' }>): void {
+  const playerId = getLobbySenderId(ws);
   const challenge = lobby.getChallenge(msg.challenge_id);
-  if (!challenge) {
+  if (!challenge || !playerId || challenge.target_id !== playerId) {
     logTracker('challenge_decline_drop_missing', { challenge_id: msg.challenge_id });
     return;
   }
@@ -568,8 +541,8 @@ function onChallengeDecline(msg: Extract<LobbyInboundMessage, { type: 'challenge
   });
 }
 
-function onChallengeCancel(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge_cancel' }>): void {
-  const senderId = getLobbySenderId(ws) ?? msg.from_id;
+function onChallengeCancel(ws: WebSocket, _msg: Extract<LobbyInboundMessage, { type: 'challenge_cancel' }>): void {
+  const senderId = getLobbySenderId(ws);
   if (!senderId) return;
   const toCancel: string[] = [];
   for (const [id, challenge] of lobby.challenges) {
@@ -589,10 +562,11 @@ function onChallengeCancel(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
 }
 
 function onChangeAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'change_alias' }>): void {
-  const playerId = getLobbySenderId(ws) ?? msg.id;
-  if (!playerId) return;
+  const meta = wsLobbyMeta.get(ws);
+  if (!meta) return;
+  const playerId = meta.playerId;
   logTracker('alias_change', { ws_id: wsId(ws), player_id: playerId, new_alias: msg.newAlias });
-  knownAliases.set(playerId, msg.newAlias);
+  knownAliases.set(meta.sessionId, msg.newAlias);
   const player = lobby.players[playerId];
   if (player) {
     player.alias = msg.newAlias;
@@ -600,108 +574,148 @@ function onChangeAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 
   }
 }
 
+function onGetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'get_alias' }>): void {
+  const sessionId = msg.session_id;
+  const alias = sessionId ? knownAliases.get(sessionId) ?? null : null;
+  logTrackerVerbose('get_alias', { ws_id: wsId(ws), session_id: sessionId ?? null, found: alias !== null });
+  sendWs(ws, 'alias_result', { alias });
+}
+
+function onSetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'set_alias' }>): void {
+  const sessionId = msg.session_id ?? wsLobbyMeta.get(ws)?.sessionId;
+  if (!sessionId) return;
+  const playerId = sessionToPlayer.get(sessionId);
+  logTracker('set_alias', { ws_id: wsId(ws), session_id: sessionId, player_id: playerId ?? null, alias: msg.alias });
+  knownAliases.set(sessionId, msg.alias);
+  const player = playerId ? lobby.players[playerId] : undefined;
+  if (player) {
+    player.alias = msg.alias;
+    broadcastLobbyUpdate();
+  }
+  sendWs(ws, 'alias_result', { alias: msg.alias });
+}
+
+// --- Game channel handlers ---
+
 function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'identify' }>): void {
-  const playerId = sessionToPlayer.get(msg.session_id);
+  const playerId = ensureSession(msg.session_id);
   logTracker('identify', {
     ws_id: wsId(ws),
     session_id: msg.session_id,
-    player_id: playerId ?? null,
+    player_id: playerId,
   });
   const previousGameConn = gameConnections.get(msg.session_id);
   if (previousGameConn && previousGameConn !== ws) {
     logTracker('game_connection_replaced', { ws_id: wsId(previousGameConn), session_id: msg.session_id });
     try { previousGameConn.close(4001, 'replaced_by_new_connection'); } catch {}
   }
-  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, available: msg.available });
+  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
   gameConnections.set(msg.session_id, ws);
-  if (!playerId) {
-    pendingGameIdentifies.set(msg.session_id, ws);
-    logTracker('identify_pending', {
-      ws_id: wsId(ws),
-      session_id: msg.session_id,
-      pending_game_identifies: pendingGameIdentifies.size,
-    });
-    return;
+  rememberGameAlias(msg.session_id, playerId, msg.alias);
+
+  // Apply busy status if lobby player exists
+  if (msg.busy !== undefined && lobby.players[playerId]) {
+    applyPlayerBusy(playerId, msg.busy);
+    broadcastLobbyUpdate();
   }
-  logTracker('identify_complete_registration', { ws_id: wsId(ws), session_id: msg.session_id, player_id: playerId });
-  completeGameRegistration(playerId);
+
+  sendGameWs(ws, 'registered', { player_id: playerId });
+  logTracker('identify_registered', { ws_id: wsId(ws), session_id: msg.session_id, player_id: playerId });
 }
 
-function onGameMessage(msg: Extract<GameInboundMessage, { type: 'message' }>): void {
-  const playerId = sessionToPlayer.get(msg.session_id);
-  if (!playerId) {
-    logTracker('game_message_drop_unknown_session', { session_id: msg.session_id });
+function onGameSend(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'send' }>, rawPayload: Buffer | null): void {
+  const meta = wsGameMeta.get(ws);
+  if (!meta?.playerId) {
+    logTracker('game_send_drop_no_player', { ws_id: wsId(ws) });
     return;
   }
-  if (!isRelayPayload(msg.data)) {
-    logTracker('game_message_drop_bad_payload', { player_id: playerId, session_id: msg.session_id });
+  const targetId = msg.to;
+  const targetSessionId = playerToSession.get(targetId);
+  const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
+
+  if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
+    logTracker('game_send_delivery_failure', { from: meta.playerId, to: targetId });
+    sendGameWs(ws, 'delivery_failure', { to: targetId });
     return;
   }
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (!peerId) {
-    logTracker('game_message_drop_unpaired', { player_id: playerId, session_id: msg.session_id });
-    return;
+
+  const fromAlias = aliasForPlayer(meta.playerId);
+
+  if (rawPayload) {
+    // Binary payload: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
+    const fromIdBuf = Buffer.from(meta.playerId, 'utf8');
+    const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
+    const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
+    let off = 0;
+    header.writeUInt32BE(fromIdBuf.byteLength, off); off += 4;
+    fromIdBuf.copy(header, off); off += fromIdBuf.byteLength;
+    header.writeUInt32BE(fromAliasBuf.byteLength, off); off += 4;
+    fromAliasBuf.copy(header, off);
+    const frame = Buffer.concat([header, rawPayload]);
+    targetWs.send(frame);
+    logTrackerVerbose('game_relay_binary', { from: meta.playerId, to: targetId, payload_bytes: rawPayload.byteLength });
+  } else {
+    logTrackerVerbose('game_relay_json_noop', { from: meta.playerId, to: targetId });
   }
-  logTrackerVerbose('game_message_relay', {
-    from_player_id: playerId,
-    to_player_id: peerId,
-    session_id: msg.session_id,
-    payload_kind: relayPayloadKind(msg.data),
-  });
-  sendGameEvent(peerId, 'message', { data: msg.data });
 }
 
-function onGameChat(msg: Extract<GameInboundMessage, { type: 'chat' }>): void {
-  const playerId = sessionToPlayer.get(msg.session_id);
-  if (!playerId) {
-    logTracker('game_chat_drop_unknown_session', { session_id: msg.session_id });
+function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): void {
+  const meta = wsGameMeta.get(ws);
+  if (!meta?.playerId) {
+    logTracker('game_binary_send_drop_no_player', { ws_id: wsId(ws) });
     return;
   }
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (!peerId) {
-    logTracker('game_chat_drop_unpaired', { player_id: playerId, session_id: msg.session_id });
+
+  const targetSessionId = playerToSession.get(targetId);
+  const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
+
+  if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
+    logTracker('game_binary_delivery_failure', { from: meta.playerId, to: targetId });
+    sendGameWs(ws, 'delivery_failure', { to: targetId });
     return;
   }
-  const fromAlias = lobby.players[playerId]?.alias ?? playerId;
-  logTrackerVerbose('game_chat_relay', { from_player_id: playerId, to_player_id: peerId, session_id: msg.session_id });
-  sendGameEvent(peerId, 'chat', {
-    text: msg.text,
-    from_alias: fromAlias,
-    timestamp: Date.now(),
-  });
+
+  // Relay binary: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
+  const fromIdBuf = Buffer.from(meta.playerId, 'utf8');
+  const fromAlias = lobby.players[meta.playerId]?.alias ?? meta.playerId;
+  const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
+  const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
+  let offset = 0;
+  header.writeUInt32BE(fromIdBuf.byteLength, offset); offset += 4;
+  fromIdBuf.copy(header, offset); offset += fromIdBuf.byteLength;
+  header.writeUInt32BE(fromAliasBuf.byteLength, offset); offset += 4;
+  fromAliasBuf.copy(header, offset);
+  const frame = Buffer.concat([header, payload]);
+  targetWs.send(frame);
+  logTrackerVerbose('game_relay_binary', { from: meta.playerId, to: targetId, payload_bytes: payload.byteLength });
 }
 
-function onGameClose(msg: Extract<GameInboundMessage, { type: 'close' }>): void {
-  const playerId = sessionToPlayer.get(msg.session_id);
-  if (!playerId) {
+function onGameClose(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'close' }>): void {
+  const meta = wsGameMeta.get(ws);
+  if (!meta) {
     logTracker('game_close_drop_unknown_session', { session_id: msg.session_id });
     return;
   }
-  const peerId = lobby.getPairedPlayerId(playerId);
-  logTracker('game_close', { player_id: playerId, peer_id: peerId ?? null, session_id: msg.session_id });
-  if (peerId) sendGameEvent(peerId, 'closed', {});
+  const playerId = meta.playerId;
+  logTracker('game_close', { player_id: playerId, session_id: msg.session_id });
   sendGameEvent(playerId, 'closed', {});
-  const pairing = lobby.getPairingForPlayer(playerId);
-  if (pairing) {
-    lobby.setPlayerStatus(pairing.playerA_id, 'waiting');
-    lobby.setPlayerStatus(pairing.playerB_id, 'waiting');
-    lobby.removePairing(pairing.token);
-    broadcastLobbyUpdate();
-    logTracker('pairing_removed_on_close', { token: pairing.token, player_id: playerId, peer_id: peerId ?? null });
-  }
 }
 
-function onSetStatus(msg: Extract<GameInboundMessage, { type: 'set_status' }>): void {
-  const playerId = sessionToPlayer.get(msg.session_id);
-  if (!playerId) {
-    logTracker('set_status_drop_unknown_session', { session_id: msg.session_id });
+function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_busy' }>): void {
+  const meta = wsGameMeta.get(ws);
+  if (!meta) {
+    logTracker('set_busy_drop_unknown_session', { session_id: msg.session_id });
     return;
   }
-  const newStatus = msg.available ? 'waiting' : 'busy';
-  logTracker('set_status', { player_id: playerId, available: msg.available, status: newStatus });
-  lobby.setPlayerStatus(playerId, newStatus);
+  const playerId = meta.playerId;
+  rememberGameAlias(meta.sessionId, playerId, msg.alias);
+  meta.busy = msg.busy;
+  logTracker('set_busy', { player_id: playerId, busy: msg.busy });
+  applyPlayerBusy(playerId, msg.busy);
   broadcastLobbyUpdate();
 }
+
+// --- Message parsing ---
 
 function parseLobbyInbound(raw: string): LobbyInboundMessage | null {
   try {
@@ -713,20 +727,74 @@ function parseLobbyInbound(raw: string): LobbyInboundMessage | null {
   }
 }
 
-function parseGameInbound(raw: string): GameInboundMessage | null {
+function rawDataToBuffer(message: RawData): Buffer {
+  if (Buffer.isBuffer(message)) return message;
+  if (Array.isArray(message)) return Buffer.concat(message);
+  return Buffer.from(message);
+}
+
+function optionalText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined {
+  const value = map.get(key);
+  return typeof value === 'string' ? value : undefined;
+}
+
+function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string {
+  const value = optionalText(map, key);
+  if (value === undefined) throw new Error(`missing text field: ${key}`);
+  return value;
+}
+
+function parseGameInbound(raw: Buffer): GameInboundMessage | null {
   try {
-    const parsed = JSON.parse(raw) as GameInboundMessage;
-    if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) return null;
-    return parsed;
+    const decoded = decodeBencodex(raw);
+    if (!isDictionary(decoded)) return null;
+    const type = getText(decoded, 'type');
+    if (!type) return null;
+    switch (type) {
+      case 'identify':
+        return {
+          type,
+          session_id: requireText(decoded, 'session_id'),
+          busy: getBoolean(decoded, 'busy'),
+          alias: optionalText(decoded, 'alias'),
+        };
+      case 'send':
+        return { type, to: requireText(decoded, 'to') };
+      case 'set_busy': {
+        const busy = getBoolean(decoded, 'busy');
+        if (busy === undefined) return null;
+        return {
+          type,
+          session_id: requireText(decoded, 'session_id'),
+          busy,
+          alias: optionalText(decoded, 'alias'),
+        };
+      }
+      case 'close':
+        return { type, session_id: requireText(decoded, 'session_id') };
+      case 'keepalive':
+        return { type };
+      default:
+        return null;
+    }
   } catch {
     return null;
   }
 }
 
-function setupKeepalive(ws: WebSocket): void {
+function setupLobbyKeepalive(ws: WebSocket): void {
   const kaTimer = setInterval(() => {
     if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({ type: 'keepalive' }));
+    }
+  }, 15_000);
+  wsKeepaliveTimers.set(ws, kaTimer);
+}
+
+function setupGameKeepalive(ws: WebSocket): void {
+  const kaTimer = setInterval(() => {
+    if (ws.readyState === ws.OPEN) {
+      sendGameWs(ws, 'keepalive', {});
     }
   }, 15_000);
   wsKeepaliveTimers.set(ws, kaTimer);
@@ -740,28 +808,13 @@ function clearKeepalive(ws: WebSocket): void {
   }
 }
 
-function onGetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'get_alias' }>): void {
-  const alias = knownAliases.get(msg.id) ?? null;
-  logTrackerVerbose('get_alias', { ws_id: wsId(ws), player_id: msg.id, found: alias !== null });
-  sendWs(ws, 'alias_result', { alias });
-}
-
-function onSetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'set_alias' }>): void {
-  logTracker('set_alias', { ws_id: wsId(ws), player_id: msg.id, alias: msg.alias });
-  knownAliases.set(msg.id, msg.alias);
-  const player = lobby.players[msg.id];
-  if (player) {
-    player.alias = msg.alias;
-    broadcastLobbyUpdate();
-  }
-  sendWs(ws, 'alias_result', { alias: msg.alias });
-}
+// --- Lobby WebSocket server ---
 
 lobbyWsServer.on('connection', (ws) => {
   const currentWsId = wsId(ws);
   wsLastActivity.set(ws, Date.now());
   logTracker('lobby_ws_connected', { ws_id: currentWsId });
-  setupKeepalive(ws);
+  setupLobbyKeepalive(ws);
 
   ws.on('message', (message) => {
     wsLastActivity.set(ws, Date.now());
@@ -774,18 +827,11 @@ lobbyWsServer.on('connection', (ws) => {
     logTrackerVerbose('lobby_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
 
     switch (parsed.type) {
-      case 'join': {
-        wsLobbyMeta.set(ws, { playerId: parsed.id });
-        const previous = lobbyConnections.get(parsed.id);
-        if (previous && previous !== ws) {
-          try { previous.close(4001, 'replaced_by_new_connection'); } catch {}
-        }
-        lobbyConnections.set(parsed.id, ws);
-        onLobbyJoin(parsed);
+      case 'join':
+        onLobbyJoin(ws, parsed);
         break;
-      }
       case 'leave':
-        onLobbyLeave(parsed);
+        onLobbyLeave(ws, parsed);
         break;
       case 'challenge':
         onChallenge(ws, parsed);
@@ -794,7 +840,7 @@ lobbyWsServer.on('connection', (ws) => {
         onChallengeAccept(ws, parsed);
         break;
       case 'challenge_decline':
-        onChallengeDecline(parsed);
+        onChallengeDecline(ws, parsed);
         break;
       case 'challenge_cancel':
         onChallengeCancel(ws, parsed);
@@ -841,61 +887,64 @@ lobbyWsServer.on('connection', (ws) => {
   });
 });
 
+// --- Game WebSocket server ---
+
+// Binary frame format for addressed messaging:
+// Outbound (client -> tracker): [4-byte target_id_len BE][target_id UTF-8][payload]
+// Inbound (tracker -> client):  [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
+
 gameWsServer.on('connection', (ws) => {
   const currentWsId = wsId(ws);
   wsLastActivity.set(ws, Date.now());
   logTracker('game_ws_connected', { ws_id: currentWsId });
-  setupKeepalive(ws);
+  setupGameKeepalive(ws);
 
   ws.on('message', (message, isBinary) => {
     wsLastActivity.set(ws, Date.now());
+    const buf = rawDataToBuffer(message);
 
-    if (isBinary) {
-      const buf = Buffer.isBuffer(message) ? message : Buffer.from(message as ArrayBuffer);
-      const meta = wsGameMeta.get(ws);
-      if (!meta?.playerId) {
-        logTracker('game_binary_drop_no_player', { ws_id: currentWsId, bytes: buf.byteLength });
+    if (isBinary && buf[0] !== 0x64) {
+      // Binary frame: addressed message to another peer
+      if (buf.byteLength < 4) {
+        logTracker('game_binary_too_short', { ws_id: currentWsId, bytes: buf.byteLength });
         return;
       }
-      const peerId = lobby.getPairedPlayerId(meta.playerId);
-      if (!peerId) {
-        logTracker('game_binary_drop_unpaired', { ws_id: currentWsId, player_id: meta.playerId, bytes: buf.byteLength });
+      const targetIdLen = buf.readUInt32BE(0);
+      if (buf.byteLength < 4 + targetIdLen) {
+        logTracker('game_binary_header_incomplete', { ws_id: currentWsId, bytes: buf.byteLength, target_id_len: targetIdLen });
         return;
       }
-      const peerSessionId = playerToSession.get(peerId);
-      const peerWs = peerSessionId ? gameConnections.get(peerSessionId) : undefined;
-      if (!peerWs || peerWs.readyState !== WebSocket.OPEN) {
-        logTracker('game_binary_drop_peer_offline', { ws_id: currentWsId, player_id: meta.playerId, peer_id: peerId });
-        return;
-      }
-      logTrackerVerbose('game_binary_relay', { from: meta.playerId, to: peerId, bytes: buf.byteLength });
-      peerWs.send(buf);
+      const targetId = buf.slice(4, 4 + targetIdLen).toString('utf8');
+      const payload = buf.slice(4 + targetIdLen);
+      onGameBinarySend(ws, targetId, payload);
       return;
     }
 
-    const text = typeof message === 'string' ? message : message.toString();
-    const parsed = parseGameInbound(text);
+    if (!isBinary) {
+      const text = typeof message === 'string' ? message : message.toString();
+      logTracker('game_ws_text_frame_drop', { ws_id: currentWsId, bytes: text.length });
+      return;
+    }
+
+    const parsed = parseGameInbound(buf);
     if (!parsed) {
-      logTracker('game_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
+      logTracker('game_ws_message_parse_drop', { ws_id: currentWsId, bytes: buf.byteLength });
       return;
     }
-    logTrackerVerbose('game_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
+    logTrackerVerbose('game_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: buf.byteLength });
 
     switch (parsed.type) {
       case 'identify':
         onIdentify(ws, parsed);
         break;
-      case 'message':
-        onGameMessage(parsed);
-        break;
-      case 'chat':
-        onGameChat(parsed);
+      case 'send':
+        onGameSend(ws, parsed, null);
         break;
       case 'close':
-        onGameClose(parsed);
+        onGameClose(ws, parsed);
         break;
-      case 'set_status':
-        onSetStatus(parsed);
+      case 'set_busy':
+        onSetBusy(ws, parsed);
         break;
       case 'keepalive':
         break;
@@ -918,10 +967,11 @@ gameWsServer.on('connection', (ws) => {
         gameConnections.delete(sessionId);
         logTracker('game_connection_removed_on_close', { ws_id: currentWsId, session_id: sessionId });
       }
-      pendingGameIdentifies.delete(sessionId);
     }
   });
 });
+
+// --- Sweep / liveness ---
 
 function sweepLobbyConnections(now: number): boolean {
   let changed = false;
@@ -965,31 +1015,6 @@ function sweepGameConnections(now: number): void {
       try { ws.close(4002, 'idle_timeout'); } catch {}
     }
     gameConnections.delete(sessionId);
-    pendingGameIdentifies.delete(sessionId);
-    if (playerId) {
-      const pairing = lobby.getPairingForPlayer(playerId);
-      if (pairing) {
-        const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
-        sendGameEvent(peerId, 'closed', {});
-        lobby.setPlayerStatus(pairing.playerA_id, 'waiting');
-        lobby.setPlayerStatus(pairing.playerB_id, 'waiting');
-        lobby.removePairing(pairing.token);
-        broadcastLobbyUpdate();
-        logTracker('pairing_removed_on_sweep', { token: pairing.token, swept_player: playerId, peer_id: peerId });
-      }
-    }
-  }
-}
-
-function sweepSessionMaps(): void {
-  for (const [sessionId, playerId] of sessionToPlayer) {
-    const hasLobby = lobbyConnections.has(playerId);
-    const hasGame = gameConnections.has(sessionId);
-    if (!hasLobby && !hasGame) {
-      sessionToPlayer.delete(sessionId);
-      playerToSession.delete(playerId);
-      logTracker('session_map_swept', { session_id: sessionId, player_id: playerId });
-    }
   }
 }
 
@@ -997,17 +1022,14 @@ setInterval(() => {
   const now = Date.now();
   const lobbyChanged = sweepLobbyConnections(now);
   sweepGameConnections(now);
-  sweepSessionMaps();
   if (lobbyChanged) {
     broadcastLobbyUpdate();
   }
   logTrackerVerbose('state_snapshot', {
     players: Object.keys(lobby.players).length,
     challenges: lobby.challenges.size,
-    pairings: lobby.pairings.size,
     lobby_connections: lobbyConnections.size,
     game_connections: gameConnections.size,
-    pending_game_identifies: pendingGameIdentifies.size,
     pending_lobby_leaves: pendingLobbyLeaves.size,
     session_to_player: sessionToPlayer.size,
     player_to_session: playerToSession.size,
@@ -1015,6 +1037,8 @@ setInterval(() => {
 }, 15_000);
 
 const port = process.env.PORT || 5801;
+httpServer.keepAliveTimeout = 5_000;
+httpServer.headersTimeout = 6_000;
 httpServer.listen({ host: '::', port }, () => {
   console.log(`Server running on port ${port}`);
 });

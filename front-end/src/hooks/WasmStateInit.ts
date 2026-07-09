@@ -5,7 +5,7 @@ import {
   RngId,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionController } from './SessionController';
 
 export type GameHexPair = { proposalHex: string; parserHex: string };
 export type GameHexes = Record<string, GameHexPair>;
@@ -178,6 +178,8 @@ export class WasmStateInit {
     my_contribution: bigint,
     their_contribution: bigint,
     rewardPuzzleHash: string,
+    channelTimeout = 15,
+    unrollTimeout = 15,
   ): { game: ChiaGame, puzzleHash: string } {
     const game_types: Record<string, { version: number; hex: string; parser_hex: string }> = {};
     for (const [name, hexes] of Object.entries(gameHexes)) {
@@ -189,8 +191,8 @@ export class WasmStateInit {
       have_potato: have_potato,
       my_contribution: { amt: my_contribution },
       their_contribution: { amt: their_contribution },
-      channel_timeout: 15,
-      unroll_timeout: 15,
+      channel_timeout: channelTimeout,
+      unroll_timeout: unrollTimeout,
       reward_puzzle_hash: rewardPuzzleHash,
     });
 

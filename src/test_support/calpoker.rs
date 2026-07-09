@@ -7,6 +7,7 @@ use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
 use crate::peer_container::SynchronousGameCradle;
 use crate::test_support::game::GameAction;
+use crate::transaction_manager::TransactionManager;
 
 fn selected_cards_to_bitfield(hand: &[usize], selected: &[usize]) -> u8 {
     hand.iter().enumerate().fold(0u8, |acc, (idx, card)| {
@@ -95,8 +96,12 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<G
 #[allow(clippy::type_complexity)]
 pub fn calpoker_ran_all_the_moves_predicate(
     want_move_number: usize,
-) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
-    Box::new(move |move_number: usize, _: &[SynchronousGameCradle]| move_number >= want_move_number)
+) -> Box<dyn Fn(usize, &[TransactionManager<SynchronousGameCradle>]) -> bool> {
+    Box::new(
+        move |move_number: usize, _: &[TransactionManager<SynchronousGameCradle>]| {
+            move_number >= want_move_number
+        },
+    )
 }
 
 /// ----------------- Tests start here ------------------

@@ -185,12 +185,9 @@ impl GameRunner {
                 .iter()
                 .map(|c| hex::encode(c.to_bytes()))
                 .collect();
-            let timed_out: Vec<String> = report
-                .timed_out
-                .iter()
-                .map(|c| hex::encode(c.to_bytes()))
-                .collect();
-            return Ok(format!("{{ \"created\": {created:?}, \"deleted\": {deleted:?}, \"timed_out\": {timed_out:?} }}\n"));
+            return Ok(format!(
+                "{{ \"created\": {created:?}, \"deleted\": {deleted:?} }}\n"
+            ));
         }
 
         Ok("null\n".to_string())
@@ -977,6 +974,13 @@ fn ws_send(ws: &mut WebSocket<TcpStream>, text: String) -> Result<(), tungstenit
 }
 
 fn service_main_inner() {
+    // Ensure panics produce full backtraces regardless of env.
+    std::env::set_var("RUST_BACKTRACE", "1");
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        eprintln!("[sim] {} PANIC: {info}\n{bt}", sim_ts());
+    }));
+
     let simulator = Simulator::default();
     let coinset_adapter = FullCoinSetAdapter::default();
     let mut game_runner = GameRunner::new(simulator, coinset_adapter)

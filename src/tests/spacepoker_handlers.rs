@@ -275,7 +275,7 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
     let parser_clvm = parser.to_clvm(allocator).unwrap();
 
-    let bet_args = (BET_SIZE, ()).to_clvm(allocator).unwrap();
+    let bet_args = (BET_SIZE, (BET_UNIT, ())).to_clvm(allocator).unwrap();
     let proposal_result = run_clvm(allocator, make_proposal_clvm, bet_args);
 
     let proposal_list = proper_list(allocator.allocator(), proposal_result, true).unwrap();
@@ -331,6 +331,7 @@ enum TestType {
     Normal,
     MutateMoverShare,
     CheckForSlashEvidence,
+    TerminalShortMoveSlash,
 }
 
 struct HandlerMove {
@@ -461,13 +462,46 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
         };
 
         if is_terminal {
+            let move_bytes_node = if matches!(hm.test_type, TestType::TerminalShortMoveSlash) {
+                let move_bytes = atom_bytes(allocator, my_turn.move_bytes_node);
+                allocator
+                    .allocator()
+                    .new_atom(&move_bytes[..16])
+                    .expect("short terminal move atom")
+            } else {
+                my_turn.move_bytes_node
+            };
+
+            if matches!(hm.test_type, TestType::TerminalShortMoveSlash) {
+                let (code, _) = run_validator(
+                    allocator,
+                    waiter_vp_hash,
+                    move_bytes_node,
+                    effective_mover_share,
+                    waiter_max_move_size,
+                    waiter_state,
+                    if is_alice_waiter {
+                        alice_their_turn_validator
+                    } else {
+                        bob_their_turn_validator
+                    },
+                    NodePtr::NIL,
+                );
+                assert_eq!(
+                    code,
+                    MoveCode::Slash,
+                    "step {step_idx}: terminal validator should slash short final move"
+                );
+                return;
+            }
+
             let their_turn = call_their_turn_handler(
                 allocator,
                 waiter_handler,
                 AMOUNT,
                 waiter_state,
                 NodePtr::NIL,
-                my_turn.move_bytes_node,
+                move_bytes_node,
                 waiter_vp_hash,
                 effective_mover_share,
             );
@@ -646,6 +680,7 @@ fn find_bob_seed_for_outcome(
     panic!("could not find seeds for coin toss outcome");
 }
 
+#[test]
 fn test_spacepoker_setup_game() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -655,6 +690,97 @@ fn test_spacepoker_setup_game() {
     assert_eq!(state_val, BET_UNIT, "initial state should be bet_unit");
 }
 
+fn make_proposal_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
+    let make_proposal = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex",
+    )
+    .expect("load make_proposal");
+    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        make_proposal_clvm,
+        args,
+        0,
+    )
+    .is_ok()
+}
+
+fn parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
+    let parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex",
+    )
+    .expect("load parser");
+    let parser_clvm = parser.to_clvm(allocator).unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        parser_clvm,
+        wire_data,
+        0,
+    )
+    .is_ok()
+}
+
+#[test]
+fn test_spacepoker_make_proposal_requires_explicit_valid_bet_unit() {
+    let mut allocator = AllocEncoder::new();
+
+    let valid_args = (BET_SIZE, (BET_UNIT, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        make_proposal_succeeds(&mut allocator, valid_args),
+        "explicit valid bet_unit should be accepted"
+    );
+
+    let missing_bet_unit = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !make_proposal_succeeds(&mut allocator, missing_bet_unit),
+        "bet_unit is required; no per_player_stake / 10 fallback should exist"
+    );
+
+    let zero_bet_unit = (BET_SIZE, (0i64, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !make_proposal_succeeds(&mut allocator, zero_bet_unit),
+        "bet_unit must be positive"
+    );
+
+    let non_dividing_bet_unit = (BET_SIZE, (6i64, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !make_proposal_succeeds(&mut allocator, non_dividing_bet_unit),
+        "per_player_stake must divide evenly into bet_unit-sized stack units"
+    );
+}
+
+#[test]
+fn test_spacepoker_parser_rejects_invalid_peer_bet_unit() {
+    let mut allocator = AllocEncoder::new();
+
+    let bad_bet_unit = 0i64;
+    let peer_wire_data = (
+        BET_SIZE,
+        (
+            BET_SIZE,
+            (
+                vec![(
+                    AMOUNT,
+                    (1i64, (0i64, (0i64, (32i64, (bad_bet_unit, (0i64, ())))))),
+                )],
+                (),
+            ),
+        ),
+    )
+        .to_clvm(&mut allocator)
+        .unwrap();
+
+    assert!(
+        !parser_succeeds(&mut allocator, peer_wire_data),
+        "peer wire proposals with invalid Space Poker terms should make the parser throw"
+    );
+}
+
+#[test]
 fn test_spacepoker_happy_path_all_calls() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -713,6 +839,7 @@ fn test_spacepoker_happy_path_all_calls() {
 // Coin toss says Alice opens: 2 nil moves (commitA, commitB), then Alice
 // opens directly. Standard alternation, Alice ends. Uses seeds picked so
 // that mover_opens is true for Alice.
+#[test]
 fn test_spacepoker_happy_path_alice_opens() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -764,6 +891,7 @@ fn test_spacepoker_happy_path_alice_opens() {
 // Coin toss says Alice must pong: 3 nil-style moves (commitA, commitB,
 // Alice pong), then Bob opens. Bob and Alice's roles in the betting
 // alternation are swapped from the alice-opens case, and Bob ends.
+#[test]
 fn test_spacepoker_happy_path_alice_pongs() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -823,6 +951,115 @@ fn test_spacepoker_happy_path_alice_pongs() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+#[test]
+fn test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+
+    let entropy_alice = make_entropy(&mut allocator, "alice_entropy_1027");
+    let entropy_bob = make_entropy(&mut allocator, "bob_entropy_1027");
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let zero_raise = 0i64.to_clvm(&mut allocator).unwrap();
+
+    let mut moves = vec![
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+    ];
+
+    for _street in 0..4 {
+        moves.push(HandlerMove {
+            input_move: zero_raise,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+    }
+
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_alice,
+        expected_mover_share: None,
+        test_type: TestType::TerminalShortMoveSlash,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
+#[test]
+fn test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+    let (entropy_alice, entropy_bob) =
+        find_bob_seed_for_outcome(&mut allocator, "alice_pongs_terminal_short_seed", false);
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let zero_raise = 0i64.to_clvm(&mut allocator).unwrap();
+
+    let mut moves = vec![
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+    ];
+
+    for _street in 0..4 {
+        moves.push(HandlerMove {
+            input_move: zero_raise,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        });
+    }
+
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_bob,
+        expected_mover_share: None,
+        test_type: TestType::TerminalShortMoveSlash,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
 fn run_hand_eval(allocator: &mut AllocEncoder, cards: &[i64], boost: i64) -> Vec<i64> {
     let program = read_hex_puzzle(
         allocator,
@@ -840,6 +1077,7 @@ fn run_hand_eval(allocator: &mut AllocEncoder, cards: &[i64], boost: i64) -> Vec
     items.iter().map(|n| int_from_node(allocator, *n)).collect()
 }
 
+#[test]
 fn test_hand_eval_high_card() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[14, 10, 7, 5, 3], 0);
@@ -850,12 +1088,14 @@ fn test_hand_eval_high_card() {
     );
 }
 
+#[test]
 fn test_hand_eval_pair() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 7, 5, 3], 0);
     assert_eq!(result[0], 2, "pair should have leading count 2");
 }
 
+#[test]
 fn test_hand_eval_two_pair() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 7, 7, 3], 0);
@@ -863,6 +1103,7 @@ fn test_hand_eval_two_pair() {
     assert_eq!(result[1], 2, "two pair second count = 2");
 }
 
+#[test]
 fn test_hand_eval_set() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 7, 3], 0);
@@ -871,6 +1112,7 @@ fn test_hand_eval_set() {
     assert_eq!(result[2], 1, "set third count = 1");
 }
 
+#[test]
 fn test_hand_eval_straight() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 9, 8, 7, 6], 0);
@@ -878,6 +1120,7 @@ fn test_hand_eval_straight() {
     assert_eq!(result[1], 3, "straight second = 3");
 }
 
+#[test]
 fn test_hand_eval_full_house() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 7, 7], 0);
@@ -885,18 +1128,21 @@ fn test_hand_eval_full_house() {
     assert_eq!(result[1], 2, "full house second count = 2");
 }
 
+#[test]
 fn test_hand_eval_four_of_a_kind() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 10, 7], 0);
     assert_eq!(result[0], 4, "four of a kind first count = 4");
 }
 
+#[test]
 fn test_hand_eval_five_of_a_kind() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[10, 10, 10, 10, 10], 0);
     assert_eq!(result[0], 5, "five of a kind first count = 5");
 }
 
+#[test]
 fn test_straight_beats_full_house() {
     let mut a = AllocEncoder::new();
     let straight = run_hand_eval(&mut a, &[10, 9, 8, 7, 6], 0);
@@ -912,6 +1158,7 @@ fn test_straight_beats_full_house() {
     );
 }
 
+#[test]
 fn test_boosted_set_does_not_beat_unboosted_full_house() {
     let mut a = AllocEncoder::new();
     let boosted_set = run_hand_eval(&mut a, &[10, 10, 10, 7, 3], 1);
@@ -924,6 +1171,7 @@ fn test_boosted_set_does_not_beat_unboosted_full_house() {
     );
 }
 
+#[test]
 fn test_boost_wins_within_same_hand_type() {
     let mut a = AllocEncoder::new();
     let boosted_pair = run_hand_eval(&mut a, &[10, 10, 7, 5, 3], 1);
@@ -936,6 +1184,7 @@ fn test_boost_wins_within_same_hand_type() {
     );
 }
 
+#[test]
 fn test_evil_path_wrong_mover_share() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1028,6 +1277,7 @@ fn run_end_validator_with_evidence(
     code
 }
 
+#[test]
 fn test_generous_mover_share_allowed() {
     let mut allocator = AllocEncoder::new();
 
@@ -1061,6 +1311,7 @@ fn test_generous_mover_share_allowed() {
     );
 }
 
+#[test]
 fn test_greedy_mover_share_slashed() {
     let mut allocator = AllocEncoder::new();
 
@@ -1109,6 +1360,21 @@ fn call_message_parser(
     run_clvm(allocator, parser, args)
 }
 
+fn message_parser_succeeds(
+    allocator: &mut AllocEncoder,
+    parser: NodePtr,
+    message: NodePtr,
+    state: NodePtr,
+    amount: i64,
+) -> bool {
+    let amount_node = amount.to_clvm(allocator).unwrap();
+    let a = allocator.allocator();
+    let tail = a.new_pair(amount_node, NodePtr::NIL).unwrap();
+    let tail = a.new_pair(state, tail).unwrap();
+    let args = a.new_pair(message, tail).unwrap();
+    run_program(allocator.allocator(), &chia_dialect(), parser, args, 0).is_ok()
+}
+
 fn readable_tag(allocator: &mut AllocEncoder, readable: NodePtr) -> String {
     let items = proper_list(allocator.allocator(), readable, true).unwrap();
     let tag_bytes = allocator.allocator().atom(items[0]).to_vec();
@@ -1123,6 +1389,7 @@ fn readable_tag(allocator: &mut AllocEncoder, readable: NodePtr) -> String {
 //
 // Uses run_handler_game for the setup phase, then manually inspects the
 // key steps.
+#[test]
 fn test_spacepoker_open_readable_has_cards_and_message_parser() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1377,6 +1644,30 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
     assert_eq!(String::from_utf8(tag_bytes).unwrap(), "cards");
     assert!(parsed_items.len() > 1, "'cards' should have values");
 
+    let short_message = allocator.allocator().new_atom(&[1, 2, 3]).unwrap();
+    assert!(
+        !message_parser_succeeds(
+            &mut allocator,
+            b_call.message_parser,
+            short_message,
+            bob_state,
+            AMOUNT,
+        ),
+        "open advisory parser should reject non-32-byte messages"
+    );
+
+    let wrong_preimage = allocator.allocator().new_atom(&[0x55; 32]).unwrap();
+    assert!(
+        !message_parser_succeeds(
+            &mut allocator,
+            b_call.message_parser,
+            wrong_preimage,
+            bob_state,
+            AMOUNT,
+        ),
+        "open advisory parser should reject preimages that do not hash to committed image"
+    );
+
     bob_waiter_vp_hash = b_call.validator_for_their_move_hash;
     bob_waiter_validator = b_call.validator_for_their_next_move;
 
@@ -1441,6 +1732,7 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
 // Alice opens with a raise, Bob calls. Exercises the raise path which
 // requires mover_share to remain unchanged on the initial open (the bet
 // only commits once the opponent responds).
+#[test]
 fn test_spacepoker_raise_and_call() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1511,6 +1803,7 @@ fn test_spacepoker_raise_and_call() {
 // Alice raises, Bob re-raises, Alice calls. Exercises the mid_round
 // re-raise path and subsequent call. On re-raise the prior raise commits
 // to the pot for both players (half_pot += last_raise).
+#[test]
 fn test_spacepoker_reraise_and_call() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1594,6 +1887,7 @@ fn test_spacepoker_reraise_and_call() {
 
 // Alice raises, Bob calls on street 1. Then Alice raises again on street 2,
 // Bob calls again. Exercises repeated raise+call across multiple streets.
+#[test]
 fn test_spacepoker_raise_call_multiple_streets() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
@@ -1657,12 +1951,28 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_spacepoker_happy_path_all_calls,
         ),
         (
+            "test_spacepoker_make_proposal_requires_explicit_valid_bet_unit",
+            &test_spacepoker_make_proposal_requires_explicit_valid_bet_unit,
+        ),
+        (
+            "test_spacepoker_parser_rejects_invalid_peer_bet_unit",
+            &test_spacepoker_parser_rejects_invalid_peer_bet_unit,
+        ),
+        (
             "test_spacepoker_happy_path_alice_opens",
             &test_spacepoker_happy_path_alice_opens,
         ),
         (
             "test_spacepoker_happy_path_alice_pongs",
             &test_spacepoker_happy_path_alice_pongs,
+        ),
+        (
+            "test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move",
+            &test_spacepoker_bob_terminal_nil_evidence_precheck_slashes_short_final_move,
+        ),
+        (
+            "test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move",
+            &test_spacepoker_alice_terminal_nil_evidence_precheck_slashes_short_final_move,
         ),
         (
             "test_spacepoker_raise_and_call",

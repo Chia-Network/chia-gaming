@@ -54,6 +54,15 @@ trap cleanup EXIT
 
 # ── Pre-flight checks ───────────────────────────────────────────────
 
+if ! command -v wasm-pack &>/dev/null; then
+    echo "=== Installing wasm-pack ==="
+    case "$(uname -s)" in
+        Linux*)  cargo install wasm-pack ;;
+        Darwin*) brew install wasm-pack ;;
+        *)       echo "Unsupported OS for automatic wasm-pack install"; exit 1 ;;
+    esac
+fi
+
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
@@ -72,14 +81,13 @@ fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
-    cargo build --features sim-server --bin chia-gaming-sim
     ./tools/build-chialisp.sh
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Building gaming frontend ==="
     (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
     echo "=== Building lobby-frontend ==="
-    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile)
+    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile --ignore-scripts)
     (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
     echo "=== Building lobby-service ==="
     (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
@@ -147,7 +155,7 @@ if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
 fi
 
 echo "=== Starting player app static server (port $GAME_PORT) ==="
-node "$SCRIPT_DIR/local-static-test-server.js" "$GAME_SERVE" "$GAME_PORT" &
+node "$SCRIPT_DIR/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="

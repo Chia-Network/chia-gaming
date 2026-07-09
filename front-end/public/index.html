@@ -15,8 +15,6 @@
         fetch('/build-meta.json')
           .then(function (r) { return r.json(); })
           .then(function (meta) {
-            window.__buildNonce = meta.basePath;
-
             var base = document.createElement('base');
             base.href = meta.basePath;
             document.head.appendChild(base);

@@ -17,7 +17,7 @@ solution constraints, trust categories), see `CLVM_DOS.md`.
   - [On-Chain Referee Actions](#on-chain-referee-actions)
   - [Referee State Model](#referee-state-model)
   - [Reward Payout Signatures](#reward-payout-signatures)
-  - [Off-Chain Validation Signal and Initial State](#off-chain-validation-signal-and-initial-state)
+  - [Off-Chain Validation and Initial State](#off-chain-validation-and-initial-state)
   - [ValidationInfoHash and the Initial Sentinel](#validationinfohash-and-the-initial-sentinel)
 - [On-Chain Game State Tracking (our_turn)](#on-chain-game-state-tracking-our_turn)
 
@@ -90,6 +90,13 @@ state tracking is **forward-only** — there is no rewind logic. Two cases:
 Games that existed off-chain but don't match any created coin are reported as
 `GameError` (these were accepted games that should have appeared on-chain).
 
+The state created by the unroll is not always the most advanced state known to
+the potato protocol.  If our last potato action has not round-tripped, the
+virtual game may be one step ahead locally while the latest mutually signed
+unroll can only materialize the previous version on-chain.  Redo is the bridge
+between those views: replay the cached last move on-chain, then continue from
+the actual coin the chain created.
+
 ### Step 4: Redo (if needed)
 
 If the game coin landed at the pre-move state, the redo transaction is emitted
@@ -103,25 +110,50 @@ on-chain confirmation arrives.
 
 ### Step 5: Timeout Resolution
 
-Once the game coin is at the latest known state, `coin_timeout_reached`
-handles resolution when the `game_timeout` relative timelock expires. The
-behavior depends on whose turn it is:
+Timeout resolution is split into two decoupled halves: **eager submission** of
+the timeout claim, and **confirmation-driven** notification when a spend is
+actually observed. There is no longer a maturity callback (`coin_timeout_reached`
+has been removed); reaching the timelock no longer triggers a spend or a
+notification directly.
 
-- **Our turn, already accepted off-chain** (`accepted == true`): We already
-decided to accept the current `mover_share` split. A timeout transaction is
-submitted (if our reward is nonzero) and `WeTimedOut` is emitted. The
-`WeTimedOut` notification fires here, not when accept_timeout was originally
-called — the off-chain call only records intent.
-- **Our turn, not yet accepted**: The game waits for a local `AcceptTimeout`
-action from the UI before submitting.
-- **Opponent's turn**: The opponent hasn't moved within the timelock. We claim
-the timeout by submitting the timeout transaction (if our reward is nonzero)
-and `OpponentTimedOut` is emitted.
+**Eager submission.** When a game coin is registered with the wallet (via
+`register_initial_game_coins`), the handler pre-builds the timeout claim with
+`build_timeout_claim` and attaches it to the `Effect::RegisterCoin`'s
+`spend: Option<SpendBundle>`. `build_timeout_claim` returns the bundle **only
+when the timeout transaction pays us** (the spend creates a coin to our reward
+puzzle hash); otherwise it returns `None` and nothing is submitted on our
+behalf. The `TransactionManager` then becomes the **sole submitter**: it tracks
+each coin's reorg-aware birthday and submits the stored claim once the coin
+reaches `birthday + game_timeout`, resubmitting across reorgs (see
+[Eager Timeout Submission](INTERNALS.md#eager-timeout-submission-and-confirmation-driven-notifications)).
+Handlers never build or submit timeout transactions at maturity.
 
-**Zero-reward skip**: In both our-turn and opponent-turn cases, if our reward
-is zero the timeout transaction is not submitted (avoiding a pointless
-transaction fee). The notification still fires so the game lifecycle is cleanly
-resolved; the opponent is expected to claim their reward.
+**Confirmation-driven notification.** Terminal notifications are emitted from
+`handle_game_coin_spent` (reached via the `coin_spent` → `coin_puzzle_and_solution`
+pipeline) when the game coin's *actual* spend is observed, by interpreting what
+the spend created:
+
+- **Our timeout claim confirmed** (spend pays our reward puzzle hash): we won the
+timeout — `WeTimedOut` (or `WeSlashedOpponent` on the slash path).
+- **Opponent moved/claimed** (spend pays *their* reward puzzle hash): in the
+common case our eager claim simply never confirms because the opponent spent
+the coin first (a normal move advances the game; a timeout claim against our
+pending move yields `OpponentTimedOut`, or `OpponentSuccessfullyCheated` when
+we were attempting to slash).
+
+Because notification rides the observed spend rather than the timelock, the
+expected "opponent moved instead of timing out" case requires no special
+handling — our unconfirmed claim is just dropped and the game advances.
+
+**Accepted games** (`accepted == true`, set by an `AcceptTimeout` action): the
+off-chain/​on-chain accept only records intent. The eager claim is registered
+like any other, and `WeTimedOut` is emitted when the resulting reward-coin spend
+is observed — not at accept time.
+
+**Zero-reward skip**: when the timeout would not pay us, `build_timeout_claim`
+returns `None`, so the manager submits nothing (avoiding a pointless fee). The
+terminal status still resolves from the observed spend: the opponent claims
+their reward, and we notify off their confirmed spend.
 
 ### Step 6: Clean Shutdown
 
@@ -133,9 +165,10 @@ emitted and the channel can be closed.
 - `src/potato_handler/mod.rs` — `go_on_chain`
 - `src/potato_handler/spend_channel_coin_handler.rs` — `handle_channel_coin_spent`,
 `finish_on_chain_transition`
-- `src/potato_handler/on_chain.rs` — `OnChainGameHandler`
-- `src/channel_handler/mod.rs` — `set_state_for_coins`,
-`accept_or_timeout_game_on_chain`, `game_coin_spent`
+- `src/potato_handler/on_chain.rs` — `OnChainGameHandler`,
+`build_timeout_claim`, `register_initial_game_coins`, `handle_game_coin_spent`
+- `src/transaction_manager.rs` — `TransactionManager` (eager claim submission)
+- `src/channel_handler/mod.rs` — `set_state_for_coins`, `game_coin_spent`
 
 ---
 
@@ -393,7 +426,7 @@ intentional for several reasons:
 
 ---
 
-## Zero-Reward Early-Out
+## Zero-Reward Early-Out and Auto-Accept
 
 When our share of a game is zero, there is no reason to wait for on-chain
 timeouts, submit transactions, or perform redo moves — those operations cost
@@ -401,19 +434,54 @@ time and transaction fees for no reward.  In these cases the system immediately
 emits `WeTimedOut { our_reward: 0, reward_coin: None }` and removes the game
 from tracking.
 
+Conversely, when our share is the full game amount or the game is terminal with
+a positive share, there is no reason to make another move — the best possible
+outcome is already available via timeout.  In these cases the system
+auto-accepts: it queues an `AcceptTimeout` action and marks the game as
+`game_finished = true`, triggering a clean end.
+
 ### Rationale
 
-1. **No rational incentive.**  When our share is zero the opponent has nothing
-  to gain by playing (they already have everything) and we have nothing to
-   claim.  Waiting for a timeout is pure overhead.
-2. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
+1. **No rational incentive (zero reward).**  When our share is zero the
+  opponent has nothing to gain by playing (they already have everything) and
+   we have nothing to claim.  Waiting for a timeout is pure overhead.
+2. **Optimal outcome already reached (auto-accept).**  When we get 100% on
+  timeout or the game is over and we get a positive share, making a move can
+   only decrease our share or cost fees for no benefit.
+3. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
   claim that yields zero reward wastes block space and fees.
-3. **Clean terminal signal.**  The UX immediately learns the game is over,
+4. **Clean terminal signal.**  The UX immediately learns the game is over,
   rather than waiting many blocks for a timeout that produces nothing.
 
-### Trigger Points
+### Auto-Accept Detection
 
-The early-out fires at five distinct points.
+`should_auto_accept(game_id, is_my_turn)` returns true when:
+
+- `is_my_turn` is true, AND
+- `our_share == game_amount` (claim — we get 100%), OR
+- `is_game_over() && our_share > 0` (terminal clean end — game is finished
+  and we get a positive share).
+
+When both conditions are true (game is over AND our share is the full
+amount), the result is the same: auto-accept fires.
+
+Auto-accept detection runs at two sites in `handle_game_coin_spent`:
+
+1. **`Expected` path** — opponent moved or a timeout confirmed, creating a
+  new game coin.  If the new coin is our turn and auto-accept triggers, the
+   game is marked `game_finished = true` and `AcceptTimeout` is queued.
+2. **`Moved` path** — opponent made a move that advances the game.  Same
+  auto-accept check as the Expected path.
+
+`build_timeout_claim` is self-gating: it returns `None` when the timeout
+transaction would not pay us (our reward puzzle hash is absent from the
+spend's output conditions).  This means timeout claims are only registered
+for coins where the timeout actually benefits us — no explicit skip logic is
+needed for our-turn coins where the timeout favors the opponent.
+
+### Zero-Reward Trigger Points
+
+The zero-reward early-out fires at five distinct points.
 
 **At unroll completion** (scanned in `finish_on_chain_transition` right after
 `set_state_for_coins` populates the `game_map`):
@@ -432,21 +500,37 @@ The early-out fires at five distinct points.
    `mover_share == coin_amount`, meaning the opponent gets everything on
    timeout and has no incentive to move.  `WeTimedOut(0)` fires.  This
    only applies when it's the opponent's turn — when it's our turn and
-   `mover_share == coin_amount`, *we* get everything and the UX should
-   trigger claiming it.
+   `mover_share == coin_amount`, *we* get everything and auto-accept fires
+   instead (see above).
 
 **During on-chain play** (action requested by UX):
 
-1. **On-chain move would produce mover_share == coin_amount.**  In
+4. **On-chain move would produce mover_share == coin_amount.**  In
   `do_on_chain_move`, after computing the move result, if the new
-   `mover_share == game_amount` (we as the new waiter get zero) and the move
-   is non-terminal (`max_move_size > 0`), the move is not submitted and
-   `WeTimedOut(0)` fires.  Terminal moves (`max_move_size == 0`) are always
-   submitted because they resolve the game.
-2. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
+   `mover_share == game_amount` (we as the new waiter get zero), the move is
+   not submitted and `WeTimedOut(0)` fires with `forfeited: true`. This
+   applies to terminal moves too: if playing the terminal move gives the
+   opponent everything, we have no reward to claim and no incentive to spend
+   fees or reveal more state. Games that need to prevent a player from
+   withholding a losing terminal move must encode that incentive in the prior
+   state's `mover_share`.
+5. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
   `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
-   is removed and `WeTimedOut(0)` fires instead of setting `accepted = true`
-   and waiting for the timeout.
+   is removed and `WeTimedOut(0)` fires with `forfeited: true` instead of
+   building a timeout claim.
+
+### AcceptTimeout Handler
+
+The `AcceptTimeout` handler covers three cases:
+
+1. **Zero share (forfeit):** `our_share == 0` — game is removed, `WeTimedOut`
+  emitted with `forfeited: true`.  No timeout claim is built.
+2. **Nonzero share (fold or auto-accept):** The handler builds a timeout
+  claim via `build_timeout_claim` and registers it with the wallet (via
+   `RegisterCoin`) for submission at maturity.  `game_finished` is set to
+   `true` on the game_map entry, signaling a clean end.
+3. **Not our turn:** The handler marks `accepted = true` (the timeout claim
+  was already registered eagerly at coin registration time).
 
 ### Already handled (no new code)
 
@@ -456,9 +540,11 @@ Off-chain `AcceptTimeout` with zero reward is already handled by
 
 **Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
 `finish_on_chain_transition` (unroll scan),
-`src/potato_handler/on_chain.rs` — `do_on_chain_move` (scenario 4),
-`do_on_chain_action` (scenario 5), `src/channel_handler/mod.rs` —
-`is_redo_zero_reward`, `get_game_our_current_share`, `get_game_amount`
+`src/potato_handler/on_chain.rs` — `should_auto_accept`, `do_on_chain_move`
+(scenario 4), `do_on_chain_action` (scenario 5),
+`build_timeout_claim`, `register_initial_game_coins`,
+`src/channel_handler/mod.rs` — `is_redo_zero_reward`,
+`get_game_our_current_share`, `get_game_amount`
 
 ---
 
@@ -479,11 +565,12 @@ RefereePuzzleArgs {
         basic: GameMoveStateInfo {
             move_made,      // the actual move data
             max_move_size,  // maximum allowed move size
-            mover_share,    // how much the mover gets if timeout occurs
+            mover_share,    // how much the mover gets if the result settles
         },
-        validation_info_hash,  // hash of the validation program + state
+        validation_info_hash,     // ValidationInfoHash commitment, or None for terminal
+        validation_program_hash,  // optional raw validator program hash when known
     },
-    previous_validation_info_hash,  // ValidationInfoHash: Initial (sentinel) for first coin, then hash of prior move
+    previous_validation_info_hash,  // ValidationInfoHash: Initial sentinel, or previous validation info hash
     validation_program,     // the chialisp program that validates moves
     nonce,                  // role-namespaced counter; also serves as the GameID
     referee_coin_puzzle_hash, // puzzle hash of the referee puzzle itself
@@ -496,15 +583,18 @@ args. After each move, the new game coin swaps `mover_pubkey` and
 is how the referee enforces alternating turns.
 
 `**mover_share` semantics.** On any game coin, `mover_share` is the amount the
-current mover receives if the coin times out (the waiter receives
-`amount - mover_share`). However, `mover_share` is *set by the previous move*:
-when a player moves, they declare `new_mover_share` as part of their move, and
-because roles swap, the value they declare becomes what their *opponent* (the
-new mover) would receive on timeout. In other words, when you set `mover_share`
-in your move you are choosing how much to leave the other player if they fail
-to respond. A game handler that wants to maximize its own timeout reward sets
-`mover_share` to zero (giving the opponent nothing); a fair split sets it to
-whatever the game rules dictate.
+current mover receives if the current result is accepted, folded, or claimed by
+timeout (the waiter receives `amount - mover_share`). These are the same
+settlement operation reached from different contexts: a player may accept/fold
+off-chain, or the opponent may claim the same result on-chain after the relative
+timelock expires. However, `mover_share` is *set by the previous move*: when a
+player moves, they declare `new_mover_share` as part of their move, and because
+roles swap, the value they declare becomes what their *opponent* (the new
+mover) would receive if that result is settled. In other words, when you set
+`mover_share` in your move you are choosing how much to leave the other player
+if they accept/fold or fail to respond. A game handler that wants to maximize
+its own settlement reward sets `mover_share` to zero (giving the opponent
+nothing); a fair split sets it to whatever the game rules dictate.
 
 The reward destination puzzle hashes are not curried into the referee — instead
 they are revealed at timeout or slash via `AGG_SIG_UNSAFE` (see
@@ -558,8 +648,12 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   takes the full game amount) when the validator returns nil *or* returns
   values whose infohash or max_move_size don't match the curried commitments
   - If the validator *raises* (CLVM exception), the slash transaction itself
-  fails to mine — this is why validators must handle all input lengths and
-  formats without raising (see `CLVM_DOS.md`, "Game-Specific Responsibilities")
+  fails to mine — this is why validators must classify malicious moves as
+  slashable before any evidence-sensitive code can raise (see `CLVM_DOS.md`,
+  "Game-Specific Responsibilities")
+  - Validator raises are acceptable only for invalid slash attempts, such as
+  malformed evidence against an otherwise valid move. A malicious move itself
+  must be classified as slashable before evidence-sensitive code can raise.
   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
   pre-signed payout authorization used by timeouts, so no additional signing
   is needed at slash time
@@ -651,26 +745,49 @@ payouts.
 `reward_payout_message`, `verify_reward_payout_signature`;
 `src/referee/types.rs` — `RMFixed` (caches both signatures)
 
-### Off-Chain Validation Signal and Initial State
+### Off-Chain Validation and Initial State
 
-When running the chialisp validator off-chain, the `off_chain()` method on
-`RefereePuzzleArgs` sets `waiter_pubkey` to nil. This is a deliberate signal
-to the puzzle that it is running in off-chain validation mode rather than as
-a real on-chain spend. `waiter_pubkey` was chosen for this because it is the
-argument least likely to be needed for real validation logic.
+There is no special "off-chain mode" in `RefereePuzzleArgs`. Earlier versions
+used a sentinel argument to tell handlers they were being run off-chain, but
+that made handler logic hard to follow. The current code constructs normal
+referee arguments with real mover and waiter pubkeys, substitutes the incoming
+move and validation program, and uses the same state-update program that would
+be used by the on-chain referee when validating peer moves.
+
+When a move has a follow-on state, the state update is run off-chain first to
+validate the move and derive that state before the receiving player's
+their-turn handler interprets it. A terminal move is still a normal move, but
+it sets the next validation program to nil, so there is no follow-on state to
+derive for future moves. The their-turn handler still interprets the move and
+may provide slash evidence. Any evidence it provides is checked by running the
+normal state-update program with that evidence.
+
+This keeps off-chain and on-chain validation semantics aligned. Some games may
+repeat a small amount of logic between their on-chain validator and off-chain
+handler code, but avoiding a separate off-chain signal keeps the handler
+contract simpler.
 
 ### ValidationInfoHash and the Initial Sentinel
 
-`RefereePuzzleArgs` contains a `previous_validation_info_hash` field, which
-records the hash of the previous move's validation program (used by slash to
-prove a prior move was invalid). This field uses the `ValidationInfoHash`
-enum, which has three variants with distinct CLVM encodings:
+The terminology is easy to mix up:
+
+- A `validation_program_hash` is the tree hash of a validator program by
+  itself.
+- A validation info hash is
+  `sha256(validation_program_hash, shatree(state))`. It commits to both the
+  validator program and the state that program validates.
+
+The referee coin stores validation info hashes, not bare program hashes. The
+current move's commitment is stored in `game_move.validation_info_hash`, and the
+previous move's commitment is stored in `previous_validation_info_hash`. These
+fields use the `ValidationInfoHash` enum, which has three variants with
+distinct CLVM encodings:
 
 | Variant   | CLVM encoding         | Truthy? | When used |
 |-----------|-----------------------|---------|-----------|
 | `None`    | `()` (nil / empty atom) | No    | Game over — no further moves, only slash or timeout |
 | `Initial` | `0x78` (`'x'`, 1 byte) | Yes   | Initial game coin — no previous move exists |
-| `Hash(h)` | 32-byte atom          | Yes    | Normal play — hash of prior validation program |
+| `Hash(h)` | 32-byte atom          | Yes    | Normal play — validation info hash |
 
 The initial game coin's `previous_validation_info_hash` is set to `Initial`
 (the single-byte sentinel `0x78`). This is truthy in CLVM, which matters
@@ -680,13 +797,30 @@ only slash or timeout. The sentinel is a single byte rather than a full hash
 to save on-chain space, since there is no real previous validation program to
 reference and slashing is impossible when no moves have been made.
 
-Each move propagates the current `validation_info_hash` (`INFOHASH_B`) into
-the next coin's `previous_validation_info_hash` (`INFOHASH_A`). There is no
+Each move propagates the current validation info hash (`INFOHASH_B`) into the
+next coin's `previous_validation_info_hash` (`INFOHASH_A`). The move solution
+also supplies `infohash_c` for the next validator/state pair; on the move path
+the referee accepts this optimistically, and on the slash path it recomputes
+the infohash from the validator return and checks that it matches. There is no
 separate code path for the initial state — the same derivation logic applies
 uniformly to all moves.
 
+The raw validation program hash is not always carried alongside the referee
+coin. It is available when the code has the validation program itself (for
+example when invoking a their-turn handler or constructing a slash), but the
+durable on-chain commitment is the validation info hash. `GameMoveDetails`
+therefore keeps the raw program hash in the optional
+`validation_program_hash` field separately from the required
+`validation_info_hash` commitment.
+
+This is an on-chain size/cost optimization. Honest move spends present only the
+compact validation info hash for the next validator/state pair; they do not
+reveal the validation program or state separately. Those larger pieces are
+revealed only on the slash path, where the referee needs them to recompute the
+infohash and prove that the optimistic move commitment was invalid.
+
 **Key code:** `src/referee/types.rs` — `ValidationInfoHash`,
-`RefereePuzzleArgs::off_chain()`;
+`RefereePuzzleArgs`;
 `src/referee/my_turn.rs`, `src/referee/their_turn.rs`;
 `clsp/referee/onchain/referee.clsp`
 
@@ -714,33 +848,53 @@ this case, `game_is_my_turn()` returns `false` (the referee thinks it is the
 opponent's turn), but on-chain it is actually *our* turn to submit the redo.
 
 When a redo is generated via `take_cached_move_for_game`, `our_turn` is set to
-`true` to reflect the on-chain reality. Without this correction, a timeout on
-the intermediate redo coin would emit `OpponentTimedOut` instead of
-`WeTimedOut`, producing wrong notifications.
+`true` to reflect the on-chain reality. Without this correction, the spend that
+resolves the intermediate redo coin would be misread (see below), producing
+wrong notifications.
 
-### How our_turn Determines Timeout Notifications
+### How our_turn and the Observed Spend Determine Notifications
 
-When `coin_timeout_reached` fires on a game coin:
+Notifications are **confirmation-driven**: they are emitted from
+`handle_game_coin_spent` when the game coin's actual spend is observed, not when
+the timelock matures. `our_turn` records whose move the on-chain state is
+waiting on, and the handler combines it with what the *observed spend* created
+to decide the terminal status:
 
-```
-primarily:
-if old_definition.our_turn →  GameNotification::WeTimedOut
-else                        →  GameNotification::OpponentTimedOut
-```
+- **Spend pays our reward puzzle hash** → our claim confirmed
+(`WeTimedOut`, or `WeSlashedOpponent` on the slash path).
+- **Spend pays the opponent's reward puzzle hash** → the opponent acted first:
+a normal move advances the game, a timeout claim against our pending move
+yields `OpponentTimedOut`, and a timeout claim while we were attempting to
+slash yields `OpponentSuccessfullyCheated`.
 
-`our_turn` is the primary signal, but not the only branch input. On-chain
-timeout handling also considers accepted-state and accept-transaction/slash
-state. In particular, accepted games can resolve through the "we timed out"
-path even when the simple two-branch sketch above would be ambiguous.
+`our_turn` is a key input, but not the only one: the accepted-state and the
+pending-slash / pending-move bookkeeping on `OnChainGameState` also steer the
+branch. In particular, an opponent's timeout claim against our pending `OurMove`
+coin drives `WeTimedOut` directly (rather than being misread as a win against a
+stale, optimistically-advanced referee state).
 
 Both players maintain independent `game_map`s, and both should have
 complementary `our_turn` values for the same game coin.
 
+### Accepted On-Chain Coins
+
+`accepted: true` means this side has accepted the game outcome in its local
+potato-protocol state.  It does not mean the observed on-chain coin is already
+terminal.  The real chain coin might still represent the version captured by
+the unroll, which can be one step behind the local potato state, so an accepted
+coin may still advance to another game coin before timeout finality.
+
+When that happens, `handle_game_coin_spent` keeps tracking the created coin and
+registers the next timeout claim under `"accepted game coin advanced by redo"`.
+The accepted flag is carried forward as timeout intent: once the actual chain
+state reaches a reward-coin spend, the terminal `WeTimedOut` notification is
+emitted from the observed conditions.
+
 ### Moves for Finished Games Are Discarded
 
-When a game coin times out, the game is removed from `game_map` and
-`live_games`. If a user-queued `Move` for that game is still on the
-`game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
+When a game coin's resolving spend is observed, the game is removed from
+`game_map` and `live_games`. If a user-queued `Move` for that game is still on
+the `game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
 `get_current_coin` and falls through to `next_action` if the game is gone, and
 `do_on_chain_move` checks `my_move_in_game` — returning `None` (game absent)
 causes a discard, while `Some(false)` (game alive, not our turn) causes a

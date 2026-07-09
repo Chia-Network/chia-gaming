@@ -193,10 +193,13 @@ impl ChannelHandlerBase {
             .map_err(|e| Error::StrErr(format!("bencodex deserialize error: {e:?}")))?;
 
         if let PeerMessage::CleanShutdownComplete(coin_spend) = &msg_envelope {
-            return Ok(vec![Effect::SpendTransaction(SpendBundle {
-                name: Some("Create unroll".to_string()),
-                spends: vec![coin_spend.clone()],
-            })]);
+            return Ok(vec![Effect::SpendTransaction(
+                SpendBundle {
+                    name: Some("Create unroll".to_string()),
+                    spends: vec![coin_spend.clone()],
+                },
+                None,
+            )]);
         }
         Ok(vec![])
     }

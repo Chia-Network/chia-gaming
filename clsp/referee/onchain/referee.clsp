@@ -17,6 +17,7 @@
 ;   sha256(validation_program_hash, shatree(state))
 ;
 ; In slash, this puzzle runs previous_validation_program against all_args.
+; The validator returns (next_validator_hash new_state max_move_size . extra_conditions).
 ; Slash succeeds in three cases:
 ;   1. validator_result is nil (0) — unconditional slash.
 ;   2. validator_result is non-nil but its (next_validator_hash, new_state,

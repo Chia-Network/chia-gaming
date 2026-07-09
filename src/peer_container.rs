@@ -20,8 +20,8 @@ use crate::common::types::{
     Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{
-    apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
-    GameNotification, ResyncInfo,
+    apply_effects, ChannelState, ChannelStatusSnapshot, CoinOfInterest, CradleEvent,
+    CradleEventQueue, Effect, GameNotification, ResyncInfo,
 };
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
@@ -49,11 +49,6 @@ pub trait PeerHandler {
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error>;
     fn coin_spent(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error>;
-    fn coin_timeout_reached(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
@@ -239,13 +234,6 @@ impl SpendWalletReceiver for Box<dyn PeerHandler> {
     ) -> Result<Vec<Effect>, Error> {
         (**self).coin_spent(env, coin_id)
     }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        (**self).coin_timeout_reached(env, coin_id)
-    }
     fn coin_puzzle_and_solution(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
@@ -273,8 +261,9 @@ pub trait MessagePeerQueue {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WatchEntry {
+    /// Relative timeout age (in blocks).  The transaction manager combines this
+    /// with the coin's reorg-aware birthday to decide ripeness.
     pub timeout_blocks: Timeout,
-    pub timeout_at: Option<u64>,
     pub name: Option<String>,
 }
 
@@ -282,7 +271,6 @@ pub struct WatchEntry {
 pub struct WatchReport {
     pub created_watched: HashSet<CoinString>,
     pub deleted_watched: HashSet<CoinString>,
-    pub timed_out: HashSet<CoinString>,
 }
 
 pub enum WalletBootstrapState {
@@ -320,7 +308,6 @@ impl FullCoinSetAdapter {
         Ok(WatchReport {
             created_watched: created_coins,
             deleted_watched: deleted_coins,
-            timed_out: HashSet::default(),
         })
     }
 }
@@ -429,7 +416,7 @@ pub trait GameCradle {
     fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
-        height: usize,
+        height: u64,
         report: &WatchReport,
     ) -> Result<(), Error>;
 
@@ -477,6 +464,15 @@ pub trait GameCradle {
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>;
 
+    /// Report that a wallet callback (selectCoins, createOfferForIds) failed
+    /// during the handshake.  The handshake handler transitions to Failed with
+    /// the reason as an advisory.
+    fn wallet_callback_failed(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        reason: String,
+    ) -> Result<(), Error>;
+
     /// Get the reward puzzle hash
     fn get_reward_puzzle_hash(&mut self, allocator: &mut AllocEncoder)
         -> Result<PuzzleHash, Error>;
@@ -521,9 +517,13 @@ impl PacketSender for SynchronousGameCradleState {
 }
 
 impl WalletSpendInterface for SynchronousGameCradleState {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &SpendBundle,
+        expiry: Option<u64>,
+    ) -> Result<(), Error> {
         self.events
-            .push_back(CradleEvent::OutboundTransaction(bundle.clone()));
+            .push_back(CradleEvent::OutboundTransaction(bundle.clone(), expiry));
         Ok(())
     }
     fn register_coin(
@@ -531,12 +531,11 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         coin_id: &CoinString,
         timeout: &Timeout,
         name: Option<&'static str>,
+        spend: Option<SpendBundle>,
     ) -> Result<(), Error> {
-        let timeout_at = timeout.to_u64() + self.current_height;
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_at: Some(timeout_at),
                 timeout_blocks: timeout.clone(),
                 name: name.map(|s| s.to_string()),
             },
@@ -545,6 +544,8 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         self.events.push_back(CradleEvent::WatchCoin {
             coin_name: coin_id.to_coin_id(),
             coin_string: coin_id.clone(),
+            timeout: timeout.clone(),
+            spend,
         });
 
         Ok(())
@@ -735,22 +736,36 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
 }
 
+/// Which half of a coin report to dispatch.  A coin that is first observed
+/// already-spent appears in BOTH `created_watched` and `deleted_watched` (see
+/// `TransactionManager::report_coin_states`).  The two halves must be delivered
+/// separately so that any handler transition triggered by `coin_created` is
+/// applied before the matching `coin_spent` is delivered -- otherwise the spend
+/// would still reach the pre-transition (handshake) handler, which ignores it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoinReportPhase {
+    Created,
+    Spent,
+}
+
 pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
     env: &mut ChannelHandlerEnv<'_>,
     peer: &mut P,
     watch_report: &WatchReport,
+    phase: CoinReportPhase,
 ) -> Result<Vec<Effect>, Error> {
     let mut effects = Vec::new();
-    for d in watch_report.deleted_watched.iter() {
-        effects.extend(peer.coin_spent(env, d)?);
-    }
-
-    for t in watch_report.timed_out.iter() {
-        effects.extend(peer.coin_timeout_reached(env, t)?);
-    }
-
-    for c in watch_report.created_watched.iter() {
-        effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
+    match phase {
+        CoinReportPhase::Created => {
+            for c in watch_report.created_watched.iter() {
+                effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
+            }
+        }
+        CoinReportPhase::Spent => {
+            for d in watch_report.deleted_watched.iter() {
+                effects.extend(peer.coin_spent(env, d)?);
+            }
+        }
     }
 
     Ok(effects)
@@ -813,6 +828,29 @@ impl SynchronousGameCradle {
         self.amount.clone()
     }
 
+    /// Render the current protocol-level peer state as indented text for the
+    /// dashboard. The peer is serialized to bencodex (via typetag, so the
+    /// concrete phase becomes the top-level tag) and re-read into an untyped
+    /// tree so the renderer can apply length- and name-based elision.
+    pub fn protocol_state_pretty(&self) -> Result<String, Error> {
+        let bytes = bencodex::to_vec(&self.peer)
+            .map_err(|e| Error::StrErr(format!("protocol_state_pretty serialize: {e:?}")))?;
+        let value: crate::protocol_pretty::BencodexValue = bencodex::from_slice(&bytes)
+            .map_err(|e| Error::StrErr(format!("protocol_state_pretty parse: {e:?}")))?;
+        Ok(crate::protocol_pretty::pretty_print(&value))
+    }
+
+    /// Labeled coin ids (hex) the dashboard shows above the protocol state so
+    /// the user can look them up in a block explorer. Sourced from the active
+    /// phase handler; 0-2 entries in practice.
+    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
+        self.peer
+            .coins_of_interest()
+            .into_iter()
+            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
+            .collect()
+    }
+
     pub fn get_our_current_share(&self) -> Option<Amount> {
         self.peer
             .channel_handler()
@@ -842,6 +880,12 @@ impl SynchronousGameCradle {
                     | ChannelState::Failed,
             )
         )
+    }
+
+    /// True when the session is fully resolved: channel status is terminal and
+    /// no on-chain games are still being played out.
+    pub fn is_fully_resolved(&self) -> bool {
+        self.channel_status_terminal() && !self.peer.has_active_on_chain_games()
     }
 
     pub fn get_watching_coins(&self) -> Vec<CoinString> {
@@ -875,6 +919,16 @@ impl SynchronousGameCradle {
         Ok(())
     }
 
+    pub fn wallet_callback_failed(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        reason: String,
+    ) -> Result<(), Error> {
+        self.peer.wallet_callback_failed(reason);
+        self.detect_phase_transition();
+        Ok(())
+    }
+
     /// Settle deferred channel-setup work and retry any re-queued messages,
     /// flush potato-gated pending actions, and collect all accumulated events.
     /// Call this after any operation that may have changed state (delivering a
@@ -894,15 +948,31 @@ impl SynchronousGameCradle {
                     self.state
                         .events
                         .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                    self.state.peer_disconnected = true;
+                    let go_effects = {
+                        let mut env = ChannelHandlerEnv::new(allocator)?;
+                        self.peer.go_on_chain(&mut env, true)?
+                    };
+                    self.process_effects(go_effects, allocator)?;
+                    break;
                 }
             }
         }
 
-        let effects = {
+        let res = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            self.peer.flush_pending_actions(&mut env)?
+            self.peer.flush_pending_actions(&mut env)
         };
-        self.process_effects(effects, allocator)?;
+        match res {
+            Ok(effects) => self.process_effects(effects, allocator)?,
+            Err(e) => {
+                self.state.events.push_back(CradleEvent::Notification(
+                    GameNotification::ActionFailed {
+                        reason: format!("{e:?}"),
+                    },
+                ));
+            }
+        }
 
         Ok(DrainResult {
             events: std::mem::take(&mut self.state.events),
@@ -1012,6 +1082,17 @@ impl SynchronousGameCradle {
         apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
 
+        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain
+        {
+            let go_effects = {
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                self.peer.go_on_chain(&mut env, true)?
+            };
+            if !go_effects.is_empty() {
+                return self.process_effects(go_effects, allocator);
+            }
+        }
+
         if self.peer.channel_handler().is_ok() {
             if let Some(ph) = self.state.channel_puzzle_hash.take() {
                 if !self.create_partial_spend_for_channel_coin(allocator, ph.clone())? {
@@ -1043,6 +1124,13 @@ impl SynchronousGameCradle {
                         self.state
                             .events
                             .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                        self.state.peer_disconnected = true;
+                        let go_effects = {
+                            let mut env = ChannelHandlerEnv::new(allocator)?;
+                            self.peer.go_on_chain(&mut env, true)?
+                        };
+                        self.process_effects(go_effects, allocator)?;
+                        break;
                     }
                 }
             }
@@ -1169,7 +1257,7 @@ impl SynchronousGameCradle {
 
             self.state
                 .events
-                .push_back(CradleEvent::OutboundTransaction(spends));
+                .push_back(CradleEvent::OutboundTransaction(spends, None));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
@@ -1218,7 +1306,7 @@ impl SynchronousGameCradle {
         self.state.channel_puzzle_hash.clone()
     }
 
-    fn filter_coin_report(&mut self, block: u64, watch_report: &WatchReport) -> WatchReport {
+    fn filter_coin_report(&mut self, watch_report: &WatchReport) -> WatchReport {
         // Pass on creates and deletes that are being watched.
         let deleted_watched: HashSet<CoinString> = watch_report
             .deleted_watched
@@ -1235,27 +1323,10 @@ impl SynchronousGameCradle {
             .filter(|c| self.state.watching_coins.contains_key(c))
             .cloned()
             .collect();
-        for c in created_watched.iter() {
-            if let Some(w) = self.state.watching_coins.get_mut(c) {
-                w.timeout_at = Some(w.timeout_blocks.to_u64() + block);
-            }
-        }
-
-        // Get timeouts
-        let mut timed_out = HashSet::new();
-        for (k, w) in self.state.watching_coins.iter_mut() {
-            if let Some(t) = w.timeout_at {
-                if t <= block {
-                    w.timeout_at = None;
-                    timed_out.insert(k.clone());
-                }
-            }
-        }
 
         WatchReport {
             created_watched,
             deleted_watched,
-            timed_out,
         }
     }
 }
@@ -1475,16 +1546,36 @@ impl GameCradle for SynchronousGameCradle {
     fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
-        height: usize,
+        height: u64,
         report: &WatchReport,
     ) -> Result<(), Error> {
-        self.state.current_height = height as u64;
-        let filtered_report = self.filter_coin_report(self.state.current_height, report);
-        let reported_effects = {
+        self.state.current_height = height;
+        let filtered_report = self.filter_coin_report(report);
+        // Process creations first and apply any resulting handler transition via
+        // process_effects, THEN process spends against the (possibly now-swapped)
+        // peer.  A channel coin first seen already-spent arrives as a
+        // created-then-spent pair: coin_created transitions a handshake handler
+        // to PotatoHandler, and the spend must reach that new handler.
+        let created_effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            report_coin_changes_to_peer(&mut env, &mut self.peer, &filtered_report)?
+            report_coin_changes_to_peer(
+                &mut env,
+                &mut self.peer,
+                &filtered_report,
+                CoinReportPhase::Created,
+            )?
         };
-        self.process_effects(reported_effects, allocator)?;
+        self.process_effects(created_effects, allocator)?;
+        let spent_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            report_coin_changes_to_peer(
+                &mut env,
+                &mut self.peer,
+                &filtered_report,
+                CoinReportPhase::Spent,
+            )?
+        };
+        self.process_effects(spent_effects, allocator)?;
         let height_effects = self.peer.new_block(self.state.current_height)?;
         self.process_effects(height_effects, allocator)?;
         Ok(())
@@ -1541,6 +1632,14 @@ impl GameCradle for SynchronousGameCradle {
         }
         self.process_effects(reported_effects, allocator)?;
         Ok(())
+    }
+
+    fn wallet_callback_failed(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        reason: String,
+    ) -> Result<(), Error> {
+        self.wallet_callback_failed(allocator, reason)
     }
 }
 
@@ -1677,5 +1776,153 @@ mod cradle_rebuild_tests {
 
         assert_eq!(rebuilt_program_hash, original_program_hash);
         assert_eq!(rebuilt_parser_hash, original_parser_hash);
+    }
+}
+
+#[cfg(test)]
+mod sequencing_tests {
+    use super::*;
+    use crate::common::types::CoinID;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    struct Recorder {
+        created: Vec<CoinString>,
+        spent: Vec<CoinString>,
+    }
+
+    /// Stand-in for the handler a handshake transitions into (e.g. PotatoHandler):
+    /// records the coin events it receives.
+    struct PostTransitionHandler {
+        rec: Rc<RefCell<Recorder>>,
+    }
+
+    impl SpendWalletReceiver for PostTransitionHandler {
+        fn coin_created(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Option<Vec<Effect>>, Error> {
+            self.rec.borrow_mut().created.push(coin.clone());
+            Ok(None)
+        }
+        fn coin_spent(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Vec<Effect>, Error> {
+            self.rec.borrow_mut().spent.push(coin.clone());
+            Ok(vec![])
+        }
+        fn coin_puzzle_and_solution(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            _coin: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+            Ok((vec![], None))
+        }
+    }
+
+    /// Stand-in for a handshake handler: `coin_created` builds a replacement
+    /// handler (mirroring `try_transition_to_potato`), while `coin_spent` is a
+    /// no-op log -- it records into its own `Recorder` only so the test can
+    /// prove the pre-transition handler never handles the spend.
+    struct HandshakeLikeHandler {
+        own: Rc<RefCell<Recorder>>,
+        replacement_rec: Rc<RefCell<Recorder>>,
+        replacement: Option<PostTransitionHandler>,
+    }
+
+    impl HandshakeLikeHandler {
+        fn take_replacement(&mut self) -> Option<PostTransitionHandler> {
+            self.replacement.take()
+        }
+    }
+
+    impl SpendWalletReceiver for HandshakeLikeHandler {
+        fn coin_created(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Option<Vec<Effect>>, Error> {
+            self.own.borrow_mut().created.push(coin.clone());
+            self.replacement = Some(PostTransitionHandler {
+                rec: self.replacement_rec.clone(),
+            });
+            Ok(Some(vec![]))
+        }
+        fn coin_spent(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            coin: &CoinString,
+        ) -> Result<Vec<Effect>, Error> {
+            self.own.borrow_mut().spent.push(coin.clone());
+            Ok(vec![])
+        }
+        fn coin_puzzle_and_solution(
+            &mut self,
+            _env: &mut ChannelHandlerEnv<'_>,
+            _coin: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+            Ok((vec![], None))
+        }
+    }
+
+    /// A channel coin first observed already-spent is reported in BOTH
+    /// `created_watched` and `deleted_watched`.  The cradle processes the created
+    /// phase, applies the handler transition, then processes the spent phase.
+    /// This guarantees the spend reaches the post-transition handler rather than
+    /// the handshake handler that ignores it.  See
+    /// `SynchronousGameCradle::new_block` for the sequencing this mirrors.
+    #[test]
+    fn first_seen_spent_pair_delivers_spend_to_post_transition_handler() {
+        let mut allocator = AllocEncoder::new();
+        let mut env = ChannelHandlerEnv::new(&mut allocator).expect("env");
+
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([7; 32])),
+            &PuzzleHash::from_bytes([8; 32]),
+            &Amount::new(1),
+        );
+        let mut report = WatchReport::default();
+        report.created_watched.insert(coin.clone());
+        report.deleted_watched.insert(coin.clone());
+
+        let handshake_rec = Rc::new(RefCell::new(Recorder::default()));
+        let replacement_rec = Rc::new(RefCell::new(Recorder::default()));
+        let mut handshake = HandshakeLikeHandler {
+            own: handshake_rec.clone(),
+            replacement_rec: replacement_rec.clone(),
+            replacement: None,
+        };
+
+        // Created phase: the handshake handler builds its replacement.
+        report_coin_changes_to_peer(&mut env, &mut handshake, &report, CoinReportPhase::Created)
+            .expect("created phase");
+        // Transition checkpoint (what detect_phase_transition does inside
+        // process_effects between the two phases).
+        let mut replacement = handshake
+            .take_replacement()
+            .expect("coin_created must trigger the transition");
+        // Spent phase: delivered to the post-transition handler.
+        report_coin_changes_to_peer(&mut env, &mut replacement, &report, CoinReportPhase::Spent)
+            .expect("spent phase");
+
+        assert!(
+            handshake_rec.borrow().spent.is_empty(),
+            "the pre-transition handshake handler must not receive the spend"
+        );
+        assert_eq!(
+            replacement_rec.borrow().spent,
+            vec![coin.clone()],
+            "the post-transition handler must receive the spend"
+        );
+        assert!(
+            replacement_rec.borrow().created.is_empty(),
+            "coin_created went to the handshake handler, not the replacement"
+        );
     }
 }

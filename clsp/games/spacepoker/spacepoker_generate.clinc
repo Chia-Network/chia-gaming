@@ -99,20 +99,22 @@
 
 ; ─── proposal factory / parser ───────────────────────────────────────
 
-; proposal factory: (bet_size) -> (wire_data local_data)
+; proposal factory: (per_player_stake bet_unit) -> (wire_data local_data)
 ; wire_data = (my_contribution their_contribution [(amount we_go_first
 ;              initial_validator_hash initial_move initial_max_move_size
 ;              initial_state initial_mover_share)])
 ; local_data = [(initial_handler initial_validator)]
-(defun spacepoker_make_proposal (bet_size)
-    (assign
-        bet_unit (/ bet_size 10)
+(defun spacepoker_make_proposal (@ _args (per_player_stake bet_unit))
+    (assert
+        (> per_player_stake 0)
+        (> bet_unit 0)
+        (= (% per_player_stake bet_unit) 0)
         (li
             (li
-                bet_size
-                bet_size
+                per_player_stake
+                per_player_stake
                 (li
-                    (li (* 2 bet_size) 1 commitA_hash 0 32 bet_unit 0)
+                    (li (* 2 per_player_stake) 1 commitA_hash 0 32 bet_unit 0)
                 )
             )
             (li
@@ -123,9 +125,9 @@
 )
 
 ; parser: (wire_data) -> (readable [(initial_validator initial_handler)])
-(defun spacepoker_parser (@ args (bet_size))
-    (assert (deep= args (f (spacepoker_make_proposal bet_size)))
-        (li (list bet_size (/ bet_size 10)) (li (li val_commitA spacepoker_bob_handler_commitA)))
+(defun spacepoker_parser (@ args (per_player_stake _their_stake ((_amount _we_go_first _hash _move _max_move_size bet_unit _mover_share))))
+    (assert (deep= args (f (spacepoker_make_proposal per_player_stake bet_unit)))
+        (li (list per_player_stake bet_unit) (li (li val_commitA spacepoker_bob_handler_commitA)))
     )
 )
 
@@ -418,8 +420,11 @@
 ; state = begin_round state = (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash).
 (defun spacepoker_alice_parse_open_message (CHAIN message state amount)
     (assign
-        (_bet_unit _half_pot _mover_Nplus1 _waiter_image_N N _mid_hash) state
-        (c "cards" (community_cards_for_pos (image_at CHAIN N) message N))
+        (_bet_unit _half_pot mover_image_Nplus1 _waiter_image_N N _mid_hash) state
+        (assert (= (strlen message) 32)
+            (= (sha256 message) mover_image_Nplus1)
+            (c "cards" (community_cards_for_pos (image_at CHAIN N) message N))
+        )
     )
 )
 
@@ -459,8 +464,11 @@
 ; begin_round message and derives the newly revealed community cards.
 (defun spacepoker_bob_parse_open_message (CHAIN message state amount)
     (assign
-        (_bet_unit _half_pot _mover_Nplus1 _waiter_image_N N _mid_hash) state
-        (c "cards" (community_cards_for_pos (image_at CHAIN N) message N))
+        (_bet_unit _half_pot mover_image_Nplus1 _waiter_image_N N _mid_hash) state
+        (assert (= (strlen message) 32)
+            (= (sha256 message) mover_image_Nplus1)
+            (c "cards" (community_cards_for_pos (image_at CHAIN N) message N))
+        )
     )
 )
 

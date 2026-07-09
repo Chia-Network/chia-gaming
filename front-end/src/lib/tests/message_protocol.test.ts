@@ -1,20 +1,16 @@
-import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
+import { isBenignTransactionSubmitError, SessionController } from '../../hooks/SessionController';
 import {
   ChiaGame,
   WasmConnection,
   WasmResult,
-  WatchReport,
   InternalBlockchainInterface,
   PeerConnectionResult,
+  SpendBundle,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { _resetForTests as resetSaveState } from '../../hooks/save';
-
-const emptyReport: WatchReport = {
-  created_watched: [],
-  deleted_watched: [],
-  timed_out: [],
-};
+import { restoreSession } from '../../hooks/blobSingleton';
+import { WasmStateInit } from '../../hooks/WasmStateInit';
+import { _resetForTests as resetSaveState, type SessionState, uint8ToBase64 } from '../../hooks/save';
 
 const mockRpc = new Proxy({} as InternalBlockchainInterface, {
   get: () => () => Promise.resolve(undefined),
@@ -49,12 +45,29 @@ function enc(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+function testSpendBundle(coinHex: string): SpendBundle {
+  return {
+    spends: [{
+      coin: coinHex,
+      bundle: {
+        puzzle: '80',
+        solution: '80',
+        signature: '',
+      },
+    }],
+  };
+}
+
 function makeMockCradle(
   onDeliver: (msg: Uint8Array) => WasmResult | undefined = () => ({ events: [] }),
 ): ChiaGame {
   return {
     deliver_message: jest.fn((msg: Uint8Array) => onDeliver(msg)),
-    block_data: jest.fn(() => ({ events: [] } as WasmResult)),
+    new_block: jest.fn(() => ({ events: [] } as WasmResult)),
+    report_coin_states: jest.fn(() => ({ events: [] } as WasmResult)),
+    snapshot_watched_coins: jest.fn(() => []),
+    drain_submissions: jest.fn(() => []),
+    resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
     cradle: 0,
@@ -75,14 +88,14 @@ function makePeerConn(
 }
 
 interface TestHarness {
-  blob: WasmBlobWrapper;
+  blob: SessionController;
   cradle: ChiaGame;
   sentMessages: Array<{ msgno: number; msg: Uint8Array }>;
   sentAcks: number[];
 }
 
 /**
- * Returns a WasmBlobWrapper at qualifyingEvents=7 (system ready).
+ * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameCradle → kickSystem(2) → qe=7.
  */
 function createReadyBlob(
@@ -90,7 +103,7 @@ function createReadyBlob(
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
-  const blob = new WasmBlobWrapper(
+  const blob = new SessionController(
     mockBlockchain,
     'test',
     100n,
@@ -101,23 +114,23 @@ function createReadyBlob(
   blob.loadWasm(mockWasmConnection);
   blob.setGameCradle(cradle);
   blob.kickSystem(2);
-  blob.blockNotification(1, [], emptyReport);
+  blob.reportCoinStates(1n, []);
 
   (cradle.deliver_message as jest.Mock).mockClear();
-  (cradle.block_data as jest.Mock).mockClear();
+  (cradle.report_coin_states as jest.Mock).mockClear();
   sentMessages.length = 0;
   sentAcks.length = 0;
 
   return { blob, cradle, sentMessages, sentAcks };
 }
 
-/** Returns a WasmBlobWrapper at qe=1 — messages will be buffered until kickSystem(2). */
+/** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
 function createUnreadyBlob(
   onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
-  const blob = new WasmBlobWrapper(
+  const blob = new SessionController(
     mockBlockchain,
     'test',
     100n,
@@ -131,29 +144,55 @@ function createUnreadyBlob(
   return { blob, cradle, sentMessages, sentAcks };
 }
 
-let activeBlob: WasmBlobWrapper | null = null;
+let activeBlob: SessionController | null = null;
+
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function clearTestGlobal(key: string) {
+  Reflect.deleteProperty(globalThis, key);
+}
 
 beforeEach(() => {
-  (global as any).localStorage = makeStorage();
+  setTestGlobal('localStorage', makeStorage());
 });
 
 afterEach(() => {
   activeBlob?.cleanup();
   activeBlob = null;
   resetSaveState();
-  delete (global as any).localStorage;
+  clearTestGlobal('localStorage');
 });
 
+function flushDeferredWork(blob: SessionController) {
+  blob.flushDeferredWork();
+}
+
+function transactionSubmitQueue(blob: SessionController): Promise<void> {
+  return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+}
+
+async function flushPromiseJobs(): Promise<void> {
+  await Promise.resolve();
+}
+
 describe('in-order delivery', () => {
-  it('delivers messages 1, 2, 3 and ACKs each', () => {
+  it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(2, enc('b'));
-    blob.deliverMessage(3, enc('c'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
+    blob.deliverMessage(3n, enc('c'));
 
-    expect(blob.remoteNumber).toBe(3);
+    expect(blob.remoteNumber).toBe(3n);
+    expect(sentAcks).toEqual([]);
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 2, 3]);
     expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
     expect(
@@ -163,20 +202,21 @@ describe('in-order delivery', () => {
 });
 
 describe('duplicate detection', () => {
-  it('delivers once but ACKs twice', () => {
+  it('delivers once but ACKs twice after pending durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(1, enc('a'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(1n, enc('a'));
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 1]);
   });
 });
 
 describe('out-of-order delivery with reorder queue', () => {
-  it('delivers 3, 1, 2 → cradle sees a, b, c in order', () => {
+  it('delivers 3, 1, 2 → cradle sees a, b, c in order', async () => {
     const delivered: Uint8Array[] = [];
     const { blob, sentAcks } = createReadyBlob((msg) => {
       delivered.push(msg);
@@ -184,29 +224,31 @@ describe('out-of-order delivery with reorder queue', () => {
     });
     activeBlob = blob;
 
-    blob.deliverMessage(3, enc('c'));
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(2, enc('b'));
+    blob.deliverMessage(3n, enc('c'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
 
     expect(delivered).toEqual([enc('a'), enc('b'), enc('c')]);
-    expect(blob.remoteNumber).toBe(3);
+    expect(blob.remoteNumber).toBe(3n);
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 2, 3]);
   });
 });
 
 describe('buffering before system ready, then spill', () => {
-  it('buffers messages and delivers when system reaches qe=7', () => {
+  it('buffers messages and delivers when system reaches qe=7', async () => {
     const { blob, cradle, sentAcks } = createUnreadyBlob();
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('a'));
-    blob.deliverMessage(2, enc('b'));
+    blob.deliverMessage(1n, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
     expect(cradle.deliver_message).not.toHaveBeenCalled();
 
     blob.kickSystem(2);
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
-    expect(blob.remoteNumber).toBe(2);
+    expect(blob.remoteNumber).toBe(2n);
+    flushDeferredWork(blob);
     expect(sentAcks).toEqual([1, 2]);
   });
 
@@ -218,14 +260,14 @@ describe('buffering before system ready, then spill', () => {
     });
     activeBlob = blob;
 
-    blob.deliverMessage(2, enc('b'));
-    blob.deliverMessage(1, enc('a'));
+    blob.deliverMessage(2n, enc('b'));
+    blob.deliverMessage(1n, enc('a'));
     expect(delivered).toEqual([]);
 
     blob.kickSystem(2);
 
     expect(delivered).toEqual([enc('a'), enc('b')]);
-    expect(blob.remoteNumber).toBe(2);
+    expect(blob.remoteNumber).toBe(2n);
   });
 });
 
@@ -235,13 +277,13 @@ describe('ACK pruning', () => {
     activeBlob = blob;
 
     blob.unackedMessages = [
-      { msgno: 1, msg: enc('a') },
-      { msgno: 2, msg: enc('b') },
-      { msgno: 3, msg: enc('c') },
+      { msgno: 1n, msg: enc('a') },
+      { msgno: 2n, msg: enc('b') },
+      { msgno: 3n, msg: enc('c') },
     ];
-    blob.receiveAck(2);
+    blob.receiveAck(2n);
 
-    expect(blob.unackedMessages).toEqual([{ msgno: 3, msg: enc('c') }]);
+    expect(blob.unackedMessages).toEqual([{ msgno: 3n, msg: enc('c') }]);
   });
 });
 
@@ -256,17 +298,17 @@ describe('outbound message numbering', () => {
     }));
     activeBlob = blob;
 
-    blob.deliverMessage(1, enc('trigger'));
+    blob.deliverMessage(1n, enc('trigger'));
     jest.runAllTimers();
 
     expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-    expect(blob.unackedMessages).toContainEqual({ msgno: 1, msg: helloBytes });
+    expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
 
-    blob.deliverMessage(2, enc('trigger2'));
+    blob.deliverMessage(2n, enc('trigger2'));
     jest.runAllTimers();
 
     expect(sentMessages[1]).toEqual({ msgno: 2, msg: helloBytes });
-    expect(blob.messageNumber).toBe(3);
+    expect(blob.messageNumber).toBe(3n);
   });
 });
 
@@ -276,8 +318,8 @@ describe('resendUnacked', () => {
     activeBlob = blob;
 
     blob.unackedMessages = [
-      { msgno: 1, msg: enc('a') },
-      { msgno: 2, msg: enc('b') },
+      { msgno: 1n, msg: enc('a') },
+      { msgno: 2n, msg: enc('b') },
     ];
     blob.resendUnacked();
 
@@ -288,11 +330,121 @@ describe('resendUnacked', () => {
   });
 });
 
+describe('restore ordering', () => {
+  it('restores counters before spilling buffered messages and replaying unacked', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    activeBlob = blob;
+
+    const cradle = makeMockCradle();
+    const restoreWasmConnection = {} as unknown as WasmConnection;
+    const wasmStateInit = {
+      getWasmConnection: jest.fn(async () => restoreWasmConnection),
+      deserializeGame: jest.fn(() => cradle),
+    } as unknown as WasmStateInit;
+
+    blob.kickSystem(2);
+    blob.deliverMessage(1n, enc('already-processed'));
+    flushDeferredWork(blob);
+    const statuses: string[] = [];
+    const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
+
+    await blob.beginRestore(
+      restoreSession(
+        blob,
+        {
+          version: 3,
+          playerId: 'p1',
+          serializedCradle: uint8ToBase64(new Uint8Array([1, 2, 3])),
+          messageNumber: 5n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 4n, msg: uint8ToBase64(enc('outbound')) }],
+        } as unknown as SessionState,
+        wasmStateInit,
+      ),
+    );
+    unsubscribe();
+
+    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(sentAcks).toEqual([1]);
+    expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
+    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
+    expect(blob.messageNumber).toBe(5n);
+    expect(blob.remoteNumber).toBe(1n);
+    expect(statuses).toEqual(['idle', 'restoring', 'restored']);
+    expect(blob.getRestoreStatus()).toBe('restored');
+  });
+
+  it('marks restore failures and emits an error event', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    activeBlob = blob;
+
+    const errors: string[] = [];
+    const sub = blob.getObservable().subscribe({
+      next: (evt) => {
+        if (evt.type === 'error') errors.push(evt.error);
+      },
+    });
+
+    await expect(blob.beginRestore(Promise.reject(new Error('restore broke'))))
+      .rejects
+      .toThrow('restore broke');
+    sub.unsubscribe();
+
+    expect(blob.getRestoreStatus()).toBe('failed');
+    expect(blob.getRestoreError()).toContain('restore broke');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('restore broke');
+  });
+
+  it('does not expose stack frames in user-facing error events', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    activeBlob = blob;
+
+    const errors: string[] = [];
+    const sub = blob.getObservable().subscribe({
+      next: (evt) => {
+        if (evt.type === 'error') errors.push(evt.error);
+      },
+    });
+    const err = new Error('wallet rejected spend');
+    err.stack = 'spend@http://localhost:3002/app/17818440673N/index.js:50242:15';
+
+    await expect(blob.beginRestore(Promise.reject(err)))
+      .rejects
+      .toThrow('wallet rejected spend');
+    sub.unsubscribe();
+
+    expect(errors).toEqual(['wallet rejected spend']);
+    expect(blob.getRestoreError()).toBe('wallet rejected spend');
+  });
+});
+
 describe('cleanShutdown calls shut_down on cradle', () => {
   it('calls shut_down on cradle', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new WasmBlobWrapper(mockBlockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(mockBlockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
 
     const cradle = {
@@ -303,10 +455,196 @@ describe('cleanShutdown calls shut_down on cradle', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameCradle(cradle);
     blob.kickSystem(2);
-    blob.blockNotification(1, [], emptyReport);
+    blob.reportCoinStates(1n, []);
 
     blob.cleanShutdown();
 
     expect((cradle as any).shut_down).toHaveBeenCalled();
+  });
+});
+
+describe('transaction submission', () => {
+  it('applies watchCoins deltas without resampling the cradle snapshot', async () => {
+    const queriedNames: string[][] = [];
+    const blockchain = new BlockchainPoller(new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(1n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: (names: string[]) => {
+          queriedNames.push(names);
+          return Promise.resolve([]);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    ), 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = makeMockCradle();
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.attachBlockchain(blockchain);
+    (cradle.snapshot_watched_coins as jest.Mock).mockClear();
+
+    blob.processResult({
+      events: [],
+      watchCoins: [{ coin_name: 'aa', coin_string: 'coin-a' }],
+    });
+    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
+    expect(queriedNames).toEqual([['aa']]);
+    blob.detachBlockchain(blockchain);
+  });
+
+  it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
+    const queriedNames: string[][] = [];
+    const blockchain = new BlockchainPoller(new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(1n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: (names: string[]) => {
+          queriedNames.push(names);
+          return Promise.resolve([]);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    ), 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      snapshot_watched_coins: jest.fn(() => [{ coin_name: 'bb', coin_string: 'coin-b' }]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    expect(queriedNames).toEqual([]);
+
+    blob.attachBlockchain(blockchain);
+    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
+    expect(queriedNames).toEqual([['bb']]);
+
+    blob.attachBlockchain(blockchain);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
+    blob.detachBlockchain(blockchain);
+  });
+
+  it('hydrates without blockchain and replays retained submissions on later attach', async () => {
+    const spend = jest.fn().mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+      getHeightInfo: () => Promise.resolve(1n),
+      registerCoins: () => Promise.resolve(),
+      getCoinRecordsByNames: () => Promise.resolve([]),
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
+      drain_submissions: jest.fn(() => [testSpendBundle('05')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.processResult({ events: [] });
+
+    expect(cradle.drain_submissions).not.toHaveBeenCalled();
+    expect(spend).not.toHaveBeenCalled();
+
+    blob.attachBlockchain(blockchain);
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    blob.detachBlockchain(blockchain);
+  });
+
+  it('submits drained transactions sequentially', async () => {
+    let resolveFirst: (() => void) | null = null;
+    const spend = jest.fn()
+      .mockImplementationOnce(() => new Promise<string>((resolve) => {
+        resolveFirst = () => resolve('');
+      }))
+      .mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => [testSpendBundle('01'), testSpendBundle('02')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.processResult({ events: [] });
+
+    await flushPromiseJobs();
+    expect(spend).toHaveBeenCalledTimes(1);
+    resolveFirst?.();
+    await transactionSubmitQueue(blob);
+    expect(spend).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not emit user-facing errors for benign stale spend rejections', async () => {
+    expect(isBenignTransactionSubmitError(
+      'spend rejected: status=[3,9] Conflicting transaction: overlapping spends [CoinID(Hash(a))]',
+    )).toBe(true);
+    expect(isBenignTransactionSubmitError(
+      'spend rejected: status=[3,5] Coin not found: CoinID(Hash(b))',
+    )).toBe(true);
+    expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(false);
+
+    const spend = jest.fn()
+      .mockRejectedValueOnce(new Error('spend rejected: status=[3,9] Conflicting transaction: overlapping spends []'))
+      .mockRejectedValueOnce(new Error('spend rejected: status=[3,5] Coin not found: CoinID(Hash(c))'));
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const errors: string[] = [];
+    blob.getObservable().subscribe((evt) => {
+      if (evt.type === 'error') errors.push(evt.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => [testSpendBundle('03'), testSpendBundle('04')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameCradle(cradle);
+    blob.processResult({ events: [] });
+
+    await transactionSubmitQueue(blob);
+    expect(spend).toHaveBeenCalledTimes(2);
+    expect(errors).toEqual([]);
   });
 });

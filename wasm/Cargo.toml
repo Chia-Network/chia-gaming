@@ -2,11 +2,12 @@
 name = "chia_gaming_wasm"
 version = "0.1.0"
 edition = "2018"
+license = "Apache-2.0"
 authors = ["Art Yerkes <art.yerkes@gmail.com>"]
-description = "tools for working with chialisp language; compiler, repl, python and wasm bindings"
-homepage = "https://chialisp.com/"
+description = "WebAssembly bindings for chia-gaming state channel gameplay."
+homepage = "https://github.com/Chia-Network/chia-gaming/"
 readme = "README.md"
-repository = "https://github.com/Chia-Network/chialisp"
+repository = "https://github.com/Chia-Network/chia-gaming/"
 keywords = ["chia", "chialisp", "clvm"]
 categories = ["command-line-utilities"]
 

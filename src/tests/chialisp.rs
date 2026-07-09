@@ -6,6 +6,7 @@ use clvmr::{run_program, ChiaDialect};
 
 use crate::utils::first;
 
+#[test]
 fn test_make_cards() {
     let mut allocator = AllocEncoder::new();
     let program =
@@ -36,6 +37,7 @@ fn test_make_cards() {
     );
 }
 
+#[test]
 fn test_mergein() {
     let mut allocator = AllocEncoder::new();
     let tests = [
@@ -61,6 +63,7 @@ fn test_mergein() {
     }
 }
 
+#[test]
 fn test_handcalc() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.

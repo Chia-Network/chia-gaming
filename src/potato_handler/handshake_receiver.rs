@@ -20,7 +20,7 @@ use crate::games::krunk_dict_tree::{generate_gap_evidence, sign_gap_evidence, si
 use crate::games::krunk_dictionary;
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
 };
 use crate::potato_handler::handshake::{
     CoinSpendRequest, HandshakeB, HandshakeD, HandshakeStepInfo, HandshakeStepWithSpend,
@@ -93,6 +93,10 @@ pub struct HandshakeReceiverHandler {
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
+    failed: bool,
+    #[serde(default)]
+    failure_advisory: Option<String>,
+
     #[serde(skip)]
     replacement: Option<Box<PotatoHandler>>,
 }
@@ -120,6 +124,8 @@ impl HandshakeReceiverHandler {
             waiting_to_start: true,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
+            failed: false,
+            failure_advisory: None,
             replacement: None,
         }
     }
@@ -240,7 +246,7 @@ impl HandshakeReceiverHandler {
             &channel_puzzle_hash,
             &total_amount,
         )?;
-        let per_player = Amount::new(total_amount.to_u64() / 2);
+        let per_player = self.my_contribution.clone();
         let conditions = vec![RawCoinCondition {
             opcode: crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
             args: vec![ann_hash.bytes().to_vec()],
@@ -346,6 +352,19 @@ impl HandshakeReceiverHandler {
                     ));
                 }
 
+                if msg.my_contribution != self.their_contribution {
+                    return Err(Error::Channel(format!(
+                        "HandshakeA contribution mismatch: peer claims my_contribution={:?} but we expect their_contribution={:?}",
+                        msg.my_contribution, self.their_contribution
+                    )));
+                }
+                if msg.their_contribution != self.my_contribution {
+                    return Err(Error::Channel(format!(
+                        "HandshakeA contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
+                        msg.their_contribution, self.my_contribution
+                    )));
+                }
+
                 let my_hs_info = {
                     let channel_public_key =
                         private_to_public_key(&self.private_keys.my_channel_coin_private_key);
@@ -395,6 +414,8 @@ impl HandshakeReceiverHandler {
                         dict_signing_pubkey: my_dict_pk,
                         dict_signing_key_pop,
                         dict_partial_signatures: Some(sigs_to_bytes(&partial_sigs)),
+                        my_contribution: self.my_contribution.clone(),
+                        their_contribution: self.their_contribution.clone(),
                     }
                 };
 
@@ -465,6 +486,7 @@ impl HandshakeReceiverHandler {
                     coin: channel_coin,
                     timeout: Timeout::new(1_000_000),
                     name: Some("channel"),
+                    spend: None,
                 });
                 effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
 
@@ -640,17 +662,6 @@ impl SpendWalletReceiver for HandshakeReceiverHandler {
         ))])
     }
 
-    fn coin_timeout_reached(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::Log(format!(
-            "[receiver-handshake:coin-timeout] {}",
-            format_coin(coin_id),
-        ))])
-    }
-
     fn coin_puzzle_and_solution(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -691,13 +702,6 @@ impl PeerHandler for HandshakeReceiverHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         <Self as SpendWalletReceiver>::coin_spent(self, env, coin_id)
-    }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        <Self as SpendWalletReceiver>::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_created(
         &mut self,
@@ -753,6 +757,18 @@ impl PeerHandler for HandshakeReceiverHandler {
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         self.replacement.take().map(|ph| ph as Box<dyn PeerHandler>)
     }
+    fn go_on_chain(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _got_error: bool,
+    ) -> Result<Vec<Effect>, Error> {
+        self.failed = true;
+        Ok(vec![])
+    }
+    fn wallet_callback_failed(&mut self, reason: String) {
+        self.failed = true;
+        self.failure_advisory = Some(reason);
+    }
     fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
         if self.pending_coin_spend && self.last_height > 0 {
@@ -804,7 +820,10 @@ impl PeerHandler for HandshakeReceiverHandler {
             let completion_effect = self.channel_transaction_completion(env, &final_bundle)?;
             let mut effects = Vec::new();
             effects.extend(completion_effect);
-            effects.push(Effect::SpendTransaction(final_bundle));
+            effects.push(Effect::SpendTransaction(
+                final_bundle,
+                self.channel_deadline,
+            ));
             return Ok(effects);
         }
 
@@ -812,19 +831,33 @@ impl PeerHandler for HandshakeReceiverHandler {
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
-        if let Some(deadline) = self.channel_deadline {
-            if self.waiting_to_start && self.last_height >= deadline {
-                return Some(ChannelStatusSnapshot {
-                    state: ChannelState::Failed,
-                    advisory: Some("channel coin not confirmed in time".to_string()),
-                    coin: None,
-                    our_balance: None,
-                    their_balance: None,
-                    game_allocated: None,
-                    have_potato: None,
-                });
-            }
+        if self.failed {
+            return Some(ChannelStatusSnapshot {
+                state: ChannelState::Failed,
+                advisory: self.failure_advisory.clone(),
+                coin: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.state_channel_coin().clone()),
+                our_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.my_out_of_game_balance()),
+                their_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.their_out_of_game_balance()),
+                game_allocated: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.total_game_allocated()),
+                have_potato: None,
+            });
         }
+        // The channel-creation expiry -> Failed signal now lives in the
+        // TransactionManager, which owns the deadline threaded onto the funding
+        // transaction.  `channel_deadline` here is retained only to thread that
+        // value; it no longer drives a status branch.
         if self.pending_coin_spend {
             return Some(ChannelStatusSnapshot {
                 state: ChannelState::WaitingForHeightToAccept,
@@ -851,7 +884,7 @@ impl PeerHandler for HandshakeReceiverHandler {
         let state = match &self.state {
             ReceiverState::WaitingForA | ReceiverState::SentB(_) => ChannelState::Handshaking,
             ReceiverState::SentD(_) => ChannelState::Handshaking,
-            ReceiverState::WaitingForCompletion(_, _) => ChannelState::WaitingForOffer,
+            ReceiverState::WaitingForCompletion(_, _) => ChannelState::MakingOfferAcceptance,
             ReceiverState::Finished(_) => ChannelState::TransactionPending,
             ReceiverState::Done => return None,
         };
@@ -878,6 +911,16 @@ impl PeerHandler for HandshakeReceiverHandler {
             game_allocated,
             have_potato: None,
         })
+    }
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
+        // Surface the state channel coin once it's known so the host can show
+        // its id in the unfolded data while the channel-creation transaction is
+        // pending (the default returns none, the right answer only before any
+        // coin exists).
+        match self.channel_handler.as_ref() {
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            None => vec![],
+        }
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         HandshakeReceiverHandler::channel_handler(self)
