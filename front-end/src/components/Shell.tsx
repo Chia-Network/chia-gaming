@@ -1728,7 +1728,7 @@ const Shell = () => {
       case 'abandon':
         setConfirmDialog({
           title: 'Abandon session?',
-          body: 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation. Only abandon if you believe the session is permanently stuck.',
+          body: 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation.',
           confirmLabel: 'Abandon',
           onConfirm: () => {
             setConfirmDialog(null);
