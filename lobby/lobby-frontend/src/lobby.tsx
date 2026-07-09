@@ -216,7 +216,8 @@ const LobbyScreen = () => {
               Channel timeout (blocks)
               <input
                 type="number"
-                min="1"
+                min="3"
+                max="30"
                 value={challengeChannelTimeout}
                 onChange={(e) => setChallengeChannelTimeout(e.target.value)}
                 className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
@@ -226,7 +227,8 @@ const LobbyScreen = () => {
               Unroll timeout (blocks)
               <input
                 type="number"
-                min="1"
+                min="3"
+                max="30"
                 value={challengeUnrollTimeout}
                 onChange={(e) => setChallengeUnrollTimeout(e.target.value)}
                 className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
