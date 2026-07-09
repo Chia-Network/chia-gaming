@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionController } from './SessionController';
 import { GameplayEvent } from './useGameSession';
 
 // Phase of the krunk state machine. Both roles share the enum -- which
@@ -126,7 +126,7 @@ function wordToProgram(word: string): Program {
 }
 
 export function useKrunkHand(
-  _gameObject: WasmBlobWrapper,
+  _gameObject: SessionController,
   _gameId: string,
   iStarted: boolean,
   gameplayEvent$: Observable<GameplayEvent>,

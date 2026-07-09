@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { Observable } from 'rxjs';
 import { formatMojos } from '../util';
-import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
+import { SessionController } from '../hooks/SessionController';
 import {
   useKrunkHand,
   KrunkHandler,
@@ -10,7 +10,7 @@ import {
 import { GameplayEvent } from '../hooks/useGameSession';
 
 interface KrunkProps {
-  gameObject: WasmBlobWrapper;
+  gameObject: SessionController;
   gameId: string;
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;

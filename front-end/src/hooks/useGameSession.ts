@@ -560,7 +560,7 @@ export interface UseGameSessionResult {
   rejectReviewedProposal: () => void;
   // Curry the supplied krunk dictionary into the cradle's game type
   // map and propose a new krunk game in one step.
-  registerKrunkAndPropose: (words: string[], perHandAmount: bigint) => void;
+  registerKrunkAndPropose: (words: string[], perHandAmount: bigint, gameTimeout: bigint) => void;
   // Same as acceptReviewedProposal but first registers the local
   // krunk game type with the user's chosen dictionary.
   acceptReviewedKrunkProposal: (words: string[]) => void;
@@ -1500,18 +1500,18 @@ export function useGameSession(
   // same curried programs; otherwise the parser's `(deep= wire_data ...)`
   // assertion will reject the proposal on the receiving side.
   const ensureKrunkRegistered = useCallback((words: string[]) => {
-    const go = gameObjectRef.current;
-    if (!go) throw new Error('no game object');
-    const wasm = go.wc;
-    if (!wasm) throw new Error('wasm connection not available yet');
-    const curried = wasm.curry_krunk_programs(words);
-    go.registerGameType('krunk', curried.proposal_hex, curried.parser_hex);
+    const sc = scRef.current;
+    if (!sc) throw new Error('no session controller');
+    const cradle = sc.cradle;
+    if (!cradle) throw new Error('cradle not available yet');
+    const curried = cradle.wasm.curry_krunk_programs(words);
+    cradle.register_game_type('krunk', curried.proposal_hex, curried.parser_hex);
     return curried;
   }, []);
 
-  const registerKrunkAndPropose = useCallback((words: string[], perHandAmount: bigint) => {
+  const registerKrunkAndPropose = useCallback((words: string[], perHandAmount: bigint, gameTimeout: bigint) => {
     ensureKrunkRegistered(words);
-    submitComposedProposal(perHandAmount, 'krunk');
+    submitComposedProposal(perHandAmount, 'krunk', gameTimeout);
   }, [ensureKrunkRegistered, submitComposedProposal]);
 
   const acceptReviewedKrunkProposal = useCallback((words: string[]) => {
