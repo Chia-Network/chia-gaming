@@ -645,16 +645,14 @@ The dictionary tree and its signatures are generated once at build time by
 
 1. Generates an ephemeral BLS keypair (never written to disk)
 2. Signs every gap range in the sorted dictionary
-3. Writes two files:
-   - `clsp/games/krunk/krunk_signed_dict.clinc` — exports the public key as
-     `KRUNK_DICT_PUBKEY`, compiled into the CLVM programs as a constant
-   - `clsp/games/krunk/krunk_signed_dict_tree.dat` — the signed dictionary
-     tree as binary-serialized CLVM, curried into handler programs at runtime
+3. Writes `clsp/games/krunk/krunk_signed_dict_tree.dat` — a single binary file
+   containing the 48-byte BLS public key followed by the CLVM-serialized signed
+   dictionary tree. At runtime the Rust/WASM loader splits the file, and both
+   values are curried into the handler programs.
 
-**Both generated files are checked in.** They only need regeneration if the
+**The generated `.dat` file is checked in.** It only needs regeneration if the
 dictionary changes. Regenerating requires rebuilding chialisp afterward
-(`./cb.sh`) since the public key is compiled into the handler programs and must
-match the signatures in the tree.
+(`./cb.sh`).
 
 The `.dat` file uses a `.dat` extension (not `.hex`) because the chialisp build
 script deletes all `*.hex` files under `clsp/` before rebuilding.
@@ -682,8 +680,7 @@ general mechanism.
 - `clsp/games/krunk/krunk_generate.clinc` — off-chain handlers (Alice/Bob)
 - `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` — on-chain validators
 - `clsp/games/krunk/krunk_helpers.clinc` — clue encoding, payout tables
-- `clsp/games/krunk/krunk_signed_dict.clinc` — generated pubkey constant
-- `clsp/games/krunk/krunk_signed_dict_tree.dat` — generated signed tree (binary)
+- `clsp/games/krunk/krunk_signed_dict_tree.dat` — generated: 48-byte pubkey + signed tree (binary)
 - `src/games/krunk_dict_tree.rs` — tree construction and gap signing logic
 - `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
 - `src/tests/krunk_handlers.rs` — handler tests
@@ -782,8 +779,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
 | `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
 | `clsp/games/krunk/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
-| `clsp/games/krunk/krunk_signed_dict.clinc`   | Generated: dict signing pubkey (see [Krunk](#krunk))      |
-| `clsp/games/krunk/krunk_signed_dict_tree.dat`| Generated: signed dict tree, binary CLVM (see [Krunk](#krunk)) |
+| `clsp/games/krunk/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary (see [Krunk](#krunk)) |
 | `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 

@@ -4,7 +4,7 @@ use chia_protocol::Bytes;
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
-use crate::common::load_clvm::{read_binary_puzzle, read_hex_puzzle};
+use crate::common::load_clvm::{read_hex_puzzle, read_krunk_dict_dat};
 use crate::common::types::{AllocEncoder, GameType, Program};
 use crate::potato_handler::types::GameFactory;
 use std::collections::BTreeMap;
@@ -80,11 +80,12 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
     let krunk_parser_raw =
         read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")
             .expect("should load krunk parser");
-    let dict_tree = read_binary_puzzle(allocator, "clsp/games/krunk/krunk_signed_dict_tree.dat")
-        .expect("should load krunk dict tree");
+    let (dict_pubkey, dict_tree) =
+        read_krunk_dict_dat(allocator, "clsp/games/krunk/krunk_signed_dict_tree.dat")
+            .expect("should load krunk dict dat");
     let krunk_make_proposal_node = CurriedProgram {
         program: krunk_make_proposal_raw,
-        args: clvm_curried_args!(dict_tree),
+        args: clvm_curried_args!(dict_pubkey, dict_tree),
     }
     .to_clvm(allocator)
     .expect("curry krunk make_proposal");
@@ -92,7 +93,7 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         Program::from_nodeptr(allocator, krunk_make_proposal_node).expect("ok");
     let krunk_parser_node = CurriedProgram {
         program: krunk_parser_raw,
-        args: clvm_curried_args!(dict_tree),
+        args: clvm_curried_args!(dict_pubkey, dict_tree),
     }
     .to_clvm(allocator)
     .expect("curry krunk parser");

@@ -259,18 +259,18 @@ mod gaming_wasm {
     fn convert_game_types(
         collection: &BTreeMap<String, JsGameFactory>,
     ) -> Result<BTreeMap<GameType, GameFactory>, JsValue> {
-        use chia_gaming::common::load_clvm::read_binary_puzzle;
+        use chia_gaming::common::load_clvm::read_krunk_dict_dat;
 
         let mut result = BTreeMap::new();
         for (name, gf) in collection.iter() {
             let (name_data, mut game_factory) = convert_game_factory(name, gf)?;
             if name == "krunk" {
                 let mut allocator = AllocEncoder::new();
-                let dict_tree = read_binary_puzzle(
+                let (dict_pubkey, dict_tree) = read_krunk_dict_dat(
                     &mut allocator,
                     "clsp/games/krunk/krunk_signed_dict_tree.dat",
                 )
-                .map_err(|e| js_error(&format!("load dict tree: {e:?}")))?;
+                .map_err(|e| js_error(&format!("load dict dat: {e:?}")))?;
 
                 if let Some(ref prog) = game_factory.program {
                     let prog_node = prog
@@ -278,7 +278,7 @@ mod gaming_wasm {
                         .map_err(|e| js_error(&format!("proposal to nodeptr: {e:?}")))?;
                     let curried = CurriedProgram {
                         program: prog_node,
-                        args: clvm_curried_args!(dict_tree),
+                        args: clvm_curried_args!(dict_pubkey, dict_tree),
                     }
                     .to_clvm(&mut allocator)
                     .map_err(|e| js_error(&format!("curry proposal: {e:?}")))?;
@@ -293,7 +293,7 @@ mod gaming_wasm {
                         .map_err(|e| js_error(&format!("parser to nodeptr: {e:?}")))?;
                     let curried = CurriedProgram {
                         program: prog_node,
-                        args: clvm_curried_args!(dict_tree),
+                        args: clvm_curried_args!(dict_pubkey, dict_tree),
                     }
                     .to_clvm(&mut allocator)
                     .map_err(|e| js_error(&format!("curry parser: {e:?}")))?;

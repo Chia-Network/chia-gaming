@@ -219,15 +219,16 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     let sigs: Vec<Aggsig> = (0..=n_words).map(|_| Aggsig::default()).collect();
     let dict_tree =
         build_signed_dict_tree_from_bytes(allocator, &dictionary, &sigs).expect("build dict tree");
+    let dict_pubkey = allocator.allocator().new_atom(&[0xAA; 48]).unwrap();
     let make_proposal_curried = CurriedProgram {
         program: make_proposal_raw,
-        args: clvm_curried_args!(dict_tree),
+        args: clvm_curried_args!(dict_pubkey, dict_tree),
     }
     .to_clvm(allocator)
     .unwrap();
     let parser_curried = CurriedProgram {
         program: parser_raw,
-        args: clvm_curried_args!(dict_tree),
+        args: clvm_curried_args!(dict_pubkey, dict_tree),
     }
     .to_clvm(allocator)
     .unwrap();
