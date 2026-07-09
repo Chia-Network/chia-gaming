@@ -175,6 +175,7 @@ export interface SessionState {
   diagnosticLog?: string[];
   activeGameId?: string | null;
   activeGameIds?: string[];
+  iProposedHand?: boolean;
   activeGameType?: string;
   handState?: PersistedGameState | null;
   channelStatus?: ChannelStatusPayload | null;

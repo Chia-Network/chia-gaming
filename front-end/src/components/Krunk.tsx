@@ -12,6 +12,7 @@ export interface KrunkProps {
   gameObject: SessionController;
   gameIds: string[];
   iStarted: boolean;
+  iProposedHand: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: bigint;
   onTurnChanged: (isMyTurn: boolean) => void;
@@ -112,19 +113,18 @@ const Krunk: React.FC<KrunkProps> = ({
   gameObject,
   gameIds,
   iStarted,
+  iProposedHand,
   gameplayEvent$,
   betSize: _betSize,
   onTurnChanged,
   myName,
   opponentName,
 }) => {
-  // In a krunk hand we always have two games: one where I'm Alice (I
-  // started = I committed the word), one where I'm Bob (opponent
-  // started = I guess). Derive which ID is which from the proposal
-  // order: the first ID was proposed with my_turn=true (I'm Alice),
-  // the second with my_turn=false (I'm Bob).
-  const aliceGameId = gameIds[0] ?? '';
-  const bobGameId = gameIds[1] ?? gameIds[0] ?? '';
+  // The hand proposer sent game 0 with my_turn=true (proposer is alice)
+  // and game 1 with my_turn=false (proposer is bob). The acceptor's
+  // roles are flipped: they're bob in game 0 and alice in game 1.
+  const aliceGameId = iProposedHand ? (gameIds[0] ?? '') : (gameIds[1] ?? gameIds[0] ?? '');
+  const bobGameId = iProposedHand ? (gameIds[1] ?? gameIds[0] ?? '') : (gameIds[0] ?? '');
 
   // useKrunkHand maps iStarted → role: iStarted=true means bob, false means alice.
   // Alice game (I pick the word): iStarted=false → role='alice'.

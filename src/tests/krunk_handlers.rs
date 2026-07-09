@@ -626,6 +626,18 @@ fn test_krunk_multi_guess_game() {
     );
     // 4th guess payout: 5% of amount = 10 (from KRUNK_PAYOUTS = (100 100 20 5 1))
     assert_eq!(alice_reveal.new_mover_share, 10, "4th guess payout = 5% of 200 = 10");
+
+    // Bob receives the reveal. The framework passes nil state for terminal moves.
+    let _bob_reveal_receive = call_their_turn_handler(
+        &mut allocator,
+        bob_move.their_turn_handler,
+        AMOUNT,
+        state,
+        NodePtr::NIL,
+        alice_reveal.move_bytes_node,
+        alice_reveal.validator_for_my_move_hash,
+        alice_reveal.new_mover_share,
+    );
 }
 
 fn test_krunk_5_wrong_guesses_alice_wins() {

@@ -538,6 +538,7 @@ export interface UseGameSessionResult {
   handKey: number;
   activeGameId: string | null;
   activeGameIds: string[];
+  iProposedHand: boolean;
   activeGameType: string;
   displayGameId: string | null;
   sessionController: SessionController;
@@ -711,6 +712,7 @@ export function useGameSession(
   const [activeGameType, setActiveGameType] = useState<string>(() =>
     restoredModel?.game.activeGameType ?? 'calpoker'
   );
+  const [iProposedHand, setIProposedHand] = useState(() => sessionSave?.iProposedHand ?? false);
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
   const [betweenHandMode, setBetweenHandMode] = useState<BetweenHandMode>(() => {
@@ -888,6 +890,7 @@ export function useGameSession(
       unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
       activeGameId: wasm.activeGameId,
       activeGameIds: wasm.activeGameIds,
+      iProposedHand,
       activeGameType,
       handState: wasm.handState,
       channelStatus: wasm.channelStatus,
@@ -900,7 +903,7 @@ export function useGameSession(
   }, [
     gameConnectionState, channelStatus, goOnChainPressed, cleanShutdownStarted,
     gameCoin, handStatus, gameTerminal, handKey, gameIds, lastDisplayedGameId,
-    myRunningBalance, betweenHandMode,
+    myRunningBalance, betweenHandMode, iProposedHand,
     composePerHandAmount, composeGameTimeout, composeGameType, lastHandTerms, rejectedOnceTerms,
     activeGameType, composeProposalSent, newHandRequested,
     cachedPeerProposal, reviewPeerProposal,
@@ -1169,12 +1172,14 @@ export function useGameSession(
       const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
       const isFirstGameOfHand = gameIdsRef.current.length === 0;
-      log(`[notify] ProposalAccepted id=${newId} first=${isFirstGameOfHand}`);
+      const weProposed = outgoingProposalIdsRef.current.has(newId);
+      log(`[notify] ProposalAccepted id=${newId} first=${isFirstGameOfHand} ours=${weProposed}`);
       outgoingProposalIdsRef.current.delete(newId);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
 
       if (isFirstGameOfHand) {
+        setIProposedHand(weProposed);
         firstGameAcceptedRef.current = true;
         sameTermsRequestedRef.current = false;
         setNewHandRequested(false);
@@ -1624,6 +1629,7 @@ export function useGameSession(
     handKey,
     activeGameId: gameSessionView.activeGameId,
     activeGameIds: gameSessionView.activeGameIds,
+    iProposedHand,
     activeGameType: gameSessionView.activeGameType,
     displayGameId: gameSessionView.displayGameId,
     sessionController: sc,

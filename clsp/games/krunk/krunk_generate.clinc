@@ -177,30 +177,33 @@
 (defconst KRUNK_EVIDENCE_INDICES (li 0 1 2 3 4))
 
 (defun krunk_bob_handler_clue (DICT_TREE amount pre_state state move validation_info_hash mover_share)
-    (assign
-        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
-        (if (= (strlen move) 1)
+    (if (= (strlen move) 1)
+        ; Non-terminal clue: state is valid.
+        (assign
+            (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
             (list
                 (expand_clue move)
                 0
                 (curry krunk_bob_handler_guess DICT_TREE)
             )
-            (assign
-                word (substr move 16 21)
-                lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
-                (if lookup_result
-                    (list
-                        (li word (make_clue word (f bob_guesses)))
-                        (li (concat (f lookup_result) (f (r lookup_result))))
-                        0
-                        0
-                    )
-                    (list
-                        (li word (make_clue word (f bob_guesses)))
-                        KRUNK_EVIDENCE_INDICES
-                        0
-                        0
-                    )
+        )
+        ; Terminal reveal: framework passes nil state, use pre_state.
+        (assign
+            (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) pre_state
+            word (substr move 16 21)
+            lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+            (if lookup_result
+                (list
+                    (li word (make_clue word (f bob_guesses)))
+                    (li (concat (f lookup_result) (f (r lookup_result))))
+                    0
+                    0
+                )
+                (list
+                    (li word (make_clue word (f bob_guesses)))
+                    KRUNK_EVIDENCE_INDICES
+                    0
+                    0
                 )
             )
         )
