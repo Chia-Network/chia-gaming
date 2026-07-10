@@ -2901,30 +2901,30 @@ const Shell = () => {
         {/* Hub tab */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'hub' ? 'flex' : 'none', flexDirection: 'column' }}>
           {hubOrigin ? (
-            peerGateActive && !hasFullNodePeer ? (
-              <div className='flex flex-col items-center justify-center w-full h-full gap-4 p-6'>
-                <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
-                <p className='text-sm text-canvas-text animate-pulse'>Waiting for full node peer</p>
+            <>
+              <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
+                <span>Connected to {hubOrigin}</span>
+                <button
+                  onClick={handleDisconnectHub}
+                  className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+                >
+                  Disconnect
+                </button>
               </div>
-            ) : (
-              <>
-                <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
-                  <span>Connected to {hubOrigin}</span>
-                  <button
-                    onClick={handleDisconnectHub}
-                    className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
-                  >
-                    Disconnect
-                  </button>
+              {peerGateActive && !hasFullNodePeer ? (
+                <div className='flex flex-col items-center justify-center w-full flex-1 gap-4 p-6'>
+                  <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
+                  <p className='text-sm text-canvas-text animate-pulse'>Waiting for full node peer</p>
                 </div>
+              ) : (
                 <iframe
                   id='hub-iframe'
                   className='bg-canvas-bg-subtle'
                   style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
                   src={iframeUrl}
                 />
-              </>
-            )
+              )}
+            </>
           ) : (
             <HubPicker onConnect={requestHubConnect} />
           )}
