@@ -1841,8 +1841,15 @@ const Shell = () => {
 
   // While the peer gate is active, poll the wallet for a full node peer every 5s
   // and only mark ready (visible in the lobby) once one is present.
+  // If the wallet disconnects while the gate is active, the poll can no longer
+  // vouch for a full node peer, so drop back to not-ready (busy + waiting gate)
+  // until the wallet reconnects and the poll re-verifies.
   useEffect(() => {
-    if (!peerGateActive || !hubOrigin || !walletConnected) return;
+    if (!peerGateActive || !hubOrigin) return;
+    if (!walletConnected) {
+      setHasFullNodePeer(false);
+      return;
+    }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const check = async () => {
