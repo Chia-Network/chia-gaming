@@ -13,7 +13,8 @@ export interface Challenge {
   id: string;
   from_id: string;
   target_id: string;
-  amount: string;
+  challenger_amount: string;
+  target_amount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
 }

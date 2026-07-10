@@ -659,16 +659,24 @@ describe('session model selectors', () => {
 
   it('parses saved session amounts through a shared bigint adapter', () => {
     expect(sessionAmountsFromSave(
-      { amount: '123', perGameAmount: '45' },
-      1n,
-      2n,
-    )).toEqual({ amount: 123n, perGameAmount: 45n });
+      { myContribution: '100', theirContribution: '50', perGameAmount: '45' },
+    )).toEqual({ myContribution: 100n, theirContribution: 50n, perGameAmount: 45n });
 
     expect(sessionAmountsFromSave(
-      { amount: 'bad', perGameAmount: undefined },
-      1n,
-      2n,
-    )).toEqual({ amount: 1n, perGameAmount: 2n });
+      { myContribution: '100', theirContribution: '100', perGameAmount: '10' },
+    )).toEqual({ myContribution: 100n, theirContribution: 100n, perGameAmount: 10n });
+
+    expect(() => sessionAmountsFromSave(
+      { myContribution: '100', theirContribution: '50' } as any,
+    )).toThrow('Garbled save');
+
+    expect(() => sessionAmountsFromSave(
+      { myContribution: 'bad', theirContribution: '50', perGameAmount: '10' },
+    )).toThrow('Garbled save');
+
+    expect(() => sessionAmountsFromSave(
+      { myContribution: '50', perGameAmount: '10' } as any,
+    )).toThrow('Garbled save');
   });
 
   it('separates history, diagnostic log, and wasm notification history in snapshots', () => {

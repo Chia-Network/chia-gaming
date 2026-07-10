@@ -152,7 +152,8 @@ function sessionSaveForReactProps(save: SessionState | null): SessionState | und
 type PendingSessionProposal = {
   from_id: string;
   from_alias: string;
-  amount: string;
+  proposer_amount: string;
+  responder_amount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
   game_session_id?: string;
@@ -161,7 +162,8 @@ type PendingSessionProposal = {
 type SessionStartRequest = {
   peerId: string;
   opponentAlias?: string;
-  amount: string;
+  myAmount: string;
+  theirAmount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
   iStarted: boolean;
@@ -201,9 +203,22 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 ];
 
 const FALLBACK_AMOUNT = 100n;
-const FALLBACK_PER_GAME = 10n;
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
+
+const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
+  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
+  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+]);
+
+const MIN_TIMEOUT_BLOCKS = 3;
+const MAX_TIMEOUT_BLOCKS = 30;
+
+function isValidTimeoutString(v: string | undefined): boolean {
+  if (v === undefined) return true;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
+}
 
 const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   connected: 'Connected',
@@ -760,6 +775,7 @@ const Shell = () => {
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
+  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -861,6 +877,7 @@ const Shell = () => {
     setSessionError(false);
     setSessionConfig(null);
     setPeerConn(null);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
@@ -872,8 +889,10 @@ const Shell = () => {
     const conn = trackerConnRef.current;
     if (!conn) return;
 
-    const amount = parseSessionAmount(request.amount);
-    const perGame = amount / 10n || 1n;
+    const myContribution = parseSessionAmount(request.myAmount);
+    const theirContribution = parseSessionAmount(request.theirAmount);
+    const minContribution = myContribution < theirContribution ? myContribution : theirContribution;
+    const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();
     const token = `peer_${request.peerId}_${Date.now()}`;
 
@@ -905,13 +924,15 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(true);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     destroySessionController();
     clearSessionPreservingHistory();
     try { getActiveBlockchain().start(); } catch { /* not connected */ }
     setSessionConfig({
       iStarted: request.iStarted,
-      amount,
+      myContribution,
+      theirContribution,
       perGameAmount: perGame,
       restoring: false,
       pairingToken: token,
@@ -932,7 +953,8 @@ const Shell = () => {
     const gameSessionId = generateSessionId();
     conn.sendPeerAppMessage(advisory.peer_id, {
       type: 'session_proposal',
-      amount: advisory.amount,
+      proposer_amount: advisory.my_amount,
+      responder_amount: advisory.their_amount,
       from_alias: getAlias(),
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
@@ -941,7 +963,8 @@ const Shell = () => {
     startFreshSessionWithPeer({
       peerId: advisory.peer_id,
       opponentAlias: advisory.peer_alias,
-      amount: advisory.amount,
+      myAmount: advisory.my_amount,
+      theirAmount: advisory.their_amount,
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
       iStarted: true,
@@ -959,7 +982,8 @@ const Shell = () => {
     startFreshSessionWithPeer({
       peerId: proposal.from_id,
       opponentAlias: proposal.from_alias,
-      amount: proposal.amount,
+      myAmount: proposal.responder_amount,
+      theirAmount: proposal.proposer_amount,
       channel_timeout: proposal.channel_timeout,
       unroll_timeout: proposal.unroll_timeout,
       iStarted: false,
@@ -1105,9 +1129,14 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          console.log('[Shell] advisory_start: peer=%s alias=%s amount=%s', params.peer_id, params.peer_alias, params.amount);
+          console.log('[Shell] advisory_start: peer=%s alias=%s my_amount=%s their_amount=%s', params.peer_id, params.peer_alias, params.my_amount, params.their_amount);
           if (!isAvailableForNewSessionPrompt()) {
             console.log('[Shell] advisory_start declined: client unavailable for new session');
+            sendSessionReject(params.peer_id);
+            return;
+          }
+          if (!isValidTimeoutString(params.channel_timeout) || !isValidTimeoutString(params.unroll_timeout)) {
+            console.log('[Shell] advisory_start declined: timeout out of range channel=%s unroll=%s', params.channel_timeout, params.unroll_timeout);
             sendSessionReject(params.peer_id);
             return;
           }
@@ -1126,9 +1155,14 @@ const Shell = () => {
           console.log('[Shell] onPeerAppMessage type=%s from=%s', msg.type, fromId);
           if (msg.type === 'session_proposal') {
             const peerAlias = fromAlias || msg.from_alias || fromId;
-            console.log('[Shell] session_proposal from=%s alias=%s amount=%s', fromId, peerAlias, msg.amount);
+            console.log('[Shell] session_proposal from=%s alias=%s proposer_amount=%s responder_amount=%s', fromId, peerAlias, msg.proposer_amount, msg.responder_amount);
             if (!isAvailableForNewSessionPrompt()) {
               console.log('[Shell] session_proposal declined: client unavailable for new session');
+              sendSessionReject(fromId);
+              return;
+            }
+            if (!isValidTimeoutString(msg.channel_timeout) || !isValidTimeoutString(msg.unroll_timeout)) {
+              console.log('[Shell] session_proposal declined: timeout out of range channel=%s unroll=%s', msg.channel_timeout, msg.unroll_timeout);
               sendSessionReject(fromId);
               return;
             }
@@ -1138,7 +1172,8 @@ const Shell = () => {
             setPendingProposalState({
               from_id: fromId,
               from_alias: peerAlias,
-              amount: msg.amount,
+              proposer_amount: msg.proposer_amount,
+              responder_amount: msg.responder_amount,
               channel_timeout: msg.channel_timeout,
               unroll_timeout: msg.unroll_timeout,
               game_session_id: proposalSessionId,
@@ -1148,7 +1183,9 @@ const Shell = () => {
             console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, ps?.peerId, ps?.peerId === fromId);
             if (ps?.peerId === fromId) {
               markPeerDead();
-              if (sessionPhaseRef.current === 'none') {
+              const channelState = dashboardSessionModelRef.current?.channel.status.state;
+              const isPreActive = !channelState || PRE_ACTIVE_CHANNEL_STATES.has(channelState);
+              if (sessionPhaseRef.current === 'none' || isPreActive) {
                 cancelAttemptedSession();
               }
             }
@@ -1405,6 +1442,7 @@ const Shell = () => {
   }, []);
 
   const handleSessionModelChange = useCallback((model: SessionModel) => {
+    dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
   }, []);
 
@@ -1448,11 +1486,12 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
+    const { myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
     if (save.pairingToken) {
       setSessionConfig({
         iStarted: save.iStarted ?? false,
-        amount,
+        myContribution,
+        theirContribution,
         perGameAmount: perGame,
         restoring: true,
         pairingToken: save.pairingToken,
@@ -1670,6 +1709,8 @@ const Shell = () => {
 
   const cancelDashboardSession = useCallback(() => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+    if (peerId) sendSessionReject(peerId);
     resetPeerRelayState();
     destroySessionController();
     clearSessionPreservingHistory();
@@ -1692,13 +1733,13 @@ const Shell = () => {
     setSessionError(false);
     setSessionConfig(null);
     setPeerConn(null);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(false);
-    setActiveTab('tracker');
     trackerConnRef.current?.setBusy(false, alias);
-  }, [clearSessionPreservingHistory, resetPeerRelayState, setActiveTab]);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, sendSessionReject]);
 
   const requestDashboardCleanShutdown = useCallback(() => {
     startCleanShutdownGrace();
@@ -1907,7 +1948,9 @@ const Shell = () => {
       <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
-          <strong>{pendingAdvisory.peer_alias}</strong> would like to play for <strong>{pendingAdvisory.amount}</strong> mojos.
+          <strong>{pendingAdvisory.peer_alias}</strong> would like to play.
+          <br />Your buy-in: <strong>{pendingAdvisory.my_amount}</strong> mojos
+          <br />Their buy-in: <strong>{pendingAdvisory.their_amount}</strong> mojos
         </p>
         <div className='flex gap-3 justify-center'>
           <button
@@ -1930,7 +1973,9 @@ const Shell = () => {
       <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
-          <strong>{pendingProposal.from_alias}</strong> is proposing a session for <strong>{pendingProposal.amount}</strong> mojos.
+          <strong>{pendingProposal.from_alias}</strong> is proposing a session.
+          <br />Your buy-in: <strong>{pendingProposal.responder_amount}</strong> mojos
+          <br />Their buy-in: <strong>{pendingProposal.proposer_amount}</strong> mojos
         </p>
         <div className='flex gap-3 justify-center'>
           <button

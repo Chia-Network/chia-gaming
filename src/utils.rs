@@ -50,10 +50,7 @@ pub fn enlist(allocator: &mut Allocator, vec: &[NodePtr]) -> Result<NodePtr, Eva
 
     for i_reverse in 0..vec.len() {
         let i = vec.len() - i_reverse - 1;
-        {
-            let v = allocator.new_pair(vec[i], built)?;
-            built = v;
-        }
+        built = allocator.new_pair(vec[i], built)?;
     }
     Ok(built)
 }

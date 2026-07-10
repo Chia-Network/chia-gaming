@@ -386,18 +386,20 @@ async function initSessionController(
   peer_conn: PeerConnectionResult,
   wasmStateInit: WasmStateInit,
 ) {
-  const amount = 100n;
+  const myContribution = 100n;
+  const theirContribution = 100n;
 
   await fakeBlockchainInfo.registerUser(uniqueId);
   let gameObject = new SessionController(
     blockchain,
     uniqueId,
-    amount,
+    myContribution,
+    theirContribution,
     peer_conn,
   );
 
   let gameHexes = await loadGameHexes(fetchHex);
-  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
+  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId);
 
   return gameObject;
 }

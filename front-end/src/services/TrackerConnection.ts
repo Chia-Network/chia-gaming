@@ -11,7 +11,8 @@ import {
 export interface AdvisoryStartParams {
   peer_id: string;
   peer_alias: string;
-  amount: string;
+  my_amount: string;
+  their_amount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
 }
@@ -31,7 +32,7 @@ export interface TrackerConnectionCallbacks {
 }
 
 type TrackerEnvelope =
-  | { type: 'advisory_start'; peer_id: string; peer_alias: string; amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | { type: 'advisory_start'; peer_id: string; peer_alias: string; my_amount: string; their_amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'registered'; player_id: string }
   | { type: 'delivery_failure'; to: string }
   | { type: 'lobby_attention' }
@@ -40,7 +41,7 @@ type TrackerEnvelope =
   | { type: 'error'; error?: string };
 
 export type PeerAppMessage =
-  | { type: 'session_proposal'; amount: string; from_alias?: string; channel_timeout?: string; unroll_timeout?: string; game_session_id?: string }
+  | { type: 'session_proposal'; proposer_amount: string; responder_amount: string; from_alias?: string; channel_timeout?: string; unroll_timeout?: string; game_session_id?: string }
   | { type: 'session_reject' };
 
 function definedBencodexFields(data: Record<string, BencodexValue | undefined>): Record<string, BencodexValue> {
@@ -73,7 +74,8 @@ function decodeTrackerEnvelope(input: ArrayBuffer): TrackerEnvelope | null {
         type,
         peer_id: requireText(decoded, 'peer_id'),
         peer_alias: requireText(decoded, 'peer_alias'),
-        amount: requireText(decoded, 'amount'),
+        my_amount: requireText(decoded, 'my_amount'),
+        their_amount: requireText(decoded, 'their_amount'),
         channel_timeout: optionalText(decoded, 'channel_timeout'),
         unroll_timeout: optionalText(decoded, 'unroll_timeout'),
       };
@@ -101,7 +103,8 @@ function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
     case 'session_proposal':
       return {
         type,
-        amount: requireText(decoded, 'amount'),
+        proposer_amount: requireText(decoded, 'proposer_amount'),
+        responder_amount: requireText(decoded, 'responder_amount'),
         from_alias: optionalText(decoded, 'from_alias'),
         channel_timeout: optionalText(decoded, 'channel_timeout'),
         unroll_timeout: optionalText(decoded, 'unroll_timeout'),
@@ -288,11 +291,12 @@ export class TrackerConnection {
         const params: AdvisoryStartParams = {
           peer_id: msg.peer_id,
           peer_alias: msg.peer_alias,
-          amount: msg.amount,
+          my_amount: msg.my_amount,
+          their_amount: msg.their_amount,
           channel_timeout: msg.channel_timeout,
           unroll_timeout: msg.unroll_timeout,
         };
-        log(`[tracker] advisory_start peer=${params.peer_id} alias=${params.peer_alias} amount=${params.amount}`);
+        log(`[tracker] advisory_start peer=${params.peer_id} alias=${params.peer_alias} my_amount=${params.my_amount} their_amount=${params.their_amount}`);
         this.callbacks.onAdvisoryStart(params);
         break;
       }

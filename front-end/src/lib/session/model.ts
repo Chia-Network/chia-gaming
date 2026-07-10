@@ -793,14 +793,25 @@ function parsePositiveBigintString(value: string | undefined, fallback: bigint):
   return parsed > 0n ? parsed : fallback;
 }
 
+function requireBigintString(value: string | undefined, label: string): bigint {
+  if (!value) throw new Error(`Garbled save: missing ${label}`);
+  try {
+    return BigInt(value);
+  } catch {
+    throw new Error(`Garbled save: invalid ${label}: ${value}`);
+  }
+}
+
 export function sessionAmountsFromSave(
-  save: Pick<SessionState, 'amount' | 'perGameAmount'>,
-  fallbackAmount: bigint,
-  fallbackPerGameAmount: bigint,
-): { amount: bigint; perGameAmount: bigint } {
+  save: Pick<SessionState, 'myContribution' | 'theirContribution' | 'perGameAmount'>,
+): { myContribution: bigint; theirContribution: bigint; perGameAmount: bigint } {
+  const myContribution = requireBigintString(save.myContribution, 'myContribution');
+  const theirContribution = requireBigintString(save.theirContribution, 'theirContribution');
+  const perGameAmount = requireBigintString(save.perGameAmount, 'perGameAmount');
   return {
-    amount: parseBigintString(save.amount, fallbackAmount),
-    perGameAmount: parseBigintString(save.perGameAmount, fallbackPerGameAmount),
+    myContribution,
+    theirContribution,
+    perGameAmount,
   };
 }
 
