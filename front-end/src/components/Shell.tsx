@@ -214,6 +214,20 @@ const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
 const MIN_TIMEOUT_BLOCKS = 3;
 const MAX_TIMEOUT_BLOCKS = 30;
 
+function isAbandonWaitingState(state: SessionModel['channel']['status']['state'] | null | undefined): state is SessionModel['channel']['status']['state'] {
+  return !!state && ABANDON_WAITING_STATES.has(state);
+}
+
+function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolean): boolean {
+  return abandonEnabled && isAbandonWaitingState(model?.channel.status.state);
+}
+
+function savedChannelState(save: SessionState): SessionModel['channel']['status']['state'] | null {
+  if (save.channelStatus) return save.channelStatus.state;
+  if (save.channelReady) return 'Active';
+  return null;
+}
+
 function isValidTimeoutString(v: string | undefined): boolean {
   if (v === undefined) return true;
   const n = Number(v);
@@ -475,8 +489,11 @@ const Shell = () => {
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [abandonEnabled, setAbandonEnabled] = useState(false);
+  const abandonEnabledRef = useRef(false);
+  abandonEnabledRef.current = abandonEnabled;
   const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waitingEnteredAtRef = useRef<bigint | null>(null);
+  const waitingStateRef = useRef<SessionModel['channel']['status']['state'] | null>(null);
 
   // Consent prompt state for the new tracker protocol
   const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
@@ -631,14 +648,20 @@ const Shell = () => {
   // the abandon action after ABANDON_DELAY_MS.
   const channelState = dashboardSessionModel?.channel.status.state ?? null;
   useEffect(() => {
-    if (channelState && ABANDON_WAITING_STATES.has(channelState)) {
-      if (waitingEnteredAtRef.current === null) {
+    if (isAbandonWaitingState(channelState)) {
+      if (waitingEnteredAtRef.current === null || waitingStateRef.current !== channelState) {
+        if (abandonTimerRef.current !== null) {
+          clearTimeout(abandonTimerRef.current);
+          abandonTimerRef.current = null;
+        }
         const now = BigInt(Date.now());
         waitingEnteredAtRef.current = now;
+        waitingStateRef.current = channelState;
         setAbandonEnabled(false);
         saveSession({ waitingStateEnteredAt: now });
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
+          if (dashboardSessionModelRef.current?.channel.status.state !== channelState) return;
           setAbandonEnabled(true);
         }, Number(ABANDON_DELAY_MS));
       }
@@ -649,6 +672,7 @@ const Shell = () => {
       }
       if (waitingEnteredAtRef.current !== null) {
         waitingEnteredAtRef.current = null;
+        waitingStateRef.current = null;
         saveSession({ waitingStateEnteredAt: undefined });
       }
       setAbandonEnabled(false);
@@ -871,6 +895,7 @@ const Shell = () => {
       abandonTimerRef.current = null;
     }
     waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
     setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
     setSessionPhase('none');
@@ -916,6 +941,7 @@ const Shell = () => {
       abandonTimerRef.current = null;
     }
     waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
     setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
 
@@ -1511,17 +1537,32 @@ const Shell = () => {
     setWalletConnected(iface.isConnected());
     setResuming(false);
 
-    // Restore abandon timer from persisted timestamp
-    if (save.waitingStateEnteredAt != null) {
+    // Restore abandon timer only if the persisted channel is still in that waiting state.
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    const restoredChannelState = savedChannelState(save);
+    if (save.waitingStateEnteredAt != null && isAbandonWaitingState(restoredChannelState)) {
       const elapsed = BigInt(Date.now()) - save.waitingStateEnteredAt;
       waitingEnteredAtRef.current = save.waitingStateEnteredAt;
+      waitingStateRef.current = restoredChannelState;
       if (elapsed >= ABANDON_DELAY_MS) {
         setAbandonEnabled(true);
       } else {
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
+          const currentState = dashboardSessionModelRef.current?.channel.status.state ?? restoredChannelState;
+          if (currentState !== restoredChannelState) return;
           setAbandonEnabled(true);
         }, Number(ABANDON_DELAY_MS - elapsed));
+      }
+    } else {
+      waitingEnteredAtRef.current = null;
+      waitingStateRef.current = null;
+      setAbandonEnabled(false);
+      if (save.waitingStateEnteredAt != null) {
+        saveSession({ waitingStateEnteredAt: undefined });
       }
     }
 
@@ -1727,6 +1768,7 @@ const Shell = () => {
       abandonTimerRef.current = null;
     }
     waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
     setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
     setSessionPhase('none');
@@ -1791,12 +1833,17 @@ const Shell = () => {
         requestDashboardGoOnChain();
         break;
       case 'abandon':
+        if (!isSessionAbandonable(dashboardSessionModelRef.current, abandonEnabledRef.current)) {
+          setConfirmDialog(null);
+          break;
+        }
         setConfirmDialog({
           title: 'Abandon session?',
           body: 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation.',
           confirmLabel: 'Abandon',
           onConfirm: () => {
             setConfirmDialog(null);
+            if (!isSessionAbandonable(dashboardSessionModelRef.current, abandonEnabledRef.current)) return;
             cancelDashboardSession();
           },
         });
