@@ -1302,7 +1302,7 @@ const Shell = () => {
     setSessionId(hubSessionId);
 
     const resuming = !!loadState().serializedGameSession;     // skip on resume
-    const gate = getBlockchainType() === 'walletconnect' && !resuming;  // skip on simulator
+    const gate = blockchainTypeRef.current === 'walletconnect' && !resuming;  // skip on simulator
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);   // simulator/resume => immediately "ready"
     // Set the refs synchronously: the HubConnection constructor below calls
@@ -1826,6 +1826,18 @@ const Shell = () => {
   }, [startBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
+
+  // connectToHub snapshots the peer gate at hub-connect time, but the
+  // wallet can be connected or switched while the hub is already up.
+  // Re-evaluate whenever the blockchain type changes so a WalletConnect wallet
+  // connected after the hub still waits for a full node peer.
+  useEffect(() => {
+    if (!hubOrigin) return;
+    const resuming = !!loadState().serializedGameSession;
+    const gate = blockchainType === 'walletconnect' && !resuming;
+    setPeerGateActive(gate);
+    setHasFullNodePeer(!gate);
+  }, [blockchainType, hubOrigin]);
 
   // While the peer gate is active, poll the wallet for a full node peer every 5s
   // and only mark ready (visible in the lobby) once one is present.
