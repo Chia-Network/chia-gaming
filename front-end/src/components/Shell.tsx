@@ -1837,6 +1837,11 @@ const Shell = () => {
     const gate = blockchainType === 'walletconnect' && !resuming;
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);
+    // Set the refs synchronously (as connectToHub does): getPresence can
+    // run on a hub reconnect before the state updates above have applied,
+    // and must not report a stale not-busy while the gate should be active.
+    peerGateActiveRef.current = gate;
+    hasFullNodePeerRef.current = !gate;
   }, [blockchainType, hubOrigin]);
 
   // While the peer gate is active, poll the wallet for a full node peer every 5s
