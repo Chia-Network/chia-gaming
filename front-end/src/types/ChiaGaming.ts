@@ -68,9 +68,6 @@ export interface CoinsetOrgBlockSpend {
 export interface ProposeGameParams {
   game_type: string;
   timeout: bigint;
-  amount: bigint;
-  my_contribution: bigint;
-  my_turn: boolean;
   parameters: Program | null;
 }
 
@@ -173,7 +170,7 @@ export type WasmEvent =
 
 interface GameCradleCreateConfig {
   rng_id: number;
-  game_types: Record<string, { version: number; hex: string; parser_hex: string }>;
+  game_types: Record<string, { version: number; hex: string }>;
   have_potato: boolean;
   my_contribution: Amount;
   their_contribution: Amount;

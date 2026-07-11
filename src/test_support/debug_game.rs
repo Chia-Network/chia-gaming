@@ -86,7 +86,7 @@ pub struct DebugGameMoveInfo {
 /// A handler for the bare debug game, wrapped in a referee coin.
 pub struct BareDebugGameHandler {
     #[cfg(test)]
-    game: Game,
+    game: GameStartInfo,
 
     pub alice_identity: ChiaIdentity,
     pub bob_identity: ChiaIdentity,
@@ -158,31 +158,19 @@ impl BareDebugGameHandler {
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args_node = (my_contribution, (their_contribution, (args, ())))
+        let args_node = (my_contribution, (their_contribution, (true, (args, ()))))
             .to_clvm(allocator)
             .into_gen()?;
-        let args_clvm = Rc::new(Program::from_nodeptr(allocator, args_node)?);
-        let alice_game = Game::new_program(
-            allocator,
-            true,
-            &game_id,
-            curried_prog.clone().into(),
-            args_clvm.clone(),
-        )?;
-        let bob_game =
-            Game::new_program(allocator, false, &game_id, curried_prog.into(), args_clvm)?;
-        let start_a = alice_game.game_start(
-            &game_id,
-            &Amount::new(my_contribution),
-            &Amount::new(their_contribution),
-            &timeout,
-        );
-        let start_b = bob_game.game_start(
-            &game_id,
-            &Amount::new(their_contribution),
-            &Amount::new(my_contribution),
-            &timeout,
-        );
+        let parameters = Program::from_nodeptr(allocator, args_node)?;
+        let games = Game::run_factory(allocator, curried_prog.into(), &parameters)?;
+        if games.len() != 1 {
+            return Err(Error::StrErr(format!(
+                "debug factory returned {} games, expected one",
+                games.len()
+            )));
+        }
+        let start_a = games[0].game_start(&game_id, &timeout, true);
+        let start_b = games[0].game_start(&game_id, &timeout, false);
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
         let make_bare_handler = |game_start: &GameStartInfo| -> BareDebugGameHandler {
@@ -208,7 +196,7 @@ impl BareDebugGameHandler {
                 mod_hash: referee_coin_puzzle_hash.clone(),
                 nonce,
                 #[cfg(test)]
-                game: alice_game.clone(),
+                game: game_start.clone(),
                 slash_detected: None,
                 rng: rng_sequence
                     .iter()
@@ -633,10 +621,10 @@ pub fn test_debug_game_factory() {
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];
     let debug_games = make_debug_games(&mut allocator, &mut rng, &identities, 0).expect("good");
-    assert_eq!(512, debug_games[0].game.starts[0].initial_max_move_size);
+    assert_eq!(512, debug_games[0].game.initial_max_move_size);
     assert_eq!(
-        debug_games[0].game.starts[0].initial_max_move_size,
-        debug_games[1].game.starts[0].initial_max_move_size
+        debug_games[0].game.initial_max_move_size,
+        debug_games[1].game.initial_max_move_size
     );
 }
 
@@ -799,8 +787,8 @@ pub fn test_debug_game_validation_move() {
     let debug_games = pair_of_array_mut(&mut debug_games);
 
     assert_eq!(
-        debug_games.0.game.starts[0].initial_validation_program,
-        debug_games.1.game.starts[0].initial_validation_program
+        debug_games.0.game.initial_validation_program,
+        debug_games.1.game.initial_validation_program
     );
 
     let _move1 = debug_games

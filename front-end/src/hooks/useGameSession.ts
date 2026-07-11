@@ -957,41 +957,27 @@ export function useGameSession(
     }
     log(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution} timeout=${terms.gameTimeout}`);
     try {
-      const baseParams = {
+      const senderGoesFirst = selectDefaultCalpokerProposalMyTurn(iStarted);
+      const parameters = terms.gameType === 'krunk'
+        ? Program.fromBigInt(terms.myContribution)
+        : terms.gameType === 'spacepoker' && terms.spacepokerUnitSize
+          ? Program.fromList([
+              Program.fromBigInt(terms.myContribution),
+              Program.fromBigInt(terms.spacepokerUnitSize),
+              Program.fromBigInt(senderGoesFirst ? 1n : 0n),
+            ])
+          : Program.fromList([
+              Program.fromBigInt(terms.myContribution),
+              Program.fromBigInt(senderGoesFirst ? 1n : 0n),
+            ]);
+      const ids = go.proposeGame({
         game_type: terms.gameType,
         timeout: terms.gameTimeout,
-        amount: terms.myContribution + terms.theirContribution,
-        my_contribution: terms.myContribution,
-        parameters: terms.gameType === 'spacepoker' && terms.spacepokerUnitSize
-          ? Program.fromBigInt(terms.spacepokerUnitSize)
-          : null,
-      };
-
-      if (terms.gameType === 'krunk') {
-        const stake = terms.myContribution;
-        const krunkBaseParams = {
-          game_type: terms.gameType,
-          timeout: terms.gameTimeout,
-          amount: stake,
-          parameters: Program.fromBigInt(stake),
-        };
-        const ids = go.proposeGames([
-          { ...krunkBaseParams, my_contribution: stake, my_turn: true },
-          { ...krunkBaseParams, my_contribution: 0n, my_turn: false },
-        ]);
-        for (const id of ids) {
-          proposalTermsByIdRef.current[id] = terms;
-          outgoingProposalIdsRef.current.add(id);
-        }
-      } else {
-        const ids = go.proposeGame({
-          ...baseParams,
-          my_turn: selectDefaultCalpokerProposalMyTurn(iStarted),
-        });
-        for (const id of ids) {
-          proposalTermsByIdRef.current[id] = terms;
-          outgoingProposalIdsRef.current.add(id);
-        }
+        parameters,
+      });
+      for (const id of ids) {
+        proposalTermsByIdRef.current[id] = terms;
+        outgoingProposalIdsRef.current.add(id);
       }
     } catch (_) {
       // proposal can fail if channel isn't ready yet; user can retry

@@ -261,68 +261,39 @@ struct GameSetup {
 }
 
 fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
-    let make_proposal = read_hex_puzzle(
+    let factory = read_hex_puzzle(
         allocator,
-        "clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex",
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex",
     )
-    .expect("load make_proposal");
-    let parser = read_hex_puzzle(
-        allocator,
-        "clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex",
-    )
-    .expect("load parser");
-
-    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
-    let parser_clvm = parser.to_clvm(allocator).unwrap();
-
-    let bet_args = (BET_SIZE, (BET_UNIT, ())).to_clvm(allocator).unwrap();
-    let proposal_result = run_clvm(allocator, make_proposal_clvm, bet_args);
-
-    let proposal_list = proper_list(allocator.allocator(), proposal_result, true).unwrap();
-    assert!(
-        proposal_list.len() >= 2,
-        "make_proposal returned {} elements",
-        proposal_list.len()
+    .expect("load factory");
+    let factory_clvm = factory.to_clvm(allocator).unwrap();
+    let parameters = (BET_SIZE, (BET_UNIT, (1i64, ())))
+        .to_clvm(allocator)
+        .unwrap();
+    let result = run_clvm(allocator, factory_clvm, parameters);
+    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "Space Poker factory must return one record"
     );
-    let wire_data = proposal_list[0];
-    let local_data = proposal_list[1];
-
-    let wire_data_list = proper_list(allocator.allocator(), wire_data, true).unwrap();
-    let game_specs_wrapper = proper_list(allocator.allocator(), wire_data_list[2], true).unwrap();
-    let game_spec = proper_list(allocator.allocator(), game_specs_wrapper[0], true).unwrap();
-    let initial_validator_hash = game_spec[2];
-    let initial_move = game_spec[3];
-    let initial_max_move_size = int_from_node(allocator, game_spec[4]);
-    let initial_state = game_spec[5];
-    let initial_mover_share = int_from_node(allocator, game_spec[6]);
-
-    let local_data_list = proper_list(allocator.allocator(), local_data, true).unwrap();
-    let hv_list = proper_list(allocator.allocator(), local_data_list[0], true).unwrap();
-    assert!(
-        hv_list.len() >= 2,
-        "handler_validator has {} elements",
-        hv_list.len()
-    );
-    let alice_handler = hv_list[0];
-    let alice_validator = hv_list[1];
-
-    let parser_result = run_clvm(allocator, parser_clvm, wire_data);
-    let parser_list = proper_list(allocator.allocator(), parser_result, true).unwrap();
-    let bob_data_list = proper_list(allocator.allocator(), parser_list[1], true).unwrap();
-    let bob_hv_list = proper_list(allocator.allocator(), bob_data_list[0], true).unwrap();
-    let bob_validator = bob_hv_list[0];
-    let bob_handler = bob_hv_list[1];
+    let record = proper_list(allocator.allocator(), records[0], true).unwrap();
+    assert_eq!(record.len(), 12, "factory record must have 12 fields");
+    assert_eq!(int_from_node(allocator, record[0]), BET_SIZE);
+    assert_eq!(int_from_node(allocator, record[1]), BET_SIZE);
+    assert_eq!(int_from_node(allocator, record[2]), AMOUNT);
+    assert_eq!(int_from_node(allocator, record[3]), 1);
 
     GameSetup {
-        alice_handler,
-        alice_validator,
-        bob_handler,
-        bob_validator,
-        initial_validator_hash,
-        initial_state,
-        initial_move,
-        initial_max_move_size,
-        initial_mover_share,
+        alice_handler: record[9],
+        alice_validator: record[11],
+        bob_handler: record[10],
+        bob_validator: record[11],
+        initial_validator_hash: record[4],
+        initial_state: record[7],
+        initial_move: record[5],
+        initial_max_move_size: int_from_node(allocator, record[6]),
+        initial_mover_share: int_from_node(allocator, record[8]),
     }
 }
 
@@ -690,93 +661,78 @@ fn test_spacepoker_setup_game() {
     assert_eq!(state_val, BET_UNIT, "initial state should be bet_unit");
 }
 
-fn make_proposal_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
-    let make_proposal = read_hex_puzzle(
+fn factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
+    let factory = read_hex_puzzle(
         allocator,
-        "clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex",
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex",
     )
-    .expect("load make_proposal");
-    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
+    .expect("load factory");
+    let factory_clvm = factory.to_clvm(allocator).unwrap();
     run_program(
         allocator.allocator(),
         &chia_dialect(),
-        make_proposal_clvm,
+        factory_clvm,
         args,
         0,
     )
     .is_ok()
 }
 
-fn parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
-    let parser = read_hex_puzzle(
-        allocator,
-        "clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex",
-    )
-    .expect("load parser");
-    let parser_clvm = parser.to_clvm(allocator).unwrap();
-    run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        parser_clvm,
-        wire_data,
-        0,
-    )
-    .is_ok()
-}
-
 #[test]
-fn test_spacepoker_make_proposal_requires_explicit_valid_bet_unit() {
+fn test_spacepoker_factory_requires_canonical_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, (BET_UNIT, ())).to_clvm(&mut allocator).unwrap();
+    let valid_args = (BET_SIZE, (BET_UNIT, (1i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(
-        make_proposal_succeeds(&mut allocator, valid_args),
-        "explicit valid bet_unit should be accepted"
+        factory_succeeds(&mut allocator, valid_args),
+        "valid canonical parameters should be accepted"
+    );
+    let valid_nil_bool = (BET_SIZE, (BET_UNIT, (0i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    assert!(
+        factory_succeeds(&mut allocator, valid_nil_bool),
+        "nil sender_goes_first should be accepted"
     );
 
     let missing_bet_unit = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
     assert!(
-        !make_proposal_succeeds(&mut allocator, missing_bet_unit),
+        !factory_succeeds(&mut allocator, missing_bet_unit),
         "bet_unit is required; no per_player_stake / 10 fallback should exist"
     );
 
-    let zero_bet_unit = (BET_SIZE, (0i64, ())).to_clvm(&mut allocator).unwrap();
+    let zero_bet_unit = (BET_SIZE, (0i64, (1i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(
-        !make_proposal_succeeds(&mut allocator, zero_bet_unit),
+        !factory_succeeds(&mut allocator, zero_bet_unit),
         "bet_unit must be positive"
     );
 
-    let non_dividing_bet_unit = (BET_SIZE, (6i64, ())).to_clvm(&mut allocator).unwrap();
-    assert!(
-        !make_proposal_succeeds(&mut allocator, non_dividing_bet_unit),
-        "per_player_stake must divide evenly into bet_unit-sized stack units"
-    );
-}
-
-#[test]
-fn test_spacepoker_parser_rejects_invalid_peer_bet_unit() {
-    let mut allocator = AllocEncoder::new();
-
-    let bad_bet_unit = 0i64;
-    let peer_wire_data = (
-        BET_SIZE,
-        (
-            BET_SIZE,
-            (
-                vec![(
-                    AMOUNT,
-                    (1i64, (0i64, (0i64, (32i64, (bad_bet_unit, (0i64, ())))))),
-                )],
-                (),
-            ),
-        ),
-    )
+    let non_dividing_bet_unit = (BET_SIZE, (6i64, (1i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
-
     assert!(
-        !parser_succeeds(&mut allocator, peer_wire_data),
-        "peer wire proposals with invalid Space Poker terms should make the parser throw"
+        !factory_succeeds(&mut allocator, non_dividing_bet_unit),
+        "per_player_stake must divide evenly into bet_unit-sized stack units"
+    );
+
+    let noncanonical_bool = (BET_SIZE, (BET_UNIT, (2i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    assert!(
+        !factory_succeeds(&mut allocator, noncanonical_bool),
+        "sender_goes_first must be nil or 1"
+    );
+
+    let extra_parameter = (BET_SIZE, (BET_UNIT, (1i64, (7i64, ()))))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    assert!(
+        !factory_succeeds(&mut allocator, extra_parameter),
+        "parameters must be a three-element proper list"
     );
 }
 
@@ -1951,12 +1907,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_spacepoker_happy_path_all_calls,
         ),
         (
-            "test_spacepoker_make_proposal_requires_explicit_valid_bet_unit",
-            &test_spacepoker_make_proposal_requires_explicit_valid_bet_unit,
-        ),
-        (
-            "test_spacepoker_parser_rejects_invalid_peer_bet_unit",
-            &test_spacepoker_parser_rejects_invalid_peer_bet_unit,
+            "test_spacepoker_factory_requires_canonical_parameters",
+            &test_spacepoker_factory_requires_canonical_parameters,
         ),
         (
             "test_spacepoker_happy_path_alice_opens",

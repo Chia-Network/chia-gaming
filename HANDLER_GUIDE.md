@@ -219,9 +219,10 @@ my_turn_handler_0 ──produces──> their_turn_handler_0
 ```
 
 The initial handler pair is established when the game is proposed and
-accepted: the proposal factory produces the first handler and validator for
-each side. From there, each turn's handler output specifies the next handler,
-creating an implicit state machine.
+accepted: the proposal factory produces fixed my-turn and their-turn handlers
+plus the initial validator for each game. The higher layer selects the handler
+appropriate to the local side and first mover. From there, each turn's handler
+output specifies the next handler, creating an implicit state machine.
 
 When a handler returns nil for the next handler, the game is over. No more
 turns will be taken.
@@ -230,29 +231,51 @@ turns will be taken.
 
 ## Proposal Execution Model
 
-Both peers derive their handler and validator programs locally — no full
-programs or hashes cross the wire from the peer during proposal.
+The proposal API takes one atomic group request:
 
-When a proposal arrives, the receiving peer runs the same registered factory
-puzzle (`run_make_proposal`) on their own machine, using only the agreed
-economic parameters (bet size, contributions) as input. The factory returns
-both `wire_data` (containing the `initial_validator_hash` among other fields)
-and `local_data` (containing the actual `initial_validator` program). The
-proposer's side uses the `local_data` directly; the responder runs the
-`parser` on the `wire_data` to extract their own handler/validator pair.
+```
+(game_type parameters timeout)
+```
 
-Critically, the `initial_validator_hash` and the `initial_validator` program
-are both outputs of the same local CLVM execution. Neither value is supplied
-by the peer — the peer's proposal contains only the game type tag and
-economic terms (`amount`, `my_contribution`, `timeout`, `my_turn`). The
-`StateUpdateProgram` constructed from these outputs is therefore
-self-consistent by construction: the hash matches the program because they
-came from the same factory invocation.
+`parameters` is the game-specific CLVM object and `timeout` is shared by every
+game produced for the group. Both peers look up and run the same registered,
+deterministic factory using those parameters. The factory returns a non-empty
+ordered list of canonical 12-field game records:
 
-This design means the peer cannot supply a mismatched program/hash pair.
-The only way a mismatch could occur is if the two peers have different
-versions of the registered game factory — which would be a configuration
-bug, not an attack.
+```
+(
+  sender_contribution
+  receiver_contribution
+  amount
+  sender_goes_first
+  initial_validator_hash
+  initial_move
+  initial_max_move_size
+  initial_state
+  initial_mover_share
+  my_turn_handler
+  their_turn_handler
+  initial_validator
+)
+```
+
+Contributions and `sender_goes_first` are oriented to the proposal sender.
+The higher layer keeps that canonical orientation on the wire, then swaps
+sender/receiver contributions into the local `my_contribution` /
+`their_contribution` perspective when constructing each peer's game. It also
+selects `my_turn_handler` or `their_turn_handler` according to whether that
+peer is the initial mover. The factory handlers themselves are not regenerated
+from peer-specific inputs.
+
+The validator program and its hash come from the same local factory execution,
+and the framework verifies that they match. The wire member metadata is checked
+against the receiver's independently derived factory output, including list
+order and cardinality. The current factories produce one game for Calpoker,
+one for Space Poker, and two for Krunk.
+
+There is no proposal parser and no peer-specific `wire_data`/`local_data`
+proposal split in this model. This is separate from the optional advisory
+message parsers described below, which remain part of active gameplay.
 
 ---
 

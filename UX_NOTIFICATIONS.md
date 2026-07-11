@@ -230,7 +230,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 
 | Notification                                               | When                                 | Meaning                                                                                                              |
 | ---------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `ProposalMade { id, my_contribution, their_contribution }` | Game proposal received from opponent | A new game has been proposed by the peer. Only fires for the receiver — the proposer does not get this notification. |
+| `ProposalMade { id, group_ids, my_contribution, their_contribution, timeout, game_type, ... }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` contains all IDs in deterministic factory order for multi-game groups (empty for a singleton). Contributions are aggregate totals in the receiver's local perspective. |
 | `ProposalAccepted { id }`                                  | Proposal accepted by either side     | The game is now live and play can begin                                                                              |
 | `ProposalCancelled { id, reason }`                         | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
 
@@ -268,7 +268,7 @@ The frontend should treat any of these as the "game ended" signal.
 
 | Conceptual UX label | Actual wire shape | When | Meaning |
 | --- | --- | --- | --- |
-| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | Preceded by `ProposalAccepted`; the game is immediately terminated. The peer sees `ProposalCancelled { reason: CancelledByPeer }` as the Rule A follow-up for their proposal. |
+| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Group accept attempted with insufficient aggregate funds | Emitted for the group request before any member is accepted. The whole group is cancelled; no partial live games are created. |
 | WeTimedOut | `GameStatus { status: EndedWeTimedOut, my_reward, coin_id }` | Game resolved in our favor | Off-chain accept-timeout completion or on-chain timeout/slash resolution path |
 | OpponentTimedOut | `GameStatus { status: EndedOpponentTimedOut, my_reward, coin_id }` | Game resolved in opponent's favor | Includes receiving opponent accept-timeout and on-chain opponent-favor outcomes |
 | EndedCancelled | `GameStatus { status: EndedCancelled, ... }` | In-flight accept lost during stale unroll | The game was accepted but no moves were made; the unroll predates the acceptance |
@@ -334,18 +334,32 @@ open item is explicitly resolved.
 Calling `propose_game`, `accept_proposal`, or `cancel_proposal` queues an
 intent. The potato protocol resolves it when the potato is held and the queue
 is drained. The notification stream — not the API call — is the source of
-truth. Proposing comes with a liveness guarantee (every game ID will resolve);
-accepting and cancelling do not (the intent may silently evaporate if the
-proposal was already resolved by the time the queue is drained).
+truth. One proposal call represents one factory-derived group and the receiver
+gets one `ProposalMade` with ordered IDs. Accept and cancel expand from any
+member ID to the whole group. Proposing comes with a liveness guarantee (every
+produced game ID will resolve); accepting and cancelling do not (the intent may
+silently evaporate if the proposal was already resolved by the time the queue
+is drained).
 
 ### Rule A — Proposal lifecycle
 
-Every proposal-start event — a `propose_game` call (proposer side) or a
-`ProposalMade` notification (receiver side) — yields exactly one
-`ProposalAccepted` or `ProposalCancelled` for that game ID on that player's
-side. The `cancel_all_proposals()` call on every exit path (go-on-chain, clean
-shutdown, channel error) is the catch-all that ensures no proposal is left
-unresolved. Enforced by the simulation loop's post-test assertion.
+Every group-start event — a `propose_game` call (proposer side) or the single
+`ProposalMade` notification (receiver side) — covers the ordered IDs returned
+by the deterministic factory. Each member ID yields exactly one
+`ProposalAccepted` or `ProposalCancelled` on that player's side, but group
+acceptance and cancellation are all-or-none. The `cancel_all_proposals()` call
+on every exit path (go-on-chain, clean shutdown, channel error) is the catch-all
+that ensures no member is left unresolved. Enforced by the simulation loop's
+post-test assertion.
+
+### Atomic proposal-group invariant
+
+Proposal creation derives all member economics atomically but does not require
+the hand to be currently fundable. Acceptance checks the aggregate sender and
+receiver contributions before accepting any member. A peer must place every
+member acceptance in the same batch; partial acceptance rejects the batch.
+Cancellation likewise expands to the complete group. Consequently the UI must
+never model a factory group as partly pending, partly live, or partly cancelled.
 
 ### Rule B — Game lifecycle (bijection)
 

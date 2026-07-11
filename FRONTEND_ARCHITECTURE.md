@@ -401,10 +401,10 @@ full mid-game session state:
 | `betweenHandMode` | `string?` | Between-hand overlay state. |
 | `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay. |
 | `betweenHandComposeGameType` | `string?` | Proposed game type in compose overlay. |
-| `betweenHandLastTerms` | `{ my_contribution, their_contribution, game_type? }?` | Last agreed hand terms. |
-| `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_type? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
-| `betweenHandCachedPeerProposal` | `{ id, my_contribution, their_contribution, game_type? }?` | Peer proposal cached while the between-hand UI decides how to present it. |
-| `betweenHandReviewPeerProposal` | `{ id, my_contribution, their_contribution, game_type? }?` | Peer proposal currently shown in the review UI. |
+| `betweenHandLastTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Last agreed hand terms. |
+| `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
+| `betweenHandCachedPeerProposal` | `{ id, groupIds?, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. |
+| `betweenHandReviewPeerProposal` | `{ id, groupIds?, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. |
 
 The old `SessionSave` name is now only a deprecated TypeScript alias for
 `SessionState`.
@@ -1004,7 +1004,9 @@ individual hands). The `useGameSession` hook owns:
   balance, hand counter, between-hand overlay.
 - **Game proposal flow** — the initiator proposes on `ChannelCreated`; the
   responder auto-accepts the first proposal and pending proposals after
-  "play again".
+  "play again". Each call supplies one `{ game_type, parameters, timeout }`
+  group request. WASM runs that game's deterministic factory and returns all
+  generated IDs (one for Calpoker/Space Poker, two for Krunk).
 - **Between-game UX** — an overlay showing the final result of each hand, with
   "Play Another Hand" and "End Session" buttons.
 - **History** and **Log** — append-only text areas managed by the Shell,
@@ -1081,7 +1083,8 @@ Premature timeouts where we failed to move are flagged as errors via
 These drive game proposal and acceptance flow. They are consumed by
 `handleNotification` and never forwarded to the game UI:
 
-- `ProposalMade` — triggers auto-accept for the responder
+- `ProposalMade` — one notification per factory group; carries the first ID and
+  ordered `group_ids` for multi-game groups, and triggers group auto-accept
 
 ### Gameplay events (forwarded to game UI via observable)
 
@@ -1112,12 +1115,14 @@ a multiplexer (game ID → component mapping) and the JS-side guards are relaxed
 `gameIdsRef.current.length > 0` (a game is active). This prevents the user
 from proposing a new hand while one is in progress.
 
-**Grouped proposals** — For games that require multiple concurrent games per
-hand (e.g. Krunk), `proposeNewGame` calls `proposeGames` (plural) with all
-games in a single call. The Rust layer tags them with a shared `group_id` so
-accepts and cancels are atomic. On the receive side, the `ProposalMade`
-notification carries `group_ids`; the frontend skips secondary group members
-and presents one logical proposal to the user.
+**Atomic factory proposals** — `proposeNewGame` constructs one request with
+`game_type`, game-specific CLVM `parameters`, and a shared game timeout.
+`SessionController.proposeGame` sends that single request to WASM and stores all
+returned IDs. The registered deterministic factory decides cardinality:
+Calpoker and Space Poker return one ID; Krunk returns two ordered IDs. On the
+receive side there is exactly one `ProposalMade` for the group, so the frontend
+presents one logical proposal without deduplicating per-member notifications.
+Accepting or cancelling via the first ID expands to the full group in WASM.
 
 **Receive guard** — When a `ProposalMade` notification arrives while a game is
 active (`handKeyRef.current > 0 && gameIdsRef.current.length === 0` is false),
@@ -1137,11 +1142,11 @@ Two proposal constraints live in WASM because they arise from the potato
 protocol's asynchronous nature and cannot be deferred to JS:
 
 1. **`SupersededByIncoming`** — When a batch arrives containing a
-   `ProposeGame` from the peer, any locally queued `QueuedProposal` actions
-   are removed from the `game_action_queue`. The queued proposals were built
-   against a now-stale state (the incoming batch carries the potato and the
-   definitive state). WASM emits `ProposalCancelled { reason:
-   SupersededByIncoming }` for each removed proposal.
+   `ProposeGroup` from the peer, any locally queued `QueuedProposalGroup`
+   actions are removed from the `game_action_queue`. The queued groups were
+   built against a now-stale state (the incoming batch carries the potato and
+   the definitive state). WASM emits one `ProposalCancelled { reason:
+   SupersededByIncoming }` for each removed group, keyed by its first ID.
 
 2. **`PeerProposalPending`** — When JS calls `propose_game` while an
    unresolved peer proposal exists in `proposed_games`, WASM rejects
@@ -1159,9 +1164,10 @@ before deciding what to do (see
 [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
 
 Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
-amount consistency, and the current hard-coded 15-block game timeout — are
-validation/safety checks, not single-hand enforcement. They exist to prevent
-protocol violations, not to limit concurrency.
+factory/member consistency, positive shared timeout validation, aggregate
+balance preflight, and all-or-none group acceptance — are validation/safety
+checks, not single-hand enforcement. They exist to prevent protocol violations,
+not to limit concurrency.
 
 ## Key Files
 

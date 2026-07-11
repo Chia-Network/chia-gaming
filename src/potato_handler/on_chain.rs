@@ -1666,9 +1666,10 @@ impl OnChainGameHandler {
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
             GameAction::SendPotato => Ok(Vec::new()),
-            GameAction::QueuedProposal(_, _)
+            GameAction::QueuedProposalGroup(_, _)
             | GameAction::QueuedAcceptProposal(_)
-            | GameAction::QueuedCancelProposal(_) => Ok(vec![]),
+            | GameAction::QueuedCancelProposal(_)
+            | GameAction::QueuedCancelProposalSilently(_) => Ok(vec![]),
             #[cfg(test)]
             GameAction::ForcedSelfAccept(_) => Ok(vec![]),
         }

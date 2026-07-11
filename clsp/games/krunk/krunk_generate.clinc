@@ -11,11 +11,9 @@
 (import std.li)
 (import std.curry)
 (import std.assert)
-(import std.deep_compare)
 (import std.len)
-(import std.or)
 
-; --- proposal factory / parser ---
+; --- deterministic factory ---
 ;
 ; DICT_TREE and DICT_PUBKEY are curried in at startup from a single .dat file
 ; (48-byte BLS pubkey prefix + serialized CLVM tree).
@@ -29,44 +27,27 @@
 (defconstant MIN_WORD 0x8000000000)
 (defconstant MAX_WORD 0x7fffffffff)
 
-(defun krunk_make_proposal (DICT_PUBKEY DICT_TREE proposer_contribution stake)
+(defun krunk_factory (DICT_PUBKEY DICT_TREE . stake)
     (assert
         (> stake 0)
-        (assert
-            (= (% stake 100) 0)
-            (assert
-                (or (= proposer_contribution 0) (= proposer_contribution stake))
-                (assign
-                    guesser_contribution (- stake proposer_contribution)
-                    base_unit (/ stake 100)
-                    (li
-                        (li
-                            proposer_contribution
-                            guesser_contribution
-                            (li
-                                (li stake 1 commit_hash 0 32 (li DICT_PUBKEY base_unit) 0)
-                            )
-                        )
-                        (li
-                            (li (curry krunk_alice_handler_commit DICT_TREE) val_commit)
-                        )
-                    )
+        (= (% stake 100) 0)
+        (assign
+            base_unit (/ stake 100)
+            initial_state (li DICT_PUBKEY base_unit)
+            alice_handler (curry krunk_alice_handler_commit DICT_TREE)
+            bob_handler (curry krunk_bob_handler_commit DICT_TREE)
+            (li
+                ; Slot 0: sender is the picker.
+                (li
+                    stake 0 stake 1 commit_hash 0 32 initial_state 0
+                    alice_handler bob_handler val_commit
+                )
+                ; Slot 1: sender is the guesser.
+                (li
+                    0 stake stake 0 commit_hash 0 32 initial_state 0
+                    bob_handler alice_handler val_commit
                 )
             )
-        )
-    )
-)
-
-; Parser: curried with (DICT_PUBKEY DICT_TREE) at registration time.
-(defun krunk_parser (DICT_PUBKEY DICT_TREE . wire_data)
-    (assign
-        proposer_contribution (f wire_data)
-        guesser_contribution (f (r wire_data))
-        stake (+ proposer_contribution guesser_contribution)
-        base_unit (/ stake 100)
-        (assert
-            (deep= wire_data (f (krunk_make_proposal DICT_PUBKEY DICT_TREE proposer_contribution stake)))
-            (li (list stake base_unit) (li (li val_commit (curry krunk_bob_handler_commit DICT_TREE))))
         )
     )
 )

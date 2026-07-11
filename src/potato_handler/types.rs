@@ -17,10 +17,23 @@ use crate::potato_handler::start::GameStart;
 use crate::referee::types::GameMoveDetails;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct WireProposeGame {
-    pub start: GameStart,
+pub struct WireGameSpec {
     pub game_id: GameID,
-    pub start_index: usize,
+    pub amount: Amount,
+    pub sender_contribution: Amount,
+    pub receiver_contribution: Amount,
+    pub sender_goes_first: bool,
+    pub initial_validation_program_hash: Hash,
+    pub initial_move: Vec<u8>,
+    pub initial_max_move_size: usize,
+    pub initial_state: Program,
+    pub initial_mover_share: Amount,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WireProposalGroup {
+    pub start: GameStart,
+    pub members: Vec<WireGameSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<GameID>,
 }
@@ -151,7 +164,7 @@ pub trait FromLocalUI {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BatchAction {
-    ProposeGame(WireProposeGame),
+    ProposeGroup(WireProposalGroup),
     AcceptProposal(GameID),
     CancelProposal(GameID),
     Move(GameID, GameMoveDetails),
@@ -215,9 +228,10 @@ pub enum GameAction {
     AcceptTimeout(GameID),
     CleanShutdown,
     SendPotato,
-    QueuedProposal(Rc<GameStartInfo>, WireProposeGame),
+    QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
     QueuedAcceptProposal(GameID),
     QueuedCancelProposal(GameID),
+    QueuedCancelProposalSilently(GameID),
     Cheat(GameID, Amount, Hash),
     #[cfg(test)]
     ForcedSelfAccept(GameID),
@@ -230,12 +244,15 @@ impl std::fmt::Debug for GameAction {
             GameAction::AcceptTimeout(gi) => write!(formatter, "AcceptTimeout({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
-            GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
+            GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
             GameAction::QueuedAcceptProposal(gi) => {
                 write!(formatter, "QueuedAcceptProposal({gi:?})")
             }
             GameAction::QueuedCancelProposal(gi) => {
                 write!(formatter, "QueuedCancelProposal({gi:?})")
+            }
+            GameAction::QueuedCancelProposalSilently(gi) => {
+                write!(formatter, "QueuedCancelProposalSilently({gi:?})")
             }
             GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
             #[cfg(test)]
@@ -246,10 +263,7 @@ impl std::fmt::Debug for GameAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameFactory {
-    #[serde(skip)]
     pub program: Option<Rc<Program>>,
-    #[serde(skip)]
-    pub parser_program: Option<Rc<Program>>,
 }
 
 #[derive(Serialize, Deserialize)]

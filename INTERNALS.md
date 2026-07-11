@@ -10,6 +10,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Peer Error Escalation](#peer-error-escalation)
 - [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
+- [Atomic Proposal Factory Invariants](#atomic-proposal-factory-invariants)
 - [cached_last_actions and the Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
 - [Simulator Strictness](#simulator-strictness)
@@ -316,6 +317,42 @@ they are only advanced after the received batch is valid.
 (snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
 `drain_queue_into_batch`; regression:
 `failed_final_move_bad_signature_does_not_queue_accept_timeout`
+
+---
+
+## Atomic Proposal Factory Invariants
+
+Proposal construction starts from exactly one group request:
+`game_type`, game-specific `parameters`, and one timeout shared by all games in
+the result. Both peers run the same registered deterministic factory. Its output
+is a non-empty ordered list of canonical 12-field records containing
+sender/receiver contributions, amount, `sender_goes_first`, the initial
+commitments, fixed my-turn and their-turn handlers, and the initial validator.
+The validator hash is checked against the validator program locally.
+
+The result remains sender-oriented until the higher layer constructs local game
+state. At that point it selects the fixed handler matching the local initial
+turn and swaps sender/receiver contributions into the receiver's
+`my_contribution` / `their_contribution` perspective. This avoids peer-specific
+factory runs or proposal parsers while ensuring both peers commit to the same
+game records. Calpoker and Space Poker factories return one record; Krunk
+returns two.
+
+Atomicity is enforced at three boundaries:
+
+1. **Propose:** Derive cardinality, IDs, economics, roles, and wire commitments
+   from one factory run. Proposals may exceed current balances; funding is
+   checked when the receiver chooses to accept.
+2. **Receive:** Re-run the factory and require the group-level wire action's
+   ordered members and cardinality to match exactly.
+3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
+   repeats the aggregate balance preflight before queueing any member, and the
+   receiver rejects a batch that accepts only part of a group. Cancellation
+   also queues every member together.
+
+These checks compose with batch rollback: if group hydration, member validation,
+or partial-acceptance validation fails, none of the received batch's proposal
+mutations survive.
 
 ---
 

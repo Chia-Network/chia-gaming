@@ -239,7 +239,7 @@ Every potato pass is a single `PeerMessage::Batch` containing:
 
 1. `**actions: Vec<BatchAction>`** — one or more game operations to apply
   sequentially:
-  - `ProposeGame` — propose a new game
+  - `ProposeGroup` — propose one factory-derived atomic game group
   - `AcceptProposal` — accept a pending game proposal
   - `CancelProposal` — cancel a pending proposal
   - `Move` — make a game move
@@ -617,10 +617,11 @@ guess Alice gives a Wordle-style clue (correct/present/absent per letter).
 Bob either guesses correctly (winning a payout that decreases with each guess)
 or exhausts all 5 guesses (Alice keeps everything).
 
-Each Krunk hand is an atomic pair of games with the same stake. In each
-individual game, the word-picker funds the entire pot and the guesser funds
-nothing; because each player is the picker once, both players put up one stake
-overall. Stakes must be positive multiples of 100 mojos.
+Each Krunk hand is an atomic pair of games with the same stake. One deterministic
+Krunk factory invocation returns both games in a fixed order. In each individual
+game, the word-picker funds the entire pot and the guesser funds nothing;
+because each player is the picker once, both players put up one stake overall.
+Stakes must be positive multiples of 100 mojos.
 
 Payouts are expressed as multiples of `base_unit = game_pot / 100`:
 
@@ -662,13 +663,24 @@ dictionary changes. Regenerating requires rebuilding chialisp afterward
 The `.dat` file uses a `.dat` extension (not `.hex`) because the chialisp build
 script deletes all `*.hex` files under `clsp/` before rebuilding.
 
-#### Atomic paired proposals
+#### Atomic factory proposals
 
-A Krunk hand always involves two simultaneous games — one where each player is
-Alice (word-picker) and one where each is Bob (guesser). These two games are
-proposed as a single atomic group using `propose_games` (plural). Both games
-share a `group_id` equal to the first game's nonce, so accepting or cancelling
-either game automatically applies to both. See
+A proposal is one group request containing `game_type`, game-specific
+`parameters`, and a timeout shared by every resulting game. Both peers run the
+same registered deterministic factory. Calpoker and Space Poker factories each
+return one game; Krunk returns two simultaneous games — one where each player
+is Alice (word-picker) and one where each is Bob (guesser).
+
+Each factory result is an ordered list of canonical 12-field records containing
+sender/receiver contributions, amount, `sender_goes_first`, initial move/state/
+validator commitments, fixed my-turn and their-turn handlers, and the validator
+program. The higher layer selects the local initial handler and swaps the
+sender/receiver contribution orientation for the receiving peer.
+
+One `ProposeGroup` wire action carries the whole derived group. Acceptance
+preflights aggregate balances for the complete group; accept and cancel apply
+to every member or none. The receiver
+gets one `ProposalMade` notification with ordered IDs. See
 [Grouped Proposals](GAME_LIFECYCLE.md#grouped-atomic-proposals) for the
 general mechanism.
 
@@ -821,13 +833,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `PotatoHandler`                 | `potato_handler/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
 | `OnChainGameHandler`            | `potato_handler/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
 | `LiveGame`                      | `channel_handler/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
-| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | Pending game proposal (stored in `proposed_games`); carries optional `group_id` for atomic grouped proposals |
+| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | One pending member of a factory-derived atomic group stored in `proposed_games` |
 | `UnrollCoin`                    | `channel_handler/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameCradle`                    | `peer_container.rs`                            | Trait for synchronous game interaction (tests/UI)                                                            |
 | `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
-| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: `ProposeGame` (with optional `group_id`), `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
-| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposal`, `CleanShutdown`, `Cheat`                   |
+| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptTimeout` |
+| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
 | `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, and `GameStatus { status: GameStatusKind, ... }` |

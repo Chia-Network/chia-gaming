@@ -209,8 +209,6 @@ mod gaming_wasm {
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameFactory {
         hex: String,
-        #[serde(default)]
-        parser_hex: Option<String>,
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
@@ -236,22 +234,10 @@ mod gaming_wasm {
                 js_factory.hex.len(),
             ))
         })?;
-        let parser_program = if let Some(ref parser_hex) = js_factory.parser_hex {
-            let parser_bytes = hex::decode(parser_hex).map_err(|e| {
-                js_error(&format!(
-                    "game factory '{name}' parser_hex decode: {e:?} (length={})",
-                    parser_hex.len(),
-                ))
-            })?;
-            Some(Program::from_bytes(&parser_bytes).into())
-        } else {
-            None
-        };
         Ok((
             name_data,
             GameFactory {
                 program: Some(Program::from_bytes(&byte_data).into()),
-                parser_program,
             },
         ))
     }
@@ -285,21 +271,6 @@ mod gaming_wasm {
                     game_factory.program =
                         Some(Program::from_nodeptr(&mut allocator, curried)
                             .map_err(|e| js_error(&format!("proposal from nodeptr: {e:?}")))?
-                            .into());
-                }
-                if let Some(ref prog) = game_factory.parser_program {
-                    let prog_node = prog
-                        .to_nodeptr(&mut allocator)
-                        .map_err(|e| js_error(&format!("parser to nodeptr: {e:?}")))?;
-                    let curried = CurriedProgram {
-                        program: prog_node,
-                        args: clvm_curried_args!(dict_pubkey, dict_tree),
-                    }
-                    .to_clvm(&mut allocator)
-                    .map_err(|e| js_error(&format!("curry parser: {e:?}")))?;
-                    game_factory.parser_program =
-                        Some(Program::from_nodeptr(&mut allocator, curried)
-                            .map_err(|e| js_error(&format!("parser from nodeptr: {e:?}")))?
                             .into());
                 }
             }
@@ -927,9 +898,6 @@ mod gaming_wasm {
         // Game name
         game_type: String,
         timeout: u64,
-        amount: u64,
-        my_contribution: u64,
-        my_turn: bool,
     }
 
     fn game_id_to_string(id: &GameID) -> String {
@@ -967,14 +935,7 @@ mod gaming_wasm {
                 .map(|(g, p)| GameStart {
                     game_type: GameType(g.game_type.as_bytes().to_vec()),
                     timeout: Timeout::new(g.timeout),
-                    amount: Amount::new(g.amount),
-                    my_contribution: Amount::new(g.my_contribution),
-                    my_turn: g.my_turn,
                     parameters: Program::from_bytes(p),
-                    initial_validation_program_hash: None,
-                    initial_state: None,
-                    initial_max_move_size: None,
-                    initial_mover_share: None,
                 })
                 .collect();
             let ids = cradle.cradle.propose_games(

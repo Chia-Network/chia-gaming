@@ -2,6 +2,7 @@
 
 (import std.or)
 (import std.and)
+(import std.assert)
 (import std.shatree)
 (import std.curry)
 (import std.print)
@@ -222,79 +223,28 @@
    )
   )
 
-(defun factory (i_am_initiator my_contribution their_contribution (CURRY_PACK))
+(defun factory (sender_contribution receiver_contribution sender_goes_first (CURRY_PACK))
   (assign
-   amount (+ my_contribution their_contribution)
-
-   (if i_am_initiator
-       (list
-        ;; One game
-        (list
-         ;; amount
-         amount
-
-         ;; my turn
-         1
-
-         ;; handler
-         (curry SELF_PROG "myturn" curry-args)
-
-         my_contribution
-         their_contribution
-
-         ;; Initial validation program
-         (curry SELF_PROG "validator" curry-args)
-
-         (validator-hash curry-args)
-
-         ;; Initial state: count slash mover-share
-         (list () () ())
-
-         ;; Initial move
-         ()
-
-         ;; Initial max move size
-         512
-
-         ;; Initial mover share
-         0
-         )
-        )
-
-       (list
-        ;; One game
-        (list
-         ;; amount
-         amount
-
-         ;; their turn
-         0
-
-         ;; handler
-         (curry SELF_PROG "theirturn" curry-args)
-
-         my_contribution
-         their_contribution
-
-         ;; Initial validation program
-         (curry SELF_PROG "validator" curry-args)
-
-         (validator-hash curry-args)
-
-         ;; Initial state: count slash mover-share
-         (list () () ())
-
-         ;; Initial move
-         ()
-
-         ;; Initial max move size
-         512
-
-         ;; Initail mover share
-         0
-         )
-        )
-       )
+   amount (+ sender_contribution receiver_contribution)
+   (assert
+    (or (not sender_goes_first) (= sender_goes_first 1))
+    (list
+     (list
+      sender_contribution
+      receiver_contribution
+      amount
+      sender_goes_first
+      (validator-hash curry-args)
+      ()
+      512
+      (list () () ())
+      0
+      (curry SELF_PROG "myturn" curry-args)
+      (curry SELF_PROG "theirturn" curry-args)
+      (curry SELF_PROG "validator" curry-args)
+      )
+     )
+    )
    )
   )
 

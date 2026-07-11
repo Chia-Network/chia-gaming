@@ -3,8 +3,6 @@ use std::collections::{BTreeMap, VecDeque};
 
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
-
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::game;
@@ -29,7 +27,7 @@ use crate::utils::proper_list;
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::types::{
     BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState,
-    SpendWalletReceiver, WireProposeGame,
+    SpendWalletReceiver, WireGameSpec, WireProposalGroup,
 };
 
 use crate::potato_handler::start::GameStart;
@@ -43,8 +41,6 @@ pub mod on_chain;
 pub mod spend_channel_coin_handler;
 pub mod start;
 pub mod types;
-
-pub type GameStartInfoPair = (Vec<Rc<GameStartInfo>>, Vec<Rc<GameStartInfo>>);
 
 fn serialize_game_type_map<S: Serializer>(
     map: &BTreeMap<GameType, GameFactory>,
@@ -135,15 +131,12 @@ pub struct PotatoHandler {
 
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
-        BatchAction::ProposeGame(gsi) => {
+        BatchAction::ProposeGroup(group) => {
             format!(
-                "ProposeGame id={} idx={} type={} amt={} my={} timeout={}",
-                gsi.game_id,
-                gsi.start_index,
-                hex::encode(&gsi.start.game_type.0),
-                gsi.start.amount,
-                gsi.start.my_contribution,
-                gsi.start.timeout,
+                "ProposeGroup ids={:?} type={} timeout={}",
+                group.members.iter().map(|m| m.game_id).collect::<Vec<_>>(),
+                hex::encode(&group.start.game_type.0),
+                group.start.timeout,
             )
         }
         BatchAction::AcceptProposal(id) => format!("AcceptProposal id={id}"),
@@ -160,6 +153,38 @@ fn format_batch_action(action: &BatchAction) -> String {
             format!("AcceptTimeout id={id} amt={amount}")
         }
     }
+}
+
+fn validate_wire_group_structure(
+    wire: &WireProposalGroup,
+    expected_members: usize,
+) -> Result<Vec<GameID>, Error> {
+    if wire.members.len() != expected_members {
+        return Err(Error::StrErr(format!(
+            "proposal group has {} members but factory returned {expected_members}",
+            wire.members.len()
+        )));
+    }
+    if wire.members.is_empty() {
+        return Err(Error::StrErr("proposal group is empty".to_string()));
+    }
+    let ids: Vec<GameID> = wire.members.iter().map(|member| member.game_id).collect();
+    if ids
+        .iter()
+        .enumerate()
+        .any(|(index, id)| ids[..index].contains(id))
+    {
+        return Err(Error::StrErr(
+            "proposal group contains duplicate game ids".to_string(),
+        ));
+    }
+    let expected_group_id = if ids.len() > 1 { Some(ids[0]) } else { None };
+    if wire.group_id != expected_group_id {
+        return Err(Error::StrErr(
+            "proposal group has non-canonical group id".to_string(),
+        ));
+    }
+    Ok(ids)
 }
 
 pub(crate) fn format_reward_coin(label: &str, ph: &PuzzleHash, amount: &Amount) -> Option<String> {
@@ -199,82 +224,63 @@ pub(crate) fn make_send_log(
 }
 
 impl PotatoHandler {
-    fn with_contributions(
-        mut games: Vec<Rc<GameStartInfo>>,
-        my_contribution: &Amount,
-        their_contribution: &Amount,
-    ) -> Vec<Rc<GameStartInfo>> {
-        for game in &mut games {
-            let game = Rc::make_mut(game);
-            game.my_contribution_this_game = my_contribution.clone();
-            game.their_contribution_this_game = their_contribution.clone();
-        }
-        games
-    }
-
-    fn hydrate_wire_proposal(
+    fn factory_games(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
-        wire: &WireProposeGame,
-    ) -> Result<(Rc<GameStartInfo>, GameType), Error> {
-        let resolved_game_type = wire.start.game_type.clone();
-        let (my_games, their_games) =
-            self.get_games_by_start_type(env, true, &wire.game_id, &wire.start)?;
-        let (_mine, theirs) = if wire.start.my_turn {
-            (my_games, their_games)
-        } else {
-            (their_games, my_games)
-        };
-        let proposer_contribution = wire.start.my_contribution.clone();
-        let receiver_contribution = wire.start.amount.checked_sub(&proposer_contribution)?;
-        let theirs = Self::with_contributions(
-            theirs,
-            &receiver_contribution,
-            &proposer_contribution,
-        );
-        let gsi = theirs.get(wire.start_index).cloned().ok_or_else(|| {
-            Error::StrErr(format!(
-                "wire proposal start_index {} out of range for game {}",
-                wire.start_index, wire.game_id
-            ))
-        })?;
+        start: &GameStart,
+    ) -> Result<Vec<game::FactoryGame>, Error> {
+        let factory = self
+            .game_types
+            .get(&start.game_type)
+            .ok_or_else(|| Error::StrErr(format!("no such game {:?}", start.game_type)))?;
+        let program = factory
+            .program
+            .as_ref()
+            .ok_or_else(|| Error::StrErr("GameFactory program missing".to_string()))?
+            .clone();
+        game::Game::run_factory(env.allocator, program.into(), &start.parameters)
+    }
 
-        if let Some(wire_hash) = &wire.start.initial_validation_program_hash {
-            let local_hash = gsi.initial_validation_program.hash();
-            if wire_hash != local_hash {
+    fn hydrate_wire_proposal_group(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        wire: &WireProposalGroup,
+    ) -> Result<(Vec<Rc<GameStartInfo>>, GameType), Error> {
+        let factory_games = self.factory_games(env, &wire.start)?;
+        let ids = validate_wire_group_structure(wire, factory_games.len())?;
+
+        let mut receiver_starts = Vec::with_capacity(factory_games.len());
+        for (index, ((factory_game, member), game_id)) in factory_games
+            .iter()
+            .zip(&wire.members)
+            .zip(ids.iter())
+            .enumerate()
+        {
+            let state = Program::from_bytes(factory_game.initial_state.bytes());
+            let expected_share = Amount::new(factory_game.initial_mover_share);
+            if member.amount != factory_game.amount
+                || member.sender_contribution != factory_game.sender_contribution
+                || member.receiver_contribution != factory_game.receiver_contribution
+                || member.sender_goes_first != factory_game.sender_goes_first
+                || member.initial_validation_program_hash
+                    != factory_game.initial_validation_program_hash
+                || member.initial_move != factory_game.initial_move
+                || member.initial_max_move_size != factory_game.initial_max_move_size
+                || member.initial_state != state
+                || member.initial_mover_share != expected_share
+            {
                 return Err(Error::StrErr(format!(
-                    "wire proposal initial_validation_program_hash mismatch: \
-                     wire={} local={}",
-                    wire_hash, local_hash
+                    "proposal group member {index} does not match factory output"
                 )));
             }
-        }
-        if let Some(wire_state) = &wire.start.initial_state {
-            let local_state_bytes = gsi.initial_state.pref().bytes();
-            if wire_state.bytes() != local_state_bytes {
-                return Err(Error::StrErr(
-                    "wire proposal initial_state mismatch".to_string(),
-                ));
-            }
-        }
-        if let Some(wire_max) = wire.start.initial_max_move_size {
-            if wire_max != gsi.initial_max_move_size {
-                return Err(Error::StrErr(format!(
-                    "wire proposal initial_max_move_size mismatch: wire={wire_max} local={}",
-                    gsi.initial_max_move_size
-                )));
-            }
-        }
-        if let Some(wire_share) = &wire.start.initial_mover_share {
-            if *wire_share != gsi.initial_mover_share {
-                return Err(Error::StrErr(format!(
-                    "wire proposal initial_mover_share mismatch: wire={wire_share} local={}",
-                    gsi.initial_mover_share
-                )));
-            }
+            receiver_starts.push(Rc::new(factory_game.game_start(
+                game_id,
+                &wire.start.timeout,
+                false,
+            )));
         }
 
-        Ok((gsi, resolved_game_type))
+        Ok((receiver_starts, wire.start.game_type.clone()))
     }
 
     pub fn from_completed_handshake(
@@ -609,29 +615,29 @@ impl PotatoHandler {
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
 
-        // Validate group consistency: if a peer accepted one member of a
-        // group we proposed, they must accept all members in the same batch.
+        // Accepting or cancelling an atomic proposal group must name every
+        // member in the same batch.
         {
-            let accepted_ids: Vec<GameID> = actions
-                .iter()
-                .filter_map(|a| match a {
-                    BatchAction::AcceptProposal(id) => Some(*id),
-                    _ => None,
-                })
-                .collect();
             let ch = self.channel_handler()?;
-            for id in &accepted_ids {
-                if !ch.is_our_nonce_parity(id) {
-                    continue;
-                }
-                let members = ch.group_member_ids(id);
-                if members.len() > 1 {
-                    for member in &members {
-                        if !accepted_ids.contains(member) {
-                            return Err(Error::StrErr(format!(
-                                "peer accepted group member {id:?} but not {member:?} \
-                                 — partial group acceptance is a protocol violation"
-                            )));
+            for operation in ["accept", "cancel"] {
+                let ids: Vec<GameID> = actions
+                    .iter()
+                    .filter_map(|action| match (operation, action) {
+                        ("accept", BatchAction::AcceptProposal(id))
+                        | ("cancel", BatchAction::CancelProposal(id)) => Some(*id),
+                        _ => None,
+                    })
+                    .collect();
+                for id in &ids {
+                    let members = ch.group_member_ids(id);
+                    if members.len() > 1 {
+                        for member in &members {
+                            if !ids.contains(member) {
+                                return Err(Error::StrErr(format!(
+                                    "peer {operation}ed group member {id:?} but not {member:?}; \
+                                     partial group {operation} is a protocol violation"
+                                )));
+                            }
                         }
                     }
                 }
@@ -640,17 +646,20 @@ impl PotatoHandler {
 
         for action in actions.iter() {
             match action {
-                BatchAction::ProposeGame(wire) => {
+                BatchAction::ProposeGroup(wire) => {
                     let cancelled: Vec<GameID> = self
                         .game_action_queue
                         .iter()
                         .filter_map(|a| match a {
-                            GameAction::QueuedProposal(gsi, _) => Some(gsi.game_id),
+                            GameAction::QueuedProposalGroup(games, _) => {
+                                games.first().map(|g| g.game_id)
+                            }
                             _ => None,
                         })
                         .collect();
-                    self.game_action_queue
-                        .retain(|a| !matches!(a, GameAction::QueuedProposal(..)));
+                    self.game_action_queue.retain(|a| {
+                        !matches!(a, GameAction::QueuedProposalGroup(..))
+                    });
                     for id in cancelled {
                         effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                             id,
@@ -660,28 +669,31 @@ impl PotatoHandler {
 
                     if !self.game_types.contains_key(&wire.start.game_type) {
                         effects.push(Effect::Log(format!(
-                            "declining proposal for unknown game type {:?} (game {})",
-                            wire.start.game_type, wire.game_id,
+                            "declining proposal for unknown game type {:?}",
+                            wire.start.game_type,
                         )));
                     } else {
-                        let (gsi, resolved_game_type) = self.hydrate_wire_proposal(env, wire)?;
-                        let ch = self.channel_handler_mut()?;
-                        ch.apply_received_proposal(env, &gsi, wire.group_id)?;
-                        let game_id = gsi.game_id;
-                        let my_contribution = gsi.my_contribution_this_game.clone();
-                        let their_contribution = gsi.their_contribution_this_game.clone();
-                        let ivp_hash = gsi.initial_validation_program.hash().clone();
-                        let initial_state = gsi.initial_state.clone();
-                        let group_ids = if wire.group_id.is_some() {
-                            actions
-                                .iter()
-                                .filter_map(|a| match a {
-                                    BatchAction::ProposeGame(w) if w.group_id == wire.group_id => {
-                                        Some(w.game_id)
-                                    }
-                                    _ => None,
-                                })
-                                .collect()
+                        let (games, resolved_game_type) =
+                            self.hydrate_wire_proposal_group(env, wire)?;
+                        for gsi in &games {
+                            let ch = self.channel_handler_mut()?;
+                            ch.apply_received_proposal(env, gsi, wire.group_id)?;
+                        }
+                        let first = games.first().ok_or_else(|| {
+                            Error::StrErr("factory returned empty proposal group".to_string())
+                        })?;
+                        let game_id = first.game_id;
+                        let my_contribution = games.iter().fold(Amount::default(), |sum, game| {
+                            sum + game.my_contribution_this_game.clone()
+                        });
+                        let their_contribution =
+                            games.iter().fold(Amount::default(), |sum, game| {
+                                sum + game.their_contribution_this_game.clone()
+                            });
+                        let ivp_hash = first.initial_validation_program.hash().clone();
+                        let initial_state = first.initial_state.clone();
+                        let group_ids = if games.len() > 1 {
+                            games.iter().map(|g| g.game_id).collect()
                         } else {
                             vec![]
                         };
@@ -690,7 +702,7 @@ impl PotatoHandler {
                             group_ids,
                             my_contribution,
                             their_contribution,
-                            timeout: gsi.timeout.clone(),
+                            timeout: first.timeout.clone(),
                             initial_validation_program_hash: ivp_hash,
                             initial_state,
                             game_type: resolved_game_type,
@@ -776,7 +788,7 @@ impl PotatoHandler {
         let has_new_game = actions.iter().any(|a| {
             matches!(
                 a,
-                BatchAction::ProposeGame(_) | BatchAction::AcceptProposal(_)
+                BatchAction::ProposeGroup(_) | BatchAction::AcceptProposal(_)
             )
         });
         if has_new_game {
@@ -1019,13 +1031,20 @@ impl PotatoHandler {
                     };
                     batch_actions.push(BatchAction::AcceptTimeout(game_id, amount));
                 }
-                GameAction::QueuedProposal(my_gsi, their_wire) => {
-                    let gid = their_wire.group_id;
-                    {
-                        let ch = self.channel_handler_mut()?;
-                        ch.send_propose_game(env, &my_gsi, gid)?;
+                GameAction::QueuedProposalGroup(my_games, their_wire) => {
+                    let saved_channel = self.channel_handler.clone();
+                    let result = (|| {
+                        for game in &my_games {
+                            let ch = self.channel_handler_mut()?;
+                            ch.send_propose_game(env, game, their_wire.group_id)?;
+                        }
+                        Ok::<(), Error>(())
+                    })();
+                    if let Err(error) = result {
+                        self.channel_handler = saved_channel;
+                        return Err(error);
                     }
-                    batch_actions.push(BatchAction::ProposeGame(their_wire));
+                    batch_actions.push(BatchAction::ProposeGroup(their_wire));
                 }
                 GameAction::QueuedAcceptProposal(game_id) => {
                     {
@@ -1071,6 +1090,16 @@ impl PotatoHandler {
                         id: game_id,
                         reason: CancelReason::CancelledByUs,
                     }));
+                    batch_actions.push(BatchAction::CancelProposal(game_id));
+                }
+                GameAction::QueuedCancelProposalSilently(game_id) => {
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        if !ch.is_game_proposed(&game_id) {
+                            continue;
+                        }
+                        ch.send_cancel_proposal(&game_id)?;
+                    }
                     batch_actions.push(BatchAction::CancelProposal(game_id));
                 }
                 GameAction::CleanShutdown => {
@@ -1159,135 +1188,6 @@ impl PotatoHandler {
         }
 
         Ok((true, effects))
-    }
-
-    fn get_games_by_start_type(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        i_initiated: bool,
-        game_id: &GameID,
-        game_start: &GameStart,
-    ) -> Result<GameStartInfoPair, Error> {
-        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
-            starter
-        } else {
-            return Err(Error::StrErr(format!(
-                "no such game {:?}",
-                game_start.game_type
-            )));
-        };
-
-        let their_contribution = game_start.amount.checked_sub(&game_start.my_contribution)?;
-
-        let starter_program = starter
-            .program
-            .as_ref()
-            .ok_or_else(|| Error::StrErr("GameFactory program missing".to_string()))?
-            .clone();
-
-        if let Some(parser_prog) = &starter.parser_program {
-            let alice_game = game::Game::new_from_proposal(
-                env.allocator,
-                i_initiated,
-                game_id,
-                starter_program.clone().into(),
-                Some(parser_prog.clone().into()),
-                &game_start.amount,
-                &game_start.my_contribution,
-                &their_contribution,
-                &game_start.parameters,
-            )?;
-            let alice_result: Vec<Rc<GameStartInfo>> = alice_game
-                .starts
-                .iter()
-                .map(|g| {
-                    Rc::new(g.game_start(
-                        game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &game_start.my_contribution,
-                        &their_contribution,
-                    ))
-                })
-                .collect();
-            let bob_game = game::Game::new_from_proposal(
-                env.allocator,
-                !i_initiated,
-                game_id,
-                starter_program.clone().into(),
-                Some(parser_prog.clone().into()),
-                &game_start.amount,
-                &game_start.my_contribution,
-                &their_contribution,
-                &game_start.parameters,
-            )?;
-            let bob_result: Vec<Rc<GameStartInfo>> = bob_game
-                .starts
-                .iter()
-                .map(|g| {
-                    Rc::new(g.game_start(
-                        game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &their_contribution,
-                        &game_start.my_contribution,
-                    ))
-                })
-                .collect();
-            Ok((alice_result, bob_result))
-        } else {
-            let program_run_args = (
-                game_start.my_contribution.clone(),
-                (
-                    their_contribution.clone(),
-                    (Rc::new(game_start.parameters.clone()), ()),
-                ),
-            )
-                .to_clvm(env.allocator)
-                .into_gen()?;
-            let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
-            let alice_game = game::Game::new_program(
-                env.allocator,
-                i_initiated,
-                game_id,
-                starter_program.clone().into(),
-                params_prog.clone(),
-            )?;
-            let alice_result: Vec<Rc<GameStartInfo>> = alice_game
-                .starts
-                .iter()
-                .map(|g| {
-                    Rc::new(g.game_start(
-                        game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &game_start.my_contribution,
-                        &their_contribution,
-                    ))
-                })
-                .collect();
-            let bob_game = game::Game::new_program(
-                env.allocator,
-                !i_initiated,
-                game_id,
-                starter_program.clone().into(),
-                params_prog,
-            )?;
-            let bob_result: Vec<Rc<GameStartInfo>> = bob_game
-                .starts
-                .iter()
-                .map(|g| {
-                    Rc::new(g.game_start(
-                        game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &their_contribution,
-                        &game_start.my_contribution,
-                    ))
-                })
-                .collect();
-            Ok((alice_result, bob_result))
-        }
     }
 
     const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
@@ -1558,9 +1458,13 @@ impl FromLocalUI for PotatoHandler {
         env: &mut ChannelHandlerEnv<'_>,
         games: &[GameStart],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        if games.is_empty() {
-            return Ok((vec![], vec![]));
+        if games.len() != 1 {
+            return Err(Error::StrErr(format!(
+                "propose_games expects one atomic group request, got {}",
+                games.len()
+            )));
         }
+        let start = &games[0];
 
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
@@ -1583,60 +1487,50 @@ impl FromLocalUI for PotatoHandler {
             ));
         }
 
-        let is_group = games.len() > 1;
-        let mut all_ids = Vec::new();
-        let mut first_id: Option<GameID> = None;
+        let factory_games = self.factory_games(env, start)?;
 
-        for game in games {
+        let mut all_ids = Vec::with_capacity(factory_games.len());
+        for _ in &factory_games {
             let game_id = {
                 let ch = self.channel_handler_mut()?;
                 GameID(ch.allocate_my_nonce())
             };
-            if first_id.is_none() {
-                first_id = Some(game_id);
-            }
-            let group_id = if is_group { first_id } else { None };
-
-            let (my_games, their_games) =
-                self.get_games_by_start_type(env, true, &game_id, game)?;
-            let (my_games, their_games) = if game.my_turn {
-                (my_games, their_games)
-            } else {
-                (their_games, my_games)
-            };
-            let their_contribution = game.amount.checked_sub(&game.my_contribution)?;
-            let my_games = Self::with_contributions(
-                my_games,
-                &game.my_contribution,
-                &their_contribution,
-            );
-            let their_games = Self::with_contributions(
-                their_games,
-                &their_contribution,
-                &game.my_contribution,
-            );
-
-            for gsi in my_games.iter() {
-                all_ids.push(gsi.game_id);
-            }
-
-            for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games).enumerate() {
-                let mut wire_start = game.clone();
-                wire_start.initial_validation_program_hash =
-                    Some(mine.initial_validation_program.hash().clone());
-                wire_start.initial_state =
-                    Some(Program::from_bytes(mine.initial_state.pref().bytes()));
-                wire_start.initial_max_move_size = Some(mine.initial_max_move_size);
-                wire_start.initial_mover_share = Some(mine.initial_mover_share.clone());
-                let wire = WireProposeGame {
-                    start: wire_start,
-                    game_id,
-                    start_index: index,
-                    group_id,
-                };
-                self.push_action(GameAction::QueuedProposal(mine, wire));
-            }
+            all_ids.push(game_id);
         }
+        let group_id = if all_ids.len() > 1 {
+            Some(all_ids[0])
+        } else {
+            None
+        };
+        let my_games: Vec<Rc<GameStartInfo>> = factory_games
+            .iter()
+            .zip(&all_ids)
+            .map(|(game, id)| Rc::new(game.game_start(id, &start.timeout, true)))
+            .collect();
+        let members = factory_games
+            .iter()
+            .zip(&all_ids)
+            .map(|(game, id)| WireGameSpec {
+                game_id: *id,
+                amount: game.amount.clone(),
+                sender_contribution: game.sender_contribution.clone(),
+                receiver_contribution: game.receiver_contribution.clone(),
+                sender_goes_first: game.sender_goes_first,
+                initial_validation_program_hash: game.initial_validation_program_hash.clone(),
+                initial_move: game.initial_move.clone(),
+                initial_max_move_size: game.initial_max_move_size,
+                initial_state: Program::from_bytes(game.initial_state.bytes()),
+                initial_mover_share: Amount::new(game.initial_mover_share),
+            })
+            .collect();
+        self.push_action(GameAction::QueuedProposalGroup(
+            my_games,
+            WireProposalGroup {
+                start: start.clone(),
+                members,
+                group_id,
+            },
+        ));
 
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
         let effects: Vec<Effect> = effect.into_iter().collect();
@@ -1652,7 +1546,41 @@ impl FromLocalUI for PotatoHandler {
             let ch = self.channel_handler()?;
             ch.group_member_ids(game_id)
         };
+        let (our_short, their_short) = {
+            let ch = self.channel_handler()?;
+            let mut our_required = Amount::default();
+            let mut their_required = Amount::default();
+            for id in &group_ids {
+                let proposal = ch.find_proposal(id).ok_or_else(|| {
+                    Error::StrErr(format!("missing proposal group member {id}"))
+                })?;
+                our_required = our_required + proposal.my_contribution.clone();
+                their_required = their_required + proposal.their_contribution.clone();
+            }
+            (
+                our_required > ch.my_out_of_game_balance(),
+                their_required > ch.their_out_of_game_balance(),
+            )
+        };
         let mut all_effects = Vec::new();
+        if our_short || their_short {
+            for id in &group_ids {
+                all_effects.push(Effect::Notify(GameNotification::ProposalAccepted {
+                    id: *id,
+                }));
+            }
+            all_effects.push(Effect::Notify(GameNotification::InsufficientBalance {
+                id: *game_id,
+                our_balance_short: our_short,
+                their_balance_short: their_short,
+            }));
+            for gid in group_ids {
+                let (_continued, effects) =
+                    self.do_game_action(GameAction::QueuedCancelProposalSilently(gid))?;
+                all_effects.extend(effects);
+            }
+            return Ok(all_effects);
+        }
         for gid in group_ids {
             let (_continued, effects) =
                 self.do_game_action(GameAction::QueuedAcceptProposal(gid))?;
@@ -1900,5 +1828,78 @@ impl PeerHandler for PotatoHandler {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod atomic_group_tests {
+    use super::*;
+
+    fn member(id: u64) -> WireGameSpec {
+        WireGameSpec {
+            game_id: GameID(id),
+            amount: Amount::new(200),
+            sender_contribution: Amount::new(100),
+            receiver_contribution: Amount::new(100),
+            sender_goes_first: true,
+            initial_validation_program_hash: Hash::default(),
+            initial_move: vec![],
+            initial_max_move_size: 32,
+            initial_state: Program::from_bytes(&[0x80]),
+            initial_mover_share: Amount::default(),
+        }
+    }
+
+    fn group(members: Vec<WireGameSpec>, group_id: Option<GameID>) -> WireProposalGroup {
+        WireProposalGroup {
+            start: GameStart {
+                game_type: GameType(b"test".to_vec()),
+                timeout: Timeout::new(15),
+                parameters: Program::from_bytes(&[0x80]),
+            },
+            members,
+            group_id,
+        }
+    }
+
+    #[test]
+    fn atomic_group_structure_rejects_malformed_membership() {
+        assert!(validate_wire_group_structure(&group(vec![], None), 1).is_err());
+        assert!(validate_wire_group_structure(
+            &group(vec![member(1), member(1)], Some(GameID(1))),
+            2
+        )
+        .is_err());
+        assert!(validate_wire_group_structure(
+            &group(vec![member(1), member(3)], None),
+            2
+        )
+        .is_err());
+        assert!(validate_wire_group_structure(
+            &group(vec![member(3), member(1)], Some(GameID(1))),
+            2
+        )
+        .is_err());
+        assert!(validate_wire_group_structure(
+            &group(vec![member(1), member(3)], Some(GameID(1))),
+            1
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn atomic_group_structure_accepts_canonical_single_and_multi_member_groups() {
+        assert_eq!(
+            validate_wire_group_structure(&group(vec![member(1)], None), 1).unwrap(),
+            vec![GameID(1)]
+        );
+        assert_eq!(
+            validate_wire_group_structure(
+                &group(vec![member(1), member(3)], Some(GameID(1))),
+                2
+            )
+            .unwrap(),
+            vec![GameID(1), GameID(3)]
+        );
     }
 }

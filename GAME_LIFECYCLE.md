@@ -15,25 +15,33 @@ see `OVERVIEW.md`. For on-chain dispute resolution, see `ON_CHAIN.md`.
 
 Games are initiated through a propose/accept flow:
 
-1. **Propose:** The potato holder sends a `BatchAction::ProposeGame` containing
-  the `GameStart` descriptor (game type, contributions, timeout, parameters).
-   Both sides record the game in `proposed_games` as a pending proposal. The
-   receiver gets a `ProposalMade` notification; the proposer does not (the
-   proposer tracks the proposal via the `propose_game` API call itself).
+1. **Propose:** The caller submits one group request containing `game_type`,
+   game-specific `parameters`, and one shared `timeout`. Both peers run the same
+   deterministic factory, which produces the ordered game records for the
+   group. The potato holder sends one `BatchAction::ProposeGroup`; both sides
+   record all produced games in `proposed_games`. The receiver gets one
+   `ProposalMade` notification for the group, with the member IDs in factory
+   order; the proposer does not.
 2. **Accept:** The receiver (or proposer on a subsequent potato) sends
-  `BatchAction::AcceptProposal`. Both sides instantiate the referee and game
-   handler, moving the game into `live_games`. Both receive
-   `ProposalAccepted`.
-3. **Cancel:** Either side can send `BatchAction::CancelProposal` to withdraw.
-  Both receive `ProposalCancelled`. If a channel goes on-chain while a
-   proposal is still pending, proposals not reflected in the unroll are
-   automatically cancelled.
+   `BatchAction::AcceptProposal` actions for every member in the same batch.
+   Both sides instantiate every referee and game handler, moving the group into
+   `live_games`. Partial group acceptance is invalid.
+3. **Cancel:** Either side can cancel using any member ID; the higher layer
+   expands the request to every member, and all cancellation actions travel in
+   the same batch. If a channel goes on-chain while a proposal is still
+   pending, the whole unresolved group is cancelled.
 
 ### Receiver-Side Proposal Validation
 
-When `apply_received_proposal` processes an incoming `ProposeGame`, it enforces
-several checks before recording the proposal. Any failure rejects the batch
-(triggering rollback and go-on-chain):
+When an incoming `ProposeGroup` is processed, the receiver first runs its
+registered factory with the request's `game_type` and exact `parameters`. The
+wire member list must be non-empty and have the same ordered cardinality as the
+factory result. Each wire member must match the corresponding canonical factory
+record: sender/receiver contributions, amount, `sender_goes_first`, initial
+commitments, fixed handlers' derived role, and validator commitment. Any
+failure rejects the batch (triggering rollback and go-on-chain).
+
+The normal per-game checks are then applied while recording each member:
 
 - **Nonce parity:** The proposal's `game_id` nonce must have the correct parity
 for the sender's role (even for initiator, odd for responder).
@@ -42,9 +50,9 @@ skip due to cancelled proposals, but cannot go backwards).
 - **Nonce gap cap:** The nonce must not jump more than `MAX_NONCE_GAP` (1000)
 ahead of the expected value. Prevents a malicious peer from claiming an
 absurdly high nonce.
-- **Amount consistency:** The proposal's `amount` must equal
-`my_contribution + their_contribution`. Prevents the peer from creating games
-where money appears or disappears.
+- **Amount consistency:** Each member's `amount` must equal its sender and
+receiver contributions. Prevents the peer from creating games where money
+appears or disappears.
 - **Game timeout:** The proposal's `timeout` must be positive. The UX defaults
   to 15 blocks, but peers can propose different positive game timeouts.
 - **Proposal count limit:** The total number of outstanding proposals must not
@@ -82,13 +90,11 @@ already cancelled by the peer before the accept is sent. The accept silently
 evaporates — the `ProposalCancelled` from the peer's cancel already resolved
 the proposal lifecycle (Rule A). Acceptance is advisory; no notification is
 emitted for the stale accept.
-- **Insufficient balance on accept:** When the potato arrives and
-`drain_queue_into_batch` processes a `QueuedAcceptProposal`, it pre-checks
-both players' available balances. If either player's contribution exceeds
-their `out_of_game_balance`, `ProposalAccepted` is emitted followed
-immediately by `InsufficientBalance` (the terminal). `CancelProposal` is sent
-to the peer (who sees `ProposalCancelled`). The game satisfies both Rule A
-(accepted) and Rule B (terminal follows acceptance).
+- **Insufficient balance on accept:** Before any group member is accepted, the
+  handler sums all local contributions and all peer contributions and compares
+  both aggregates with the available balances. If either total is short, no
+  member is accepted; the entire group is cancelled and
+  `InsufficientBalance` identifies the failed group request.
 
 ### Proposal Collision Handling
 
@@ -118,29 +124,40 @@ behavior for each variant.
 
 ### Grouped (Atomic) Proposals
 
-Multiple games can be proposed as a single atomic group by calling
-`propose_games` (plural) instead of `propose_game`. All games in the group
-share a `group_id` equal to the first game's nonce. This is used by Krunk,
-which always proposes two games as a pair (one where each player is Alice).
+Every proposal uses the same atomic-group path, including factories that
+produce only one game. The API accepts exactly one request with `game_type`,
+`parameters`, and a timeout shared by all produced games. Factory cardinality
+is part of the registered game contract:
 
-**Wire format:** Each `ProposeGame` in the batch carries a `group_id` field.
-`ProposedGame` records in `proposed_games` store the same field.
+- Calpoker: 1 game
+- Space Poker: 1 game
+- Krunk: 2 games, one with each player in each role
 
-**Accept/cancel expansion:** When `accept_proposal` or `cancel_proposal` is
-called with a game ID that belongs to a group, the potato handler
-automatically expands the operation to all group members. The individual
-`AcceptProposal` / `CancelProposal` batch actions remain per-ID on the wire;
-the expansion happens in the potato handler before serialization.
+**Atomic proposal construction:** The sender runs the factory first and sums
+all sender contributions and all receiver contributions. Both aggregate totals
+must fit the corresponding out-of-game balances before IDs are allocated or
+any proposal is queued. The group is then represented by one
+`BatchAction::ProposeGroup` containing the shared request and the ordered member
+metadata. Multi-game groups use the first ordered ID as `group_id`; singleton
+groups do not need one.
 
-**Receive-side validation:** When a peer batch contains `AcceptProposal` for
-one member of a group we proposed, all other members of that group must also
-be accepted in the same batch. Partial group acceptance is a protocol
-violation that triggers batch rejection and go-on-chain.
+**Receiver derivation:** The receiver runs the same factory and compares the
+entire ordered wire group with its local result. It does not parse one member
+at a time to discover peer-specific handlers. The higher layer selects the
+appropriate fixed handler and swaps sender/receiver contributions into its
+local perspective.
 
-**Notification:** `ProposalMade` includes a `group_ids` field listing all game
-IDs in the group. The frontend uses this to present grouped proposals as one
-logical proposal and to skip duplicate `ProposalMade` notifications for
-secondary group members.
+**Accept/cancel expansion:** Calling `accept_proposal` or `cancel_proposal`
+with any member ID expands to the complete group. Acceptance performs another
+aggregate balance preflight before queuing any member. Accept or cancel actions
+for all members are sent together; a received partial acceptance is a protocol
+violation that rejects the batch. Thus proposal creation, acceptance, and
+cancellation are all-or-none at group scope.
+
+**Notification:** The receiver gets exactly one `ProposalMade` for the group.
+Its `id` is the first game ID, and `group_ids` contains all member IDs in
+factory order for multi-game groups (empty for a singleton). Contributions in
+the notification are aggregate totals from the receiver's local perspective.
 
 ### WASM Accept-and-Move Convenience
 
@@ -149,7 +166,7 @@ a proposal and makes the first move. Internally this translates into two
 distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
 batch.
 
-**Key code:** `src/potato_handler/mod.rs` — `propose_game`, `propose_games`,
+**Key code:** `src/potato_handler/mod.rs` — `propose_games`,
 `accept_proposal`, `cancel_proposal`;
 `wasm/src/mod.rs` — `propose_games`, `accept_proposal_and_move`
 
@@ -163,8 +180,8 @@ return formats, chaining), see `HANDLER_GUIDE.md`.
 A single game's lifecycle, independent of other concurrent games:
 
 ```
-1. Propose  (BatchAction::ProposeGame)
-   → game enters proposed_games on both sides
+1. Propose  (BatchAction::ProposeGroup)
+   → all factory-produced games enter proposed_games on both sides
 
 2. Accept   (BatchAction::AcceptProposal)
    → referee + game handler instantiated, game moves to live_games

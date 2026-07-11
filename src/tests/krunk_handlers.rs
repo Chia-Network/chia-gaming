@@ -1,10 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::channel_handler::game::Game;
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, GameID, Program, Puzzle, Sha256Input, Sha256tree,
-};
+use crate::common::types::{chia_dialect, Aggsig, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
 use crate::games::krunk_dict_tree::build_signed_dict_tree_from_bytes;
 use crate::utils::proper_list;
 
@@ -46,6 +43,12 @@ fn int_from_node(allocator: &mut AllocEncoder, node: NodePtr) -> i64 {
 
 fn atom(allocator: &mut AllocEncoder, bytes: &[u8]) -> NodePtr {
     allocator.allocator().new_atom(bytes).unwrap()
+}
+
+fn assert_clvm_eq(allocator: &mut AllocEncoder, left: NodePtr, right: NodePtr, message: &str) {
+    let left_hash = clvm_utils::tree_hash(allocator.allocator(), left);
+    let right_hash = clvm_utils::tree_hash(allocator.allocator(), right);
+    assert_eq!(left_hash, right_hash, "{message}");
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -209,79 +212,43 @@ struct GameSetup {
     initial_mover_share: i64,
 }
 
-/// Sets up a krunk game by building a dict tree from the supplied dictionary,
-/// currying it with a placeholder dict_pubkey into the proposal/parser puzzles,
-/// then running them to extract the initial state, handlers, and validators.
-fn setup_game_with_contribution(
-    allocator: &mut AllocEncoder,
-    dictionary: Vec<Bytes>,
-    proposer_contribution: i64,
-) -> GameSetup {
-    let make_proposal_raw = read_hex_puzzle(
+/// Builds the dictionary-curried factory and extracts slot 0, where the sender
+/// is Alice (the word picker).
+fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
+    let factory_raw = read_hex_puzzle(
         allocator,
-        "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
+        "clsp/games/krunk/krunk_include_krunk_factory.hex",
     )
-    .expect("load make_proposal");
-    let parser_raw = read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")
-        .expect("load parser");
+    .expect("load factory");
 
     let n_words = dictionary.len();
     let sigs: Vec<Aggsig> = (0..=n_words).map(|_| Aggsig::default()).collect();
     let dict_tree =
         build_signed_dict_tree_from_bytes(allocator, &dictionary, &sigs).expect("build dict tree");
     let dict_pubkey = allocator.allocator().new_atom(&[0xAA; 48]).unwrap();
-    let make_proposal_curried = CurriedProgram {
-        program: make_proposal_raw,
+    let factory_curried = CurriedProgram {
+        program: factory_raw,
         args: clvm_curried_args!(dict_pubkey, dict_tree),
     }
     .to_clvm(allocator)
     .unwrap();
-    let parser_curried = CurriedProgram {
-        program: parser_raw,
-        args: clvm_curried_args!(dict_pubkey, dict_tree),
-    }
-    .to_clvm(allocator)
-    .unwrap();
-
-    let bet_args = (proposer_contribution, (BET_SIZE, ()))
-        .to_clvm(allocator)
-        .unwrap();
-    let proposal_result = run_clvm(allocator, make_proposal_curried, bet_args);
-    let proposal_list = proper_list(allocator.allocator(), proposal_result, true).unwrap();
-    let wire_data = proposal_list[0];
-    let local_data = proposal_list[1];
-
-    let wire_data_list = proper_list(allocator.allocator(), wire_data, true).unwrap();
-    let game_specs_wrapper = proper_list(allocator.allocator(), wire_data_list[2], true).unwrap();
-    let game_spec = proper_list(allocator.allocator(), game_specs_wrapper[0], true).unwrap();
-    let initial_max_move_size = int_from_node(allocator, game_spec[4]);
-    let initial_state = game_spec[5];
-    let initial_mover_share = int_from_node(allocator, game_spec[6]);
-
-    let local_data_list = proper_list(allocator.allocator(), local_data, true).unwrap();
-    let hv_list = proper_list(allocator.allocator(), local_data_list[0], true).unwrap();
-    let alice_handler = hv_list[0];
-
-    let parser_result = run_clvm(allocator, parser_curried, wire_data);
-    let parser_list = proper_list(allocator.allocator(), parser_result, true).unwrap();
-    let bob_data_list = proper_list(allocator.allocator(), parser_list[1], true).unwrap();
-    let bob_hv_list = proper_list(allocator.allocator(), bob_data_list[0], true).unwrap();
-    let bob_handler = bob_hv_list[1];
+    let stake = BET_SIZE.to_clvm(allocator).unwrap();
+    let result = run_clvm(allocator, factory_curried, stake);
+    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(records.len(), 2, "Krunk factory must return two records");
+    let game_spec = proper_list(allocator.allocator(), records[0], true).unwrap();
+    assert_eq!(game_spec.len(), 12, "factory record must have 12 fields");
 
     GameSetup {
-        alice_handler,
-        bob_handler,
-        proposal_my_contribution: int_from_node(allocator, wire_data_list[0]),
-        proposal_their_contribution: int_from_node(allocator, wire_data_list[1]),
-        proposal_amount: int_from_node(allocator, game_spec[0]),
-        initial_state,
-        initial_max_move_size,
-        initial_mover_share,
+        alice_handler: game_spec[9],
+        bob_handler: game_spec[10],
+        proposal_my_contribution: int_from_node(allocator, game_spec[0]),
+        proposal_their_contribution: int_from_node(allocator, game_spec[1]),
+        proposal_amount: int_from_node(allocator, game_spec[2]),
+        initial_state: game_spec[7],
+        initial_max_move_size: int_from_node(allocator, game_spec[6]),
+        initial_mover_share: int_from_node(allocator, game_spec[8]),
     }
-}
-
-fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
-    setup_game_with_contribution(allocator, dictionary, BET_SIZE)
 }
 
 fn make_entropy(allocator: &mut AllocEncoder, seed: &str) -> NodePtr {
@@ -298,34 +265,23 @@ fn test_dictionary() -> Vec<Bytes> {
     ]
 }
 
-fn factory_puzzles(allocator: &mut AllocEncoder, dictionary: &[Bytes]) -> (Puzzle, Puzzle) {
-    let make_proposal_raw = read_hex_puzzle(
+fn factory_puzzle(allocator: &mut AllocEncoder, dictionary: &[Bytes]) -> Puzzle {
+    let factory_raw = read_hex_puzzle(
         allocator,
-        "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
+        "clsp/games/krunk/krunk_include_krunk_factory.hex",
     )
-    .expect("load make_proposal");
-    let parser_raw = read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")
-        .expect("load parser");
+    .expect("load factory");
     let sigs: Vec<Aggsig> = (0..=dictionary.len()).map(|_| Aggsig::default()).collect();
     let dict_tree =
         build_signed_dict_tree_from_bytes(allocator, dictionary, &sigs).expect("build dict tree");
     let dict_pubkey = allocator.allocator().new_atom(&[0xAA; 48]).unwrap();
-    let make_proposal = CurriedProgram {
-        program: make_proposal_raw,
+    let factory = CurriedProgram {
+        program: factory_raw,
         args: clvm_curried_args!(dict_pubkey, dict_tree),
     }
     .to_clvm(allocator)
     .unwrap();
-    let parser = CurriedProgram {
-        program: parser_raw,
-        args: clvm_curried_args!(dict_pubkey, dict_tree),
-    }
-    .to_clvm(allocator)
-    .unwrap();
-    (
-        Puzzle::from_nodeptr(allocator, make_proposal).unwrap(),
-        Puzzle::from_nodeptr(allocator, parser).unwrap(),
-    )
+    Puzzle::from_nodeptr(allocator, factory).unwrap()
 }
 
 fn test_krunk_setup_game() {
@@ -340,52 +296,96 @@ fn test_krunk_setup_game() {
 
 fn test_krunk_guesser_funds_zero() {
     let mut allocator = AllocEncoder::new();
-    let setup = setup_game_with_contribution(&mut allocator, test_dictionary(), 0);
-    assert_eq!(setup.proposal_my_contribution, 0);
-    assert_eq!(setup.proposal_their_contribution, BET_SIZE);
-    assert_eq!(setup.proposal_amount, BET_SIZE);
+    let factory = factory_puzzle(&mut allocator, &test_dictionary());
+    let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
+    let stake = BET_SIZE.to_clvm(&mut allocator).unwrap();
+    let result = run_clvm(&mut allocator, factory_clvm, stake);
+    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    let slot0 = proper_list(allocator.allocator(), records[0], true).unwrap();
+    let slot1 = proper_list(allocator.allocator(), records[1], true).unwrap();
+    assert_eq!(slot0.len(), 12);
+    assert_eq!(slot1.len(), 12);
+    assert_eq!(int_from_node(&mut allocator, slot0[0]), BET_SIZE);
+    assert_eq!(int_from_node(&mut allocator, slot0[1]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot0[2]), BET_SIZE);
+    assert_eq!(int_from_node(&mut allocator, slot0[3]), 1);
+    assert_eq!(int_from_node(&mut allocator, slot0[5]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot0[6]), 32);
+    assert_eq!(int_from_node(&mut allocator, slot0[8]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot1[0]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot1[1]), BET_SIZE);
+    assert_eq!(int_from_node(&mut allocator, slot1[2]), BET_SIZE);
+    assert_eq!(int_from_node(&mut allocator, slot1[3]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot1[5]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot1[6]), 32);
+    assert_eq!(int_from_node(&mut allocator, slot1[8]), 0);
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[4],
+        slot1[4],
+        "validator hashes must match",
+    );
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[7],
+        slot1[7],
+        "initial states must match",
+    );
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[9],
+        slot1[10],
+        "Alice handlers must swap slots",
+    );
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[10],
+        slot1[9],
+        "Bob handlers must swap slots",
+    );
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[11],
+        slot1[11],
+        "validators must match",
+    );
 }
 
 fn test_krunk_rejects_malformed_economics() {
     let mut allocator = AllocEncoder::new();
     let dictionary = test_dictionary();
-    let (make_proposal, parser) = factory_puzzles(&mut allocator, &dictionary);
-    let stake_node = BET_SIZE.to_clvm(&mut allocator).unwrap();
-    let stake = Program::from_nodeptr(&mut allocator, stake_node).unwrap();
+    let factory = factory_puzzle(&mut allocator, &dictionary);
+    let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
 
-    let mismatched_envelope = Game::new_from_proposal(
-        &mut allocator,
-        true,
-        &GameID(1),
-        make_proposal.clone(),
-        Some(parser.clone()),
-        &Amount::new(101),
-        &Amount::new(100),
-        &Amount::new(1),
-        &stake,
-    );
-    assert!(
-        mismatched_envelope.is_err(),
-        "factory economics must match the proposal envelope"
-    );
+    let zero = 0i64.to_clvm(&mut allocator).unwrap();
+    assert!(run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        factory_clvm,
+        zero,
+        0,
+    )
+    .is_err());
 
-    let invalid_stake_node = 101_i64.to_clvm(&mut allocator).unwrap();
-    let invalid_stake = Program::from_nodeptr(&mut allocator, invalid_stake_node).unwrap();
-    let non_multiple = Game::new_from_proposal(
-        &mut allocator,
-        true,
-        &GameID(1),
-        make_proposal,
-        Some(parser),
-        &Amount::new(101),
-        &Amount::new(101),
-        &Amount::new(0),
-        &invalid_stake,
-    );
-    assert!(
-        non_multiple.is_err(),
-        "Krunk stakes must be multiples of 100"
-    );
+    let non_multiple = 101i64.to_clvm(&mut allocator).unwrap();
+    assert!(run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        factory_clvm,
+        non_multiple,
+        0,
+    )
+    .is_err());
+
+    let one_element_list = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    assert!(run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        factory_clvm,
+        one_element_list,
+        0,
+    )
+    .is_err());
 }
 
 fn test_krunk_happy_path_correct_guess() {

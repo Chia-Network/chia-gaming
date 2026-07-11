@@ -1582,24 +1582,33 @@ fn run_game_container_with_action_list_with_success_predicate(
                             GameAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
                         };
-                        let is_krunk = game_type == b"krunk";
+                        let parameters = if game_type == b"calpoker" {
+                            let node = (Amount::new(100), (my_turn, ()))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else if game_type == b"spacepoker" {
+                            let node = (Amount::new(100), (extras.clone(), (my_turn, ())))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else if game_type == b"debug" {
+                            let node = (
+                                Amount::new(100),
+                                (Amount::new(100), (my_turn, (extras.clone(), ()))),
+                            )
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else {
+                            extras.clone()
+                        };
                         let new_ids = cradles[*who].propose_game(
                             allocator,
                             &GameStart {
-                                amount: Amount::new(if is_krunk { 100 } else { 200 }),
-                                my_contribution: Amount::new(if is_krunk && !my_turn {
-                                    0
-                                } else {
-                                    100
-                                }),
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(timeout),
-                                my_turn,
-                                parameters: extras.clone(),
-                                initial_validation_program_hash: None,
-                                initial_state: None,
-                                initial_max_move_size: None,
-                                initial_mover_share: None,
+                                parameters,
                             },
                         )?;
                         local_uis[*who]
@@ -1607,33 +1616,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                             .extend(new_ids.iter().cloned());
                     }
                     GameAction::ProposeKrunkGroup(who, _trigger) => {
-                        let starts = [
-                            GameStart {
-                                amount: Amount::new(100),
-                                my_contribution: Amount::new(100),
+                        let new_ids = cradles[*who].propose_game(
+                            allocator,
+                            &GameStart {
                                 game_type: GameType(b"krunk".to_vec()),
                                 timeout: Timeout::new(15),
-                                my_turn: true,
                                 parameters: Program::from_hex("64")?,
-                                initial_validation_program_hash: None,
-                                initial_state: None,
-                                initial_max_move_size: None,
-                                initial_mover_share: None,
                             },
-                            GameStart {
-                                amount: Amount::new(100),
-                                my_contribution: Amount::new(0),
-                                game_type: GameType(b"krunk".to_vec()),
-                                timeout: Timeout::new(15),
-                                my_turn: false,
-                                parameters: Program::from_hex("64")?,
-                                initial_validation_program_hash: None,
-                                initial_state: None,
-                                initial_max_move_size: None,
-                                initial_mover_share: None,
-                            },
-                        ];
-                        let new_ids = cradles[*who].propose_games(allocator, &starts)?;
+                        )?;
                         local_uis[*who]
                             .proposed_game_ids
                             .extend(new_ids.iter().cloned());
@@ -1834,19 +1824,25 @@ fn run_game_container_with_action_list_with_success_predicate(
                         cradles[*who].self_accept_proposal(allocator, gid)?;
                     }
                     GameAction::WrongParityProposal(who) => {
+                        let parameters = if game_type == b"calpoker" {
+                            let node = (Amount::new(100), (true, ()))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else if game_type == b"spacepoker" {
+                            let node = (Amount::new(100), (extras.clone(), (true, ())))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else {
+                            extras.clone()
+                        };
                         cradles[*who].propose_game(
                             allocator,
                             &GameStart {
-                                amount: Amount::new(200),
-                                my_contribution: Amount::new(100),
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
-                                my_turn: true,
-                                parameters: extras.clone(),
-                                initial_validation_program_hash: None,
-                                initial_state: None,
-                                initial_max_move_size: None,
-                                initial_mover_share: None,
+                                parameters,
                             },
                         )?;
                         cradles[*who].flush_pending(allocator)?;
@@ -1854,8 +1850,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 for action in new_actions.iter_mut() {
-                                    if let BatchAction::ProposeGame(ref mut wire) = action {
-                                        wire.game_id = GameID(wire.game_id.0 ^ 1);
+                                    if let BatchAction::ProposeGroup(ref mut wire) = action {
+                                        wire.members[0].game_id = GameID(wire.members[0].game_id.0 ^ 1);
                                     }
                                 }
                                 Ok(PeerMessage::Batch {
@@ -1871,19 +1867,25 @@ fn run_game_container_with_action_list_with_success_predicate(
                         })?;
                     }
                     GameAction::InvalidProposalParameters(who) => {
+                        let parameters = if game_type == b"calpoker" {
+                            let node = (Amount::new(100), (true, ()))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else if game_type == b"spacepoker" {
+                            let node = (Amount::new(100), (extras.clone(), (true, ())))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else {
+                            extras.clone()
+                        };
                         cradles[*who].propose_game(
                             allocator,
                             &GameStart {
-                                amount: Amount::new(200),
-                                my_contribution: Amount::new(100),
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
-                                my_turn: true,
-                                parameters: extras.clone(),
-                                initial_validation_program_hash: None,
-                                initial_state: None,
-                                initial_max_move_size: None,
-                                initial_mover_share: None,
+                                parameters,
                             },
                         )?;
                         cradles[*who].flush_pending(allocator)?;
@@ -1891,7 +1893,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 for action in new_actions.iter_mut() {
-                                    if let BatchAction::ProposeGame(ref mut wire) = action {
+                                    if let BatchAction::ProposeGroup(ref mut wire) = action {
                                         wire.start.parameters = Program::from_hex("80")?;
                                     }
                                 }
@@ -1908,19 +1910,25 @@ fn run_game_container_with_action_list_with_success_predicate(
                         })?;
                     }
                     GameAction::InvalidProposalTimeout(who) => {
+                        let parameters = if game_type == b"calpoker" {
+                            let node = (Amount::new(100), (true, ()))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else if game_type == b"spacepoker" {
+                            let node = (Amount::new(100), (extras.clone(), (true, ())))
+                                .to_clvm(allocator)
+                                .into_gen()?;
+                            Program::from_nodeptr(allocator, node)?
+                        } else {
+                            extras.clone()
+                        };
                         cradles[*who].propose_game(
                             allocator,
                             &GameStart {
-                                amount: Amount::new(200),
-                                my_contribution: Amount::new(100),
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
-                                my_turn: true,
-                                parameters: extras.clone(),
-                                initial_validation_program_hash: None,
-                                initial_state: None,
-                                initial_max_move_size: None,
-                                initial_mover_share: None,
+                                parameters,
                             },
                         )?;
                         cradles[*who].flush_pending(allocator)?;
@@ -1928,7 +1936,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 for action in new_actions.iter_mut() {
-                                    if let BatchAction::ProposeGame(ref mut wire) = action {
+                                    if let BatchAction::ProposeGroup(ref mut wire) = action {
                                         wire.start.timeout = Timeout::new(0);
                                     }
                                 }
@@ -3877,37 +3885,41 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         .expect("should finish");
 
         let borrowed: &Program = sim_setup.args_program.borrow();
+        let params1_node = (
+            Amount::new(1000),
+            (Amount::new(1000), (true, (borrowed.clone(), ()))),
+        )
+            .to_clvm(&mut allocator)
+            .into_gen()
+            .expect("encode debug parameters");
+        let params1 =
+            Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
         let result1 = outcome.cradles[0].propose_game(
             &mut allocator,
             &GameStart {
-                amount: Amount::new(2000),
-                my_contribution: Amount::new(1000),
                 game_type: GameType(game_type.to_vec()),
                 timeout: Timeout::new(15),
-                my_turn: true,
-                parameters: borrowed.clone(),
-                initial_validation_program_hash: None,
-                initial_state: None,
-                initial_max_move_size: None,
-                initial_mover_share: None,
+                parameters: params1,
             },
         );
 
         assert!(result1.is_ok());
 
+        let params2_node = (
+            Amount::new(1000),
+            (Amount::new(1000), (true, (borrowed.clone(), ()))),
+        )
+            .to_clvm(&mut allocator)
+            .into_gen()
+            .expect("encode debug parameters");
+        let params2 =
+            Program::from_nodeptr(&mut allocator, params2_node).expect("debug parameters");
         let result2 = outcome.cradles[1].propose_game(
             &mut allocator,
             &GameStart {
-                amount: Amount::new(2000),
-                my_contribution: Amount::new(1000),
                 game_type: GameType(game_type.to_vec()),
                 timeout: Timeout::new(15),
-                my_turn: true,
-                parameters: borrowed.clone(),
-                initial_validation_program_hash: None,
-                initial_state: None,
-                initial_max_move_size: None,
-                initial_mover_share: None,
+                parameters: params2,
             },
         );
 

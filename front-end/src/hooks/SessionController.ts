@@ -963,26 +963,25 @@ export class SessionController implements PollingCradle {
   // --- Game actions (called by higher layer) ---
 
   proposeGame(params: ProposeGameParams): string[] {
-    return this.proposeGames([params]);
-  }
-
-  proposeGames(paramsList: ProposeGameParams[]): string[] {
     if (!this.cradle) throw new Error('no cradle');
     try {
-      const wasmParamsList = paramsList.map(p => {
-        const { parameters: _drop, ...rest } = p;
-        return rest;
-      });
-      const paramBytesList = paramsList.map(p => clvmToBytes(p.parameters));
-      const result = this.cradle.propose_games(wasmParamsList, paramBytesList);
+      const { parameters, ...wasmParams } = params;
+      const result = this.cradle.propose_game(wasmParams, clvmToBytes(parameters));
       this.processResult(result);
       return result?.ids || [];
     } catch (e) {
       const msg = extractErrorMessage(e);
-      console.error('[wasm] proposeGames failed:', msg);
+      console.error('[wasm] proposeGame failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
       return [];
     }
+  }
+
+  proposeGames(paramsList: ProposeGameParams[]): string[] {
+    if (paramsList.length !== 1) {
+      throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
+    }
+    return this.proposeGame(paramsList[0]);
   }
 
   acceptProposal(gameId: string): void {

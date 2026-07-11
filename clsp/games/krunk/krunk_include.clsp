@@ -1,6 +1,5 @@
 (include *standard-cl-23*)
 
-(import games.krunk.krunk_generate exposing krunk_make_proposal krunk_parser)
+(import games.krunk.krunk_generate exposing krunk_factory)
 
-(export krunk_make_proposal)
-(export krunk_parser)
+(export krunk_factory)
