@@ -412,6 +412,10 @@ export interface HandTerms {
   spacepokerUnitSize?: bigint;
 }
 
+export function isValidKrunkStake(stake: bigint): boolean {
+  return stake > 0n && stake % 100n === 0n;
+}
+
 export interface BetweenHandProposal {
   id: string;
   groupIds: string[];
@@ -473,7 +477,7 @@ function parseProgramBigInt(value: unknown): bigint | undefined {
   }
 }
 
-function parseTermsFromNotificationValue(value: unknown, gameType?: string): HandTerms | null {
+export function parseTermsFromNotificationValue(value: unknown, gameType?: string): HandTerms | null {
   if (typeof value !== 'object' || value === null) return null;
   const obj = value as Record<string, unknown>;
   const mine = parseAmount(obj.my_contribution);
@@ -483,10 +487,21 @@ function parseTermsFromNotificationValue(value: unknown, gameType?: string): Han
   try {
     const timeout = parseTimeoutBlocks(obj.timeout);
     if (timeout == null) return null;
+    const myContribution = BigInt(mine);
+    const theirContribution = BigInt(theirs);
+    if (resolvedGameType === 'krunk') {
+      const stake = myContribution + theirContribution;
+      return {
+        gameType: resolvedGameType,
+        myContribution: stake,
+        theirContribution: stake,
+        gameTimeout: timeout,
+      };
+    }
     return {
       gameType: resolvedGameType,
-      myContribution: BigInt(mine),
-      theirContribution: BigInt(theirs),
+      myContribution,
+      theirContribution,
       gameTimeout: timeout,
       spacepokerUnitSize: resolvedGameType === 'spacepoker'
         ? parseProgramBigInt(obj.initial_state)
@@ -926,6 +941,16 @@ export function useGameSession(
   const proposeNewGame = useCallback((terms: HandTerms) => {
     const go = scRef.current;
     if (!go || !go.isChannelReady()) return;
+    if (
+      terms.gameType === 'krunk'
+      && (
+        terms.myContribution !== terms.theirContribution
+        || !isValidKrunkStake(terms.myContribution)
+      )
+    ) {
+      log(`[notify] proposeNewGame blocked — invalid Krunk stake ${terms.myContribution}`);
+      return;
+    }
     if (gameIdsRef.current.length > 0) {
       log('[notify] proposeNewGame blocked — game active');
       return;
@@ -943,9 +968,16 @@ export function useGameSession(
       };
 
       if (terms.gameType === 'krunk') {
+        const stake = terms.myContribution;
+        const krunkBaseParams = {
+          game_type: terms.gameType,
+          timeout: terms.gameTimeout,
+          amount: stake,
+          parameters: Program.fromBigInt(stake),
+        };
         const ids = go.proposeGames([
-          { ...baseParams, my_turn: true },
-          { ...baseParams, my_turn: false },
+          { ...krunkBaseParams, my_contribution: stake, my_turn: true },
+          { ...krunkBaseParams, my_contribution: 0n, my_turn: false },
         ]);
         for (const id of ids) {
           proposalTermsByIdRef.current[id] = terms;
@@ -1507,6 +1539,7 @@ export function useGameSession(
 
   const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string, gameTimeout: bigint, spacepokerUnitSize?: bigint) => {
     if (perHandAmount <= 0n || gameTimeout <= 0n) return;
+    if (gameType === 'krunk' && !isValidKrunkStake(perHandAmount)) return;
     proposeNewGame({
       gameType,
       myContribution: perHandAmount,

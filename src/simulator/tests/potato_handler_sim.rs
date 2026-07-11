@@ -1075,7 +1075,8 @@ fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiv
     match &moves[mn] {
         GameAction::ProposeNewGame(who, trigger)
         | GameAction::ProposeNewGameWithTimeout(who, trigger, _)
-        | GameAction::ProposeNewGameTheirTurn(who, trigger) => match trigger {
+        | GameAction::ProposeNewGameTheirTurn(who, trigger)
+        | GameAction::ProposeKrunkGroup(who, trigger) => match trigger {
             ProposeTrigger::Channel => local_uis[*who].channel_created,
             ProposeTrigger::AfterGame(gid) => {
                 local_uis[0].game_finished_ids.contains(gid)
@@ -1581,11 +1582,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                             GameAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
                         };
+                        let is_krunk = game_type == b"krunk";
                         let new_ids = cradles[*who].propose_game(
                             allocator,
                             &GameStart {
-                                amount: Amount::new(200),
-                                my_contribution: Amount::new(100),
+                                amount: Amount::new(if is_krunk { 100 } else { 200 }),
+                                my_contribution: Amount::new(if is_krunk && !my_turn {
+                                    0
+                                } else {
+                                    100
+                                }),
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(timeout),
                                 my_turn,
@@ -1596,6 +1602,38 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 initial_mover_share: None,
                             },
                         )?;
+                        local_uis[*who]
+                            .proposed_game_ids
+                            .extend(new_ids.iter().cloned());
+                    }
+                    GameAction::ProposeKrunkGroup(who, _trigger) => {
+                        let starts = [
+                            GameStart {
+                                amount: Amount::new(100),
+                                my_contribution: Amount::new(100),
+                                game_type: GameType(b"krunk".to_vec()),
+                                timeout: Timeout::new(15),
+                                my_turn: true,
+                                parameters: Program::from_hex("64")?,
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
+                            },
+                            GameStart {
+                                amount: Amount::new(100),
+                                my_contribution: Amount::new(0),
+                                game_type: GameType(b"krunk".to_vec()),
+                                timeout: Timeout::new(15),
+                                my_turn: false,
+                                parameters: Program::from_hex("64")?,
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
+                            },
+                        ];
+                        let new_ids = cradles[*who].propose_games(allocator, &starts)?;
                         local_uis[*who]
                             .proposed_game_ids
                             .extend(new_ids.iter().cloned());
@@ -2319,7 +2357,7 @@ pub fn run_krunk_container_with_action_list_with_success_predicate(
         private_keys,
         &identities,
         b"krunk",
-        &Program::from_hex("80")?,
+        &Program::from_hex("64")?,
         moves,
         predicate,
         per_player_balance,
@@ -2633,6 +2671,75 @@ pub fn setup_debug_test(
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     let mut res: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = Vec::new();
+    res.push(("krunk_group_accepts_with_exact_stake_balance", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = [
+            GameAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        let outcome = run_krunk_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|move_number, cradles| {
+                let proposer = cradles[0]
+                    .proposal_contributions_for_testing()
+                    .unwrap_or_default();
+                let receiver = cradles[1]
+                    .proposal_contributions_for_testing()
+                    .unwrap_or_default();
+
+                if move_number == 1 && proposer.len() == 2 && receiver.len() == 2 {
+                    assert_eq!(
+                        proposer,
+                        vec![
+                            (GameID(1), Amount::new(100), Amount::new(0)),
+                            (GameID(3), Amount::new(0), Amount::new(100)),
+                        ],
+                        "proposer must store proposer-relative contributions",
+                    );
+                    assert_eq!(
+                        receiver,
+                        vec![
+                            (GameID(1), Amount::new(0), Amount::new(100)),
+                            (GameID(3), Amount::new(100), Amount::new(0)),
+                        ],
+                        "receiver must store mirrored contributions",
+                    );
+                }
+
+                move_number >= moves.len() && proposer.is_empty() && receiver.is_empty()
+            }),
+            Some(100),
+        )
+        .expect("grouped Krunk acceptance should succeed");
+
+        for (player, cradle) in outcome.cradles.iter().enumerate() {
+            assert_eq!(
+                cradle
+                    .allocated_balances_for_testing()
+                    .expect("accepted games should remain off chain"),
+                (Amount::new(100), Amount::new(100)),
+                "player {player} must allocate exactly one stake per participant",
+            );
+        }
+
+        for (player, ui) in outcome.local_uis.iter().enumerate() {
+            assert!(
+                !ui.notifications.iter().any(|notification| matches!(
+                    notification,
+                    GameNotification::InsufficientBalance { .. }
+                )),
+                "player {player} unexpectedly reported InsufficientBalance: {:?}",
+                ui.notifications,
+            );
+            assert!(
+                [GameID(1), GameID(3)]
+                    .iter()
+                    .all(|id| ui.game_accepted_ids.contains(id)),
+                "player {player} did not accept both grouped games",
+            );
+        }
+    }));
     res.push(("test_peer_in_sim", &|| {
         let mut allocator = AllocEncoder::new();
 

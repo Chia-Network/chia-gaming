@@ -1130,6 +1130,20 @@ impl ChannelHandler {
         self.proposed_games.iter().find(|p| p.game_id == *game_id)
     }
 
+    #[cfg(test)]
+    pub fn proposal_contributions_for_testing(&self) -> Vec<(GameID, Amount, Amount)> {
+        self.proposed_games
+            .iter()
+            .map(|proposal| {
+                (
+                    proposal.game_id,
+                    proposal.my_contribution.clone(),
+                    proposal.their_contribution.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// Return all GameIDs that share a group_id with the given game.
     /// If the game has no group_id, returns just the game itself.
     pub fn group_member_ids(&self, game_id: &GameID) -> Vec<GameID> {

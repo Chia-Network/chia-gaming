@@ -14,6 +14,9 @@ use crate::common::types::{
 };
 
 struct ProposalGameSpec {
+    my_contribution: Amount,
+    their_contribution: Amount,
+    amount: Amount,
     initial_validation_program_hash: Hash,
     initial_move: Vec<u8>,
     initial_max_move_size: usize,
@@ -186,7 +189,10 @@ impl Game {
         }
 
         let spec = ProposalGameSpec {
-            // game_spec_list[0] is amount, game_spec_list[1] is we_go_first
+            my_contribution: Amount::from_clvm(allocator, wire_list[0])?,
+            their_contribution: Amount::from_clvm(allocator, wire_list[1])?,
+            amount: Amount::from_clvm(allocator, game_spec_list[0])?,
+            // game_spec_list[1] is we_go_first
             initial_validation_program_hash: Hash::from_nodeptr(allocator, game_spec_list[2])?,
             initial_move: atom_from_clvm(allocator, game_spec_list[3]).unwrap_or_default(),
             initial_max_move_size: atom_from_clvm(allocator, game_spec_list[4])
@@ -266,11 +272,30 @@ impl Game {
         game_id: &GameID,
         proposal_program: Puzzle,
         parser_program: Option<Puzzle>,
+        amount: &Amount,
         my_contribution: &Amount,
+        their_contribution: &Amount,
         parameters: &Program,
     ) -> Result<Game, Error> {
         let (wire_data, alice_handler, alice_validator_node, spec) =
             Self::run_make_proposal(allocator, proposal_program, my_contribution, parameters)?;
+
+        if spec.amount != *amount
+            || spec.my_contribution != *my_contribution
+            || spec.their_contribution != *their_contribution
+        {
+            return Err(Error::StrErr(format!(
+                "proposal factory economics mismatch: \
+                 factory amount={} contributions={}/{}; \
+                 proposal amount={} contributions={}/{}",
+                spec.amount,
+                spec.my_contribution,
+                spec.their_contribution,
+                amount,
+                my_contribution,
+                their_contribution,
+            )));
+        }
 
         let (handler, validator_node) = if as_alice {
             (alice_handler, alice_validator_node)

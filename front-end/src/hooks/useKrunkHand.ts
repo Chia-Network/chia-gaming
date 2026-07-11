@@ -44,6 +44,16 @@ export interface UseKrunkHandResult {
   submitGuess: (word: string) => void;
 }
 
+export function canDraftKrunkGuess(
+  wordCommitted: boolean,
+  handler: KrunkHandler,
+  guessCount: number,
+): boolean {
+  return wordCommitted
+    && handler === KrunkHandler.BobWaiting
+    && guessCount === 0;
+}
+
 const MAX_GUESSES = 5;
 
 function readableToProgram(raw: number[] | Uint8Array): Program | null {

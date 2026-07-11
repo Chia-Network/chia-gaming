@@ -617,7 +617,12 @@ guess Alice gives a Wordle-style clue (correct/present/absent per letter).
 Bob either guesses correctly (winning a payout that decreases with each guess)
 or exhausts all 5 guesses (Alice keeps everything).
 
-Payouts are expressed as multiples of `base_unit = bet_size / 50`:
+Each Krunk hand is an atomic pair of games with the same stake. In each
+individual game, the word-picker funds the entire pot and the guesser funds
+nothing; because each player is the picker once, both players put up one stake
+overall. Stakes must be positive multiples of 100 mojos.
+
+Payouts are expressed as multiples of `base_unit = game_pot / 100`:
 
 | Guess # | Payout (× base_unit) |
 |---------|---------------------|

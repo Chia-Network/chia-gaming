@@ -759,6 +759,39 @@ pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
 
 impl SynchronousGameCradle {
     #[cfg(test)]
+    pub fn proposal_contributions_for_testing(
+        &self,
+    ) -> Result<Vec<(GameID, Amount, Amount)>, Error> {
+        let handler = self
+            .peer
+            .as_any()
+            .downcast_ref::<PotatoHandler>()
+            .ok_or_else(|| {
+                Error::StrErr(
+                    "proposal_contributions_for_testing: not a PotatoHandler".to_string(),
+                )
+            })?;
+        let channel = handler.channel_handler()?;
+        Ok(channel.proposal_contributions_for_testing())
+    }
+
+    #[cfg(test)]
+    pub fn allocated_balances_for_testing(&self) -> Result<(Amount, Amount), Error> {
+        let handler = self
+            .peer
+            .as_any()
+            .downcast_ref::<PotatoHandler>()
+            .ok_or_else(|| {
+                Error::StrErr("allocated_balances_for_testing: not a PotatoHandler".to_string())
+            })?;
+        let channel = handler.channel_handler()?;
+        Ok((
+            channel.my_allocated_balance(),
+            channel.their_allocated_balance(),
+        ))
+    }
+
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
         let ph = self
             .peer

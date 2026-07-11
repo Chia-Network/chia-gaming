@@ -13,6 +13,7 @@
 (import std.assert)
 (import std.deep_compare)
 (import std.len)
+(import std.or)
 
 ; --- proposal factory / parser ---
 ;
@@ -28,19 +29,29 @@
 (defconstant MIN_WORD 0x8000000000)
 (defconstant MAX_WORD 0x7fffffffff)
 
-(defun krunk_make_proposal (DICT_PUBKEY DICT_TREE bet_size)
-    (assign
-        base_unit (/ bet_size 50)
-        (li
-            (li
-                bet_size
-                bet_size
-                (li
-                    (li (* 2 bet_size) 1 commit_hash 0 32 (li DICT_PUBKEY base_unit) 0)
+(defun krunk_make_proposal (DICT_PUBKEY DICT_TREE proposer_contribution stake)
+    (assert
+        (> stake 0)
+        (assert
+            (= (% stake 100) 0)
+            (assert
+                (or (= proposer_contribution 0) (= proposer_contribution stake))
+                (assign
+                    guesser_contribution (- stake proposer_contribution)
+                    base_unit (/ stake 100)
+                    (li
+                        (li
+                            proposer_contribution
+                            guesser_contribution
+                            (li
+                                (li stake 1 commit_hash 0 32 (li DICT_PUBKEY base_unit) 0)
+                            )
+                        )
+                        (li
+                            (li (curry krunk_alice_handler_commit DICT_TREE) val_commit)
+                        )
+                    )
                 )
-            )
-            (li
-                (li (curry krunk_alice_handler_commit DICT_TREE) val_commit)
             )
         )
     )
@@ -49,11 +60,13 @@
 ; Parser: curried with (DICT_PUBKEY DICT_TREE) at registration time.
 (defun krunk_parser (DICT_PUBKEY DICT_TREE . wire_data)
     (assign
-        bet_size (f wire_data)
-        base_unit (/ bet_size 50)
+        proposer_contribution (f wire_data)
+        guesser_contribution (f (r wire_data))
+        stake (+ proposer_contribution guesser_contribution)
+        base_unit (/ stake 100)
         (assert
-            (deep= wire_data (f (krunk_make_proposal DICT_PUBKEY DICT_TREE bet_size)))
-            (li (list bet_size base_unit) (li (li val_commit (curry krunk_bob_handler_commit DICT_TREE))))
+            (deep= wire_data (f (krunk_make_proposal DICT_PUBKEY DICT_TREE proposer_contribution stake)))
+            (li (list stake base_unit) (li (li val_commit (curry krunk_bob_handler_commit DICT_TREE))))
         )
     )
 )

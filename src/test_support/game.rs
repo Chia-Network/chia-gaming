@@ -202,6 +202,8 @@ mod sim_tests {
         ProposeNewGameWithTimeout(usize, ProposeTrigger, u64),
         /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
         ProposeNewGameTheirTurn(usize, ProposeTrigger),
+        /// Propose the two asymmetric games that make up one Krunk hand.
+        ProposeKrunkGroup(usize, ProposeTrigger),
         /// Go on chain
         GoOnChain(usize),
         /// Wait a number of blocks
@@ -280,6 +282,9 @@ mod sim_tests {
                 }
                 GameAction::ProposeNewGameTheirTurn(p, t) => {
                     write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
+                }
+                GameAction::ProposeKrunkGroup(p, t) => {
+                    write!(formatter, "ProposeKrunkGroup({p},{t:?})")
                 }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::AcceptTimeout(p, g) => {

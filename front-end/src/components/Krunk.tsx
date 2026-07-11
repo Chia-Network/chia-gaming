@@ -3,6 +3,7 @@ import { Observable } from 'rxjs';
 import { SessionController } from '../hooks/SessionController';
 import {
   useKrunkHand,
+  canDraftKrunkGuess,
   KrunkHandler,
   KrunkGuess,
 } from '../hooks/useKrunkHand';
@@ -223,13 +224,23 @@ const Krunk: React.FC<KrunkProps> = ({
     wordCommitted &&
     bobHand.gameState.role === 'bob' &&
     bobHand.gameState.handler === KrunkHandler.BobGuess;
+  const canDraftFirstGuess = canDraftKrunkGuess(
+    wordCommitted,
+    bobHand.gameState.handler,
+    bobHand.gameState.guesses.length,
+  );
 
   useEffect(() => {
     if (isBobGuessPhase) {
-      setGuessDraft('');
       guessInputRef.current?.focus();
     }
   }, [isBobGuessPhase]);
+
+  useEffect(() => {
+    if (canDraftFirstGuess) {
+      guessInputRef.current?.focus();
+    }
+  }, [canDraftFirstGuess]);
 
   const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
 
@@ -279,7 +290,7 @@ const Krunk: React.FC<KrunkProps> = ({
     return `Waiting for ${themLabel}…`;
   }, [aliceHand.gameState, themLabel]);
 
-  const guessInputDisabled = !isBobGuessPhase;
+  const guessInputDisabled = !isBobGuessPhase && !canDraftFirstGuess;
   const showGuessInput = wordCommitted && !bobGameOver;
 
   return (
@@ -309,12 +320,12 @@ const Krunk: React.FC<KrunkProps> = ({
               placeholder='_____'
               disabled={guessInputDisabled}
               onChange={e => onGuessDraftChange(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submitGuess(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && isBobGuessPhase) submitGuess(); }}
             />
             <button
               type='button'
               className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-              disabled={guessInputDisabled || guessDraft.length !== 5}
+              disabled={!isBobGuessPhase || guessDraft.length !== 5}
               onClick={submitGuess}
             >
               Submit guess

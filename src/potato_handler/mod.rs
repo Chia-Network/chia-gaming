@@ -199,6 +199,19 @@ pub(crate) fn make_send_log(
 }
 
 impl PotatoHandler {
+    fn with_contributions(
+        mut games: Vec<Rc<GameStartInfo>>,
+        my_contribution: &Amount,
+        their_contribution: &Amount,
+    ) -> Vec<Rc<GameStartInfo>> {
+        for game in &mut games {
+            let game = Rc::make_mut(game);
+            game.my_contribution_this_game = my_contribution.clone();
+            game.their_contribution_this_game = their_contribution.clone();
+        }
+        games
+    }
+
     fn hydrate_wire_proposal(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
@@ -212,6 +225,13 @@ impl PotatoHandler {
         } else {
             (their_games, my_games)
         };
+        let proposer_contribution = wire.start.my_contribution.clone();
+        let receiver_contribution = wire.start.amount.checked_sub(&proposer_contribution)?;
+        let theirs = Self::with_contributions(
+            theirs,
+            &receiver_contribution,
+            &proposer_contribution,
+        );
         let gsi = theirs.get(wire.start_index).cloned().ok_or_else(|| {
             Error::StrErr(format!(
                 "wire proposal start_index {} out of range for game {}",
@@ -1172,7 +1192,9 @@ impl PotatoHandler {
                 game_id,
                 starter_program.clone().into(),
                 Some(parser_prog.clone().into()),
+                &game_start.amount,
                 &game_start.my_contribution,
+                &their_contribution,
                 &game_start.parameters,
             )?;
             let alice_result: Vec<Rc<GameStartInfo>> = alice_game
@@ -1194,7 +1216,9 @@ impl PotatoHandler {
                 game_id,
                 starter_program.clone().into(),
                 Some(parser_prog.clone().into()),
+                &game_start.amount,
                 &game_start.my_contribution,
+                &their_contribution,
                 &game_start.parameters,
             )?;
             let bob_result: Vec<Rc<GameStartInfo>> = bob_game
@@ -1580,6 +1604,17 @@ impl FromLocalUI for PotatoHandler {
             } else {
                 (their_games, my_games)
             };
+            let their_contribution = game.amount.checked_sub(&game.my_contribution)?;
+            let my_games = Self::with_contributions(
+                my_games,
+                &game.my_contribution,
+                &their_contribution,
+            );
+            let their_games = Self::with_contributions(
+                their_games,
+                &their_contribution,
+                &game.my_contribution,
+            );
 
             for gsi in my_games.iter() {
                 all_ids.push(gsi.game_id);

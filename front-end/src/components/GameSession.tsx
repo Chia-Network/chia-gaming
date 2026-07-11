@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
+import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -556,6 +556,7 @@ function ComposeProposalDialog({
 }) {
   const defaultSpacePokerStackSize = 10;
   const isSpacepoker = session.composeGameType === 'spacepoker';
+  const isKrunk = session.composeGameType === 'krunk';
   const [spUnitSize, setSpUnitSize] = useState(() => {
     const remembered = session.lastHandTerms.gameType === 'spacepoker'
       ? session.lastHandTerms.spacepokerUnitSize
@@ -593,9 +594,18 @@ function ComposeProposalDialog({
     : null;
 
   const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
+  const krunkStakeValid = !isKrunk || isValidKrunkStake(perHandAmount);
+  const standardMaxMojos = isKrunk && maxPerHandMojos != null
+    ? maxPerHandMojos - (maxPerHandMojos % 100n)
+    : maxPerHandMojos;
 
   const submit = () => {
-    if (perHandAmount <= 0n || !timeoutValid || session.composeProposalSent) return;
+    if (
+      perHandAmount <= 0n
+      || !timeoutValid
+      || !krunkStakeValid
+      || session.composeProposalSent
+    ) return;
     session.submitComposedProposal(
       perHandAmount,
       session.composeGameType,
@@ -657,15 +667,28 @@ function ComposeProposalDialog({
           <AmountInput
             valueMojos={session.composePerHandAmount}
             onChange={session.setComposePerHandAmount}
-            maxMojos={maxPerHandMojos}
-            onUseMax={maxPerHandMojos != null ? () => session.setComposePerHandAmount(maxPerHandMojos) : undefined}
+            maxMojos={standardMaxMojos}
+            onUseMax={standardMaxMojos != null && standardMaxMojos > 0n
+              ? () => session.setComposePerHandAmount(standardMaxMojos)
+              : undefined}
             disabled={session.composeProposalSent}
             label='Per-player stake'
             exceedsLabel='Exceeds available reserve.'
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n && timeoutValid) submit();
+              if (
+                e.key === 'Enter'
+                && !session.composeProposalSent
+                && session.composePerHandAmount > 0n
+                && timeoutValid
+                && krunkStakeValid
+              ) submit();
             }}
           />
+        )}
+        {isKrunk && perHandAmount > 0n && !krunkStakeValid && (
+          <p className='text-xs text-alert-text'>
+            Krunk stakes must be multiples of 100 mojos.
+          </p>
         )}
 
         <div className='flex w-full flex-col items-center gap-1'>
@@ -698,6 +721,7 @@ function ComposeProposalDialog({
             session.composeProposalSent ||
             perHandAmount <= 0n ||
             !timeoutValid ||
+            !krunkStakeValid ||
             (isSpacepoker && !spValid)
           }
           onClick={submit}
