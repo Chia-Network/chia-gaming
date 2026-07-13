@@ -13,9 +13,9 @@ describe('Krunk terms', () => {
     expect(isValidKrunkStake(201n)).toBe(false);
   });
 
-  it('maps one asymmetric game into the paired per-player stake', () => {
+  it('keeps the aggregate per-player contributions from a grouped proposal', () => {
     expect(parseTermsFromNotificationValue({
-      my_contribution: { Amount: '0' },
+      my_contribution: { Amount: '300' },
       their_contribution: { Amount: '300' },
       timeout: 15,
     }, 'krunk')).toEqual({

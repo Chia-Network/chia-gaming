@@ -489,15 +489,6 @@ export function parseTermsFromNotificationValue(value: unknown, gameType?: strin
     if (timeout == null) return null;
     const myContribution = BigInt(mine);
     const theirContribution = BigInt(theirs);
-    if (resolvedGameType === 'krunk') {
-      const stake = myContribution + theirContribution;
-      return {
-        gameType: resolvedGameType,
-        myContribution: stake,
-        theirContribution: stake,
-        gameTimeout: timeout,
-      };
-    }
     return {
       gameType: resolvedGameType,
       myContribution,

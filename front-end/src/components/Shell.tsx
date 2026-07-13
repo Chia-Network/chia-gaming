@@ -177,6 +177,19 @@ function parseSessionAmount(raw: string): bigint {
   }
 }
 
+function SessionBuyIn({ myAmount, theirAmount }: { myAmount: string; theirAmount: string }) {
+  if (myAmount === theirAmount) {
+    return <><br />Buy-in: <strong>{myAmount}</strong> mojos</>;
+  }
+
+  return (
+    <>
+      <br />Your buy-in: <strong>{myAmount}</strong> mojos
+      <br />Their buy-in: <strong>{theirAmount}</strong> mojos
+    </>
+  );
+}
+
 function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
   if (!raw) return undefined;
   try {
@@ -1997,8 +2010,7 @@ const Shell = () => {
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
           <strong>{pendingAdvisory.peer_alias}</strong> would like to play.
-          <br />Your buy-in: <strong>{pendingAdvisory.my_amount}</strong> mojos
-          <br />Their buy-in: <strong>{pendingAdvisory.their_amount}</strong> mojos
+          <SessionBuyIn myAmount={pendingAdvisory.my_amount} theirAmount={pendingAdvisory.their_amount} />
         </p>
         <div className='flex gap-3 justify-center'>
           <button
@@ -2022,8 +2034,7 @@ const Shell = () => {
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
           <strong>{pendingProposal.from_alias}</strong> is proposing a session.
-          <br />Your buy-in: <strong>{pendingProposal.responder_amount}</strong> mojos
-          <br />Their buy-in: <strong>{pendingProposal.proposer_amount}</strong> mojos
+          <SessionBuyIn myAmount={pendingProposal.responder_amount} theirAmount={pendingProposal.proposer_amount} />
         </p>
         <div className='flex gap-3 justify-center'>
           <button
