@@ -4,6 +4,7 @@ import { SessionController } from '../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
+  krunkGuessSubmissionMode,
   KrunkHandler,
   KrunkGuess,
 } from '../hooks/useKrunkHand';
@@ -197,6 +198,7 @@ const Krunk: React.FC<KrunkProps> = ({
   const wordCommitted = aliceHand.gameState.handler !== KrunkHandler.WaitingCommit;
   const [wordDraft, setWordDraft] = useState('');
   const [guessDraft, setGuessDraft] = useState('');
+  const [queuedGuess, setQueuedGuess] = useState<string | null>(null);
 
   const wordInputRef = useRef<HTMLInputElement>(null);
   const guessInputRef = useRef<HTMLInputElement>(null);
@@ -229,6 +231,10 @@ const Krunk: React.FC<KrunkProps> = ({
     bobHand.gameState.handler,
     bobHand.gameState.guesses.length,
   );
+  const guessSubmissionMode = krunkGuessSubmissionMode(
+    isBobGuessPhase,
+    canDraftFirstGuess && queuedGuess === null,
+  );
 
   useEffect(() => {
     if (isBobGuessPhase) {
@@ -241,6 +247,12 @@ const Krunk: React.FC<KrunkProps> = ({
       guessInputRef.current?.focus();
     }
   }, [canDraftFirstGuess]);
+
+  useEffect(() => {
+    if (!isBobGuessPhase || queuedGuess === null) return;
+    bobHand.submitGuess(queuedGuess);
+    setQueuedGuess(null);
+  }, [isBobGuessPhase, queuedGuess, bobHand.submitGuess]);
 
   const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
 
@@ -259,8 +271,12 @@ const Krunk: React.FC<KrunkProps> = ({
   };
 
   const submitGuess = () => {
-    if (guessDraft.length !== 5) return;
-    bobHand.submitGuess(guessDraft);
+    if (guessDraft.length !== 5 || guessSubmissionMode === null) return;
+    if (guessSubmissionMode === 'queue') {
+      setQueuedGuess(guessDraft);
+    } else {
+      bobHand.submitGuess(guessDraft);
+    }
     setGuessDraft('');
   };
 
@@ -273,11 +289,12 @@ const Krunk: React.FC<KrunkProps> = ({
       return `Out of guesses. Word was ${gs.revealedWord ?? '?????'}.`;
     }
     if (!wordCommitted) return 'Pick your word first →';
+    if (queuedGuess !== null) return 'First guess queued…';
     if (gs.handler === KrunkHandler.BobGuess) {
       return `Guess ${gs.guesses.length + 1} of ${MAX_GUESSES}`;
     }
     return `Waiting for ${themLabel}…`;
-  }, [bobHand.gameState, wordCommitted, themLabel]);
+  }, [bobHand.gameState, wordCommitted, queuedGuess, themLabel]);
 
   const aliceStatus = useMemo(() => {
     const gs = aliceHand.gameState;
@@ -290,7 +307,7 @@ const Krunk: React.FC<KrunkProps> = ({
     return `Waiting for ${themLabel}…`;
   }, [aliceHand.gameState, themLabel]);
 
-  const guessInputDisabled = !isBobGuessPhase && !canDraftFirstGuess;
+  const guessInputDisabled = guessSubmissionMode === null;
   const showGuessInput = wordCommitted && !bobGameOver;
 
   return (
@@ -320,12 +337,12 @@ const Krunk: React.FC<KrunkProps> = ({
               placeholder='_____'
               disabled={guessInputDisabled}
               onChange={e => onGuessDraftChange(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && isBobGuessPhase) submitGuess(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && guessSubmissionMode !== null) submitGuess(); }}
             />
             <button
               type='button'
               className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-              disabled={!isBobGuessPhase || guessDraft.length !== 5}
+              disabled={guessSubmissionMode === null || guessDraft.length !== 5}
               onClick={submitGuess}
             >
               Submit guess

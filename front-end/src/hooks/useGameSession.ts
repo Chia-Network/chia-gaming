@@ -98,6 +98,20 @@ export function gameplayEventsForGameStatus(
   return events;
 }
 
+export function activeIdsAfterProposalAccepted(
+  activeIds: string[],
+  acceptedId: string,
+  proposalGroupIds: string[] | undefined,
+): string[] {
+  const acceptedIds = proposalGroupIds && proposalGroupIds.length > 0
+    ? proposalGroupIds
+    : [acceptedId];
+  return [
+    ...activeIds,
+    ...acceptedIds.filter(id => !activeIds.includes(id)),
+  ];
+}
+
 function parseCoinAmount(coin: unknown): string | null {
   const bytes = asBytes(coin);
   if (!bytes || bytes.length < 64) {
@@ -784,6 +798,20 @@ export function useGameSession(
     if (review) terms[review.id] = review.terms;
     return terms;
   })());
+  const proposalGroupIdsByIdRef = useRef<Record<string, string[]>>((() => {
+    const groups: Record<string, string[]> = {};
+    const outgoingIds = restoredModel?.betweenHand.outgoingProposalIds ?? [];
+    for (const id of outgoingIds) groups[id] = outgoingIds;
+    for (const proposal of [
+      restoredModel?.betweenHand.cachedPeerProposal,
+      restoredModel?.betweenHand.reviewPeerProposal,
+    ]) {
+      if (!proposal) continue;
+      const ids = proposal.groupIds.length > 0 ? proposal.groupIds : [proposal.id];
+      for (const id of ids) groups[id] = ids;
+    }
+    return groups;
+  })());
   const outgoingProposalIdsRef = useRef<Set<string>>(
     new Set(restoredModel?.betweenHand.outgoingProposalIds)
   );
@@ -969,6 +997,7 @@ export function useGameSession(
       });
       for (const id of ids) {
         proposalTermsByIdRef.current[id] = terms;
+        proposalGroupIdsByIdRef.current[id] = ids;
         outgoingProposalIdsRef.current.add(id);
       }
     } catch (_) {
@@ -1077,7 +1106,13 @@ export function useGameSession(
         triggerGoOnChain();
         return;
       }
-      proposalTermsByIdRef.current[incoming.id] = incoming.terms;
+      const incomingGroupIds = incoming.groupIds.length > 0
+        ? incoming.groupIds
+        : [incoming.id];
+      for (const id of incomingGroupIds) {
+        proposalTermsByIdRef.current[id] = incoming.terms;
+        proposalGroupIdsByIdRef.current[id] = incomingGroupIds;
+      }
 
       // For grouped proposals, only process the first notification; skip
       // subsequent group members so the user sees one logical proposal.
@@ -1182,11 +1217,19 @@ export function useGameSession(
       const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
       const isFirstGameOfHand = gameIdsRef.current.length === 0;
-      const weProposed = outgoingProposalIdsRef.current.has(newId);
+      const acceptedGroupIds = proposalGroupIdsByIdRef.current[newId] ?? [newId];
+      const weProposed = acceptedGroupIds.some(id => outgoingProposalIdsRef.current.has(id));
       log(`[notify] ProposalAccepted id=${newId} first=${isFirstGameOfHand} ours=${weProposed}`);
-      outgoingProposalIdsRef.current.delete(newId);
-      setGameIds(prev => [...prev, newId]);
-      gameIdsRef.current = [...gameIdsRef.current, newId];
+      for (const id of acceptedGroupIds) {
+        outgoingProposalIdsRef.current.delete(id);
+      }
+      const nextGameIds = activeIdsAfterProposalAccepted(
+        gameIdsRef.current,
+        newId,
+        acceptedGroupIds,
+      );
+      setGameIds(nextGameIds);
+      gameIdsRef.current = nextGameIds;
 
       if (isFirstGameOfHand) {
         setIProposedHand(weProposed);

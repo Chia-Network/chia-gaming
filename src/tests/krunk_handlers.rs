@@ -41,6 +41,14 @@ fn int_from_node(allocator: &mut AllocEncoder, node: NodePtr) -> i64 {
     }
 }
 
+fn int_list_from_node(allocator: &mut AllocEncoder, node: NodePtr) -> Vec<i64> {
+    proper_list(allocator.allocator(), node, true)
+        .expect("expected proper integer list")
+        .into_iter()
+        .map(|item| int_from_node(allocator, item))
+        .collect()
+}
+
 fn atom(allocator: &mut AllocEncoder, bytes: &[u8]) -> NodePtr {
     allocator.allocator().new_atom(bytes).unwrap()
 }
@@ -651,6 +659,15 @@ fn test_krunk_multi_guess_game() {
             bob_move.validator_for_my_move_hash,
             0,
         );
+        if i == 0 {
+            let readable =
+                proper_list(allocator.allocator(), alice_receive.readable_move, true).unwrap();
+            assert_eq!(
+                int_list_from_node(&mut allocator, readable[1]),
+                vec![0, 1, 0, 0, 0],
+                "WORLD vs CRANE clue must stay in letter order"
+            );
+        }
         state = new_state;
 
         // Alice gives a clue
@@ -687,6 +704,13 @@ fn test_krunk_multi_guess_game() {
             alice_clue.validator_for_my_move_hash,
             0,
         );
+        if i == 0 {
+            assert_eq!(
+                int_list_from_node(&mut allocator, bob_clue_receive.readable_move),
+                vec![0, 1, 0, 0, 0],
+                "Bob must receive clue values in guess-letter order"
+            );
+        }
         state = clue_state;
         alice_handler = alice_clue.their_turn_handler;
         bob_handler = bob_clue_receive.my_turn_handler;

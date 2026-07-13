@@ -1,5 +1,11 @@
-import { KrunkHandler, canDraftKrunkGuess } from '../../hooks/useKrunkHand';
 import {
+  KrunkHandler,
+  canDraftKrunkGuess,
+  krunkGuessSubmissionMode,
+} from '../../hooks/useKrunkHand';
+import {
+  activeIdsAfterProposalAccepted,
+  gameplayEventsForGameStatus,
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
@@ -33,5 +39,38 @@ describe('Krunk first guess drafting', () => {
     expect(canDraftKrunkGuess(false, KrunkHandler.BobWaiting, 0)).toBe(false);
     expect(canDraftKrunkGuess(true, KrunkHandler.BobWaiting, 1)).toBe(false);
     expect(canDraftKrunkGuess(true, KrunkHandler.BobGuess, 0)).toBe(false);
+  });
+
+  it('queues an early first guess and sends it once the guess phase starts', () => {
+    expect(krunkGuessSubmissionMode(false, true)).toBe('queue');
+    expect(krunkGuessSubmissionMode(true, false)).toBe('send');
+    expect(krunkGuessSubmissionMode(false, false)).toBeNull();
+  });
+
+  it('exposes the guesser game on the first atomic-group acceptance', () => {
+    const activeIds = activeIdsAfterProposalAccepted([], '1', ['1', '3']);
+    expect(activeIds).toEqual(['1', '3']);
+    expect(activeIdsAfterProposalAccepted(activeIds, '3', ['1', '3']))
+      .toEqual(['1', '3']);
+
+    const opponentCommit = {
+      GameStatus: {
+        id: '3',
+        status: 'my-turn',
+        coin_id: null,
+        other_params: {
+          readable: [0x80],
+          mover_share: '0',
+        },
+      },
+    };
+    expect(gameplayEventsForGameStatus(opponentCommit, activeIds, null)).toEqual([
+      {
+        OpponentMoved: {
+          readable: Uint8Array.from([0x80]),
+          gameId: '3',
+        },
+      },
+    ]);
   });
 });

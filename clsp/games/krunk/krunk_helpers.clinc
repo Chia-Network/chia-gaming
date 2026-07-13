@@ -2,11 +2,12 @@
 (import std.len)
 (import std.or)
 (import std.relops)
+(import std.reverse)
 
 (defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
 
 (defun expand_clue (clue_byte)
-    (expand_clue_inner (+ clue_byte 128) 5)
+    (reverse (expand_clue_inner (+ clue_byte 128) 5))
 )
 
 (defun expand_clue_inner (val n)

@@ -54,6 +54,15 @@ export function canDraftKrunkGuess(
     && guessCount === 0;
 }
 
+export function krunkGuessSubmissionMode(
+  isGuessPhase: boolean,
+  canQueueFirstGuess: boolean,
+): 'send' | 'queue' | null {
+  if (isGuessPhase) return 'send';
+  if (canQueueFirstGuess) return 'queue';
+  return null;
+}
+
 const MAX_GUESSES = 5;
 
 function readableToProgram(raw: number[] | Uint8Array): Program | null {
@@ -95,28 +104,10 @@ function programToClue(prog: Program): KrunkGuess['clue'] | null {
   return vals as KrunkGuess['clue'];
 }
 
-function packedClueToClue(prog: Program): KrunkGuess['clue'] | null {
-  let clueByte: number;
-  try {
-    clueByte = Number(prog.toInt());
-  } catch {
-    return null;
-  }
-  let val = clueByte + 128;
-  if (val < 0 || val >= 3 ** 5) return null;
-  const clue: number[] = [];
-  for (let i = 0; i < 5; i++) {
-    clue.push(val % 3);
-    val = Math.floor(val / 3);
-  }
-  if (clue.some((v) => v < 0 || v > 2)) return null;
-  return clue as KrunkGuess['clue'];
-}
-
 // Readables from Krunk handlers:
 //   nil                      — no info (commit)
 //   [c0..c4]                 — expanded clue list (non-terminal clue)
-//   (word, clue)             — word + clue, clue is expanded list or packed byte
+//   (word, clue)             — word + expanded clue list
 type KrunkReadable =
   | { kind: 'nil' }
   | { kind: 'clue'; clue: KrunkGuess['clue'] }
@@ -141,7 +132,7 @@ function parseKrunkReadable(prog: Program | null): KrunkReadable {
     }
     if (items.length === 2) {
       const word = atomToWord(items[0]);
-      const clue = programToClue(items[1]) ?? packedClueToClue(items[1]);
+      const clue = programToClue(items[1]);
       if (word && clue) {
         return { kind: 'guess', word: word.toUpperCase(), clue };
       }

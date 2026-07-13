@@ -185,13 +185,13 @@
             lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
             (if lookup_result
                 (list
-                    (li word (make_clue word (f bob_guesses)))
+                    (li word (expand_clue (make_clue word (f bob_guesses))))
                     (li (concat (f lookup_result) (f (r lookup_result))))
                     0
                     0
                 )
                 (list
-                    (li word (make_clue word (f bob_guesses)))
+                    (li word (expand_clue (make_clue word (f bob_guesses))))
                     KRUNK_EVIDENCE_INDICES
                     0
                     0
