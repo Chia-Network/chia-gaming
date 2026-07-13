@@ -1,5 +1,6 @@
 packages:
   - "."
+autoInstallPeers: false
 allowBuilds:
   electron: true
   electron-builder: true

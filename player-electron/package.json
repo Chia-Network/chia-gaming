@@ -19,6 +19,7 @@
     "dist:linux": "electron-builder --config electron-builder.yml --linux"
   },
   "devDependencies": {
+    "dmg-builder": "26.8.1",
     "electron": "42.3.3",
     "electron-builder": "26.8.1"
   }
