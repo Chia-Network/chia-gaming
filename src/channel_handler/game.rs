@@ -226,7 +226,9 @@ impl Game {
         let mut games = Vec::with_capacity(records.len());
         for (index, record) in records.into_iter().enumerate() {
             let fields = proper_list(allocator.allocator(), record, true).ok_or_else(|| {
-                Error::StrErr(format!("proposal factory game {index} is not a proper list"))
+                Error::StrErr(format!(
+                    "proposal factory game {index} is not a proper list"
+                ))
             })?;
             if fields.len() != 12 {
                 return Err(Error::StrErr(format!(
@@ -251,8 +253,7 @@ impl Game {
             };
 
             let initial_validation_program_hash = Hash::from_nodeptr(allocator, fields[4])?;
-            let initial_validation_program =
-                Rc::new(Program::from_nodeptr(allocator, fields[11])?);
+            let initial_validation_program = Rc::new(Program::from_nodeptr(allocator, fields[11])?);
             let actual_hash = initial_validation_program.sha256tree(allocator);
             if actual_hash.hash() != &initial_validation_program_hash {
                 return Err(Error::StrErr(format!(

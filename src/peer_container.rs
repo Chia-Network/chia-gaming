@@ -767,9 +767,7 @@ impl SynchronousGameCradle {
             .as_any()
             .downcast_ref::<PotatoHandler>()
             .ok_or_else(|| {
-                Error::StrErr(
-                    "proposal_contributions_for_testing: not a PotatoHandler".to_string(),
-                )
+                Error::StrErr("proposal_contributions_for_testing: not a PotatoHandler".to_string())
             })?;
         let channel = handler.channel_handler()?;
         Ok(channel.proposal_contributions_for_testing())

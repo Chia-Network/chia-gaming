@@ -657,9 +657,8 @@ impl PotatoHandler {
                             _ => None,
                         })
                         .collect();
-                    self.game_action_queue.retain(|a| {
-                        !matches!(a, GameAction::QueuedProposalGroup(..))
-                    });
+                    self.game_action_queue
+                        .retain(|a| !matches!(a, GameAction::QueuedProposalGroup(..)));
                     for id in cancelled {
                         effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                             id,
@@ -1551,11 +1550,11 @@ impl FromLocalUI for PotatoHandler {
             let mut our_required = Amount::default();
             let mut their_required = Amount::default();
             for id in &group_ids {
-                let proposal = ch.find_proposal(id).ok_or_else(|| {
-                    Error::StrErr(format!("missing proposal group member {id}"))
-                })?;
-                our_required = our_required + proposal.my_contribution.clone();
-                their_required = their_required + proposal.their_contribution.clone();
+                let proposal = ch
+                    .find_proposal(id)
+                    .ok_or_else(|| Error::StrErr(format!("missing proposal group member {id}")))?;
+                our_required += proposal.my_contribution.clone();
+                their_required += proposal.their_contribution.clone();
             }
             (
                 our_required > ch.my_out_of_game_balance(),
@@ -1870,11 +1869,9 @@ mod atomic_group_tests {
             2
         )
         .is_err());
-        assert!(validate_wire_group_structure(
-            &group(vec![member(1), member(3)], None),
-            2
-        )
-        .is_err());
+        assert!(
+            validate_wire_group_structure(&group(vec![member(1), member(3)], None), 2).is_err()
+        );
         assert!(validate_wire_group_structure(
             &group(vec![member(3), member(1)], Some(GameID(1))),
             2
@@ -1894,11 +1891,8 @@ mod atomic_group_tests {
             vec![GameID(1)]
         );
         assert_eq!(
-            validate_wire_group_structure(
-                &group(vec![member(1), member(3)], Some(GameID(1))),
-                2
-            )
-            .unwrap(),
+            validate_wire_group_structure(&group(vec![member(1), member(3)], Some(GameID(1))), 2)
+                .unwrap(),
             vec![GameID(1), GameID(3)]
         );
     }
