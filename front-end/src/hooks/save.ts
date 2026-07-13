@@ -204,6 +204,10 @@ export interface SessionState {
   betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
+
+  // Timer persistence (epoch ms timestamps)
+  waitingStateEnteredAt?: bigint;
+  cleanShutdownGraceStartedAt?: bigint;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */

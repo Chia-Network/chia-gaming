@@ -206,7 +206,8 @@ export type GameDashboardActionKind =
   | 'none'
   | 'cancel'
   | 'clean-shutdown'
-  | 'go-on-chain';
+  | 'go-on-chain'
+  | 'abandon';
 
 export type GameDashboardActionLabel =
   | 'No Session'
@@ -214,6 +215,7 @@ export type GameDashboardActionLabel =
   | 'Waiting'
   | 'Clean Shutdown'
   | 'Go On-Chain'
+  | 'Abandon'
   | 'Done';
 
 export interface GameDashboardViewModel {
@@ -505,6 +507,7 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
   cleanShutdownGraceActive?: boolean;
+  abandonEnabled?: boolean;
 }
 
 function channelStatusDetail(model: SessionModel): string | null {
@@ -563,9 +566,15 @@ function collapsedHandDetail(model: SessionModel): string | null {
   return terminal.label;
 }
 
+export const ABANDON_WAITING_STATES = new Set<ChannelState>([
+  'OfferSent', 'TransactionPending', 'ShutdownTransactionPending',
+  'GoingOnChain', 'Unrolling',
+]);
+
 function dashboardActionFor(
   model: SessionModel,
   cleanShutdownGraceActive: boolean,
+  abandonEnabled: boolean,
 ): Pick<GameDashboardViewModel, 'actionLabel' | 'actionEnabled' | 'actionKind'> {
   switch (model.channel.status.state) {
     case 'Handshaking':
@@ -576,6 +585,9 @@ function dashboardActionFor(
       return { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' };
     case 'OfferSent':
     case 'TransactionPending':
+      if (abandonEnabled) {
+        return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+      }
       return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
     case 'Active':
       if (model.game.activeIds.length > 0) {
@@ -593,6 +605,9 @@ function dashboardActionFor(
     case 'ShutdownTransactionPending':
     case 'GoingOnChain':
     case 'Unrolling':
+      if (abandonEnabled) {
+        return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+      }
       return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
     case 'ResolvedClean':
     case 'ResolvedUnrolled':
@@ -619,7 +634,7 @@ export function selectGameDashboardView(
   }
 
   const channel = model.channel.status;
-  const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false);
+  const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false, options.abandonEnabled ?? false);
 
   return {
     channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],

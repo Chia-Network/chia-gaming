@@ -115,6 +115,31 @@ describe('session model selectors', () => {
     });
   });
 
+  it('enables abandon action after timeout for waiting states', () => {
+    const waitingStates = [
+      'OfferSent', 'TransactionPending', 'ShutdownTransactionPending',
+      'GoingOnChain', 'Unrolling',
+    ] as const;
+
+    for (const state of waitingStates) {
+      const model = createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+      });
+
+      expect(selectGameDashboardView(model, { abandonEnabled: false })).toMatchObject({
+        actionLabel: 'Waiting',
+        actionEnabled: false,
+        actionKind: 'none',
+      });
+
+      expect(selectGameDashboardView(model, { abandonEnabled: true })).toMatchObject({
+        actionLabel: 'Abandon',
+        actionEnabled: true,
+        actionKind: 'abandon',
+      });
+    }
+  });
+
   it('allows chain-submitting dashboard actions even while the blockchain is offline', () => {
     const cleanShutdown = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
