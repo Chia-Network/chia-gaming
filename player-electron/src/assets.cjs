@@ -10,7 +10,8 @@ const path = require('node:path');
 //  - our own app:// scheme for all bundled assets
 //  - WASM compilation (wasm-unsafe-eval) and the bundle's inline bootstrap
 //  - the WalletConnect relay (wss) and any user-chosen tracker (ws/wss/https)
-//  - the tracker lobby iframe (https)
+//  - the tracker lobby iframe (http/https, matching the origins connect-src
+//    allows for the tracker relay socket)
 const CSP = [
   "default-src 'self' app:",
   "script-src 'self' app: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
@@ -18,7 +19,7 @@ const CSP = [
   "img-src 'self' app: data: https:",
   "font-src 'self' app: data:",
   "connect-src 'self' app: https: http: wss: ws:",
-  "frame-src https:",
+  "frame-src https: http:",
 ].join('; ');
 
 const MIME_TYPES = {
