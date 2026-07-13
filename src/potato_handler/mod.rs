@@ -709,10 +709,18 @@ impl PotatoHandler {
                     }
                 }
                 BatchAction::AcceptProposal(game_id) => {
+                    let amount = {
+                        let ch = self.channel_handler()?;
+                        let proposal = ch.find_proposal(game_id).ok_or_else(|| {
+                            Error::StrErr(format!("missing accepted proposal {game_id}"))
+                        })?;
+                        proposal.my_contribution.clone() + proposal.their_contribution.clone()
+                    };
                     let ch = self.channel_handler_mut()?;
                     ch.apply_received_accept_proposal(game_id)?;
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: *game_id,
+                        amount,
                     }));
                 }
                 BatchAction::CancelProposal(game_id) => {
@@ -1002,9 +1010,20 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
-                        let move_result =
-                            ch.send_move_no_finalize(env, &game_id, &readable_move, new_entropy)?;
-                        batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                        match ch.send_move_no_finalize(env, &game_id, &readable_move, new_entropy) {
+                            Ok(move_result) => {
+                                batch_actions
+                                    .push(BatchAction::Move(game_id, move_result.game_move));
+                            }
+                            Err(Error::GameMoveRejected { tag, message }) => {
+                                effects.push(Effect::Notify(GameNotification::MoveRejected {
+                                    id: game_id,
+                                    tag: String::from_utf8_lossy(&tag).into_owned(),
+                                    message: String::from_utf8_lossy(&message).into_owned(),
+                                }));
+                            }
+                            Err(error) => return Err(error),
+                        }
                     } else {
                         deferred.push_back(GameAction::Move(game_id, readable_move, new_entropy));
                     }
@@ -1054,12 +1073,15 @@ impl PotatoHandler {
                         if ch.is_our_nonce_parity(&game_id) {
                             return Err(Error::StrErr("cannot accept own proposal".to_string()));
                         }
+                        let amount =
+                            proposal.my_contribution.clone() + proposal.their_contribution.clone();
                         let our_short = proposal.my_contribution > ch.my_out_of_game_balance();
                         let their_short =
                             proposal.their_contribution > ch.their_out_of_game_balance();
                         if our_short || their_short {
                             effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                                 id: game_id,
+                                amount,
                             }));
                             effects.push(Effect::Notify(GameNotification::InsufficientBalance {
                                 id: game_id,
@@ -1071,10 +1093,11 @@ impl PotatoHandler {
                             continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
+                        effects.push(Effect::Notify(GameNotification::ProposalAccepted {
+                            id: game_id,
+                            amount,
+                        }));
                     }
-                    effects.push(Effect::Notify(GameNotification::ProposalAccepted {
-                        id: game_id,
-                    }));
                     batch_actions.push(BatchAction::AcceptProposal(game_id));
                 }
                 GameAction::QueuedCancelProposal(game_id) => {
@@ -1564,8 +1587,16 @@ impl FromLocalUI for PotatoHandler {
         let mut all_effects = Vec::new();
         if our_short || their_short {
             for id in &group_ids {
+                let amount = {
+                    let ch = self.channel_handler()?;
+                    let proposal = ch.find_proposal(id).ok_or_else(|| {
+                        Error::StrErr(format!("missing proposal group member {id}"))
+                    })?;
+                    proposal.my_contribution.clone() + proposal.their_contribution.clone()
+                };
                 all_effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                     id: *id,
+                    amount,
                 }));
             }
             all_effects.push(Effect::Notify(GameNotification::InsufficientBalance {

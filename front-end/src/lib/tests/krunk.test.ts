@@ -1,10 +1,14 @@
 import {
   KrunkHandler,
+  applyKrunkMoveRejected,
   canDraftKrunkGuess,
+  krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
+  type KrunkGameState,
 } from '../../hooks/useKrunkHand';
 import {
   activeIdsAfterProposalAccepted,
+  gameplayEventForMoveRejected,
   gameplayEventsForGameStatus,
   isValidKrunkStake,
   parseTermsFromNotificationValue,
@@ -45,6 +49,70 @@ describe('Krunk first guess drafting', () => {
     expect(krunkGuessSubmissionMode(false, true)).toBe('queue');
     expect(krunkGuessSubmissionMode(true, false)).toBe('send');
     expect(krunkGuessSubmissionMode(false, false)).toBeNull();
+  });
+
+  it('shows one pending row for a queued first guess only until real guesses exist', () => {
+    expect(krunkGuessesWithQueued([], 'CRANE')).toEqual([
+      { word: 'CRANE', clue: [-1, -1, -1, -1, -1] },
+    ]);
+
+    const pending = [{ word: 'CRANE', clue: [-1, -1, -1, -1, -1] as const }];
+    expect(krunkGuessesWithQueued(pending, 'CRANE')).toBe(pending);
+    expect(krunkGuessesWithQueued(pending, null)).toBe(pending);
+    expect(krunkGuessesWithQueued([], null)).toEqual([]);
+  });
+
+  it('rolls back optimistic dictionary-rejected commits and guesses', () => {
+    const alice: KrunkGameState = {
+      handler: KrunkHandler.AliceWaiting,
+      myTurn: false,
+      role: 'alice',
+      guesses: [],
+      secretWord: 'XXXXX',
+      revealedWord: null,
+      outcome: null,
+      error: null,
+    };
+    expect(applyKrunkMoveRejected(alice, {
+      tag: 'not_in_dictionary',
+      message: 'xxxxx',
+    })).toMatchObject({
+      handler: KrunkHandler.WaitingCommit,
+      myTurn: true,
+      secretWord: null,
+      error: 'XXXXX is not in the dictionary.',
+    });
+
+    const bob: KrunkGameState = {
+      ...alice,
+      handler: KrunkHandler.BobWaiting,
+      role: 'bob',
+      secretWord: null,
+      guesses: [{ word: 'XXXXX', clue: [-1, -1, -1, -1, -1] }],
+    };
+    expect(applyKrunkMoveRejected(bob, {
+      tag: 'not_in_dictionary',
+      message: 'xxxxx',
+    })).toMatchObject({
+      handler: KrunkHandler.BobGuess,
+      myTurn: true,
+      guesses: [],
+      error: 'XXXXX is not in the dictionary.',
+    });
+  });
+
+  it('routes a typed move rejection with its game id, tag, and message', () => {
+    expect(gameplayEventForMoveRejected({
+      id: 7n,
+      tag: 'not_in_dictionary',
+      message: 'xxxxx',
+    })).toEqual({
+      MoveRejected: {
+        gameId: '7',
+        tag: 'not_in_dictionary',
+        message: 'xxxxx',
+      },
+    });
   });
 
   it('exposes the guesser game on the first atomic-group acceptance', () => {

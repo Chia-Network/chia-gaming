@@ -135,6 +135,58 @@ mod sim_tests {
             }
         }));
 
+        res.push(("test_krunk_rejected_local_move_stays_live", &|| {
+            let mut allocator = AllocEncoder::new();
+            let invalid_word = word_program(&mut allocator, b"XXXXX");
+            let moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(1)),
+                GameAction::Move(
+                    0,
+                    GameID(1),
+                    ReadableMove::from_program(Rc::new(invalid_word)),
+                    true,
+                ),
+                GameAction::WaitBlocks(1, 0),
+            ];
+            let move_count = moves.len();
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(move_count)),
+                None,
+            )
+            .expect("rejected local Krunk move should remain recoverable");
+
+            assert_stayed_off_chain(&outcome, "test_krunk_rejected_local_move_stays_live");
+            let notifications = &outcome.local_uis[0].notifications;
+            assert!(notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::MoveRejected { id, tag, message }
+                    if *id == GameID(1)
+                        && tag == "not_in_dictionary"
+                        && message == "XXXXX"
+            )));
+            assert!(!notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed { .. }
+            )));
+            assert!(!notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::GameStatus {
+                    status:
+                        crate::potato_handler::effects::GameStatusKind::EndedWeTimedOut
+                        | crate::potato_handler::effects::GameStatusKind::EndedOpponentTimedOut
+                        | crate::potato_handler::effects::GameStatusKind::EndedWeSlashedOpponent
+                        | crate::potato_handler::effects::GameStatusKind::EndedOpponentSlashedUs
+                        | crate::potato_handler::effects::GameStatusKind::EndedOpponentSuccessfullyCheated
+                        | crate::potato_handler::effects::GameStatusKind::EndedCancelled
+                        | crate::potato_handler::effects::GameStatusKind::EndedError,
+                    ..
+                }
+            )));
+        }));
+
         res.push(("test_play_krunk_clean_shutdown", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = full_group_moves(&mut allocator);

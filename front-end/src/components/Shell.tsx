@@ -314,13 +314,15 @@ function GameDashboard({
                   <span className='text-canvas-text'>{view.channelDetail}</span>
                 )}
               </span>
-              <span className='flex min-w-0 flex-wrap gap-x-1'>
-                <span className='text-canvas-solid'>Hand:</span>
-                <span className='font-medium text-canvas-text-contrast'>{view.handStatusLabel}</span>
-                {view.handDetail && (
-                  <span className='text-canvas-text'>{view.handDetail}</span>
-                )}
-              </span>
+              {view.lifecycleRows.map(row => (
+                <span key={row.id} className='flex min-w-0 flex-wrap gap-x-1'>
+                  <span className='text-canvas-solid'>{row.label}:</span>
+                  <span className='font-medium text-canvas-text-contrast'>{row.statusLabel}</span>
+                  {row.detail && (
+                    <span className='text-canvas-text'>{row.detail}</span>
+                  )}
+                </span>
+              ))}
             </div>
             {balances && (
               <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5'>

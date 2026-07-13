@@ -105,6 +105,7 @@ type WasmNotificationTag =
   | 'GameStatus'
   | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
+  | 'MoveRejected'
   | 'ActionFailed';
 
 export type GameStatusState =
@@ -158,8 +159,22 @@ export interface ChannelStatusPayload {
   have_potato?: boolean | null;
 }
 
+export interface ProposalAcceptedPayload {
+  id: bigint | number | string;
+  amount: bigint | number | string | { amt?: unknown; Amount?: unknown };
+}
+
+export interface MoveRejectedPayload {
+  id: bigint | number | string;
+  tag: string;
+  message: string;
+}
+
 export type WasmNotification = {
-  [K in WasmNotificationTag]?: Record<string, unknown>;
+  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected'>]?: Record<string, unknown>;
+} & {
+  ProposalAccepted?: ProposalAcceptedPayload;
+  MoveRejected?: MoveRejectedPayload;
 };
 
 export type WasmEvent =

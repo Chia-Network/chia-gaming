@@ -16,7 +16,12 @@ import {
 import SpacePoker from './SpacePoker';
 import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
-import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog, type SessionModel } from '../lib/session/model';
+import {
+  DEFAULT_GAME_TIMEOUT_BLOCKS,
+  selectComposeAmountAfterGameTypeChoice,
+  selectHideGameInterfaceForBetweenHandDialog,
+  type SessionModel,
+} from '../lib/session/model';
 import type { ChannelState } from '../types/ChiaGaming';
 
 const PRE_ACTIVE_STATES: ReadonlySet<ChannelState> = new Set([
@@ -613,6 +618,14 @@ function ComposeProposalDialog({
       isSpacepoker ? spUnitSize : undefined,
     );
   };
+  const selectGameType = (gameType: string) => {
+    session.setComposePerHandAmount(selectComposeAmountAfterGameTypeChoice(
+      session.composeGameType,
+      gameType,
+      session.composePerHandAmount,
+    ));
+    session.setComposeGameType(gameType);
+  };
 
   return (
     <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
@@ -627,7 +640,7 @@ function ComposeProposalDialog({
                 color={session.composeGameType === gameType ? 'primary' : 'neutral'}
                 size='sm'
                 disabled={session.composeProposalSent}
-                onClick={() => session.setComposeGameType(gameType)}
+                onClick={() => selectGameType(gameType)}
               >
                 {displayName}
               </Button>

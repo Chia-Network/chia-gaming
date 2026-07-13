@@ -176,6 +176,21 @@ export interface SessionState {
   diagnosticLog?: string[];
   activeGameId?: string | null;
   activeGameIds?: string[];
+  currentHandGameIds?: string[];
+  gameInstances?: Record<string, {
+    id: string;
+    amount: string;
+    coinHex: string | null;
+    turnState: string;
+    handStatus: string;
+    terminal: {
+      type: string;
+      label: string | null;
+      myReward: string | null;
+      rewardCoinHex: string | null;
+      cleanEnd?: boolean;
+    };
+  }>;
   iProposedHand?: boolean;
   activeGameType?: string;
   handState?: PersistedGameState | null;

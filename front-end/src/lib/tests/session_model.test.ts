@@ -4,6 +4,7 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
+  selectComposeAmountAfterGameTypeChoice,
   selectGameDashboardView,
   selectStatusBarBalances,
   selectGameSessionView,
@@ -272,6 +273,43 @@ describe('session model selectors', () => {
     expect(slashing.handStatusLabel).toBe('Slashing cheater');
   });
 
+  it('omits lifecycle rows off-chain and shows one row per game on-chain', () => {
+    const instances = {
+      '7': {
+        id: '7',
+        amount: '100',
+        coin: { coinHex: 'aaaa', turnState: 'my-turn' as const },
+        handStatus: 'our-turn' as const,
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      },
+      '9': {
+        id: '9',
+        amount: '100',
+        coin: { coinHex: 'bbbb', turnState: 'their-turn' as const },
+        handStatus: 'their-turn' as const,
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      },
+    };
+    const game = {
+      activeIds: ['7', '9'],
+      currentHandIds: ['7', '9'],
+      instances,
+    };
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game,
+    })).lifecycleRows).toEqual([]);
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game,
+    })).lifecycleRows).toEqual([
+      { id: '7', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
+      { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
+    ]);
+  });
+
   it('shows a premature opponent timeout as an explicit ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
@@ -384,9 +422,26 @@ describe('session model selectors', () => {
   });
 
   it('derives status-bar balances across phases', () => {
-    // Mid-hand Hand shows the running pot total (both contributions) as a single
-    // value, derived from the hand terms.  game_allocated reads 0 during the
-    // hand, so the pot comes from terms while a game is active.
+    const pending = (id: string) => ({
+      id,
+      amount: '100',
+      coin: { coinHex: null, turnState: 'my-turn' as const },
+      handStatus: 'active' as const,
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+    });
+    const ended = (id: string, myReward: string) => ({
+      ...pending(id),
+      coin: { coinHex: null, turnState: 'ended' as const },
+      handStatus: 'ended' as const,
+      terminal: {
+        type: 'opponent-timed-out' as const,
+        label: 'Ended cleanly',
+        myReward,
+        rewardCoinHex: null,
+        cleanEnd: true,
+      },
+    });
+
     const active = selectStatusBarBalances(createSessionModel({
       channel: {
         status: {
@@ -394,25 +449,51 @@ describe('session model selectors', () => {
           state: 'Active',
           ourBalance: '70',
           theirBalance: '30',
-          gameAllocated: '0',
+          gameAllocated: '20',
         },
       },
-      betweenHand: {
-        lastTerms: { gameType: 'calpoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 15n },
-      },
       game: {
-        activeIds: ['game-1'],
+        activeIds: ['game-1', 'game-2'],
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': pending('game-1'),
+          'game-2': pending('game-2'),
+        },
       },
     }));
     expect(active).toEqual([
       { label: 'Me', value: '70' },
       { label: 'Opp', value: '30' },
-      { label: 'Hand', value: '20' },
+      { label: 'Hand 1', value: '100' },
+      { label: 'Hand 2', value: '100' },
     ]);
 
-    // At hand end Me/Opp stay and Hand shows the mine/opp split (pot from the
-    // hand terms, since game_allocated is back to zero).
-    const reward = selectStatusBarBalances(createSessionModel({
+    const partiallyResolvedGroup = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Active',
+          ourBalance: '85',
+          theirBalance: '15',
+          gameAllocated: '20',
+        },
+      },
+      game: {
+        activeIds: ['game-2'],
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': ended('game-1', '80'),
+          'game-2': pending('game-2'),
+        },
+      },
+    }));
+    expect(partiallyResolvedGroup).toEqual([
+      { label: 'Me', value: '85' },
+      { label: 'Opp', value: '15' },
+      { label: 'Hand', value: '100' },
+    ]);
+
+    const bothResolved = selectStatusBarBalances(createSessionModel({
       channel: {
         status: {
           ...INITIAL_CHANNEL_STATUS_MODEL,
@@ -422,18 +503,63 @@ describe('session model selectors', () => {
           gameAllocated: '0',
         },
       },
-      betweenHand: {
-        lastTerms: { gameType: 'calpoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 15n },
-      },
       game: {
-        coin: { coinHex: null, turnState: 'ended' },
-        terminal: { type: 'we-slashed-opponent', label: 'We won', myReward: '15', rewardCoinHex: null },
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': ended('game-1', '80'),
+          'game-2': ended('game-2', '20'),
+        },
       },
     }));
-    expect(reward).toEqual([
+    expect(bothResolved).toEqual([
       { label: 'Me', value: '85' },
       { label: 'Opp', value: '15' },
-      { label: 'Hand', value: '15', value2: '5' },
+    ]);
+
+    const onChainSplits = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          ourBalance: '85',
+          theirBalance: '15',
+          gameAllocated: '0',
+        },
+      },
+      game: {
+        activeIds: [],
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': ended('game-1', '80'),
+          'game-2': ended('game-2', '20'),
+        },
+      },
+    }));
+    expect(onChainSplits).toEqual([
+      { label: 'Me', value: '85' },
+      { label: 'Opp', value: '15' },
+      { label: 'Hand 1', value: '80', value2: '20' },
+      { label: 'Hand 2', value: '20', value2: '80' },
+    ]);
+
+    const malformedReward = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Active',
+          ourBalance: '85',
+          theirBalance: '15',
+          gameAllocated: '0',
+        },
+      },
+      game: {
+        currentHandIds: ['game-1'],
+        instances: { 'game-1': ended('game-1', '101') },
+      },
+    }));
+    expect(malformedReward).toEqual([
+      { label: 'Me', value: '85' },
+      { label: 'Opp', value: '15' },
     ]);
 
     const clean = selectStatusBarBalances(createSessionModel({
@@ -603,6 +729,47 @@ describe('session model selectors', () => {
     expect(restored.game.coin.turnState).toBe('playing-on-chain');
   });
 
+  it('round-trips current-hand game instances through session snapshots', () => {
+    const model = createSessionModel({
+      game: {
+        currentHandIds: ['7', '9'],
+        instances: {
+          '7': {
+            id: '7',
+            amount: '100',
+            coin: { coinHex: 'aaaa', turnState: 'my-turn' },
+            handStatus: 'our-turn',
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
+          '9': {
+            id: '9',
+            amount: '100',
+            coin: { coinHex: null, turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'opponent-timed-out',
+              label: 'Ended cleanly',
+              myReward: '80',
+              rewardCoinHex: null,
+              cleanEnd: true,
+            },
+          },
+        },
+      },
+    });
+
+    const snapshot = snapshotFromSessionModel(model);
+    const restored = sessionModelFromSave({
+      version: 3n,
+      playerId: 'p1',
+      currentHandGameIds: snapshot.currentHandGameIds,
+      gameInstances: snapshot.gameInstances,
+    });
+
+    expect(restored.game.currentHandIds).toEqual(['7', '9']);
+    expect(restored.game.instances).toEqual(model.game.instances);
+  });
+
   it('keeps an unrolled session on-chain while an active game is unresolved', () => {
     const unrolledWithGame = createSessionModel({
       channel: {
@@ -723,6 +890,12 @@ describe('session model selectors', () => {
 
     expect(selectDefaultCalpokerProposalMyTurn(false)).toBe(true);
     expect(selectDefaultCalpokerInitialTurn(false)).toBe('my-turn');
+  });
+
+  it('defaults Krunk to 100 only when it is selected', () => {
+    expect(selectComposeAmountAfterGameTypeChoice('calpoker', 'krunk', 25n)).toBe(100n);
+    expect(selectComposeAmountAfterGameTypeChoice('krunk', 'krunk', 300n)).toBe(300n);
+    expect(selectComposeAmountAfterGameTypeChoice('krunk', 'calpoker', 300n)).toBe(300n);
   });
 
   it('does not regress an ended hand when a local turn callback arrives late', () => {

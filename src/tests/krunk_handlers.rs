@@ -1,9 +1,16 @@
 #![allow(non_snake_case)]
 
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs};
+use crate::channel_handler::types::ReadableMove;
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, Aggsig, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{
+    chia_dialect, Aggsig, AllocEncoder, Amount, Error, Hash, Program, Puzzle, Sha256Input,
+    Sha256tree,
+};
 use crate::games::krunk_dict_tree::build_signed_dict_tree_from_bytes;
 use crate::utils::proper_list;
+
+use std::rc::Rc;
 
 use chia_protocol::Bytes;
 use clvm_traits::{clvm_curried_args, ToClvm};
@@ -394,6 +401,89 @@ fn test_krunk_rejects_malformed_economics() {
         0,
     )
     .is_err());
+}
+
+fn assert_not_in_dictionary_rejection(
+    allocator: &mut AllocEncoder,
+    handler: NodePtr,
+    state: NodePtr,
+    word: &[u8],
+) {
+    let handler = GameHandler::my_handler_from_nodeptr(allocator, handler).unwrap();
+    let word_node = atom(allocator, word);
+    let readable = ReadableMove::from_program(Rc::new(
+        Program::from_nodeptr(allocator, word_node).unwrap(),
+    ));
+    let state = Program::from_nodeptr(allocator, state).unwrap().into();
+    let error = handler
+        .call_my_turn_handler(
+            allocator,
+            &MyTurnInputs {
+                readable_new_move: readable,
+                entropy: Hash::default(),
+                amount: Amount::new(AMOUNT as u64),
+                last_mover_share: Amount::default(),
+                state,
+            },
+        )
+        .unwrap_err();
+    match error {
+        Error::GameMoveRejected { tag, message } => {
+            assert_eq!(tag, b"not_in_dictionary");
+            assert_eq!(message, word);
+        }
+        other => panic!("expected GameMoveRejected, got {other:?}"),
+    }
+}
+
+fn test_krunk_invalid_words_are_typed_rejections() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator, test_dictionary());
+    assert_not_in_dictionary_rejection(
+        &mut allocator,
+        setup.alice_handler,
+        setup.initial_state,
+        b"xxxxx",
+    );
+
+    let alice_word = atom(&mut allocator, b"crane");
+    let entropy = make_entropy(&mut allocator, "typed_rejection_salt");
+    let alice_commit = call_my_turn_handler(
+        &mut allocator,
+        setup.alice_handler,
+        alice_word,
+        AMOUNT,
+        setup.initial_state,
+        0,
+        entropy,
+    );
+    let (_, val_result) = run_validator(
+        &mut allocator,
+        alice_commit.validator_for_my_move_hash,
+        alice_commit.move_bytes_node,
+        0,
+        alice_commit.max_move_size,
+        setup.initial_state,
+        alice_commit.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let state_after_commit = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+    let bob_receive = call_their_turn_handler(
+        &mut allocator,
+        setup.bob_handler,
+        AMOUNT,
+        setup.initial_state,
+        state_after_commit,
+        alice_commit.move_bytes_node,
+        alice_commit.validator_for_my_move_hash,
+        0,
+    );
+    assert_not_in_dictionary_rejection(
+        &mut allocator,
+        bob_receive.my_turn_handler,
+        state_after_commit,
+        b"xxxxx",
+    );
 }
 
 fn test_krunk_happy_path_correct_guess() {
@@ -1200,6 +1290,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_krunk_rejects_malformed_economics",
             &test_krunk_rejects_malformed_economics,
+        ),
+        (
+            "test_krunk_invalid_words_are_typed_rejections",
+            &test_krunk_invalid_words_are_typed_rejections,
         ),
         (
             "test_krunk_happy_path_correct_guess",

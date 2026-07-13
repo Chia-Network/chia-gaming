@@ -59,8 +59,8 @@
         word local_move
         salt (substr entropy 0 16)
         move (sha256 salt word)
-        (assert
-            (not (dict_lookup MIN_WORD MAX_WORD word DICT_TREE))
+        (if (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+            (list "not_in_dictionary" word)
             (list
                 "krunk_alice_handler_commit"
                 move
@@ -147,8 +147,8 @@
     (assign
         (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
         guess local_move
-        (assert
-            (not (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE))
+        (if (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE)
+            (list "not_in_dictionary" guess)
             (list
                 "krunk_bob_handler_guess"
                 guess

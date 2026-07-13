@@ -1103,6 +1103,8 @@ via the `gameplayEventSubject` RxJS stream:
   `proposal-rejected` entries from the game queue)
 - `OpponentMoved` — the opponent made a move (with readable data)
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
+- `MoveRejected` — a recoverable local move rejection with game id, tag, and
+  message; game hooks roll back only their matching optimistic move
 
 Terminal notifications are also forwarded as `{ _terminal: true, notification }`
 so the game UI can stop processing.

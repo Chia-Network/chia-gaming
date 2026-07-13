@@ -659,10 +659,11 @@ fn event_shape(actual: &TestEvent) -> String {
                 format!("Notif(GameStatus(id={id:?},status={status:?}))")
             }
             GameNotification::ProposalMade { id, .. } => format!("Notif(ProposalMade(id={id:?}))"),
-            GameNotification::ProposalAccepted { id } => format!("Notif(ProposalAccepted(id={id:?}))"),
+            GameNotification::ProposalAccepted { id, .. } => format!("Notif(ProposalAccepted(id={id:?}))"),
             GameNotification::ProposalCancelled { id, reason } => format!("Notif(ProposalCancelled(id={id:?},reason={reason:?}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
+            GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
             GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
         },
     }
@@ -816,7 +817,7 @@ impl LocalTestUIReceiver {
             .notifications
             .iter()
             .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id } = n {
+                if let GameNotification::ProposalAccepted { id, .. } = n {
                     Some(id.clone())
                 } else {
                     None
@@ -926,7 +927,7 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::ProposalAccepted { id } => {
+            GameNotification::ProposalAccepted { id, .. } => {
                 self.assert_channel_created("game_proposal_accepted");
                 self.game_accepted_ids.insert(id.clone());
                 self.notifications.push(notification.clone());
@@ -1986,7 +1987,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 .iter()
                 .filter(|n| {
                     matches!(n,
-                        GameNotification::ProposalAccepted { id: nid } if nid == id
+                        GameNotification::ProposalAccepted { id: nid, .. } if nid == id
                     )
                 })
                 .count();
@@ -2018,7 +2019,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     .iter()
                     .filter(|n2| {
                         matches!(n2,
-                            GameNotification::ProposalAccepted { id: nid } if nid == id
+                            GameNotification::ProposalAccepted { id: nid, .. } if nid == id
                         )
                     })
                     .count();
@@ -2050,7 +2051,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     // Rule B forward: every ProposalAccepted has exactly one terminal.
     for (i, lui) in local_uis.iter().enumerate() {
         for n in lui.notifications.iter() {
-            if let GameNotification::ProposalAccepted { id } = n {
+            if let GameNotification::ProposalAccepted { id, .. } = n {
                 let terminal_count = lui
                     .notifications
                     .iter()
@@ -2071,7 +2072,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             .notifications
             .iter()
             .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id } = n {
+                if let GameNotification::ProposalAccepted { id, .. } = n {
                     Some(*id)
                 } else {
                     None
@@ -2105,7 +2106,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             .notifications
             .iter()
             .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id } = n {
+                if let GameNotification::ProposalAccepted { id, .. } = n {
                     Some(id.clone())
                 } else {
                     None
@@ -2164,7 +2165,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         let accepted_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
             .iter()
             .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id } = n {
+                if let GameNotification::ProposalAccepted { id, .. } = n {
                     Some(*id)
                 } else {
                     None
@@ -6303,10 +6304,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs.iter().any(
-                |n| matches!(n, GameNotification::ProposalAccepted { id } if *id == GameID(3))
-            ),
-            "Bob should get ProposalAccepted for game 3, got: {p1_notifs:?}"
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ProposalAccepted { id, amount }
+                    if *id == GameID(3) && amount.to_u64() == 200
+            )),
+            "Bob should get ProposalAccepted with game 3's 200-mojo total, got: {p1_notifs:?}"
         );
         assert!(
             p1_notifs

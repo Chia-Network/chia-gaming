@@ -4,6 +4,7 @@ import { SessionController } from '../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
+  krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
   KrunkHandler,
   KrunkGuess,
@@ -34,15 +35,24 @@ const CLUE_COLORS: Record<number, { bg: string; border: string }> = {
 
 function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValue: number; flipDelay?: number }) {
   // 3 phases: 'idle' (neutral), 'half' (edge-on, swap color), 'done' (revealed)
-  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(flipDelay == null ? 'done' : 'idle');
+  const animationDelay = useRef(flipDelay).current;
+  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(animationDelay == null ? 'done' : 'idle');
 
   useEffect(() => {
-    if (flipDelay == null) return;
+    if (animationDelay == null) return;
     setPhase('idle');
-    const t1 = setTimeout(() => setPhase('half'), flipDelay);
-    const t2 = setTimeout(() => setPhase('done'), flipDelay + FLIP_HALF_MS);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [flipDelay, clueValue, letter]);
+    const start = setTimeout(() => setPhase('half'), animationDelay);
+    return () => clearTimeout(start);
+  }, [animationDelay]);
+
+  useEffect(() => {
+    if (phase !== 'half') return;
+    const fallback = setTimeout(
+      () => setPhase(current => current === 'half' ? 'done' : current),
+      FLIP_HALF_MS + 100,
+    );
+    return () => clearTimeout(fallback);
+  }, [phase]);
 
   const showColor = phase === 'done';
   const color = CLUE_COLORS[clueValue];
@@ -59,6 +69,11 @@ function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValu
     <div
       className={`inline-flex items-center justify-center rounded border border-canvas-line bg-canvas-bg font-bold uppercase tabular-nums select-none text-canvas-text-contrast ${TILE}`}
       style={style}
+      onTransitionEnd={event => {
+        if (event.propertyName === 'transform' && phase === 'half') {
+          setPhase('done');
+        }
+      }}
     >
       {letter}
     </div>
@@ -208,6 +223,10 @@ const Krunk: React.FC<KrunkProps> = ({
   // the value in state so it survives re-renders while the animation plays.
   const prevResolvedCountRef = useRef(0);
   const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
+  const displayedBobGuesses = krunkGuessesWithQueued(
+    bobHand.gameState.guesses,
+    queuedGuess,
+  );
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
   if (resolvedCount > prevResolvedCountRef.current) {
     prevResolvedCountRef.current = resolvedCount;
@@ -288,6 +307,7 @@ const Krunk: React.FC<KrunkProps> = ({
       if (gs.outcome === 'win') return 'You guessed it!';
       return `Out of guesses. Word was ${gs.revealedWord ?? '?????'}.`;
     }
+    if (gs.error) return gs.error;
     if (!wordCommitted) return 'Pick your word first →';
     if (queuedGuess !== null) return 'First guess queued…';
     if (gs.handler === KrunkHandler.BobGuess) {
@@ -302,6 +322,7 @@ const Krunk: React.FC<KrunkProps> = ({
       if (gs.outcome === 'win') return `${themLabel} couldn't guess it!`;
       return `${themLabel} guessed your word.`;
     }
+    if (gs.error) return gs.error;
     if (gs.handler === KrunkHandler.WaitingCommit) return 'Pick your secret word';
     if (gs.handler === KrunkHandler.AliceClue) return 'Scoring…';
     return `Waiting for ${themLabel}…`;
@@ -319,9 +340,9 @@ const Krunk: React.FC<KrunkProps> = ({
             Your guesses
           </p>
           <Grid
-            guesses={bobHand.gameState.guesses}
+            guesses={displayedBobGuesses}
             draft={guessDraft}
-            showDraftRow={showGuessInput}
+            showDraftRow={showGuessInput && queuedGuess === null}
             latestAnimateIndex={animateIndex}
           />
 
@@ -349,7 +370,9 @@ const Krunk: React.FC<KrunkProps> = ({
             </button>
           </div>
 
-          <p className='text-xs text-canvas-text mt-1'>{bobStatus}</p>
+          <p className={`text-xs mt-1 ${bobHand.gameState.error ? 'text-red-600' : 'text-canvas-text'}`}>
+            {bobStatus}
+          </p>
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}
@@ -386,7 +409,9 @@ const Krunk: React.FC<KrunkProps> = ({
             </button>
           </div>
 
-          <p className='text-xs text-canvas-text mt-1'>{aliceStatus}</p>
+          <p className={`text-xs mt-1 ${aliceHand.gameState.error ? 'text-red-600' : 'text-canvas-text'}`}>
+            {aliceStatus}
+          </p>
         </div>
       </div>
     </div>

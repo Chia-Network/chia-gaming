@@ -15,7 +15,8 @@ like "OpponentMoved" or "WeTimedOut" for readability. The canonical wire model
 in Rust is `GameNotification` plus `GameStatusKind`:
 
 - dedicated variants: `ProposalMade`, `ProposalAccepted`,
-  `ProposalCancelled`, `InsufficientBalance`, `ActionFailed`, `ChannelStatus`
+  `ProposalCancelled`, `InsufficientBalance`, `MoveRejected`, `ActionFailed`,
+  `ChannelStatus`
 - gameplay/terminal lifecycle: `GameNotification::GameStatus { status:
   GameStatusKind, ... }`
 
@@ -173,20 +174,22 @@ Monotonicity applies across all three lenses:
 The Game tab dashboard is the persistent user-facing summary. Its collapsed bar
 is intentionally calmer than the raw notification stream:
 
-`Channel: <channel status> <channel advisory> Hand: <hand status> <hand detail>`
+`Channel: <channel status> <channel advisory> [Hand N: <status> <detail>]`
 
 The channel half summarizes the channel lifecycle. `Unrolling` and
 `ResolvedUnrolled` are not separate pop-up-worthy events; the bar is the source
 of truth for those states. `Failed` and `ResolvedStale` can still produce
 error-style attention because they indicate adverse channel-level outcomes.
 
-The hand half summarizes one accepted hand. It deliberately hides off-chain turn
-noise and only becomes turn-specific once a game coin is actually on-chain:
+Lifecycle rows are omitted entirely during off-chain play. Once the channel
+enters on-chain resolution, the dashboard shows one row per accepted game in
+the current hand (`Hand` for one game, `Hand 1`, `Hand 2`, etc. for multiple
+games). Each row uses that game's own turn or terminal state:
 
 | Hand label | Meaning |
 | --- | --- |
 | `No hand` | No accepted hand is currently active or being displayed. |
-| `Active` | A hand is live off-chain, or the channel is going on-chain/unrolling before a concrete game coin is being tracked. Off-chain `my turn` vs `their turn` is not important enough for the collapsed bar. |
+| `Active` | The channel is going on-chain/unrolling before a concrete game coin is being tracked. |
 | `Your turn` | A game coin is on-chain and the protocol says our side is the mover. |
 | `Their turn` | A game coin is on-chain and the protocol says the opponent is the mover. |
 | `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
@@ -220,6 +223,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 | OpponentMoved | `GameStatus { status: MyTurn, other_params: { readable, mover_share } }` | Opponent made a move | It is now our turn; `mover_share` is our share on timeout from the opponent's move |
 | OpponentPlayedIllegalMove | `GameStatus { status: IllegalMoveDetected, ... }` | Opponent's on-chain move detected as illegal | Emitted before slash resolution |
 | GameMessage | `GameStatus { status: MyTurn/TheirTurn, other_params: { readable } }` | Informational game message | Decoded advisory/readable message payload |
+| MoveRejected | `MoveRejected { id, tag, message }` | A local my-turn handler rejects user input | Recoverable game-scoped rejection; no peer batch is sent for the rejected move |
 | GameOnChain | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }` | Game transitions on-chain | On-chain phase begins for this game |
 | WeMoved | `GameStatus { status: OnChainTheirTurn, other_params: { moved_by_us: true }, coin_id }` | Our on-chain move confirms | New game coin is tracked in `coin_id` |
 
@@ -231,7 +235,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 | Notification                                               | When                                 | Meaning                                                                                                              |
 | ---------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `ProposalMade { id, group_ids, my_contribution, their_contribution, timeout, game_type, ... }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` contains all IDs in deterministic factory order for multi-game groups (empty for a singleton). Contributions are aggregate totals in the receiver's local perspective. |
-| `ProposalAccepted { id }`                                  | Proposal accepted by either side     | The game is now live and play can begin                                                                              |
+| `ProposalAccepted { id, amount }`                          | Proposal accepted by either side     | The game is now live; `amount` is that game's total pot                                                              |
 | `ProposalCancelled { id, reason }`                         | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
 
 ### Cancellation Reasons (`CancelReason`)
@@ -492,6 +496,7 @@ never see raw notifications; they receive one of:
 | Variant | Shape | When |
 |---------|-------|------|
 | `Timeout` | `{ byUs: boolean, forfeited: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout. `forfeited: true` marks the case where the losing side intentionally skipped its final move (no point paying for an on-chain move that wins nothing), so games can label it "Forfeit" instead of the misleading "Timed Out". `byUs` gives the direction. |
+| `MoveRejected` | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook |
 | `GameError` | `{ reason: string }` | Slashes, cheats, cancellations, errors, insufficient balance |
 
 The mapping from `GameTerminalType` (produced by `parseGameStatusTerminalInfo`)

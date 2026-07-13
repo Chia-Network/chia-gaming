@@ -36,6 +36,7 @@ export interface KrunkGameState {
   // Set at game end: the alice-side word that was being guessed.
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
+  error: string | null;
 }
 
 export interface UseKrunkHandResult {
@@ -61,6 +62,57 @@ export function krunkGuessSubmissionMode(
   if (isGuessPhase) return 'send';
   if (canQueueFirstGuess) return 'queue';
   return null;
+}
+
+const PENDING_CLUE: KrunkGuess['clue'] = [-1, -1, -1, -1, -1];
+
+export function krunkGuessesWithQueued(
+  guesses: KrunkGuess[],
+  queuedGuess: string | null,
+): KrunkGuess[] {
+  if (guesses.length > 0 || queuedGuess === null) return guesses;
+  return [{ word: queuedGuess, clue: PENDING_CLUE }];
+}
+
+export function applyKrunkMoveRejected(
+  state: KrunkGameState,
+  rejection: { tag: string; message: string },
+): KrunkGameState {
+  if (rejection.tag !== 'not_in_dictionary') return state;
+  const word = rejection.message.toUpperCase();
+  const error = `${word} is not in the dictionary.`;
+
+  if (
+    state.role === 'alice'
+    && state.handler === KrunkHandler.AliceWaiting
+    && state.secretWord === word
+  ) {
+    return {
+      ...state,
+      handler: KrunkHandler.WaitingCommit,
+      myTurn: true,
+      secretWord: null,
+      error,
+    };
+  }
+
+  const lastGuess = state.guesses[state.guesses.length - 1];
+  if (
+    state.role === 'bob'
+    && state.handler === KrunkHandler.BobWaiting
+    && lastGuess?.word === word
+    && lastGuess.clue.every(value => value === -1)
+  ) {
+    return {
+      ...state,
+      handler: KrunkHandler.BobGuess,
+      myTurn: true,
+      guesses: state.guesses.slice(0, -1),
+      error,
+    };
+  }
+
+  return state;
 }
 
 const MAX_GUESSES = 5;
@@ -170,6 +222,7 @@ export function useKrunkHand(
     secretWord: null,
     revealedWord: null,
     outcome: null,
+    error: null,
   });
 
   const gsRef = useRef(gs);
@@ -232,6 +285,7 @@ export function useKrunkHand(
                 handler: KrunkHandler.AliceClue,
                 myTurn: true,
                 guesses: [...cur.guesses, newGuess],
+                error: null,
               });
             }
             return;
@@ -244,6 +298,7 @@ export function useKrunkHand(
               ...cur,
               handler: KrunkHandler.BobGuess,
               myTurn: true,
+              error: null,
             });
             return;
           }
@@ -265,6 +320,7 @@ export function useKrunkHand(
                 handler: KrunkHandler.BobWaiting,
                 myTurn: false,
                 guesses: next,
+                error: null,
               });
               return;
             }
@@ -273,6 +329,7 @@ export function useKrunkHand(
               handler: KrunkHandler.BobGuess,
               myTurn: true,
               guesses: next,
+              error: null,
             });
             return;
           }
@@ -286,6 +343,12 @@ export function useKrunkHand(
             gsRef.current = { ...cur, guesses: next };
             finishGame(parsed.word, parsed.clue);
             return;
+          }
+        } else if ('MoveRejected' in evt) {
+          if (evt.MoveRejected.gameId !== gameIdRef.current) return;
+          const next = applyKrunkMoveRejected(gsRef.current, evt.MoveRejected);
+          if (next !== gsRef.current) {
+            transition(next);
           }
         } else if ('_terminal' in evt) {
           if (!handFinishedRef.current) {
@@ -332,13 +395,14 @@ export function useKrunkHand(
       return;
     }
     try {
-      go.makeMove(gid, wordToProgram(normalised));
       transition({
         ...cur,
         secretWord: normalised,
         handler: KrunkHandler.AliceWaiting,
         myTurn: false,
+        error: null,
       });
+      go.makeMove(gid, wordToProgram(normalised));
     } catch (e) {
       console.error('[krunk] commit failed', e);
     }
@@ -356,18 +420,19 @@ export function useKrunkHand(
       return;
     }
     try {
-      go.makeMove(gid, wordToProgram(normalised));
       transition({
         ...cur,
         guesses: [
           ...cur.guesses,
           // Use -1 as a "pending" sentinel; replaced when alice's
           // clue readable arrives.
-          { word: normalised, clue: [-1, -1, -1, -1, -1] as KrunkGuess['clue'] },
+          { word: normalised, clue: PENDING_CLUE },
         ],
         handler: KrunkHandler.BobWaiting,
         myTurn: false,
+        error: null,
       });
+      go.makeMove(gid, wordToProgram(normalised));
     } catch (e) {
       console.error('[krunk] guess failed', e);
     }

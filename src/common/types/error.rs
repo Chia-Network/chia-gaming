@@ -16,7 +16,7 @@ pub enum Error {
     JsonErr(serde_json::Error),
     HexErr(hex::FromHexError),
     Channel(String),
-    GameMoveRejected(Vec<u8>),
+    GameMoveRejected { tag: Vec<u8>, message: Vec<u8> },
 }
 
 impl std::error::Error for Error {}

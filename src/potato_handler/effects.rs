@@ -133,6 +133,7 @@ pub enum GameNotification {
     },
     ProposalAccepted {
         id: GameID,
+        amount: Amount,
     },
     ProposalCancelled {
         id: GameID,
@@ -146,6 +147,11 @@ pub enum GameNotification {
 
     ActionFailed {
         reason: String,
+    },
+    MoveRejected {
+        id: GameID,
+        tag: String,
+        message: String,
     },
     ChannelStatus {
         state: ChannelState,
