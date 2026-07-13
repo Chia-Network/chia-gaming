@@ -101,7 +101,7 @@ updates never include the secret nonce.
 | `set_alias` | `{ session_id, alias }` | Save a new alias for this tracker session |
 | `join` | `{ session_id, alias }` | Authenticate the lobby socket by secret nonce and register/update the public lobby player |
 | `leave` | `{}` | Leave the lobby for the current session-bound socket |
-| `challenge` | `{ target_id, amount }` | Challenge another player by public lobby id with a channel buy-in amount |
+| `challenge` | `{ target_id, challenger_amount, target_amount, channel_timeout?, unroll_timeout? }` | Challenge another player by public lobby id with per-player channel buy-ins and optional channel/unroll timeouts. Amounts are decimal bigint strings; timeouts are decimal block counts accepted only in the lobby range 3-30. |
 | `challenge_accept` | `{ challenge_id }` | Accept a pending challenge addressed to the current session-bound socket |
 | `challenge_decline` | `{ challenge_id }` | Decline a pending challenge |
 | `challenge_cancel` | `{}` | Cancel outgoing challenges for the current session-bound socket |
@@ -114,7 +114,7 @@ updates never include the secret nonce.
 | `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
 | `joined` | `{ id, alias }` | The public lobby id and alias assigned to this session |
 | `lobby_update` | `Player[]` | Current list of public players in the lobby (broadcast on changes). Each `Player` includes `id`, `alias`, `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when actively playing a paired session, `opponent_alias`; it never includes `session_id`. |
-| `challenge_received` | `{ challenge_id, from_id, from_alias, amount }` | Someone challenged you |
+| `challenge_received` | `{ challenge_id, from_id, from_alias, challenger_amount, target_amount, channel_timeout?, unroll_timeout? }` | Someone challenged you. Amounts are neutral lobby labels: `challenger_amount` is the sender's buy-in, `target_amount` is yours. The lobby auto-declines challenges with invalid amounts or out-of-range timeouts before showing them. |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
 When a challenge is accepted, the tracker removes that challenge, cancels stale
@@ -156,7 +156,7 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
 | Event | Payload | Purpose |
 |-------|---------|---------|
 | `registered` | `{ player_id }` | Confirmation of identity. Sent in response to `identify`. |
-| `advisory_start` | `{ peer_id, peer_alias, amount, channel_timeout?, unroll_timeout? }` | The tracker suggests starting a session with this peer (triggered by challenge acceptance in the lobby). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. |
+| `advisory_start` | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The tracker suggests starting a session with this peer (triggered by challenge acceptance in the lobby). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. |
 | binary frame | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]` | A peer payload from another peer, relayed through the tracker pipe with the sender's public id and alias. |
 | `delivery_failure` | `{ to }` | The target peer is not connected; the message could not be delivered. |
 | `lobby_attention` | `{}` | Signals that something happened in the lobby that the user should look at. |
@@ -279,10 +279,15 @@ browser-level per-host connection throttling, causing multi-second freezes
 across all connections to that host — even connections from different browser
 contexts (e.g. the lobby iframe vs. the main app).
 
-**Lobby scope:** The lobby negotiates only the channel buy-in amount. Game type
-and per-hand terms are negotiated inside the state-channel session via game
-proposals, which allows players to switch between supported games from hand to
-hand without rematching in the lobby.
+**Lobby scope:** The lobby negotiates only session setup terms: each player's
+channel buy-in contribution and the channel/unroll timeout block counts. The
+tracker UX defaults to equal buy-ins and 15-block timeouts, but accepts
+asymmetric buy-ins and timeout values in the 3-30 block range. The tracker
+service rejects invalid challenge terms before forwarding them to the target
+lobby, and the target lobby auto-declines invalid terms if they are ever
+received. Game type and per-hand terms are negotiated inside the state-channel
+session via game proposals, which allows players to switch between supported
+games from hand to hand without rematching in the lobby.
 
 **Future direction: connection identifiers.** The MVP supports one paired
 session per game channel. A future extension adds a `connection_id` field to all
@@ -375,7 +380,9 @@ full mid-game session state:
 | `remoteNumber` | `number?` | Last delivered inbound game-message sequence number. |
 | `channelReady` | `boolean?` | Whether the channel has been created and peer keepalives can start. |
 | `iStarted` | `boolean?` | Whether this player was the channel/session initiator. |
-| `amount` | `string?` | Channel buy-in amount as a decimal bigint string. |
+| `amount` | `string?` | Total channel buy-in (sum of both contributions) as a decimal bigint string. |
+| `myContribution` | `string?` | This player's channel buy-in contribution as a decimal bigint string. |
+| `theirContribution` | `string?` | Opponent's channel buy-in contribution as a decimal bigint string. |
 | `perGameAmount` | `string?` | Default per-hand amount as a decimal bigint string. |
 | `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound binary game messages, with `msg` base64-encoded for JSON storage, that have not been acknowledged by the peer. |
 | `history` | `string[]?` | Game notification log. |
@@ -760,10 +767,11 @@ The Shell is the top-level React component. It owns:
 - **Tab navigation** — five tabs: Wallet, Tracker, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
-The Shell does not know about game protocol details. When the tracker emits
-`matched`, the Shell creates `GameSessionParams` with the channel buy-in amount
-and renders the `GameSession` component. Specific game types and per-hand terms
-are chosen later inside the session through game proposals.
+The Shell does not know about game protocol details. When the tracker challenge
+flow completes, Shell creates `GameSessionParams` with the total channel amount
+and the perspective-correct `myContribution` / `theirContribution`, then renders
+the `GameSession` component. Specific game types and per-hand terms are chosen
+later inside the session through game proposals.
 
 Session-end side effects (tracker busy state, balance polling, peer relay
 teardown, clearing session refs) are driven by the `onTerminal` callback wired

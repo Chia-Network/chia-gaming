@@ -255,6 +255,12 @@ pub struct TransactionManager<C> {
 /// Chia reorg.
 pub const DEFAULT_CONFIRMATION_DEPTH: u64 = 32;
 
+/// Extra blocks past the funding transaction's `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
+/// deadline before declaring the channel failed.  Ensures a real coin-record
+/// report at/past the deadline has been processed (since `check_channel_expiry`
+/// only runs inside `report_coin_states`, not the height-only `new_block` path).
+pub const CHANNEL_EXPIRY_BUFFER: u64 = 6;
+
 /// Upper bound on any height reported to the manager.  Real Chia heights are in
 /// the single-digit millions and grow ~1.6M/year, so this is absurdly generous
 /// while leaving ~7 orders of magnitude below `u64::MAX` -- enough that adding
@@ -696,7 +702,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
                 if !tx.spent_coin_ids.contains(&parent) {
                     return true;
                 }
-                if matches!(tx.expiry, Some(e) if height >= e) {
+                if matches!(tx.expiry, Some(e) if height >= e + CHANNEL_EXPIRY_BUFFER) {
                     return false;
                 }
                 resubmit = Some((tx.bundle.clone(), tx.expiry));
@@ -772,7 +778,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
             self.channel_established = true;
             return;
         }
-        if height < expiry {
+        if height < expiry + CHANNEL_EXPIRY_BUFFER {
             return;
         }
         self.channel_expired = true;
@@ -1304,15 +1310,27 @@ mod tests {
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
         assert_eq!(count_failed_notifications(&drain), 0);
 
-        // At the deadline with the channel coin still unconfirmed: Failed fires
-        // once, and the dead funding tx is pruned.
+        // At the deadline: still no failure because the buffer hasn't elapsed.
         mgr.report_coin_states(&mut allocator, 100, &[])
+            .expect("report");
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(count_failed_notifications(&drain), 0);
+
+        // Within the buffer window (expiry + 5): still no failure.
+        mgr.report_coin_states(&mut allocator, 105, &[])
+            .expect("report");
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(count_failed_notifications(&drain), 0);
+
+        // Past the buffer (expiry + 6): Failed fires once, and the dead
+        // funding tx is pruned.
+        mgr.report_coin_states(&mut allocator, 106, &[])
             .expect("report");
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
         assert_eq!(count_failed_notifications(&drain), 1);
 
         // A later report does not re-emit the terminal signal.
-        mgr.report_coin_states(&mut allocator, 101, &[])
+        mgr.report_coin_states(&mut allocator, 107, &[])
             .expect("report");
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
         assert_eq!(count_failed_notifications(&drain), 0);

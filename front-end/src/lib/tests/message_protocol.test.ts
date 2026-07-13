@@ -107,6 +107,7 @@ function createReadyBlob(
     mockBlockchain,
     'test',
     100n,
+    100n,
     makePeerConn(sentMessages, sentAcks),
   );
   const cradle = makeMockCradle(onDeliver);
@@ -133,6 +134,7 @@ function createUnreadyBlob(
   const blob = new SessionController(
     mockBlockchain,
     'test',
+    100n,
     100n,
     makePeerConn(sentMessages, sentAcks),
   );
@@ -338,6 +340,7 @@ describe('restore ordering', () => {
       mockBlockchain,
       'test',
       100n,
+      100n,
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
@@ -388,6 +391,7 @@ describe('restore ordering', () => {
       mockBlockchain,
       'test',
       100n,
+      100n,
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
@@ -417,6 +421,7 @@ describe('restore ordering', () => {
       mockBlockchain,
       'test',
       100n,
+      100n,
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
@@ -444,7 +449,7 @@ describe('cleanShutdown calls shut_down on cradle', () => {
   it('calls shut_down on cradle', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
 
     const cradle = {
@@ -483,7 +488,7 @@ describe('transaction submission', () => {
     ), 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = makeMockCradle();
 
@@ -522,7 +527,7 @@ describe('transaction submission', () => {
     ), 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -555,7 +560,7 @@ describe('transaction submission', () => {
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(null, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -592,7 +597,7 @@ describe('transaction submission', () => {
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -628,7 +633,7 @@ describe('transaction submission', () => {
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
     const errors: string[] = [];
     blob.getObservable().subscribe((evt) => {

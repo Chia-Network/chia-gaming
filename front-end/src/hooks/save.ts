@@ -165,7 +165,8 @@ export interface SessionState {
   remoteNumber?: bigint;
   channelReady?: boolean;
   iStarted?: boolean;
-  amount?: string;
+  myContribution?: string;
+  theirContribution?: string;
   perGameAmount?: string;
   unackedMessages?: Array<{ msgno: bigint; msg: string }>;
   history?: string[];
@@ -205,6 +206,10 @@ export interface SessionState {
   betweenHandCachedPeerProposal?: { id: string; groupIds?: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandReviewPeerProposal?: { id: string; groupIds?: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
+
+  // Timer persistence (epoch ms timestamps)
+  waitingStateEnteredAt?: bigint;
+  cleanShutdownGraceStartedAt?: bigint;
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */

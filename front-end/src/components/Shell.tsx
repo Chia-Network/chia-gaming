@@ -53,6 +53,7 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
+  ABANDON_WAITING_STATES,
   selectGameDashboardView,
   selectStatusBarBalances,
   sessionAmountsFromSave,
@@ -151,7 +152,8 @@ function sessionSaveForReactProps(save: SessionState | null): SessionState | und
 type PendingSessionProposal = {
   from_id: string;
   from_alias: string;
-  amount: string;
+  proposer_amount: string;
+  responder_amount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
   game_session_id?: string;
@@ -160,7 +162,8 @@ type PendingSessionProposal = {
 type SessionStartRequest = {
   peerId: string;
   opponentAlias?: string;
-  amount: string;
+  myAmount: string;
+  theirAmount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
   iStarted: boolean;
@@ -200,7 +203,36 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 ];
 
 const FALLBACK_AMOUNT = 100n;
-const FALLBACK_PER_GAME = 10n;
+const ABANDON_DELAY_MS = 120_000n;
+const GRACE_DELAY_MS = 10_000n;
+
+const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
+  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
+  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+]);
+
+const MIN_TIMEOUT_BLOCKS = 3;
+const MAX_TIMEOUT_BLOCKS = 30;
+
+function isAbandonWaitingState(state: SessionModel['channel']['status']['state'] | null | undefined): state is SessionModel['channel']['status']['state'] {
+  return !!state && ABANDON_WAITING_STATES.has(state);
+}
+
+function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolean): boolean {
+  return abandonEnabled && isAbandonWaitingState(model?.channel.status.state);
+}
+
+function savedChannelState(save: SessionState): SessionModel['channel']['status']['state'] | null {
+  if (save.channelStatus) return save.channelStatus.state;
+  if (save.channelReady) return 'Active';
+  return null;
+}
+
+function isValidTimeoutString(v: string | undefined): boolean {
+  if (v === undefined) return true;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
+}
 
 const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
   connected: 'Connected',
@@ -456,6 +488,13 @@ const Shell = () => {
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [abandonEnabled, setAbandonEnabled] = useState(false);
+  const abandonEnabledRef = useRef(false);
+  abandonEnabledRef.current = abandonEnabled;
+  const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitingEnteredAtRef = useRef<bigint | null>(null);
+  const waitingStateRef = useRef<SessionModel['channel']['status']['state'] | null>(null);
+
   // Consent prompt state for the new tracker protocol
   const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
   const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
@@ -598,8 +637,47 @@ const Shell = () => {
         clearTimeout(cleanShutdownGraceTimerRef.current);
         cleanShutdownGraceTimerRef.current = null;
       }
+      if (abandonTimerRef.current !== null) {
+        clearTimeout(abandonTimerRef.current);
+        abandonTimerRef.current = null;
+      }
     };
   }, []);
+
+  // Abandon timer: track when the channel enters a waiting state and enable
+  // the abandon action after ABANDON_DELAY_MS.
+  const channelState = dashboardSessionModel?.channel.status.state ?? null;
+  useEffect(() => {
+    if (isAbandonWaitingState(channelState)) {
+      if (waitingEnteredAtRef.current === null || waitingStateRef.current !== channelState) {
+        if (abandonTimerRef.current !== null) {
+          clearTimeout(abandonTimerRef.current);
+          abandonTimerRef.current = null;
+        }
+        const now = BigInt(Date.now());
+        waitingEnteredAtRef.current = now;
+        waitingStateRef.current = channelState;
+        setAbandonEnabled(false);
+        saveSession({ waitingStateEnteredAt: now });
+        abandonTimerRef.current = setTimeout(() => {
+          abandonTimerRef.current = null;
+          if (dashboardSessionModelRef.current?.channel.status.state !== channelState) return;
+          setAbandonEnabled(true);
+        }, Number(ABANDON_DELAY_MS));
+      }
+    } else if (channelState !== null) {
+      if (abandonTimerRef.current !== null) {
+        clearTimeout(abandonTimerRef.current);
+        abandonTimerRef.current = null;
+      }
+      if (waitingEnteredAtRef.current !== null) {
+        waitingEnteredAtRef.current = null;
+        waitingStateRef.current = null;
+        saveSession({ waitingStateEnteredAt: undefined });
+      }
+      setAbandonEnabled(false);
+    }
+  }, [channelState]);
 
   const [history, setHistory] = useState<string[]>([]);
   const [logLines, setLogLines] = useState<string[]>([]);
@@ -721,6 +799,7 @@ const Shell = () => {
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
+  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -811,11 +890,19 @@ const Shell = () => {
       clearTimeout(cleanShutdownGraceTimerRef.current);
       cleanShutdownGraceTimerRef.current = null;
     }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
+    setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
     setSessionPhase('none');
     setSessionError(false);
     setSessionConfig(null);
     setPeerConn(null);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
@@ -827,8 +914,10 @@ const Shell = () => {
     const conn = trackerConnRef.current;
     if (!conn) return;
 
-    const amount = parseSessionAmount(request.amount);
-    const perGame = amount / 10n || 1n;
+    const myContribution = parseSessionAmount(request.myAmount);
+    const theirContribution = parseSessionAmount(request.theirAmount);
+    const minContribution = myContribution < theirContribution ? myContribution : theirContribution;
+    const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();
     const token = `peer_${request.peerId}_${Date.now()}`;
 
@@ -843,19 +932,33 @@ const Shell = () => {
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
+    }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
+    setAbandonEnabled(false);
+    setCleanShutdownGraceActive(false);
 
     setSessionPhase('none');
     setSessionError(false);
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(true);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     destroySessionController();
     clearSessionPreservingHistory();
     try { getActiveBlockchain().start(); } catch { /* not connected */ }
     setSessionConfig({
       iStarted: request.iStarted,
-      amount,
+      myContribution,
+      theirContribution,
       perGameAmount: perGame,
       restoring: false,
       pairingToken: token,
@@ -876,7 +979,8 @@ const Shell = () => {
     const gameSessionId = generateSessionId();
     conn.sendPeerAppMessage(advisory.peer_id, {
       type: 'session_proposal',
-      amount: advisory.amount,
+      proposer_amount: advisory.my_amount,
+      responder_amount: advisory.their_amount,
       from_alias: getAlias(),
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
@@ -885,7 +989,8 @@ const Shell = () => {
     startFreshSessionWithPeer({
       peerId: advisory.peer_id,
       opponentAlias: advisory.peer_alias,
-      amount: advisory.amount,
+      myAmount: advisory.my_amount,
+      theirAmount: advisory.their_amount,
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
       iStarted: true,
@@ -903,7 +1008,8 @@ const Shell = () => {
     startFreshSessionWithPeer({
       peerId: proposal.from_id,
       opponentAlias: proposal.from_alias,
-      amount: proposal.amount,
+      myAmount: proposal.responder_amount,
+      theirAmount: proposal.proposer_amount,
       channel_timeout: proposal.channel_timeout,
       unroll_timeout: proposal.unroll_timeout,
       iStarted: false,
@@ -1049,9 +1155,14 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          console.log('[Shell] advisory_start: peer=%s alias=%s amount=%s', params.peer_id, params.peer_alias, params.amount);
+          console.log('[Shell] advisory_start: peer=%s alias=%s my_amount=%s their_amount=%s', params.peer_id, params.peer_alias, params.my_amount, params.their_amount);
           if (!isAvailableForNewSessionPrompt()) {
             console.log('[Shell] advisory_start declined: client unavailable for new session');
+            sendSessionReject(params.peer_id);
+            return;
+          }
+          if (!isValidTimeoutString(params.channel_timeout) || !isValidTimeoutString(params.unroll_timeout)) {
+            console.log('[Shell] advisory_start declined: timeout out of range channel=%s unroll=%s', params.channel_timeout, params.unroll_timeout);
             sendSessionReject(params.peer_id);
             return;
           }
@@ -1070,9 +1181,14 @@ const Shell = () => {
           console.log('[Shell] onPeerAppMessage type=%s from=%s', msg.type, fromId);
           if (msg.type === 'session_proposal') {
             const peerAlias = fromAlias || msg.from_alias || fromId;
-            console.log('[Shell] session_proposal from=%s alias=%s amount=%s', fromId, peerAlias, msg.amount);
+            console.log('[Shell] session_proposal from=%s alias=%s proposer_amount=%s responder_amount=%s', fromId, peerAlias, msg.proposer_amount, msg.responder_amount);
             if (!isAvailableForNewSessionPrompt()) {
               console.log('[Shell] session_proposal declined: client unavailable for new session');
+              sendSessionReject(fromId);
+              return;
+            }
+            if (!isValidTimeoutString(msg.channel_timeout) || !isValidTimeoutString(msg.unroll_timeout)) {
+              console.log('[Shell] session_proposal declined: timeout out of range channel=%s unroll=%s', msg.channel_timeout, msg.unroll_timeout);
               sendSessionReject(fromId);
               return;
             }
@@ -1082,7 +1198,8 @@ const Shell = () => {
             setPendingProposalState({
               from_id: fromId,
               from_alias: peerAlias,
-              amount: msg.amount,
+              proposer_amount: msg.proposer_amount,
+              responder_amount: msg.responder_amount,
               channel_timeout: msg.channel_timeout,
               unroll_timeout: msg.unroll_timeout,
               game_session_id: proposalSessionId,
@@ -1092,7 +1209,9 @@ const Shell = () => {
             console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, ps?.peerId, ps?.peerId === fromId);
             if (ps?.peerId === fromId) {
               markPeerDead();
-              if (sessionPhaseRef.current === 'none') {
+              const channelState = dashboardSessionModelRef.current?.channel.status.state;
+              const isPreActive = !channelState || PRE_ACTIVE_CHANNEL_STATES.has(channelState);
+              if (sessionPhaseRef.current === 'none' || isPreActive) {
                 cancelAttemptedSession();
               }
             }
@@ -1350,6 +1469,7 @@ const Shell = () => {
   }, []);
 
   const handleSessionModelChange = useCallback((model: SessionModel) => {
+    dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
   }, []);
 
@@ -1393,11 +1513,12 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    const { amount, perGameAmount: perGame } = sessionAmountsFromSave(save, FALLBACK_AMOUNT, FALLBACK_PER_GAME);
+    const { myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
     if (save.pairingToken) {
       setSessionConfig({
         iStarted: save.iStarted ?? false,
-        amount,
+        myContribution,
+        theirContribution,
         perGameAmount: perGame,
         restoring: true,
         pairingToken: save.pairingToken,
@@ -1416,6 +1537,48 @@ const Shell = () => {
     activeBlockchainRef.current = iface;
     setWalletConnected(iface.isConnected());
     setResuming(false);
+
+    // Restore abandon timer only if the persisted channel is still in that waiting state.
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    const restoredChannelState = savedChannelState(save);
+    if (save.waitingStateEnteredAt != null && isAbandonWaitingState(restoredChannelState)) {
+      const elapsed = BigInt(Date.now()) - save.waitingStateEnteredAt;
+      waitingEnteredAtRef.current = save.waitingStateEnteredAt;
+      waitingStateRef.current = restoredChannelState;
+      if (elapsed >= ABANDON_DELAY_MS) {
+        setAbandonEnabled(true);
+      } else {
+        abandonTimerRef.current = setTimeout(() => {
+          abandonTimerRef.current = null;
+          const currentState = dashboardSessionModelRef.current?.channel.status.state ?? restoredChannelState;
+          if (currentState !== restoredChannelState) return;
+          setAbandonEnabled(true);
+        }, Number(ABANDON_DELAY_MS - elapsed));
+      }
+    } else {
+      waitingEnteredAtRef.current = null;
+      waitingStateRef.current = null;
+      setAbandonEnabled(false);
+      if (save.waitingStateEnteredAt != null) {
+        saveSession({ waitingStateEnteredAt: undefined });
+      }
+    }
+
+    // Restore clean shutdown grace from persisted timestamp
+    if (save.cleanShutdownGraceStartedAt != null) {
+      const elapsed = BigInt(Date.now()) - save.cleanShutdownGraceStartedAt;
+      if (elapsed < GRACE_DELAY_MS) {
+        setCleanShutdownGraceActive(true);
+        cleanShutdownGraceTimerRef.current = setTimeout(() => {
+          cleanShutdownGraceTimerRef.current = null;
+          setCleanShutdownGraceActive(false);
+          saveSession({ cleanShutdownGraceStartedAt: undefined });
+        }, Number(GRACE_DELAY_MS - elapsed));
+      }
+    }
 
     // For WalletConnect restores, finalize performs the first wallet RPC
     // (address lookup). Keep it in the background so local restore can render
@@ -1578,14 +1741,18 @@ const Shell = () => {
       clearTimeout(cleanShutdownGraceTimerRef.current);
     }
     setCleanShutdownGraceActive(true);
+    saveSession({ cleanShutdownGraceStartedAt: BigInt(Date.now()) });
     cleanShutdownGraceTimerRef.current = setTimeout(() => {
       cleanShutdownGraceTimerRef.current = null;
       setCleanShutdownGraceActive(false);
-    }, 10_000);
+      saveSession({ cleanShutdownGraceStartedAt: undefined });
+    }, Number(GRACE_DELAY_MS));
   }, []);
 
   const cancelDashboardSession = useCallback(() => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+    if (peerId) sendSessionReject(peerId);
     resetPeerRelayState();
     destroySessionController();
     clearSessionPreservingHistory();
@@ -1593,17 +1760,29 @@ const Shell = () => {
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
+    }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
+    setAbandonEnabled(false);
+    setCleanShutdownGraceActive(false);
     setSessionPhase('none');
     setSessionError(false);
     setSessionConfig(null);
     setPeerConn(null);
+    dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreTrackerReconciled(false);
-    setActiveTab('tracker');
     trackerConnRef.current?.setBusy(false, alias);
-  }, [clearSessionPreservingHistory, resetPeerRelayState, setActiveTab]);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, sendSessionReject]);
 
   const requestDashboardCleanShutdown = useCallback(() => {
     startCleanShutdownGrace();
@@ -1653,6 +1832,22 @@ const Shell = () => {
         break;
       case 'go-on-chain':
         requestDashboardGoOnChain();
+        break;
+      case 'abandon':
+        if (!isSessionAbandonable(dashboardSessionModelRef.current, abandonEnabledRef.current)) {
+          setConfirmDialog(null);
+          break;
+        }
+        setConfirmDialog({
+          title: 'Abandon session?',
+          body: 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation.',
+          confirmLabel: 'Abandon',
+          onConfirm: () => {
+            setConfirmDialog(null);
+            if (!isSessionAbandonable(dashboardSessionModelRef.current, abandonEnabledRef.current)) return;
+            cancelDashboardSession();
+          },
+        });
         break;
       case 'none':
         break;
@@ -1793,6 +1988,7 @@ const Shell = () => {
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     cleanShutdownGraceActive,
+    abandonEnabled,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
   const sessionConsentOverlay = pendingAdvisory ? (
@@ -1800,7 +1996,9 @@ const Shell = () => {
       <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
-          <strong>{pendingAdvisory.peer_alias}</strong> would like to play for <strong>{pendingAdvisory.amount}</strong> mojos.
+          <strong>{pendingAdvisory.peer_alias}</strong> would like to play.
+          <br />Your buy-in: <strong>{pendingAdvisory.my_amount}</strong> mojos
+          <br />Their buy-in: <strong>{pendingAdvisory.their_amount}</strong> mojos
         </p>
         <div className='flex gap-3 justify-center'>
           <button
@@ -1823,7 +2021,9 @@ const Shell = () => {
       <div className='bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center'>
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
-          <strong>{pendingProposal.from_alias}</strong> is proposing a session for <strong>{pendingProposal.amount}</strong> mojos.
+          <strong>{pendingProposal.from_alias}</strong> is proposing a session.
+          <br />Your buy-in: <strong>{pendingProposal.responder_amount}</strong> mojos
+          <br />Their buy-in: <strong>{pendingProposal.proposer_amount}</strong> mojos
         </p>
         <div className='flex gap-3 justify-center'>
           <button

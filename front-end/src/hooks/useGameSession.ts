@@ -541,7 +541,6 @@ function maxQueuedNotificationId(...queues: QueuedNotification[][]): bigint {
 export interface UseGameSessionResult {
   sessionModel: SessionModel;
   gameConnectionState: GameConnectionState;
-  amount: bigint;
   perGameAmount: bigint;
   currentHandAmount: bigint;
   myRunningBalance: bigint;
@@ -606,7 +605,7 @@ export function useGameSession(
   blockchain: BlockchainPoller | null = null,
   onTerminal?: () => void,
 ): UseGameSessionResult {
-  const { iStarted, amount, perGameAmount } = params;
+  const { iStarted, myContribution, theirContribution, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
   const { sessionController: sc } = getOrCreateSessionController(
@@ -614,7 +613,8 @@ export function useGameSession(
     peerConn,
     registerMessageHandler,
     uniqueId,
-    amount,
+    myContribution,
+    theirContribution,
     iStarted,
     sessionSave,
     params.pairingToken,
@@ -900,7 +900,8 @@ export function useGameSession(
       remoteNumber: wasm.remoteNumber,
       channelReady: wasm.channelReady,
       iStarted: wasm.iStarted,
-      amount: wasm.amount,
+      myContribution: wasm.myContribution,
+      theirContribution: wasm.theirContribution,
       perGameAmount: wasm.perGameAmount,
       unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
       activeGameId: wasm.activeGameId,
@@ -1636,7 +1637,6 @@ export function useGameSession(
   return {
     sessionModel,
     gameConnectionState,
-    amount,
     perGameAmount,
     currentHandAmount: gameSessionView.currentHandAmount,
     myRunningBalance,
