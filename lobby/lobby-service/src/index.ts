@@ -1073,7 +1073,7 @@ function sweepGameConnections(now: number): void {
   }
 }
 
-setInterval(() => {
+const sweepTimer = setInterval(() => {
   const now = Date.now();
   const lobbyChanged = sweepLobbyConnections(now);
   sweepGameConnections(now);
@@ -1097,3 +1097,41 @@ httpServer.headersTimeout = 6_000;
 httpServer.listen({ host: '::', port }, () => {
   console.log(`Server running on port ${port}`);
 });
+
+let shuttingDown = false;
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; shutting down`);
+  clearInterval(sweepTimer);
+
+  for (const ws of [...lobbyWsServer.clients, ...gameWsServer.clients]) {
+    try { ws.close(1001, 'server_shutdown'); } catch {}
+  }
+
+  let pendingClosures = 3;
+  const deadline = setTimeout(() => {
+    for (const ws of [...lobbyWsServer.clients, ...gameWsServer.clients]) {
+      try { ws.terminate(); } catch {}
+    }
+    httpServer.closeAllConnections?.();
+    process.exit();
+  }, 5_000);
+  const closed = (err?: Error): void => {
+    if (err) {
+      console.error(`Shutdown failed: ${err.message}`);
+      process.exitCode = 1;
+    }
+    pendingClosures -= 1;
+    if (pendingClosures === 0) {
+      clearTimeout(deadline);
+    }
+  };
+
+  lobbyWsServer.close(closed);
+  gameWsServer.close(closed);
+  httpServer.close(closed);
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));

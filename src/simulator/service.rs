@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -18,8 +19,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot, watch};
-use tokio_tungstenite::tungstenite::Message;
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{
@@ -905,11 +905,10 @@ const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const ACTOR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) struct ServiceConfig {
-    pub(crate) health_addr: SocketAddr,
-    pub(crate) websocket_addr: SocketAddr,
+    pub(crate) listen_addr: SocketAddr,
     pub(crate) block_interval: Duration,
     pub(crate) outbound_capacity: usize,
-    pub(crate) ready: Option<oneshot::Sender<(SocketAddr, SocketAddr)>>,
+    pub(crate) ready: Option<oneshot::Sender<SocketAddr>>,
     #[cfg(test)]
     actor_ready: Option<oneshot::Sender<GameActor>>,
 }
@@ -917,8 +916,7 @@ pub(crate) struct ServiceConfig {
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
-            health_addr: "[::]:5800".parse().unwrap(),
-            websocket_addr: "[::]:5801".parse().unwrap(),
+            listen_addr: "[::]:5800".parse().unwrap(),
             block_interval: DEFAULT_BLOCK_INTERVAL,
             outbound_capacity: DEFAULT_OUTBOUND_CAPACITY,
             ready: None,
@@ -1245,10 +1243,61 @@ fn cors_headers() -> HeaderMap {
     headers
 }
 
-async fn get_peak(State(height): State<Arc<AtomicUsize>>) -> impl IntoResponse {
+#[derive(Clone)]
+struct ServiceState {
+    height: Arc<AtomicUsize>,
+    actor: GameActor,
+    outbound_capacity: usize,
+    shutdown: watch::Receiver<bool>,
+    next_connection_id: Arc<AtomicUsize>,
+    connections: ConnectionTracker,
+}
+
+#[derive(Clone, Default)]
+struct ConnectionTracker {
+    inner: Arc<ConnectionTrackerInner>,
+}
+
+#[derive(Default)]
+struct ConnectionTrackerInner {
+    active: AtomicUsize,
+    changed: Notify,
+}
+
+struct ConnectionGuard {
+    tracker: ConnectionTracker,
+}
+
+impl ConnectionTracker {
+    fn start(&self) -> ConnectionGuard {
+        self.inner.active.fetch_add(1, Ordering::Relaxed);
+        ConnectionGuard {
+            tracker: self.clone(),
+        }
+    }
+
+    async fn wait_for_empty(&self) {
+        loop {
+            let changed = self.inner.changed.notified();
+            if self.inner.active.load(Ordering::Relaxed) == 0 {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.tracker.inner.active.fetch_sub(1, Ordering::Relaxed);
+        self.tracker.inner.changed.notify_waiters();
+    }
+}
+
+async fn get_peak(State(state): State<ServiceState>) -> impl IntoResponse {
     (
         cors_headers(),
-        format!("{}\n", height.load(Ordering::Relaxed)),
+        format!("{}\n", state.height.load(Ordering::Relaxed)),
     )
 }
 
@@ -1260,24 +1309,54 @@ async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, cors_headers(), "not found")
 }
 
-async fn run_health_server(
+async fn upgrade_websocket(
+    websocket: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<ServiceState>,
+) -> impl IntoResponse {
+    let connection_id = state.next_connection_id.fetch_add(1, Ordering::Relaxed) as u64;
+    let connection_guard = state.connections.start();
+    websocket.on_upgrade(move |socket| async move {
+        let _connection_guard = connection_guard;
+        handle_connection(
+            socket,
+            addr,
+            connection_id,
+            state.actor,
+            state.outbound_capacity,
+            state.shutdown,
+        )
+        .await;
+    })
+}
+
+async fn run_server(
     listener: TcpListener,
-    height: Arc<AtomicUsize>,
+    state: ServiceState,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let connections = state.connections.clone();
     let app = Router::new()
         .route(
-            "/get_peak",
+            "/health",
             get(get_peak).post(get_peak).options(get_peak_options),
         )
+        .route("/ws", get(upgrade_websocket))
         .fallback(not_found)
-        .with_state(height);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            wait_for_shutdown(&mut shutdown).await;
-        })
+        .with_state(state);
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        wait_for_shutdown(&mut shutdown).await;
+    })
+    .await
+    .map_err(|e| format!("simulator server failed: {e}"))?;
+    tokio::time::timeout(CONNECTION_SHUTDOWN_TIMEOUT, connections.wait_for_empty())
         .await
-        .map_err(|e| format!("health server failed: {e}"))
+        .map_err(|_| format!("connections did not stop within {CONNECTION_SHUTDOWN_TIMEOUT:?}"))?;
+    Ok(())
 }
 
 async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
@@ -1289,15 +1368,11 @@ async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn flush_websocket(
-    websocket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-) {
+async fn flush_websocket(websocket: &mut WebSocket) {
     let _ = tokio::time::timeout(WEBSOCKET_CLOSE_TIMEOUT, websocket.flush()).await;
 }
 
-async fn close_websocket(
-    websocket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-) {
+async fn close_websocket(websocket: &mut WebSocket) {
     let _ = tokio::time::timeout(
         WEBSOCKET_CLOSE_TIMEOUT,
         websocket.send(Message::Close(None)),
@@ -1305,10 +1380,7 @@ async fn close_websocket(
     .await;
 }
 
-async fn send_websocket_message(
-    websocket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    message: Message,
-) -> Result<(), String> {
+async fn send_websocket_message(websocket: &mut WebSocket, message: Message) -> Result<(), String> {
     tokio::time::timeout(WEBSOCKET_CLOSE_TIMEOUT, websocket.send(message))
         .await
         .map_err(|_| "WebSocket write timed out".to_string())?
@@ -1316,7 +1388,7 @@ async fn send_websocket_message(
 }
 
 async fn handle_connection(
-    stream: tokio::net::TcpStream,
+    mut websocket: WebSocket,
     addr: SocketAddr,
     connection_id: ConnectionId,
     actor: GameActor,
@@ -1324,20 +1396,8 @@ async fn handle_connection(
     mut shutdown: watch::Receiver<bool>,
 ) {
     sim_log(&format!(
-        "tcp_accept: addr={addr} connection_id={connection_id}"
+        "ws_accept: addr={addr} connection_id={connection_id}"
     ));
-    let mut websocket = tokio::select! {
-        result = tokio_tungstenite::accept_async(stream) => {
-            match result {
-                Ok(websocket) => websocket,
-                Err(e) => {
-                    sim_log(&format!("ws_handshake_error: addr={addr} err={e}"));
-                    return;
-                }
-            }
-        }
-        _ = wait_for_shutdown(&mut shutdown) => return,
-    };
 
     let (outbound, mut outbound_receiver) = mpsc::channel(outbound_capacity);
     let (actor_disconnect, mut actor_disconnected) = watch::channel(false);
@@ -1381,12 +1441,11 @@ async fn handle_connection(
                             .as_ref()
                             .map(|f| format!("close_frame: code={} reason={}", f.code, f.reason))
                             .unwrap_or_else(|| "close_frame: no frame".to_string());
-                        // Tungstenite queues the required close reply when it reads
-                        // the peer's frame. Give the socket a bounded chance to flush it.
+                        // The WebSocket implementation queues the required close reply
+                        // when it reads the peer's frame. Give it a bounded chance to flush.
                         flush_websocket(&mut websocket).await;
                         break (reason, true);
                     }
-                    Some(Ok(Message::Frame(_))) => {}
                     Some(Err(e)) => break (format!("read_error: {e}"), false),
                     None => break ("connection_eof".to_string(), false),
                 }
@@ -1412,63 +1471,6 @@ async fn handle_connection(
         close_websocket(&mut websocket).await;
     }
     actor.disconnect(connection_id, reason);
-}
-
-async fn run_websocket_server(
-    listener: TcpListener,
-    actor: GameActor,
-    outbound_capacity: usize,
-    mut shutdown: watch::Receiver<bool>,
-) -> Result<(), String> {
-    let next_connection_id = Arc::new(AtomicUsize::new(1));
-    let mut connections = tokio::task::JoinSet::new();
-    loop {
-        tokio::select! {
-            _ = wait_for_shutdown(&mut shutdown) => break,
-            accepted = listener.accept() => {
-                match accepted {
-                    Ok((stream, addr)) => {
-                        let connection_id =
-                            next_connection_id.fetch_add(1, Ordering::Relaxed) as u64;
-                        connections.spawn(handle_connection(
-                            stream,
-                            addr,
-                            connection_id,
-                            actor.clone(),
-                            outbound_capacity,
-                            shutdown.clone(),
-                        ));
-                    }
-                    Err(e) => sim_log(&format!("tcp_accept_error: {e}")),
-                }
-            }
-            Some(result) = connections.join_next(), if !connections.is_empty() => {
-                if let Err(e) = result {
-                    return Err(format!("connection task failed: {e}"));
-                }
-            }
-        }
-    }
-    let drain_result = tokio::time::timeout(CONNECTION_SHUTDOWN_TIMEOUT, async {
-        while let Some(result) = connections.join_next().await {
-            if let Err(e) = result {
-                return Err(format!("connection task failed during shutdown: {e}"));
-            }
-        }
-        Ok(())
-    })
-    .await;
-    match drain_result {
-        Ok(result) => result?,
-        Err(_) => {
-            connections.abort_all();
-            while connections.join_next().await.is_some() {}
-            return Err(format!(
-                "connections did not stop within {CONNECTION_SHUTDOWN_TIMEOUT:?}"
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn unexpected_task_result(
@@ -1506,18 +1508,12 @@ pub(crate) async fn run_service(
     if config.outbound_capacity == 0 {
         return Err("outbound capacity must be greater than zero".to_string());
     }
-    let health_listener = TcpListener::bind(config.health_addr)
+    let listener = TcpListener::bind(config.listen_addr)
         .await
-        .map_err(|e| format!("failed to bind health server: {e}"))?;
-    let websocket_listener = TcpListener::bind(config.websocket_addr)
-        .await
-        .map_err(|e| format!("failed to bind WebSocket server: {e}"))?;
-    let health_addr = health_listener
+        .map_err(|e| format!("failed to bind simulator server: {e}"))?;
+    let listen_addr = listener
         .local_addr()
-        .map_err(|e| format!("failed to read health server address: {e}"))?;
-    let websocket_addr = websocket_listener
-        .local_addr()
-        .map_err(|e| format!("failed to read WebSocket server address: {e}"))?;
+        .map_err(|e| format!("failed to read simulator server address: {e}"))?;
     let height = Arc::new(AtomicUsize::new(0));
     let (actor, actor_thread, mut actor_done) = tokio::task::spawn_blocking({
         let height = height.clone();
@@ -1526,24 +1522,21 @@ pub(crate) async fn run_service(
     .await
     .map_err(|e| format!("game actor startup task failed: {e}"))??;
     sim_log(&format!(
-        "startup: health on {}, WebSocket API on {}",
-        health_addr, websocket_addr
+        "startup: health and WebSocket API on {listen_addr}"
     ));
 
     let (service_shutdown, service_shutdown_receiver) = watch::channel(false);
-    let mut health_task = tokio::spawn(run_health_server(
-        health_listener,
+    let state = ServiceState {
         height,
-        service_shutdown_receiver.clone(),
-    ));
-    let mut websocket_task = tokio::spawn(run_websocket_server(
-        websocket_listener,
-        actor.clone(),
-        config.outbound_capacity,
-        service_shutdown_receiver,
-    ));
+        actor: actor.clone(),
+        outbound_capacity: config.outbound_capacity,
+        shutdown: service_shutdown_receiver.clone(),
+        next_connection_id: Arc::new(AtomicUsize::new(1)),
+        connections: ConnectionTracker::default(),
+    };
+    let mut server_task = tokio::spawn(run_server(listener, state, service_shutdown_receiver));
     if let Some(ready) = config.ready.take() {
-        let _ = ready.send((health_addr, websocket_addr));
+        let _ = ready.send(listen_addr);
     }
     #[cfg(test)]
     if let Some(actor_ready) = config.actor_ready.take() {
@@ -1553,8 +1546,7 @@ pub(crate) async fn run_service(
     let mut block_timer = tokio::time::interval(config.block_interval);
     block_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     block_timer.tick().await;
-    let mut health_finished = false;
-    let mut websocket_finished = false;
+    let mut server_finished = false;
     let mut actor_finished = false;
     let service_error;
     loop {
@@ -1563,14 +1555,9 @@ pub(crate) async fn run_service(
                 service_error = None;
                 break;
             }
-            result = &mut health_task => {
-                health_finished = true;
-                service_error = Some(unexpected_task_result("health server", result));
-                break;
-            }
-            result = &mut websocket_task => {
-                websocket_finished = true;
-                service_error = Some(unexpected_task_result("WebSocket server", result));
+            result = &mut server_task => {
+                server_finished = true;
+                service_error = Some(unexpected_task_result("simulator server", result));
                 break;
             }
             result = &mut actor_done => {
@@ -1592,13 +1579,8 @@ pub(crate) async fn run_service(
 
     let _ = service_shutdown.send(true);
     let mut cleanup_errors = Vec::new();
-    if !health_finished {
-        if let Err(e) = finish_server_task("health server", &mut health_task).await {
-            cleanup_errors.push(e);
-        }
-    }
-    if !websocket_finished {
-        if let Err(e) = finish_server_task("WebSocket server", &mut websocket_task).await {
+    if !server_finished {
+        if let Err(e) = finish_server_task("simulator server", &mut server_task).await {
             cleanup_errors.push(e);
         }
     }
@@ -1667,11 +1649,21 @@ fn service_main_inner() {
                 let _ = stdin_shutdown.send(true);
             }
         });
+        let ctrl_c_shutdown = shutdown_sender.clone();
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
                 sim_log("ctrl-c: shutting down");
-                let _ = shutdown_sender.send(true);
+                let _ = ctrl_c_shutdown.send(true);
             }
+        });
+        #[cfg(unix)]
+        tokio::spawn(async move {
+            let mut terminate =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
+            terminate.recv().await;
+            sim_log("SIGTERM: shutting down");
+            let _ = shutdown_sender.send(true);
         });
 
         run_service(ServiceConfig::default(), shutdown)
@@ -1697,13 +1689,13 @@ mod regression_tests {
     use tokio::net::TcpStream;
     use tokio::task::JoinHandle as TokioJoinHandle;
     use tokio::time::{sleep, timeout};
+    use tokio_tungstenite::tungstenite::Message as ClientMessage;
     use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
     struct ServiceHarness {
-        health_addr: SocketAddr,
-        websocket_addr: SocketAddr,
+        listen_addr: SocketAddr,
         actor: GameActor,
         shutdown: Option<watch::Sender<bool>>,
         service: Option<TokioJoinHandle<Result<(), String>>>,
@@ -1715,27 +1707,24 @@ mod regression_tests {
             let (actor_sender, actor_ready) = oneshot::channel();
             let (shutdown, shutdown_receiver) = watch::channel(false);
             let config = ServiceConfig {
-                health_addr: "127.0.0.1:0".parse().unwrap(),
-                websocket_addr: "127.0.0.1:0".parse().unwrap(),
+                listen_addr: "127.0.0.1:0".parse().unwrap(),
                 block_interval: Duration::from_secs(60),
                 outbound_capacity: DEFAULT_OUTBOUND_CAPACITY,
                 ready: Some(ready_sender),
                 actor_ready: Some(actor_sender),
             };
             let service = tokio::spawn(run_service(config, shutdown_receiver));
-            let (health_addr, websocket_addr) = timeout(TEST_TIMEOUT, ready)
+            let listen_addr = timeout(TEST_TIMEOUT, ready)
                 .await
                 .expect("service readiness timed out")
                 .expect("service stopped before reporting readiness");
-            assert_ne!(health_addr.port(), 0);
-            assert_ne!(websocket_addr.port(), 0);
+            assert_ne!(listen_addr.port(), 0);
             let actor = timeout(TEST_TIMEOUT, actor_ready)
                 .await
                 .expect("actor readiness timed out")
                 .expect("service stopped before exposing actor");
             Self {
-                health_addr,
-                websocket_addr,
+                listen_addr,
                 actor,
                 shutdown: Some(shutdown),
                 service: Some(service),
@@ -1755,12 +1744,8 @@ mod regression_tests {
             result.expect("service shutdown failed");
 
             assert!(
-                TcpStream::connect(self.health_addr).await.is_err(),
-                "health listener still accepted connections after shutdown"
-            );
-            assert!(
-                TcpStream::connect(self.websocket_addr).await.is_err(),
-                "WebSocket listener still accepted connections after shutdown"
+                TcpStream::connect(self.listen_addr).await.is_err(),
+                "simulator listener still accepted connections after shutdown"
             );
         }
     }
@@ -1783,7 +1768,7 @@ mod regression_tests {
                     .await
                     .expect("WebSocket closed before RPC response")
                     .expect("failed to read WebSocket message");
-                let Message::Text(text) = message else {
+                let ClientMessage::Text(text) = message else {
                     continue;
                 };
                 let value: Value =
@@ -1808,7 +1793,7 @@ mod regression_tests {
                     .await
                     .expect("WebSocket closed before JSON message")
                     .expect("failed to read WebSocket message");
-                if let Message::Text(text) = message {
+                if let ClientMessage::Text(text) = message {
                     return serde_json::from_str(&text).expect("server returned invalid JSON");
                 }
             }
@@ -1819,7 +1804,7 @@ mod regression_tests {
 
     async fn send_request(websocket: &mut ClientWebSocket, request: Value) {
         websocket
-            .send(Message::Text(request.to_string().into()))
+            .send(ClientMessage::Text(request.to_string().into()))
             .await
             .expect("failed to send WebSocket request");
     }
@@ -1839,10 +1824,10 @@ mod regression_tests {
     #[tokio::test]
     async fn regression_fragmented_websocket_upgrade_waits_for_complete_request() {
         let harness = ServiceHarness::start().await;
-        let mut stream = TcpStream::connect(harness.websocket_addr).await.unwrap();
+        let mut stream = TcpStream::connect(harness.listen_addr).await.unwrap();
         let request = format!(
-            "GET / HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-            harness.websocket_addr
+            "GET /ws HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+            harness.listen_addr
         );
 
         for chunk in request.as_bytes().chunks(17) {
@@ -1877,18 +1862,18 @@ mod regression_tests {
         const CLIENT_COUNT: usize = 12;
 
         let harness = ServiceHarness::start().await;
-        let websocket_addr = harness.websocket_addr;
+        let listen_addr = harness.listen_addr;
         let mut clients = Vec::new();
         for client_index in 0..CLIENT_COUNT {
             clients.push(tokio::spawn(async move {
-                let url = format!("ws://{websocket_addr}/");
+                let url = format!("ws://{listen_addr}/ws");
                 let (mut websocket, _) = timeout(TEST_TIMEOUT, connect_async(url))
                     .await
                     .expect("WebSocket connect timed out")
                     .expect("WebSocket connect failed");
                 let register_id = 10_000 + client_index as u64;
                 websocket
-                    .send(Message::Text(
+                    .send(ClientMessage::Text(
                         serde_json::json!({
                             "id": register_id,
                             "method": "register",
@@ -1908,7 +1893,7 @@ mod regression_tests {
 
                 let peak_id = 20_000 + client_index as u64;
                 websocket
-                    .send(Message::Text(
+                    .send(ClientMessage::Text(
                         serde_json::json!({
                             "id": peak_id,
                             "method": "get_peak",
@@ -2017,10 +2002,10 @@ mod regression_tests {
     async fn regression_health_get_and_post_and_shutdown_release_ports() {
         let harness = ServiceHarness::start().await;
         let get = raw_http_request(
-            harness.health_addr,
+            harness.listen_addr,
             &format!(
-                "GET /get_peak HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                harness.health_addr
+                "GET /health HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                harness.listen_addr
             ),
         )
         .await;
@@ -2035,10 +2020,10 @@ mod regression_tests {
         );
 
         let post = raw_http_request(
-            harness.health_addr,
+            harness.listen_addr,
             &format!(
-                "POST /get_peak HTTP/1.1\r\nHost: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                harness.health_addr
+                "POST /health HTTP/1.1\r\nHost: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                harness.listen_addr
             ),
         )
         .await;
@@ -2053,9 +2038,28 @@ mod regression_tests {
     }
 
     #[tokio::test]
+    async fn regression_shutdown_sends_websocket_close_on_unified_listener() {
+        let harness = ServiceHarness::start().await;
+        let url = format!("ws://{}/ws", harness.listen_addr);
+        let (mut websocket, _) = connect_async(url).await.unwrap();
+
+        harness.shutdown().await;
+
+        let message = timeout(TEST_TIMEOUT, websocket.next())
+            .await
+            .expect("timed out waiting for WebSocket close")
+            .expect("WebSocket ended without a close frame")
+            .expect("failed to read WebSocket close");
+        assert!(
+            matches!(message, ClientMessage::Close(_)),
+            "expected close frame, got {message:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn regression_response_precedes_events_and_coin_filters_are_per_client() {
         let harness = ServiceHarness::start().await;
-        let url = format!("ws://{}/", harness.websocket_addr);
+        let url = format!("ws://{}/ws", harness.listen_addr);
         let (mut registered_client, _) = connect_async(&url).await.unwrap();
         let (mut unregistered_client, _) = connect_async(&url).await.unwrap();
 
@@ -2201,15 +2205,14 @@ mod regression_tests {
         let (actor_sender, actor_ready) = oneshot::channel();
         let (_shutdown, shutdown_receiver) = watch::channel(false);
         let config = ServiceConfig {
-            health_addr: "127.0.0.1:0".parse().unwrap(),
-            websocket_addr: "127.0.0.1:0".parse().unwrap(),
+            listen_addr: "127.0.0.1:0".parse().unwrap(),
             block_interval: Duration::from_secs(60),
             outbound_capacity: DEFAULT_OUTBOUND_CAPACITY,
             ready: Some(ready_sender),
             actor_ready: Some(actor_sender),
         };
         let service = tokio::spawn(run_service(config, shutdown_receiver));
-        let (health_addr, websocket_addr) = timeout(TEST_TIMEOUT, ready)
+        let listen_addr = timeout(TEST_TIMEOUT, ready)
             .await
             .expect("service readiness timed out")
             .expect("service stopped before reporting readiness");
@@ -2229,12 +2232,8 @@ mod regression_tests {
             "{error}"
         );
         assert!(
-            TcpStream::connect(health_addr).await.is_err(),
-            "health listener remained open after actor exit"
-        );
-        assert!(
-            TcpStream::connect(websocket_addr).await.is_err(),
-            "WebSocket listener remained open after actor exit"
+            TcpStream::connect(listen_addr).await.is_err(),
+            "simulator listener remained open after actor exit"
         );
     }
 }

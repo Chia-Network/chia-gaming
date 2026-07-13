@@ -20,22 +20,31 @@ fn word_program(allocator: &mut AllocEncoder, word: &[u8; 5]) -> Program {
 /// Happy-path krunk moves: Alice commits "crane", Bob guesses "crane",
 /// Alice's clue handler auto-detects the match and reveals.
 pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
+    test_moves_for_picker(allocator, game_id, 0)
+}
+
+fn test_moves_for_picker(
+    allocator: &mut AllocEncoder,
+    game_id: GameID,
+    picker: usize,
+) -> Vec<GameAction> {
     // Dictionary entries are uppercase (see krunkwords.txt).
     let alice_word = word_program(allocator, b"CRANE");
     let bob_guess = word_program(allocator, b"CRANE");
     let nil_move = Program::from_hex("80").expect("nil move");
+    let guesser = 1 - picker;
 
     vec![
         // Move 0: Alice commits her secret word.
         GameAction::Move(
-            0,
+            picker,
             game_id,
             ReadableMove::from_program(Rc::new(alice_word)),
             true,
         ),
         // Move 1: Bob guesses (he picks "crane" and wins on first try).
         GameAction::Move(
-            1,
+            guesser,
             game_id,
             ReadableMove::from_program(Rc::new(bob_guess)),
             true,
@@ -43,7 +52,7 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<G
         // Move 2: Alice's handler sees the matching guess and reveals
         // automatically; local_move is unused for the terminal reveal path.
         GameAction::Move(
-            0,
+            picker,
             game_id,
             ReadableMove::from_program(Rc::new(nil_move)),
             true,
@@ -66,6 +75,7 @@ pub fn krunk_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
+    use crate::potato_handler::effects::{ChannelState, GameNotification};
     use crate::simulator::tests::potato_handler_sim::{
         run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
@@ -86,6 +96,16 @@ mod sim_tests {
                 ui.notifications
             );
         }
+    }
+
+    fn full_group_moves(allocator: &mut AllocEncoder) -> Vec<GameAction> {
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        moves.extend(test_moves_for_picker(allocator, GameID(1), 0));
+        moves.extend(test_moves_for_picker(allocator, GameID(3), 1));
+        moves
     }
 
     pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
@@ -112,6 +132,65 @@ mod sim_tests {
                 Err(e) => {
                     panic!("krunk happy path failed; error={e:?}");
                 }
+            }
+        }));
+
+        res.push(("test_play_krunk_clean_shutdown", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = full_group_moves(&mut allocator);
+            moves.push(GameAction::CleanShutdown(1));
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                None,
+            )
+            .expect("krunk clean shutdown should complete");
+            for (who, ui) in outcome.local_uis.iter().enumerate() {
+                assert!(
+                    ui.clean_shutdown_complete && !ui.got_error,
+                    "player {who} should recognize the clean shutdown: {:?}",
+                    ui.notifications
+                );
+            }
+        }));
+
+        res.push(("test_play_krunk_go_on_chain", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = full_group_moves(&mut allocator);
+            moves.push(GameAction::GoOnChain(0));
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                None,
+            )
+            .expect("krunk on-chain resolution should complete");
+            for (who, ui) in outcome.local_uis.iter().enumerate() {
+                assert!(
+                    ui.notifications.iter().any(|notification| matches!(
+                        notification,
+                        GameNotification::ChannelStatus {
+                            state: ChannelState::ResolvedUnrolled,
+                            ..
+                        }
+                    )),
+                    "player {who} should resolve through the known unroll: {:?}",
+                    ui.notifications
+                );
+                assert!(
+                    !ui.notifications.iter().any(|notification| matches!(
+                        notification,
+                        GameNotification::ChannelStatus {
+                            state: ChannelState::Failed,
+                            ..
+                        }
+                    )),
+                    "player {who} should not fail unroll recognition: {:?}",
+                    ui.notifications
+                );
             }
         }));
 

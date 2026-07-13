@@ -45,7 +45,7 @@ typetag = "=0.2.21"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "io-util"], optional = true }
 tokio-tungstenite = { version = "=0.30.0", optional = true }
 futures-util = { version = "=0.3.32", features = ["sink"], optional = true }
-axum = { version = "=0.8.9", optional = true }
+axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "6eb5962181f176affc5d8bd84ee25de04fefa4b3" }

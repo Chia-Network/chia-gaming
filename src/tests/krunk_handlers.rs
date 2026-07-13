@@ -334,14 +334,14 @@ fn test_krunk_guesser_funds_zero() {
     assert_clvm_eq(
         &mut allocator,
         slot0[9],
-        slot1[10],
-        "Alice handlers must swap slots",
+        slot1[9],
+        "Alice my-turn handlers must match",
     );
     assert_clvm_eq(
         &mut allocator,
         slot0[10],
-        slot1[9],
-        "Bob handlers must swap slots",
+        slot1[10],
+        "Bob their-turn handlers must match",
     );
     assert_clvm_eq(
         &mut allocator,

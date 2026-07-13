@@ -185,8 +185,8 @@ Outputs `lobby/lobby-service/dist/index-rollup.cjs`.
 cargo build --features sim-server --bin chia-gaming-sim
 ```
 
-Binary at `target/debug/chia-gaming-sim`. Listens on port 5800 (HTTP) and
-5801 (WebSocket), both hardcoded.
+Binary at `target/debug/chia-gaming-sim`. Listens on port 5800, serving
+`/health` over HTTP and the simulator API over WebSocket at `/ws`.
 
 ## Staging (Asset Layout)
 
@@ -269,7 +269,7 @@ PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
 | `--self`    | yes      | Public HTTP origin of this tracker (used for WebSocket URL derivation)                         |
 | `--dir`     | yes      | Root directory to serve static lobby files from                                                |
 | `--verbose` | no       | Verbose logging                                                                                |
-| `PORT`      | no       | Listen port (default `5801` — conflicts with the simulator; always override when running both) |
+| `PORT`      | no       | Listen port (default `5801`; the local demo overrides it with `TRACKER_PORT`)                   |
 
 #### Simulator
 
@@ -277,9 +277,9 @@ PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
 ./target/debug/chia-gaming-sim
 ```
 
-Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. Built by
-`cargo build --features sim-server --bin chia-gaming-sim`. Not included in
-production tarballs.
+Port 5800 serves both `GET|POST /health` and `GET /ws`. Built by
+`cargo build --features sim-server --bin chia-gaming-sim`. The simulator is
+not included in production tarballs.
 
 ### Running from tarball or zipfile
 

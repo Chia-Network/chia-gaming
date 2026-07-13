@@ -45,7 +45,7 @@
                 ; Slot 1: sender is the guesser.
                 (li
                     0 stake stake 0 commit_hash 0 32 initial_state 0
-                    bob_handler alice_handler val_commit
+                    alice_handler bob_handler val_commit
                 )
             )
         )
