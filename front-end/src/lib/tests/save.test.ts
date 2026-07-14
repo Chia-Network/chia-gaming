@@ -18,7 +18,6 @@ import {
   getTheme,
   setTheme,
   hardReset,
-  HARD_RESET_IDB_TIMEOUT_MS,
   flushSessionState,
   getTrackerAlert,
   setTrackerAlert,
@@ -519,9 +518,11 @@ describe('hard reset', () => {
 
     await hardReset();
 
-    expect(deleteDatabase).toHaveBeenCalledWith('app-state');
+    expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
-    expect(deleteDatabase).toHaveBeenCalledTimes(2);
+    expect(deleteDatabase).toHaveBeenCalledWith('app-state');
+    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
+    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
   });
 
   it('deletes known IndexedDB databases when enumeration is unavailable (e.g. Safari)', async () => {
@@ -553,7 +554,11 @@ describe('hard reset', () => {
     setTestGlobal('sessionStorage', session);
     setTestGlobal('indexedDB', {
       databases: jest.fn().mockRejectedValue(new Error('database list failed')),
-      deleteDatabase: jest.fn(),
+      deleteDatabase: jest.fn((_name: string) => {
+        const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+        setTimeout(() => request.onsuccess?.(), 0);
+        return request;
+      }),
     });
 
     await expect(hardReset()).resolves.toBeUndefined();
@@ -562,21 +567,29 @@ describe('hard reset', () => {
     spy.mockRestore();
   });
 
-  it('completes when IndexedDB enumeration never resolves', async () => {
-    jest.useFakeTimers();
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  it('deletes known databases before waiting on enumeration', async () => {
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    let releaseEnumeration: ((value: Array<{ name?: string }>) => void) | undefined;
     setTestGlobal('indexedDB', {
-      databases: () => new Promise(() => {}),
-      deleteDatabase: jest.fn(),
+      databases: () => new Promise((resolve) => { releaseEnumeration = resolve; }),
+      deleteDatabase,
     });
 
     const done = hardReset();
-    await jest.advanceTimersByTimeAsync(HARD_RESET_IDB_TIMEOUT_MS);
-    await expect(done).resolves.toBeUndefined();
+    // Known wipes must be requested without waiting for databases().
+    expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
 
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
-    jest.useRealTimers();
+    // Let known deleteDatabase requests settle so enumeration can start.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(releaseEnumeration).toBeDefined();
+    releaseEnumeration!([{ name: 'extra-unknown-db' }]);
+    await done;
+    expect(deleteDatabase).toHaveBeenCalledWith('extra-unknown-db');
   });
 });
 

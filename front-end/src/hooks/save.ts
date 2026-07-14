@@ -189,9 +189,11 @@ function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<v
         console.error(`[save] ${context}: failed to delete IndexedDB database "${name}":`, request.error);
         resolve();
       };
+      // Blocked means another connection is still open. Keep waiting for
+      // onsuccess/onerror — resolving early would let hardReset claim a wipe
+      // that has not happened yet.
       request.onblocked = () => {
-        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"`);
-        resolve();
+        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"; waiting for other connections to close`);
       };
     } catch (e) {
       console.error(`[save] ${context}: failed to start IndexedDB database deletion for "${name}":`, e);
@@ -256,52 +258,32 @@ function signalHardResetToOtherTabs(): void {
   }
 }
 
-/** Cap IndexedDB work so Start Over always reaches reload (open/databases can hang). */
-export const HARD_RESET_IDB_TIMEOUT_MS = 2000;
-
-function withTimeout(promise: Promise<void>, ms: number, label: string): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      console.warn(`[save] ${label} timed out after ${ms}ms; continuing hard reset`);
-      finish();
-    }, ms);
-    promise.then(finish, (e) => {
-      console.error(`[save] ${label} failed:`, e);
-      finish();
-    }).finally(() => clearTimeout(timer));
-  });
-}
-
 async function clearAllIndexedDbForHardReset(): Promise<void> {
-  try {
-    if (typeof indexedDB === 'undefined') return;
-    const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
-    if (typeof dynamicDatabaseLookup.databases !== 'function') {
-      // Browsers without `indexedDB.databases()` (notably Safari) can't be
-      // enumerated, so fall back to deleting the databases we know about (e.g.
-      // WalletConnect's) rather than leaving them behind.
-      console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
-      await Promise.all(
-        KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
-      );
-      return;
-    }
+  if (typeof indexedDB === 'undefined') return;
 
+  // Always wipe known databases first. Enumeration can hang while WalletConnect
+  // (or other) connections are still open; known deletes must not wait on that.
+  await Promise.all(
+    KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')),
+  );
+
+  const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+  if (typeof dynamicDatabaseLookup.databases !== 'function') {
+    console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; known DB names already deleted');
+    return;
+  }
+
+  try {
     const databases = await dynamicDatabaseLookup.databases();
+    const known = new Set(KNOWN_HARD_RESET_DB_NAMES);
     await Promise.all(
       databases
         .map((db) => db.name)
-        .filter((name): name is string => typeof name === 'string' && name.length > 0)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0 && !known.has(name))
         .map((name) => deleteIndexedDb(name, 'hard reset')),
     );
   } catch (e) {
-    console.error('[save] failed to clear IndexedDB during hard reset:', e);
+    console.error('[save] failed to enumerate IndexedDB during hard reset:', e);
   }
 }
 
@@ -865,8 +847,9 @@ export function clearSession(): Promise<void> {
 export async function hardReset(): Promise<void> {
   signalHardResetToOtherTabs();
   stopPersistenceForHardReset();
-  // Clear sync storage first so the boot marker is gone even if IndexedDB hangs
-  // (open / databases() can stall indefinitely with open WalletConnect connections).
+  // Sync storage first so a later IndexedDB hang cannot leave the boot marker
+  // or preferences behind after the caller reloads. IndexedDB wipe still runs
+  // to completion below — hardReset must obliterate, not time out.
   try {
     localStorage.clear();
   } catch (e) {
@@ -877,16 +860,7 @@ export async function hardReset(): Promise<void> {
   } catch (e) {
     console.error('[save] failed to clear sessionStorage during hard reset:', e);
   }
-  await withTimeout((async () => {
-    if (typeof indexedDB !== 'undefined' && typeof indexedDB.open === 'function') {
-      try {
-        await deleteSessionRecord();
-      } catch (e) {
-        console.error('[save] failed to delete session record during hard reset:', e);
-      }
-    }
-    await clearAllIndexedDbForHardReset();
-  })(), HARD_RESET_IDB_TIMEOUT_MS, 'IndexedDB hard reset cleanup');
+  await clearAllIndexedDbForHardReset();
 }
 
 // --- Alias ---

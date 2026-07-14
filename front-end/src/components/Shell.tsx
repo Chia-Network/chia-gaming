@@ -1774,6 +1774,20 @@ const Shell = () => {
 
   const handleStartOver = useCallback(async () => {
     setStartingOver(true);
+    // Close live connections before wiping storage. Open WalletConnect /
+    // tracker sockets can block IndexedDB deleteDatabase and hang Start Over.
+    try {
+      trackerConnRef.current?.disconnect();
+      trackerConnRef.current = null;
+      if (activeBlockchainRef.current) {
+        try { await activeBlockchainRef.current.disconnect(); } catch { /* ignore */ }
+      }
+      deactivate();
+      activeBlockchainRef.current = null;
+      setActiveBlockchainPoller(null);
+    } catch (e) {
+      console.error('[Shell] start over connection teardown failed:', e);
+    }
     try {
       await hardReset();
     } catch (e) {

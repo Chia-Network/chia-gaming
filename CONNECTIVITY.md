@@ -376,11 +376,16 @@ The tracker does not create a session. It can only advise and relay:
   explicit go-on-chain or FOAD signals. Tracker liveness with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: `SessionState` in localStorage with serialized
-  WASM cradle, message numbers, unacked messages, etc.
+- **Session persistence**: `SessionState` in IndexedDB (raw cradle /
+  unacked bytes via structured clone) plus small preferences and the
+  resumable-session boot marker in localStorage
   (`front-end/src/hooks/save.ts`).
-- **Resume on reload**: Boot state machine with resume dialog, lease system
-  for tab conflict detection (`Shell.tsx`).
+- **Resume on reload**: Marker-first boot state machine with Resume /
+  Start Over dialog, full `hardReset` obliteration, and lease system for tab
+  conflict detection (`Shell.tsx`).
+- **Game dashboard banner**: Selector-driven channel / lifecycle /
+  balance strip from `SessionModel`
+  (`selectGameDashboardView`, `selectStatusBarBalances`).
 - **Channel state tracking**: `ChannelStatus` notifications from WASM with
   full state machine (`useGameSession.ts`). `isWindingDown()` helper for
   UI gating.

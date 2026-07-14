@@ -125,7 +125,10 @@ The player app self-declares whether it is `busy` over the game channel. Busy
 means the app has an active session (the user explicitly accepted a session
 start). The `TrackerConnection` uses a `getPresence` callback — provided by
 Shell — to derive the authoritative busy+alias state at connect and reconnect
-time for the `identify` message. Explicit `setBusy(true)` is called only when
+time for the `identify` message. Presence alias comes from the active session
+aliases or `peekAlias()` (lobby-synced prefs). It must never call `getAlias()`,
+which invents and persists a `Player_*` fallback that can overwrite the
+tracker-side lobby name. Explicit `setBusy(true)` is called only when
 the user accepts a session (not when a consent dialog is merely displayed), and
 `setBusy(false)` fires on the session controller's terminal event or when the
 user explicitly ends/cancels a session. Showing a session-consent dialog does not set busy;
@@ -239,6 +242,13 @@ keepalives at two separate layers:
   the alias is confirmed (either from a saved alias or after the user picks
   one), sends `join` to register in the lobby.
 - On reconnect, re-emits `get_alias` followed by `join` to re-register.
+- When the user confirms, auto-joins, or edits an alias, the lobby iframe posts
+  `{ type: 'lobby-alias', alias }` to the parent Shell so local prefs stay in
+  sync. Shell stores that via `setAlias` / `peekAlias` and must not invent a
+  `Player_*` fallback for game-channel `identify` / `set_busy` — those generated
+  names previously overwrote the tracker-side lobby alias. The tracker therefore
+  treats lobby `set_alias` / `join` / `change_alias` as authoritative and ignores
+  game-channel alias updates once a name is already known for the session.
 
 #### Tracker Reconnection
 
@@ -378,11 +388,12 @@ full mid-game session state:
 | `serializedCradle` | `Uint8Array?` | Raw binary WASM cradle state via `cradle.serialize()`. |
 | `cradleSchemaVersion` | `bigint?` | Rust-owned schema ID for `serializedCradle`; missing or mismatched IDs are unsupported and cleared before deserialization. |
 | `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect. |
-| `messageNumber` | `number?` | Next outbound game-message sequence number. |
-| `remoteNumber` | `number?` | Last delivered inbound game-message sequence number. |
+| `sessionPeerId` | `string?` | Public tracker peer id of the current opponent, used to rebind `PeerSession` on restore. |
+| `gameSessionId` | `string?` | Per-pairing game session id exchanged in `session_proposal`. |
+| `messageNumber` | `bigint?` | Next outbound game-message sequence number. |
+| `remoteNumber` | `bigint?` | Last delivered inbound game-message sequence number. |
 | `channelReady` | `boolean?` | Whether the channel has been created and peer keepalives can start. |
 | `iStarted` | `boolean?` | Whether this player was the channel/session initiator. |
-| `amount` | `string?` | Total channel buy-in (sum of both contributions) as a decimal bigint string. |
 | `myContribution` | `string?` | This player's channel buy-in contribution as a decimal bigint string. |
 | `theirContribution` | `string?` | Opponent's channel buy-in contribution as a decimal bigint string. |
 | `perGameAmount` | `string?` | Default per-hand amount as a decimal bigint string. |
@@ -393,6 +404,9 @@ full mid-game session state:
 | `historicalUnrollCount` | `bigint?` | Development persistence metric exposed directly by WASM when a channel handler is available. |
 | `durabilityWarning` | `string?` | Last delivery-boundary storage failure warning. |
 | `activeGameId` | `string \| null?` | Current live game ID, if any. |
+| `activeGameIds` | `string[]?` | IDs of currently live games in an atomic group. |
+| `currentHandGameIds` | `string[]?` | IDs belonging to the current hand group. |
+| `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
 | `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching. |
@@ -401,6 +415,7 @@ full mid-game session state:
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
 | `gameCoinHex` | `string \| null?` | Current game coin or reward coin ID shown in the Game tab. |
 | `gameTurnState` | `string?` | Current game turn state used for restore and timeout labels. |
+| `gameHandStatus` | `string?` | Current hand-level status used by the dashboard. |
 | `gameTerminalType` | `string?` | Last terminal game status category. |
 | `gameTerminalLabel` | `string \| null?` | Human-readable terminal label shown after game completion. |
 | `gameTerminalReward` | `string \| null?` | Terminal reward amount as a decimal string. |
@@ -410,13 +425,19 @@ full mid-game session state:
 | `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue, without non-serializable payloads. |
 | `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue, without non-serializable payloads. |
 | `dismissedChannelState` | `string?` | Last dismissed channel-state notification value. |
+| `goOnChainPressed` | `boolean?` | Whether the user already initiated go-on-chain from the dashboard. |
+| `cleanShutdownStarted` | `boolean?` | Whether clean shutdown has been requested. |
 | `betweenHandMode` | `string?` | Between-hand overlay state. |
 | `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay. |
+| `betweenHandComposeGameTimeout` | `string?` | Proposed game timeout in compose overlay. |
 | `betweenHandComposeGameType` | `string?` | Proposed game type in compose overlay. |
 | `betweenHandLastTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Last agreed hand terms. |
 | `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
 | `betweenHandCachedPeerProposal` | `{ id, groupIds?, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. |
 | `betweenHandReviewPeerProposal` | `{ id, groupIds?, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. |
+| `outgoingProposalTerms` | `Record<string, …>?` | Locally originated proposal terms keyed by proposal id. |
+| `waitingStateEnteredAt` | `bigint?` | Epoch ms when the channel entered an abandon-eligible waiting state. |
+| `cleanShutdownGraceStartedAt` | `bigint?` | Epoch ms when the clean-shutdown grace timer started. |
 
 The old `SessionSave` name is now only a deprecated TypeScript alias for
 `SessionState`.
@@ -481,6 +502,22 @@ Development builds log the raw cradle byte count, an estimated total IndexedDB
 record size, the compact historical-unroll count when available, and all three
 history counts. The record-size walk is skipped in production.
 
+#### Prop-safe session values
+
+`SessionState` contains raw `Uint8Array` cradles and message payloads plus
+`bigint` fields. React props cannot safely deep-enumerate those values:
+
+- Expanding a typed array into `{0:n,1:n,...}` destroys the cradle and makes
+  WASM restore fail with bencodex `unexpected end of input`.
+- Deep-cloning a degraded numeric-keyed byte object (or cloning the full
+  session every render) can OOM the tab.
+
+`reactPropSafeValue` / `sessionSaveForReactProps` leave `ArrayBuffer` views and
+dense byte-objects alone, hide bigints as non-enumerable properties, and Shell
+keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
+every parent render. Persistence itself uses IndexedDB structured clone and
+never routes cradle bytes through this React-prop path.
+
 #### Session model ownership
 
 Restore-sensitive UX state is being moved behind an MVC-style frontend session
@@ -502,47 +539,82 @@ to survive reload or affect protocol/availability decisions, prefer putting it i
 the model and deriving the view from selectors instead of maintaining a separate
 React-only copy that restore has to reconstruct by hand.
 
-**Pre-game saves:** `Shell.tsx` calls `saveSession({ blockchainType })` as
-soon as the user picks a connection type (before any WASM cradle exists). This
-ensures that even pre-game state is persisted and detected on reload.
+**Game dashboard (status banner):** The compact strip above the Game tab content
+(`GameDashboard` in `Shell.tsx`) is selector-driven. `selectGameDashboardView`
+projects channel / lifecycle labels and the primary action button
+(clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
+projects the balance segments under those labels. Both read from the shared
+`SessionModel`; they are not a separate React-owned copy of channel state.
+
+**Pre-game saves and the boot marker:** A durable game session is anything with
+`serializedCradle` or `pairingToken` (`isResumable`). Those writes set the
+`localStorage` boot marker (`appState_savedSession`) automatically.
+
+Pre-game wallet connection is different: `Shell` calls `markSavedSession()` when
+the wallet finishes connecting, then `saveSession({ blockchainType })`. The
+marker is what forces Resume / Start Over on reload even before a cradle exists.
+Preference-only / non-resumable IndexedDB writes must **not** clear that marker —
+otherwise a wallet reconnect would restore `blockchainType` with no dialog.
+`peekSession()` treats marker + `blockchainType` (or leftover WalletConnect
+storage) as resumable pre-game state. `blockchainType` alone, without a marker,
+is not enough (it is preserved across normal `clearSession()`).
+
+Unsupported IndexedDB schema versions are deleted, but the marker is kept so the
+next boot still shows Resume / Start Over instead of silently booting into
+leftover preferences.
 
 #### Boot state machine
 
 On page load, `Shell.tsx` runs a boot sequence that determines which dialog
-(if any) to show before the app becomes interactive:
+(if any) to show before the app becomes interactive. The initializer never
+claims the tab lease (that would fence other tabs) and never blocks the dialog
+on IndexedDB:
 
 ```
-peekSession() → save
+hasSavedSessionMarker()?
                  │
-                 ├─ save exists
-                 │   → show Resume / Start Over dialog
+                 ├─ yes → show Resume / Start Over (hydrate IndexedDB into the
+                 │         in-memory cache in the background so incidental
+                 │         preference patches cannot clobber a durable cradle)
                  │       │
                  │       ├─ Start Over → hardReset(), reload
+                 │       │                (separate "Starting over…" UI state;
+                 │       │                 does not share the Resume spinner)
                  │       │
-                 │       └─ Resume → is there a lease conflict?
+                 │       └─ Resume → peekSession() / load IndexedDB
                  │           │
-                 │           ├─ Yes → show Take Over dialog
-                 │           │   ├─ Take Over → claimLease(), restore
-                 │           │   └─ Close Tab → dead
+                 │           ├─ load failure / unsupported → keep dialog open
+                 │           │   with loadError; re-arm the marker
                  │           │
-                 │           └─ No → claimLease(), restore
+                 │           └─ save loaded → is there a lease conflict?
+                 │               │
+                 │               ├─ Yes → show Take Over dialog
+                 │               │   ├─ Take Over → claimLease(), restore
+                 │               │   └─ Close Tab → dead
+                 │               │
+                 │               └─ No → claimLease(), restore
                  │
-                 ├─ no save, lease conflict (another tab is active)
+                 ├─ no marker, lease conflict (another tab is active)
                  │   → show Take Over dialog (save: null)
                  │
-                 └─ no save, no conflict
+                 └─ no marker, no conflict
                      → claimLease(), ready (fresh start)
 ```
 
 **Start over hard reset:** Start over is deliberately not graceful cleanup. It
 is the escape hatch for garbled local state, so it must not deserialize saved
-state, reconnect to services, disconnect WalletConnect, preserve preferences,
-or otherwise interpret the current session. The handler calls `hardReset()` and
-reloads the page. `hardReset()` clears the app's in-memory save cache,
-`localStorage`, `sessionStorage`, and best-effort deletes every IndexedDB
-database visible for the origin. IndexedDB cleanup is fire-and-forget: failures
-are logged, but reset must still reload rather than stall on WalletConnect or
-browser storage internals.
+state, reconnect to services, preserve preferences, or otherwise interpret the
+current session. The handler tears down live tracker/wallet sockets (so
+IndexedDB deletes are not blocked), awaits `hardReset()`, and reloads the page.
+`hardReset()`:
+
+1. Signals sibling tabs to stop persisting.
+2. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
+   marker and prefs must not outlive a later IndexedDB hang).
+3. Deletes every known app / WalletConnect IndexedDB database, then enumerates
+   and deletes any remaining origin databases. Deletion waits through
+   `onblocked` until `onsuccess`/`onerror`; hardReset does **not** time out and
+   abandon the wipe.
 
 **Full vs pre-game saves:** The resume/takeover handlers check
 `save.serializedCradle` to distinguish full game saves from pre-game saves.
@@ -581,7 +653,9 @@ There are two different reset paths:
   UI state.
 - `hardReset()` is destructive app-origin storage reset. It is used by Start
   over and intentionally wipes all local browser state without attempting
-  graceful wallet, tracker, or session cleanup.
+  graceful wallet, tracker, or session cleanup. Sync storage is cleared before
+  IndexedDB so markers/prefs cannot outlive the wipe; IndexedDB deletion is
+  awaited to completion (no give-up timeout).
 
 The browser storage involved is split across three APIs:
 
@@ -632,8 +706,11 @@ the log and persisted through the normal debounced save path.
 `SessionController.deliverMessage` enforces strict ordering:
 
 - `msgno <= remoteNumber`: duplicate, dropped. An ack is re-sent in case the
-  original ack was lost. If another message boundary is already waiting for a
-  durability flush, this duplicate ack is queued behind that flush too.
+  original ack was lost. The receiver also calls `resendUnacked()` (throttled)
+  so a peer that retransmitted after reload still receives any unacked outbound
+  we hold (for example an OfferSent handshake payload). If another message
+  boundary is already waiting for a durability flush, the duplicate ack is
+  queued behind that flush too.
 - `msgno > remoteNumber + 1`: out-of-order, buffered in a `reorderQueue` map.
 - `msgno == remoteNumber + 1`: delivered to the WASM cradle, `remoteNumber`
   incremented, ack queued, then contiguous messages are flushed from the reorder
@@ -838,13 +915,13 @@ user chooses to resume a pre-game save (one with `blockchainType` but no
 to re-establish the connection automatically — no modals or QR codes are shown,
 consistent with the principle that a reload should be invisible to the user.
 
-**Session persistence:** `blockchainType` is persisted as a minimal
-`SessionState` (via `saveSession({ blockchainType })`) immediately when the
-user makes their choice, before the connection completes. This is the earliest
-point at which state is saved — even before a WASM cradle exists. Once the
-full game session is running, `useGameSession` takes over persistence and
-includes `blockchainType` in every subsequent save alongside the WASM and
-JS state. `clearSession()` preserves `blockchainType` as part of normal
+**Session persistence:** `blockchainType` is written via
+`saveSession({ blockchainType })` as soon as the wallet connection completes,
+together with an explicit `markSavedSession()` so reload shows Resume / Start
+Over even before a WASM cradle exists. Preference-only writes must not clear
+that marker. Once the full game session is running, `useGameSession` takes over
+persistence and includes `blockchainType` in every subsequent save alongside the
+WASM and JS state. `clearSession()` preserves `blockchainType` as part of normal
 session lifecycle cleanup; `hardReset()` is the destructive path that wipes it.
 
 **Intentional deviation:** The simulator returns `ConnectionSetup.fields`
@@ -1196,7 +1273,7 @@ not to limit concurrency.
 
 | File | Purpose |
 |------|---------|
-| `front-end/src/components/Shell.tsx` | Top-level component: wallet, tracker, tabs, logs |
+| `front-end/src/components/Shell.tsx` | Top-level component: boot dialogs, wallet, tracker, GameDashboard banner, tabs, logs |
 | `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
 | `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
 | `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
@@ -1204,7 +1281,10 @@ not to limit concurrency.
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts` | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods |
-| `front-end/src/hooks/save.ts` | `SessionState` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
+| `front-end/src/hooks/save.ts` | `SessionState` interface, marker/`saveSession`/`peekSession`/`hardReset`/`peekAlias`, tab lease management |
+| `front-end/src/lib/session/indexedDb.ts` | IndexedDB session record read/write/delete |
+| `front-end/src/lib/session/model.ts` | Session model + `selectGameDashboardView` / `selectStatusBarBalances` |
+| `front-end/src/lib/reactPropSafe.ts` | Prop-safe cloning that preserves typed arrays / dense byte objects |
 | `front-end/src/hooks/BlockchainPoller.ts` | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots |
 | `front-end/src/lib/AsyncScheduler.ts` | Generic serialized async queue and repeating polling loop |
 | `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
@@ -1212,6 +1292,7 @@ not to limit concurrency.
 | `front-end/src/hooks/WalletConnectRpc.ts` | WalletConnect RPC formatting/normalization helpers |
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
+| `lobby/lobby-frontend/src/lobby.tsx` | Lobby UI; syncs chosen alias to parent via `lobby-alias` postMessage |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |
 | `lobby/lobby-service/src/index.ts` | Tracker server: lobby, challenges, addressed message relay, liveness sweep |
 | `lobby/lobby-service/src/lobbyState.ts` | Tracker state: players, challenges |
