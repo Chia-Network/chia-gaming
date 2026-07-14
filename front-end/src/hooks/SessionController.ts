@@ -867,14 +867,24 @@ export class SessionController implements PollingCradle {
   }
 
   flushPendingSave(): Promise<void> {
-    const durability = this.flushDurabilityAndSend();
+    // Rust intentionally omits transient cradle events from serialization.
+    // Move every event into its durable JS representation (message counters,
+    // unacked messages, notifications) before taking the lifecycle snapshot.
+    this.flushDeferredWork();
+
+    let saveRequest: Promise<void> = Promise.resolve();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      void this.onSaveNeeded?.();
-      return flushSessionState();
+      saveRequest = Promise.resolve(this.onSaveNeeded?.());
+      void saveRequest.catch(() => {});
     }
-    return durability;
+
+    // Always flush the outer persistence debounce as well: React may have
+    // queued a full-session save without SessionController's timer being set.
+    const persistence = flushSessionState();
+    const durability = this.flushDurabilityAndSend();
+    return Promise.all([saveRequest, persistence, durability]).then(() => {});
   }
 
   private markNeedsImmediateDurability() {

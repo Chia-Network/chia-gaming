@@ -157,7 +157,7 @@ const STATE_KEY = 'appState';
 const PREFERENCES_KEY = 'appPreferences';
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 4n;
+export const CURRENT_VERSION = 5n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app

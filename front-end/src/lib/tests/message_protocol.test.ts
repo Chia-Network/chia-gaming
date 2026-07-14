@@ -231,6 +231,25 @@ describe('in-order delivery', () => {
   });
 });
 
+describe('lifecycle flush', () => {
+  it('drains transient handshake events before resolving the save flush', async () => {
+    const outbound = enc('next-handshake-message');
+    const { blob, sentMessages } = createReadyBlob(() => ({
+      events: [{ OutboundMessage: outbound }],
+    }));
+    activeBlob = blob;
+
+    blob.deliverMessage(1n, enc('incoming-handshake-message'));
+    await blob.flushPendingSave();
+
+    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    const saved = await peekSession();
+    expect(saved?.remoteNumber).toBe(1n);
+    expect(saved?.messageNumber).toBe(2n);
+    expect(saved?.unackedMessages).toEqual([{ msgno: 1n, msg: outbound }]);
+  });
+});
+
 describe('duplicate detection', () => {
   it('delivers once but ACKs twice after pending durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
@@ -447,7 +466,7 @@ describe('restore ordering', () => {
       restoreSession(
         blob,
         {
-          version: 4n,
+          version: 5n,
           playerId: 'p1',
           serializedCradle: new Uint8Array([1, 2, 3]),
           messageNumber: 5n,

@@ -287,7 +287,7 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(4n);
+    expect(state.version).toBe(5n);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {
@@ -300,7 +300,7 @@ describe('flat state', () => {
   it('rejects and deletes a stale IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 3n,
+      version: 4n,
       playerId: 'old-player',
       serializedCradle: new Uint8Array([1]),
     });

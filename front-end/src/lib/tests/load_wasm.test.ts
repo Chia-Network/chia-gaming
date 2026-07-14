@@ -28,11 +28,18 @@ import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
-import { _resetForTests as resetSaveState } from '../../hooks/save';
+import {
+  _resetForTests as resetSaveState,
+  flushSessionState,
+  peekSession,
+  saveSession,
+} from '../../hooks/save';
+import { SESSION_DB_NAME } from '../session/indexedDb';
 import { setDiagSink } from '../../services/log';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
+import 'fake-indexeddb/auto';
 // @ts-ignore
 import * as fs from 'fs';
 // @ts-ignore
@@ -156,6 +163,15 @@ beforeAll(() => {
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
   process.on('exit', onProcessExit);
+});
+
+beforeEach(async () => {
+  await new Promise<void>((resolve) => {
+    const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => resolve();
+    request.onblocked = () => resolve();
+  });
 });
 
 afterAll(async () => {
@@ -430,7 +446,7 @@ async function isSimulatorAvailable(): Promise<boolean> {
 }
 
 it(
-  'loads',
+  'persists and reloads a live intermediate handshake cradle',
   async () => {
     lateRejection = null;
     const offConnectionLog = fakeBlockchainInfo.onConnectionChange((connected) => {
@@ -502,6 +518,43 @@ it(
       wasm_blob2.onSaveNeeded = () => Promise.resolve();
       cradle2.set_blob(wasm_blob2);
       testLog('after cradle2 init');
+
+      await flushWrapperDrain([cradle1, cradle2]);
+      const sentA = cradle1.outbound_messages();
+      assert.equal(sentA.length, 1, 'initiator should have one HandshakeA message');
+      const sentABytes = wasm_blob1.getWasmFields()?.serializedCradle;
+      assert.ok(sentABytes instanceof Uint8Array);
+      assert.ok(sentABytes.byteLength > 0);
+      void saveSession({
+        serializedCradle: sentABytes,
+        pairingToken: 'reload-regression',
+      });
+
+      cradle2.deliver_message(sentA[0].msgno, sentA[0].msg);
+      await flushWrapperDrain([cradle2]);
+      const sentBBytes = wasm_blob2.getWasmFields()?.serializedCradle;
+      assert.ok(sentBBytes instanceof Uint8Array);
+      assert.ok(sentBBytes.byteLength > 0);
+      void saveSession({
+        serializedCradle: sentBBytes,
+        pairingToken: 'reload-regression',
+      });
+      await flushSessionState();
+
+      resetSaveState();
+      const reloaded = await peekSession();
+      assert.ok(reloaded?.serializedCradle instanceof Uint8Array);
+      assert.equal(reloaded.serializedCradle.byteLength, sentBBytes.byteLength);
+      assert.deepEqual(reloaded.serializedCradle, sentBBytes);
+      const restoredId = WholeWasmObject.create_serialized_game(
+        reloaded.serializedCradle,
+        'reload-regression-seed',
+      );
+      assert.equal(typeof restoredId, 'number');
+      testLog(
+        `reload regression sentA=${sentABytes.byteLength} sentB=${sentBBytes.byteLength}` +
+        ` restored=${reloaded.serializedCradle.byteLength}`,
+      );
 
       testLog('before action_with_messages');
       await action_with_messages(poller, cradle1, cradle2);
