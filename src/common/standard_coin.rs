@@ -41,7 +41,9 @@ pub(crate) fn calculate_synthetic_offset(
     let mut blob_input = public_key.bytes().to_vec();
     blob_input.extend_from_slice(hidden_puzzle_hash.bytes());
     let blob = Sha256Input::Bytes(&blob_input).hash();
-    BigInt::from_bytes_be(Sign::Plus, blob.bytes()) % group_order_int()
+    let group_order = group_order_int();
+    let value = BigInt::from_signed_bytes_be(blob.bytes());
+    ((value % &group_order) + &group_order) % &group_order
 }
 
 pub fn calculate_synthetic_secret_key(
