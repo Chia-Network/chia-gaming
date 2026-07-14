@@ -372,7 +372,7 @@ interface CalpokerHandProps {
   playerNumber: number;
   gameplayEvent$: Observable<GameplayEvent>;
   onOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (isMyTurn: boolean) => void;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
   myName?: string;
@@ -428,6 +428,10 @@ function CalpokerHand({
   myName,
   opponentName,
 }: CalpokerHandProps) {
+  const handleTurnChanged = useCallback(
+    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
+    [gameId, onTurnChanged],
+  );
   const {
     playerHand,
     opponentHand,
@@ -449,7 +453,7 @@ function CalpokerHand({
     iStarted,
     gameplayEvent$,
     onOutcome,
-    onTurnChanged,
+    handleTurnChanged,
     gameObject.handState ?? undefined,
   );
 
@@ -506,7 +510,7 @@ interface SpacePokerHandProps {
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: string;
   unitSizeMojos?: string;
-  onTurnChanged: (isMyTurn: boolean) => void;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
   myName?: string;
@@ -528,6 +532,10 @@ function SpacePokerHand({
 }: SpacePokerHandProps) {
   const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : 1n;
   const stackSize = unitMojos > 0n ? perGameAmount / unitMojos : 0n;
+  const handleTurnChanged = useCallback(
+    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
+    [gameId, onTurnChanged],
+  );
 
   const handleGameLog = useCallback((lines: string[]) => {
     appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
@@ -543,7 +551,7 @@ function SpacePokerHand({
       gameplayEvent$={gameplayEvent$}
       betSize={betSize}
       unitSizeMojos={unitSizeMojos}
-      onTurnChanged={onTurnChanged}
+      onTurnChanged={handleTurnChanged}
       onGameLog={handleGameLog}
       myName={myName}
       opponentName={opponentName}
@@ -959,7 +967,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                 <Krunk
                   key={session.handKey}
                   gameObject={session.sessionController}
-                  gameIds={session.activeGameIds}
+                  currentHandGameIds={session.currentHandGameIds}
+                  activeGameIds={session.activeGameIds}
                   iProposedHand={session.iProposedHand}
                   gameplayEvent$={session.gameplayEvent$}
                   betSize={session.currentHandAmount}

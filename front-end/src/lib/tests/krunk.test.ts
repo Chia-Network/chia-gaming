@@ -4,6 +4,7 @@ import {
   canDraftKrunkGuess,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
+  krunkTerminalStatus,
   type KrunkGameState,
 } from '../../hooks/useKrunkHand';
 import {
@@ -13,6 +14,7 @@ import {
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
+import { krunkGameSlots } from '../../components/Krunk';
 
 describe('Krunk terms', () => {
   it('requires positive 100-mojo stake increments', () => {
@@ -38,6 +40,24 @@ describe('Krunk terms', () => {
 });
 
 describe('Krunk first guess drafting', () => {
+  it('keeps factory-order role slots stable after one sibling ends', () => {
+    const current = ['0', '1'];
+    const active = ['1'];
+
+    expect(krunkGameSlots(current, true, active)).toEqual({
+      aliceGameId: '0',
+      bobGameId: '1',
+      aliceActive: false,
+      bobActive: true,
+    });
+    expect(krunkGameSlots(current, false, active)).toEqual({
+      aliceGameId: '1',
+      bobGameId: '0',
+      aliceActive: true,
+      bobActive: false,
+    });
+  });
+
   it('allows drafting after our word commit while their commit is pending', () => {
     expect(canDraftKrunkGuess(true, KrunkHandler.BobWaiting, 0)).toBe(true);
     expect(canDraftKrunkGuess(false, KrunkHandler.BobWaiting, 0)).toBe(false);
@@ -71,6 +91,8 @@ describe('Krunk first guess drafting', () => {
       secretWord: 'XXXXX',
       revealedWord: null,
       outcome: null,
+      timeoutByUs: null,
+      timeoutForfeited: false,
       error: null,
     };
     expect(applyKrunkMoveRejected(alice, {
@@ -99,6 +121,32 @@ describe('Krunk first guess drafting', () => {
       guesses: [],
       error: 'XXXXX is not in the dictionary.',
     });
+  });
+
+  it('shows clock timeouts instead of guessing-result placeholders', () => {
+    const timedOut: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'bob',
+      guesses: [],
+      secretWord: null,
+      revealedWord: null,
+      outcome: 'lose',
+      timeoutByUs: true,
+      timeoutForfeited: false,
+      error: null,
+    };
+
+    expect(krunkTerminalStatus(timedOut, 'Peer')).toBe('We timed out.');
+    expect(krunkTerminalStatus({
+      ...timedOut,
+      role: 'alice',
+      timeoutByUs: false,
+    }, 'Peer')).toBe('Peer timed out.');
+    expect(krunkTerminalStatus({
+      ...timedOut,
+      timeoutForfeited: true,
+    }, 'Peer')).toBe('We forfeited.');
   });
 
   it('routes a typed move rejection with its game id, tag, and message', () => {

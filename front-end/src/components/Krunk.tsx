@@ -6,6 +6,7 @@ import {
   canDraftKrunkGuess,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
+  krunkTerminalStatus,
   KrunkHandler,
   KrunkGuess,
 } from '../hooks/useKrunkHand';
@@ -13,13 +14,36 @@ import { GameplayEvent } from '../hooks/useGameSession';
 
 export interface KrunkProps {
   gameObject: SessionController;
-  gameIds: string[];
+  currentHandGameIds: string[];
+  activeGameIds: string[];
   iProposedHand: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: bigint;
-  onTurnChanged: (isMyTurn: boolean) => void;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   myName?: string;
   opponentName?: string;
+}
+
+export function krunkGameSlots(
+  currentHandGameIds: string[],
+  iProposedHand: boolean,
+  activeGameIds: string[] = currentHandGameIds,
+): {
+  aliceGameId: string | null;
+  bobGameId: string | null;
+  aliceActive: boolean;
+  bobActive: boolean;
+} {
+  const first = currentHandGameIds[0] ?? null;
+  const second = currentHandGameIds[1] ?? null;
+  const slots = iProposedHand
+    ? { aliceGameId: first, bobGameId: second }
+    : { aliceGameId: second, bobGameId: first };
+  return {
+    ...slots,
+    aliceActive: slots.aliceGameId !== null && activeGameIds.includes(slots.aliceGameId),
+    bobActive: slots.bobGameId !== null && activeGameIds.includes(slots.bobGameId),
+  };
 }
 
 const MAX_GUESSES = 5;
@@ -170,7 +194,8 @@ function TargetRow({ word }: { word: string }) {
 
 const Krunk: React.FC<KrunkProps> = ({
   gameObject,
-  gameIds,
+  currentHandGameIds,
+  activeGameIds,
   iProposedHand,
   gameplayEvent$,
   betSize: _betSize,
@@ -181,33 +206,47 @@ const Krunk: React.FC<KrunkProps> = ({
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
   // roles are flipped: they're bob in game 0 and alice in game 1.
-  const aliceGameId = iProposedHand ? (gameIds[0] ?? '') : (gameIds[1] ?? gameIds[0] ?? '');
-  const bobGameId = iProposedHand ? (gameIds[1] ?? gameIds[0] ?? '') : (gameIds[0] ?? '');
+  const {
+    aliceGameId,
+    bobGameId,
+    aliceActive,
+    bobActive,
+  } = krunkGameSlots(currentHandGameIds, iProposedHand, activeGameIds);
+  const aliceId = aliceGameId ?? '';
+  const bobId = bobGameId ?? '';
+  const onAliceTurnChanged = useCallback(
+    (isMyTurn: boolean) => {
+      if (aliceGameId !== null) onTurnChanged(aliceGameId, isMyTurn);
+    },
+    [aliceGameId, onTurnChanged],
+  );
+  const onBobTurnChanged = useCallback(
+    (isMyTurn: boolean) => {
+      if (bobGameId !== null) onTurnChanged(bobGameId, isMyTurn);
+    },
+    [bobGameId, onTurnChanged],
+  );
 
   // useKrunkHand maps iStarted → role: iStarted=true means bob, false means alice.
   // Alice game (I pick the word): iStarted=false → role='alice'.
   // Bob game (I guess): iStarted=true → role='bob'.
   const aliceHand = useKrunkHand(
     gameObject,
-    aliceGameId,
+    aliceId,
     false,
     gameplayEvent$,
-    useCallback(() => {}, []),
+    onAliceTurnChanged,
+    aliceActive,
   );
 
   const bobHand = useKrunkHand(
     gameObject,
-    bobGameId,
+    bobId,
     true,
     gameplayEvent$,
-    useCallback(() => {}, []),
+    onBobTurnChanged,
+    bobActive,
   );
-
-  // Report turn state: either game needing input = my turn.
-  useEffect(() => {
-    const myTurn = aliceHand.gameState.myTurn || bobHand.gameState.myTurn;
-    onTurnChanged(myTurn);
-  }, [aliceHand.gameState.myTurn, bobHand.gameState.myTurn, onTurnChanged]);
 
   // Word picker gate: must commit secret word (alice side) before Bob input.
   const wordCommitted = aliceHand.gameState.handler !== KrunkHandler.WaitingCommit;
@@ -242,11 +281,12 @@ const Krunk: React.FC<KrunkProps> = ({
 
   // Auto-focus guess input when guess phase starts.
   const isBobGuessPhase =
+    bobActive &&
     wordCommitted &&
     bobHand.gameState.role === 'bob' &&
     bobHand.gameState.handler === KrunkHandler.BobGuess;
   const canDraftFirstGuess = canDraftKrunkGuess(
-    wordCommitted,
+    bobActive && wordCommitted,
     bobHand.gameState.handler,
     bobHand.gameState.guesses.length,
   );
@@ -303,10 +343,8 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const bobStatus = useMemo(() => {
     const gs = bobHand.gameState;
-    if (gs.handler === KrunkHandler.Terminal) {
-      if (gs.outcome === 'win') return 'You guessed it!';
-      return `Out of guesses. Word was ${gs.revealedWord ?? '?????'}.`;
-    }
+    const terminalStatus = krunkTerminalStatus(gs, themLabel);
+    if (terminalStatus !== null) return terminalStatus;
     if (gs.error) return gs.error;
     if (!wordCommitted) return 'Pick your word first →';
     if (queuedGuess !== null) return 'First guess queued…';
@@ -318,10 +356,8 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const aliceStatus = useMemo(() => {
     const gs = aliceHand.gameState;
-    if (gs.handler === KrunkHandler.Terminal) {
-      if (gs.outcome === 'win') return `${themLabel} couldn't guess it!`;
-      return `${themLabel} guessed your word.`;
-    }
+    const terminalStatus = krunkTerminalStatus(gs, themLabel);
+    if (terminalStatus !== null) return terminalStatus;
     if (gs.error) return gs.error;
     if (gs.handler === KrunkHandler.WaitingCommit) return 'Pick your secret word';
     if (gs.handler === KrunkHandler.AliceClue) return 'Scoring…';
@@ -329,7 +365,7 @@ const Krunk: React.FC<KrunkProps> = ({
   }, [aliceHand.gameState, themLabel]);
 
   const guessInputDisabled = guessSubmissionMode === null;
-  const showGuessInput = wordCommitted && !bobGameOver;
+  const showGuessInput = bobActive && wordCommitted && !bobGameOver;
 
   return (
     <div className='flex flex-col gap-4 items-center py-4'>
@@ -386,7 +422,7 @@ const Krunk: React.FC<KrunkProps> = ({
             <TargetRow word={aliceHand.gameState.secretWord} />
           )}
 
-          <div className={`flex flex-col items-center gap-2 mt-1 ${wordCommitted ? 'hidden' : ''}`}>
+          <div className={`flex flex-col items-center gap-2 mt-1 ${wordCommitted || !aliceActive ? 'hidden' : ''}`}>
             <input
               ref={wordInputRef}
               type='text'

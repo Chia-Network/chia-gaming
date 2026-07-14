@@ -36,6 +36,8 @@ export interface KrunkGameState {
   // Set at game end: the alice-side word that was being guessed.
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
+  timeoutByUs: boolean | null;
+  timeoutForfeited: boolean;
   error: string | null;
 }
 
@@ -113,6 +115,27 @@ export function applyKrunkMoveRejected(
   }
 
   return state;
+}
+
+export function krunkTerminalStatus(
+  state: KrunkGameState,
+  opponentLabel: string,
+): string | null {
+  if (state.handler !== KrunkHandler.Terminal) return null;
+  if (state.timeoutByUs !== null) {
+    if (state.timeoutByUs) {
+      return state.timeoutForfeited ? 'We forfeited.' : 'We timed out.';
+    }
+    return `${opponentLabel} ${state.timeoutForfeited ? 'forfeited' : 'timed out'}.`;
+  }
+  if (state.role === 'bob') {
+    return state.outcome === 'win'
+      ? 'You guessed it!'
+      : `Out of guesses. Word was ${state.revealedWord ?? '?????'}.`;
+  }
+  return state.outcome === 'win'
+    ? `${opponentLabel} couldn't guess it!`
+    : `${opponentLabel} guessed your word.`;
 }
 
 const MAX_GUESSES = 5;
@@ -208,6 +231,7 @@ export function useKrunkHand(
   iStarted: boolean,
   gameplayEvent$: Observable<GameplayEvent>,
   onTurnChanged: (isMyTurn: boolean) => void,
+  active = true,
 ): UseKrunkHandResult {
   // Channel-level convention: iStarted=true → I'm second mover in
   // every game. Krunk's first mover is alice (the committer), so the
@@ -222,6 +246,8 @@ export function useKrunkHand(
     secretWord: null,
     revealedWord: null,
     outcome: null,
+    timeoutByUs: null,
+    timeoutForfeited: false,
     error: null,
   });
 
@@ -229,10 +255,18 @@ export function useKrunkHand(
   const gameObjectRef = useRef(_gameObject);
   const gameIdRef = useRef(_gameId);
   const handFinishedRef = useRef(false);
+  const activeRef = useRef(active);
 
   gsRef.current = gs;
   gameObjectRef.current = _gameObject;
   gameIdRef.current = _gameId;
+  activeRef.current = active;
+
+  useEffect(() => {
+    if (_gameId && !active) {
+      handFinishedRef.current = true;
+    }
+  }, [_gameId, active]);
 
   const transition = useCallback((next: KrunkGameState) => {
     gsRef.current = next;
@@ -350,7 +384,20 @@ export function useKrunkHand(
           if (next !== gsRef.current) {
             transition(next);
           }
-        } else if ('_terminal' in evt) {
+        } else if ('Timeout' in evt) {
+          if (evt.Timeout.gameId !== gameIdRef.current) return;
+          if (!handFinishedRef.current) {
+            handFinishedRef.current = true;
+            transition({
+              ...gsRef.current,
+              handler: KrunkHandler.Terminal,
+              myTurn: false,
+              timeoutByUs: evt.Timeout.byUs,
+              timeoutForfeited: evt.Timeout.forfeited,
+            });
+          }
+        } else if ('GameError' in evt) {
+          if (evt.GameError.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             finishGame(gsRef.current.revealedWord, null);
           }
@@ -365,10 +412,10 @@ export function useKrunkHand(
   // send a clue or the final reveal. The user has nothing to choose;
   // we just feed it nil.
   useEffect(() => {
-    if (gs.role !== 'alice' || gs.handler !== KrunkHandler.AliceClue || !gs.myTurn) return;
+    if (!activeRef.current || gs.role !== 'alice' || gs.handler !== KrunkHandler.AliceClue || !gs.myTurn) return;
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
-    if (!go || !gid) return;
+    if (!activeRef.current || !go || !gid) return;
     try {
       go.makeMove(gid, null);
       const latest = gs.guesses[gs.guesses.length - 1];
@@ -387,7 +434,7 @@ export function useKrunkHand(
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     const cur = gsRef.current;
-    if (!go || !gid) return;
+    if (!activeRef.current || !go || !gid) return;
     if (cur.role !== 'alice' || cur.handler !== KrunkHandler.WaitingCommit) return;
     const normalised = word.trim().toUpperCase();
     if (!/^[A-Z]{5}$/.test(normalised)) {
@@ -412,7 +459,7 @@ export function useKrunkHand(
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     const cur = gsRef.current;
-    if (!go || !gid) return;
+    if (!activeRef.current || !go || !gid) return;
     if (cur.role !== 'bob' || cur.handler !== KrunkHandler.BobGuess) return;
     const normalised = word.trim().toUpperCase();
     if (!/^[A-Z]{5}$/.test(normalised)) {

@@ -22,8 +22,10 @@ import {
 import type { SessionState } from '../../hooks/save';
 import {
   gameplayEventsForGameStatus,
+  nextGameInstanceAfterLocalTurn,
   nextGameTurnAfterLocalTurn,
   isActivelyPlayingOnChain,
+  isFinishingGameStatus,
   parseGameStatusTerminalInfo,
   terminalEventForInfo,
 } from '../../hooks/useGameSession';
@@ -310,6 +312,46 @@ describe('session model selectors', () => {
     ]);
   });
 
+  it('derives Playing move identically for one or many keyed games', () => {
+    const makeInstance = (id: string, handStatus: 'our-turn' | 'their-turn') => ({
+      id,
+      amount: '100',
+      coin: { coinHex: `${id}${id}`, turnState: handStatus === 'our-turn' ? 'my-turn' as const : 'their-turn' as const },
+      handStatus,
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+    });
+    const first = makeInstance('7', 'our-turn');
+    const second = makeInstance('9', 'their-turn');
+    const updated = {
+      '7': nextGameInstanceAfterLocalTurn(first, false, 'Unrolling'),
+      '9': second,
+    };
+
+    expect(updated['7']).toMatchObject({
+      coin: { turnState: 'playing-on-chain' },
+      handStatus: 'playing-move',
+    });
+    expect(updated['9']).toBe(second);
+    expect(nextGameInstanceAfterLocalTurn(first, true, 'Active')).toMatchObject({
+      coin: { turnState: 'my-turn' },
+      handStatus: 'active',
+    });
+
+    const singleton = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: { activeIds: ['7'], currentHandIds: ['7'], instances: { '7': updated['7'] } },
+    }));
+    const multiple = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: { activeIds: ['7', '9'], currentHandIds: ['7', '9'], instances: updated },
+    }));
+    expect(singleton.lifecycleRows[0]).toMatchObject({ label: 'Hand', statusLabel: 'Playing move' });
+    expect(multiple.lifecycleRows).toEqual([
+      { id: '7', label: 'Hand 1', statusLabel: 'Playing move', detail: null },
+      { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
+    ]);
+  });
+
   it('shows a premature opponent timeout as an explicit ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
@@ -386,6 +428,32 @@ describe('session model selectors', () => {
       other_params: null,
     }, null, 'their-turn')).toMatchObject({
       label: 'Opponent folded',
+    });
+  });
+
+  it('does not mislabel an explicit on-chain clock timeout as a fold', () => {
+    expect(parseGameStatusTerminalInfo({
+      id: '7',
+      status: 'ended-we-timed-out',
+      my_reward: { amt: 0n },
+      coin_id: null,
+      reason: null,
+      other_params: { forfeited: false },
+    }, null, 'my-turn')).toMatchObject({
+      type: 'we-timed-out',
+      label: 'Timed out',
+    });
+
+    expect(parseGameStatusTerminalInfo({
+      id: '7',
+      status: 'ended-opponent-timed-out',
+      my_reward: { amt: 20n },
+      coin_id: null,
+      reason: null,
+      other_params: { forfeited: false },
+    }, null, 'their-turn')).toMatchObject({
+      type: 'opponent-timed-out',
+      label: 'Opponent timed out',
     });
   });
 
@@ -917,6 +985,13 @@ describe('session model selectors', () => {
     expect(isActivelyPlayingOnChain('ended')).toBe(false);
   });
 
+  it('marks either side of a terminal on-chain coin as finishing', () => {
+    expect(isFinishingGameStatus('on-chain-my-turn', true)).toBe(true);
+    expect(isFinishingGameStatus('on-chain-their-turn', true)).toBe(true);
+    expect(isFinishingGameStatus('on-chain-my-turn', false)).toBe(false);
+    expect(isFinishingGameStatus('my-turn', true)).toBe(false);
+  });
+
   it('orders terminal readable gameplay events before the terminal marker', () => {
     const notification = {
       GameStatus: {
@@ -931,15 +1006,15 @@ describe('session model selectors', () => {
       },
     };
 
-    const terminalEvent = { Timeout: { byUs: false, forfeited: true } };
+    const terminalEvent = { Timeout: { gameId: '7', byUs: false, forfeited: true } };
     expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
       { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7' } },
-      { Timeout: { byUs: false, forfeited: true } },
+      { Timeout: { gameId: '7', byUs: false, forfeited: true } },
     ]);
   });
 
   it('does not emit gameplay timeout events for clean terminal accepts', () => {
-    expect(terminalEventForInfo({
+    expect(terminalEventForInfo('7', {
       type: 'opponent-timed-out',
       label: 'Ended cleanly',
       myReward: '20',

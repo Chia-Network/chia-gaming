@@ -324,6 +324,7 @@ export function useSpacepokerHand(
         if (handFinishedRef.current) return;
 
         if ('OpponentMoved' in evt) {
+          if (evt.OpponentMoved.gameId && evt.OpponentMoved.gameId !== gameIdRef.current) return;
           const readable = evt.OpponentMoved.readable;
           let items: Program[] = [];
           try {
@@ -519,6 +520,7 @@ export function useSpacepokerHand(
           }
 
         } else if ('Timeout' in evt) {
+          if (evt.Timeout.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
             const cur = gsRef.current;
@@ -551,6 +553,7 @@ export function useSpacepokerHand(
             }
           }
         } else if ('GameError' in evt) {
+          if (evt.GameError.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
         }
       },

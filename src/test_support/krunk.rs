@@ -75,7 +75,7 @@ pub fn krunk_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
-    use crate::potato_handler::effects::{ChannelState, GameNotification};
+    use crate::potato_handler::effects::{ChannelState, GameNotification, GameStatusKind};
     use crate::simulator::tests::potato_handler_sim::{
         run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
@@ -105,6 +105,34 @@ mod sim_tests {
         ];
         moves.extend(test_moves_for_picker(allocator, GameID(1), 0));
         moves.extend(test_moves_for_picker(allocator, GameID(3), 1));
+        moves
+    }
+
+    fn third_guess_terminal_moves(
+        allocator: &mut AllocEncoder,
+        game_id: GameID,
+    ) -> Vec<GameAction> {
+        let nil_move = Program::from_hex("80").expect("nil move");
+        let mut moves = vec![GameAction::Move(
+            0,
+            game_id,
+            ReadableMove::from_program(Rc::new(word_program(allocator, b"CRANE"))),
+            true,
+        )];
+        for guess in [b"WORLD", b"BLADE", b"CRANE"] {
+            moves.push(GameAction::Move(
+                1,
+                game_id,
+                ReadableMove::from_program(Rc::new(word_program(allocator, guess))),
+                true,
+            ));
+            moves.push(GameAction::Move(
+                0,
+                game_id,
+                ReadableMove::from_program(Rc::new(nil_move.clone())),
+                true,
+            ));
+        }
         moves
     }
 
@@ -242,6 +270,94 @@ mod sim_tests {
                     )),
                     "player {who} should not fail unroll recognition: {:?}",
                     ui.notifications
+                );
+            }
+        }));
+
+        res.push(("test_krunk_split_terminal_move_finishes_for_both", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(1)),
+            ];
+            let mut game_moves = third_guess_terminal_moves(&mut allocator, GameID(1));
+            let terminal_reveal = game_moves.pop().expect("terminal reveal");
+            moves.extend(game_moves);
+            moves.push(GameAction::GoOnChain(0));
+            moves.push(terminal_reveal);
+            moves.push(GameAction::WaitBlocks(120, 1));
+            moves.push(GameAction::WaitBlocks(5, 0));
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&|_, cradles| {
+                    for cradle in cradles {
+                        let has_unspent_timeout_claim = cradle
+                            .snapshot_watched_coins()
+                            .iter()
+                            .filter_map(|coin| cradle.watched_coin(coin))
+                            .any(|watched| {
+                                watched.birthday.is_some()
+                                    && watched.spent_confirmed_at.is_none()
+                                    && watched.timeout_spend.is_some()
+                            });
+                        if cradle.channel_status_terminal() && has_unspent_timeout_claim {
+                            assert!(
+                                !cradle.is_fully_resolved(),
+                                "terminal channel must keep polling while a timeout claim is pending"
+                            );
+                        }
+                    }
+                    false
+                }),
+                None,
+            )
+            .expect("split Krunk terminal should resolve on chain");
+
+            let picker = &outcome.local_uis[0].notifications;
+            let guesser = &outcome.local_uis[1].notifications;
+            assert!(
+                picker.iter().any(|notification| matches!(
+                    notification,
+                    GameNotification::GameStatus {
+                        id,
+                        status: GameStatusKind::OnChainTheirTurn,
+                        other_params: Some(params),
+                        ..
+                    } if *id == GameID(1) && params.game_finished == Some(true)
+                )),
+                "picker should mark the terminal coin as finishing: {picker:?}"
+            );
+            assert!(
+                guesser.iter().any(|notification| matches!(
+                    notification,
+                    GameNotification::GameStatus {
+                        id,
+                        status: GameStatusKind::OnChainMyTurn,
+                        other_params: Some(params),
+                        ..
+                    } if *id == GameID(1) && params.game_finished == Some(true)
+                )),
+                "guesser should mark the terminal coin as finishing: {guesser:?}"
+            );
+            for (side, notifications) in [("picker", picker), ("guesser", guesser)] {
+                assert!(
+                    notifications.iter().any(|notification| matches!(
+                        notification,
+                        GameNotification::GameStatus {
+                            id,
+                            status:
+                                GameStatusKind::EndedWeTimedOut
+                                | GameStatusKind::EndedOpponentTimedOut,
+                            my_reward: Some(reward),
+                            other_params: Some(params),
+                            ..
+                        } if *id == GameID(1)
+                            && *reward > crate::common::types::Amount::default()
+                            && params.game_finished == Some(true)
+                    )),
+                    "{side} should receive its positive terminal payout: {notifications:?}"
                 );
             }
         }));

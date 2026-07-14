@@ -47,8 +47,8 @@ export type GameplayEvent =
   | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
-  | { Timeout: { byUs: boolean; forfeited: boolean } }
-  | { GameError: { reason: string } };
+  | { Timeout: { gameId: string; byUs: boolean; forfeited: boolean } }
+  | { GameError: { gameId: string; reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
   return coerceToBytes(value);
@@ -66,7 +66,11 @@ export function gameplayEventForMoveRejected(
   };
 }
 
-export function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusState): GameplayEvent | null {
+export function terminalEventForInfo(
+  gameId: string,
+  info: GameTerminalInfo,
+  status: GameStatusState,
+): GameplayEvent | null {
   if (info.cleanEnd) return null;
 
   switch (info.type) {
@@ -77,13 +81,13 @@ export function terminalEventForInfo(info: GameTerminalInfo, status: GameStatusS
       // than the misleading "Timed Out". Direction follows the status: our own
       // forfeit arrives as ended-we-timed-out, the opponent's as
       // ended-opponent-timed-out.
-      return { Timeout: { byUs: status === 'ended-we-timed-out', forfeited: true } };
+      return { Timeout: { gameId, byUs: status === 'ended-we-timed-out', forfeited: true } };
     case 'we-timed-out':
-      return { Timeout: { byUs: true, forfeited: false } };
+      return { Timeout: { gameId, byUs: true, forfeited: false } };
     case 'opponent-timed-out':
-      return { Timeout: { byUs: false, forfeited: false } };
+      return { Timeout: { gameId, byUs: false, forfeited: false } };
     default:
-      return { GameError: { reason: info.label ?? info.type } };
+      return { GameError: { gameId, reason: info.label ?? info.type } };
   }
 }
 
@@ -268,6 +272,28 @@ export function nextGameTurnAfterLocalTurn(
   return ON_CHAIN_FLOW_STATES.has(channelState) ? 'playing-on-chain' : 'their-turn';
 }
 
+export function nextGameInstanceAfterLocalTurn(
+  instance: GameInstanceModel,
+  isMyTurn: boolean,
+  channelState: ChannelState,
+): GameInstanceModel {
+  const turnState = nextGameTurnAfterLocalTurn(
+    instance.coin.turnState,
+    isMyTurn,
+    channelState,
+  );
+  if (turnState === 'ended') {
+    return instance;
+  }
+  return {
+    ...instance,
+    coin: { ...instance.coin, turnState },
+    handStatus: ON_CHAIN_FLOW_STATES.has(channelState)
+      ? isMyTurn ? 'our-turn' : 'playing-move'
+      : 'active',
+  };
+}
+
 // While we are actively (re)playing our move on-chain the game hook owns the
 // turn state ('playing-on-chain' once it fires a move; 'replaying' once the
 // channel handler signals a redo). An `on-chain-my-turn` for that same coin is
@@ -277,6 +303,14 @@ export function nextGameTurnAfterLocalTurn(
 // suppresses the spurious "Your turn" flicker during play/replay.
 export function isActivelyPlayingOnChain(current: GameTurnState): boolean {
   return current === 'playing-on-chain' || current === 'replaying';
+}
+
+export function isFinishingGameStatus(
+  status: GameStatusState,
+  gameFinished: boolean | undefined,
+): boolean {
+  return gameFinished === true
+    && (status === 'on-chain-my-turn' || status === 'on-chain-their-turn');
 }
 
 const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
@@ -332,7 +366,11 @@ export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex
   if (gs.status === 'ended-we-timed-out') {
     const clean = !!gs.other_params?.game_finished;
     const forfeited = !!gs.other_params?.forfeited;
-    const offChainAccept = !clean && !gs.coin_id && gs.reason !== 'move too late';
+    const offChainAccept =
+      !clean
+      && !gs.coin_id
+      && gs.reason !== 'move too late'
+      && gs.other_params?.forfeited === undefined;
     if (forfeited) {
       return {
         type: 'forfeit',
@@ -349,7 +387,7 @@ export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex
     } else if (turnState === 'replaying' || turnState === 'their-turn') {
       label = 'Move too late';
     } else {
-      label = 'We took too long to move';
+      label = 'Timed out';
     }
     return {
       type: 'we-timed-out',
@@ -363,7 +401,10 @@ export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex
   if (gs.status === 'ended-opponent-timed-out') {
     const clean = !!gs.other_params?.game_finished;
     const forfeited = !!gs.other_params?.forfeited;
-    const offChainAccept = !clean && !gs.coin_id;
+    const offChainAccept =
+      !clean
+      && !gs.coin_id
+      && gs.other_params?.forfeited === undefined;
     if (forfeited) {
       return {
         type: 'forfeit',
@@ -374,7 +415,7 @@ export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex
     }
     return {
       type: 'opponent-timed-out',
-      label: clean ? 'Ended cleanly' : offChainAccept ? 'Opponent folded' : 'Opponent took too long to move',
+      label: clean ? 'Ended cleanly' : offChainAccept ? 'Opponent folded' : 'Opponent timed out',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
       cleanEnd: clean,
@@ -572,6 +613,7 @@ export interface UseGameSessionResult {
   handKey: number;
   activeGameId: string | null;
   activeGameIds: string[];
+  currentHandGameIds: string[];
   iProposedHand: boolean;
   activeGameType: string;
   displayGameId: string | null;
@@ -579,7 +621,7 @@ export interface UseGameSessionResult {
   gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (isMyTurn: boolean) => void;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   betweenHandMode: BetweenHandMode;
   cachedPeerProposal: BetweenHandProposal | null;
   reviewPeerProposal: BetweenHandProposal | null;
@@ -1061,7 +1103,11 @@ export function useGameSession(
     }
   }, []);
 
-  const onTurnChanged = useCallback((isMyTurn: boolean) => {
+  const onTurnChanged = useCallback((gameId: string, isMyTurn: boolean) => {
+    updateGameInstance(gameId, instance =>
+      nextGameInstanceAfterLocalTurn(instance, isMyTurn, channelStateRef.current)
+    );
+
     const ts = nextGameTurnAfterLocalTurn(
       turnStateRef.current,
       isMyTurn,
@@ -1081,7 +1127,7 @@ export function useGameSession(
     } else {
       setHandStatus('active');
     }
-  }, []);
+  }, [updateGameInstance]);
 
   const triggerGoOnChain = useCallback(() => {
     log('[game] going on chain');
@@ -1374,7 +1420,7 @@ export function useGameSession(
           setReviewPeerProposal(null);
         }
 
-        const terminalEvent = terminalEventForInfo(terminalInfo, status);
+        const terminalEvent = terminalEventForInfo(terminalId, terminalInfo, status);
         if (terminalEvent) {
           gameplayEventSubject.next(terminalEvent);
         }
@@ -1383,6 +1429,10 @@ export function useGameSession(
 
       const coinHex = await coinIdHex(gs.coin_id);
       const statusId = String(gs.id);
+      const finishing = isFinishingGameStatus(
+        status,
+        gs.other_params?.game_finished,
+      );
       updateGameInstance(statusId, instance => {
         if (ignoreLocalTurnDuringOnChain) {
           return coinHex
@@ -1392,13 +1442,16 @@ export function useGameSession(
         if (status === 'my-turn' || status === 'on-chain-my-turn') {
           return {
             ...instance,
-            coin: { coinHex: coinHex ?? instance.coin.coinHex, turnState: 'my-turn' },
-            handStatus: status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active',
+            coin: {
+              coinHex: coinHex ?? instance.coin.coinHex,
+              turnState: finishing ? 'finishing' : 'my-turn',
+            },
+            handStatus: finishing
+              ? 'finishing'
+              : status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active',
           };
         }
         if (status === 'their-turn' || status === 'on-chain-their-turn') {
-          const finishing =
-            status === 'on-chain-their-turn' && gs.other_params?.game_finished === true;
           return {
             ...instance,
             coin: {
@@ -1440,7 +1493,14 @@ export function useGameSession(
           setGameCoin(prev => ({ ...prev, coinHex }));
         }
       } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
-        if (isActivelyPlayingOnChain(turnStateRef.current)) {
+        if (finishing) {
+          turnStateRef.current = 'finishing';
+          setGameCoin(prev => ({
+            coinHex: coinHex ?? prev.coinHex,
+            turnState: 'finishing',
+          }));
+          setHandStatus('finishing');
+        } else if (isActivelyPlayingOnChain(turnStateRef.current)) {
           // We're mid play/replay of our move on-chain; keep showing 'Playing
           // move'/'Replaying' rather than reverting to 'Your turn'. Just refresh
           // the coin id.
@@ -1453,15 +1513,10 @@ export function useGameSession(
           setHandStatus(status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active');
         }
       } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
-        // After we play a terminal move on-chain the game is over (the next
-        // coin nominally passes the turn to the opponent, but its validation
-        // program is nil). We're not waiting on the opponent — we're waiting to
-        // settle our win — so present this as 'Finishing' rather than 'Their
-        // turn'. This is driven generically by game_finished, not anything
-        // game-specific.
-        const weFinishedTheGame =
-          status === 'on-chain-their-turn' && gs.other_params?.game_finished === true;
-        if (weFinishedTheGame) {
+        // A nil validation program is terminal regardless of which side would
+        // nominally own the next turn. Both peers are waiting for the payout
+        // timeout, not another move.
+        if (finishing) {
           turnStateRef.current = 'finishing';
           setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'finishing' }));
           setHandStatus('finishing');
@@ -1821,6 +1876,7 @@ export function useGameSession(
     handKey,
     activeGameId: gameSessionView.activeGameId,
     activeGameIds: gameSessionView.activeGameIds,
+    currentHandGameIds,
     iProposedHand,
     activeGameType: gameSessionView.activeGameType,
     displayGameId: gameSessionView.displayGameId,
