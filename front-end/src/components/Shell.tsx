@@ -1999,9 +1999,9 @@ const Shell = () => {
   }, [cancelDashboardSession, requestDashboardCleanShutdown, requestDashboardGoOnChain]);
 
   const handleReconnect = useCallback(() => {
-    if (!blockchainType) return;
+    if (!blockchainType || connecting) return;
     handleConnect(blockchainType);
-  }, [blockchainType, handleConnect]);
+  }, [blockchainType, connecting, handleConnect]);
 
   if (bootState.kind === 'loading') {
     return null;

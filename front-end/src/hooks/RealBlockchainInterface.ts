@@ -20,9 +20,14 @@ const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
 const CHANGE_ADDRESS_STORAGE_PREFIX = 'appState_wcChangeAddress:';
+const REMOTE_WALLET_STORAGE_PREFIX = 'appState_wcRemoteWalletId:';
 
 function changeAddressStorageKey(fingerprint: string): string {
   return `${CHANGE_ADDRESS_STORAGE_PREFIX}${fingerprint}`;
+}
+
+function remoteWalletStorageKey(fingerprint: string): string {
+  return `${REMOTE_WALLET_STORAGE_PREFIX}${fingerprint}`;
 }
 
 function loadCachedChangeAddress(fingerprint: string): string | null {
@@ -42,17 +47,43 @@ function saveCachedChangeAddress(fingerprint: string, puzzleHash: string): void 
   }
 }
 
-function clearCachedChangeAddresses(): void {
+function loadCachedRemoteWalletId(fingerprint: string): bigint | null {
+  try {
+    const raw = localStorage.getItem(remoteWalletStorageKey(fingerprint));
+    if (!raw || !/^\d+$/.test(raw)) return null;
+    return BigInt(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedRemoteWalletId(fingerprint: string, walletId: bigint): void {
+  try {
+    localStorage.setItem(remoteWalletStorageKey(fingerprint), walletId.toString());
+  } catch {
+    // Best-effort cache; a miss only means we ask the wallet again.
+  }
+}
+
+function clearCachedWalletConnectKeys(prefix: string): void {
   try {
     const toRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith(CHANGE_ADDRESS_STORAGE_PREFIX)) toRemove.push(key);
+      if (key && key.startsWith(prefix)) toRemove.push(key);
     }
     for (const key of toRemove) localStorage.removeItem(key);
   } catch {
     // ignore
   }
+}
+
+function clearCachedChangeAddresses(): void {
+  clearCachedWalletConnectKeys(CHANGE_ADDRESS_STORAGE_PREFIX);
+}
+
+function clearCachedRemoteWalletIds(): void {
+  clearCachedWalletConnectKeys(REMOTE_WALLET_STORAGE_PREFIX);
 }
 
 function encodeU64AsClvmHex(val: bigint): string {
@@ -184,7 +215,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult;
 
   private remoteWalletId: bigint | undefined;
-  private remoteWalletPending = false;
+  private remoteWalletEnsurePromise: Promise<void> | null = null;
   private connectionListeners = new Set<(connected: boolean) => void>();
   private lastConnectedState = false;
   private wcSubscription: { unsubscribe: () => void } | null = null;
@@ -232,7 +263,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         log(`[wc-blockchain] address restored from cache → ${puzzleHash}`);
       }
       this.blockchainAddressData = { puzzleHash };
-      this.ensureRemoteWallet();
+      this.ensureRemoteWallet(fingerprint);
       await this.waitForRemoteWallet(epoch);
       if (epoch !== this.monitoringEpoch || !walletConnectState.getSession()) {
         return;
@@ -250,7 +281,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.monitoringReady = false;
     this.monitoringPromise = null;
     this.remoteWalletId = undefined;
-    this.remoteWalletPending = false;
+    // Leave remoteWalletEnsurePromise running if any; its completion is
+    // harmless and clearing it would allow duplicate getWallets stamps.
     this.fireConnectionChange(false);
   }
 
@@ -562,38 +594,45 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   // --- Private ---
 
-  private ensureRemoteWallet() {
-    if (this.remoteWalletPending || this.remoteWalletId !== undefined) return;
-    this.remoteWalletPending = true;
+  private ensureRemoteWallet(fingerprint?: string) {
+    if (this.remoteWalletId !== undefined || this.remoteWalletEnsurePromise) return;
+    const fp = fingerprint ?? walletConnectState.getAddress();
+    if (!fp) {
+      log('[wc-blockchain] ensureRemoteWallet skipped: no fingerprint');
+      return;
+    }
+    const cachedRemote = loadCachedRemoteWalletId(fp);
+    if (cachedRemote !== null) {
+      this.remoteWalletId = cachedRemote;
+      log(`[wc-blockchain] remote wallet restored from cache id=${cachedRemote}`);
+      return;
+    }
     console.log('[wc-blockchain] ensuring remote wallet exists...');
-    rpc.getWallets({ includeData: true })
-      .then((resp) => {
-        const wallets = Array.isArray(resp) ? resp : [];
-        const remote = wallets.find((w: any) => w.type == WalletType.Remote);
-        if (remote) {
-          this.remoteWalletId = remote.id;
-          this.remoteWalletPending = false;
-          console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
-        } else {
-          console.log('[wc-blockchain] no remote wallet found, creating...');
-          rpc.createNewRemoteWallet({ allowUnsynced: true })
-            .then((created) => {
-              this.remoteWalletId = created.walletId;
-              this.remoteWalletPending = false;
-              console.log(`[wc-blockchain] created remote wallet id=${created.walletId}`);
-            })
-            .catch((e) => {
-              this.remoteWalletPending = false;
-              console.warn('[wc-blockchain] createNewRemoteWallet failed, will retry', e);
-              log(`[wc-blockchain] createNewRemoteWallet failed: ${String(e)}`);
-            });
-        }
-      })
-      .catch((e) => {
-        this.remoteWalletPending = false;
-        console.warn('[wc-blockchain] getWallets failed, will retry', e);
-        log(`[wc-blockchain] getWallets failed: ${String(e)}`);
-      });
+    this.remoteWalletEnsurePromise = this.fetchRemoteWallet(fp).finally(() => {
+      this.remoteWalletEnsurePromise = null;
+    });
+  }
+
+  private async fetchRemoteWallet(fingerprint: string): Promise<void> {
+    try {
+      const resp = await rpc.getWallets({ includeData: true });
+      const wallets = Array.isArray(resp) ? resp : [];
+      const remote = wallets.find((w: any) => w.type == WalletType.Remote);
+      if (remote) {
+        this.remoteWalletId = remote.id;
+        saveCachedRemoteWalletId(fingerprint, remote.id);
+        console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
+        return;
+      }
+      console.log('[wc-blockchain] no remote wallet found, creating...');
+      const created = await rpc.createNewRemoteWallet({ allowUnsynced: true });
+      this.remoteWalletId = created.walletId;
+      saveCachedRemoteWalletId(fingerprint, created.walletId);
+      console.log(`[wc-blockchain] created remote wallet id=${created.walletId}`);
+    } catch (e) {
+      console.warn('[wc-blockchain] remote wallet setup failed, will retry', e);
+      log(`[wc-blockchain] remote wallet setup failed: ${String(e)}`);
+    }
   }
 
   private static readonly REMOTE_WALLET_TIMEOUT_MS = 30_000;
@@ -612,11 +651,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           return;
         }
         if (Date.now() - started > RealBlockchainInterface.REMOTE_WALLET_TIMEOUT_MS) {
-          reject(new Error('Timed out waiting for remote wallet'));
+          reject(new Error(
+            'Timed out waiting for remote wallet (chia_getWallets). '
+            + 'Check the Chia wallet for a pending WalletConnect approval.',
+          ));
           return;
         }
-        // Retry ensure on each tick: a failed getWallets/create clears
-        // remoteWalletPending but the previous loop never called it again.
+        // Only starts a new RPC when the previous ensure fully finished.
         this.ensureRemoteWallet();
         setTimeout(check, 500);
       };
@@ -624,12 +665,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  /** Drop a hung or stale monitoring attempt so reconnect can retry. */
+  /** Drop a hung monitoring wait so reconnect can retry without stacking RPCs. */
   private resetMonitoringAttempt() {
     this.monitoringEpoch++;
     this.monitoringReady = false;
     this.monitoringPromise = null;
-    this.remoteWalletPending = false;
+    // Keep remoteWalletEnsurePromise / remoteWalletId — aborting an in-flight
+    // getWallets and starting another is what flooded the wallet on reconnect.
   }
 
   private fireConnectionChange(connected: boolean) {
@@ -661,7 +703,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     if (fresh) {
       await clearWalletConnectStorage();
       clearCachedChangeAddresses();
+      clearCachedRemoteWalletIds();
       this.blockchainAddressData = { puzzleHash: '' };
+      this.remoteWalletId = undefined;
+      this.remoteWalletEnsurePromise = null;
       walletConnectState.reset();
     }
     await walletConnectState.init();

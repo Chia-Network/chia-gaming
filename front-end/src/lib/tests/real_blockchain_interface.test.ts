@@ -140,7 +140,7 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
-  it('reuses a cached change address across reloads without asking the wallet again', async () => {
+  it('reuses cached change address and remote wallet id across reloads', async () => {
     jest.useFakeTimers();
     try {
       const puzzleHash = '11'.repeat(32);
@@ -151,14 +151,19 @@ describe('RealBlockchainInterface', () => {
       first.onConnectionChange(() => {});
       await connectAndWait(first);
       expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+      expect(mockGetWallets).toHaveBeenCalledTimes(1);
 
       // Simulate a page reload: new adapter instance, same fingerprint + cache.
       const second = new RealBlockchainInterface();
-      second.onConnectionChange(() => {});
+      const events: boolean[] = [];
+      second.onConnectionChange((connected) => events.push(connected));
       await connectAndWait(second);
 
       expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+      expect(mockGetWallets).toHaveBeenCalledTimes(1);
       expect((await second.getAddress()).puzzleHash).toBe(puzzleHash);
+      expect(events).toEqual([true]);
+      expect(second.getRegistrationScopeKey()).toBe('7');
     } finally {
       jest.useRealTimers();
     }
@@ -222,6 +227,41 @@ describe('RealBlockchainInterface', () => {
       jest.advanceTimersByTime(500);
       for (let i = 0; i < 10; i++) await Promise.resolve();
       expect(events).toEqual([true]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not stack duplicate getWallets while one request is still in flight', async () => {
+    jest.useFakeTimers();
+    try {
+      const address = encodePuzzleHashToBech32m('11'.repeat(32));
+      mockGetNextAddress.mockResolvedValue(address);
+      let resolveWallets!: (value: unknown) => void;
+      mockGetWallets.mockImplementation(() => new Promise((resolve) => {
+        resolveWallets = resolve;
+      }));
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onConnectionChange(() => {});
+      mockWalletSession = { topic: 'wallet-1' };
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'connected', connected: true, sessions: 1 });
+      }
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(mockGetWallets).toHaveBeenCalledTimes(1);
+
+      // Reconnect finalize used to clear pending and fire another RPC each click.
+      const setup = await blockchain.beginConnect('id');
+      void setup.finalize();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(mockGetWallets).toHaveBeenCalledTimes(1);
+
+      resolveWallets([{ type: 205, id: 7n }]);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      jest.advanceTimersByTime(500);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(blockchain.getRegistrationScopeKey()).toBe('7');
     } finally {
       jest.useRealTimers();
     }
