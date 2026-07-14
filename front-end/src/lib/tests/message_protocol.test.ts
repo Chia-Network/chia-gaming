@@ -517,17 +517,16 @@ describe('durability failures', () => {
       throw new Error('malformed cradle serialization');
     });
     blob.onSaveNeeded = () => {
+      // Serialize failures throw from getWasmFields; null means not ready yet.
       const fields = blob.getWasmFields();
-      if (!fields) {
-        return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
-      }
+      if (!fields) return Promise.resolve();
       return saveSession(fields);
     };
 
     blob.deliverMessage(1n, enc('trigger'));
     await expect(blob.flushPendingWork())
       .rejects
-      .toThrow('WASM cradle serialization failed');
+      .toThrow('malformed cradle serialization');
 
     expect(sentMessages).toEqual([]);
     expect(sentAcks).toEqual([]);

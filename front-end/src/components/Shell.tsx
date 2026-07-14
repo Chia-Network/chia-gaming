@@ -1451,7 +1451,13 @@ const Shell = () => {
         // beginConnect may have failed before completeConnection ran.
         if (bcType !== 'walletconnect') {
           completeConnection(iface, bcType, pollMs);
+        } else {
+          setConnecting(false);
         }
+      } else if (activeBlockchainRef.current) {
+        // Reconnect failed — keep blockchainType so Reconnect stays usable.
+        setConnectionSetup(null);
+        setConnecting(false);
       } else {
         setBlockchainType(undefined);
         clearSessionPreservingHistory();
@@ -1667,6 +1673,7 @@ const Shell = () => {
     // For WalletConnect restores, finalize performs the first wallet RPC
     // (address lookup). Keep it in the background so local restore can render
     // while the simulator/wallet is unavailable.
+    setConnecting(true);
     void (async () => {
       try {
         const setup = await iface.beginConnect(uniqueId);
@@ -1687,6 +1694,8 @@ const Shell = () => {
         // beginConnect may have failed before completeConnection ran.
         if (!activeBlockchainRef.current && bcType !== 'walletconnect') {
           completeConnection(iface, bcType, pollMs);
+        } else {
+          setConnecting(false);
         }
       }
       console.log('[Shell] performResume: blockchain connect task done');
@@ -2443,6 +2452,12 @@ const Shell = () => {
                 connecting={connecting}
               />
             </div>
+          ) : connecting ? (
+            <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
+              <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
+              <p className='text-sm text-canvas-text animate-pulse'>Connecting…</p>
+              <Button variant='solid' onClick={handleCancelConnect}>Cancel</Button>
+            </div>
           ) : !walletConnected && activeBlockchainRef.current ? (
             <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
               <div className='flex items-center gap-2'>
@@ -2453,12 +2468,6 @@ const Shell = () => {
                 Connection was lost
               </p>
               <Button variant='solid' onClick={handleReconnect}>Reconnect</Button>
-            </div>
-          ) : connecting ? (
-            <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
-              <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
-              <p className='text-sm text-canvas-text animate-pulse'>Connecting…</p>
-              <Button variant='solid' onClick={handleCancelConnect}>Cancel</Button>
             </div>
           ) : (
             <div className='flex flex-col justify-center items-center w-full px-4 py-6 gap-4'>

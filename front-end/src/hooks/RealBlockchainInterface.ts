@@ -233,7 +233,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       }
       this.blockchainAddressData = { puzzleHash };
       this.ensureRemoteWallet();
-      await this.waitForRemoteWallet();
+      await this.waitForRemoteWallet(epoch);
       if (epoch !== this.monitoringEpoch || !walletConnectState.getSession()) {
         return;
       }
@@ -553,7 +553,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async registerCoins(names: string[]): Promise<void> {
-    await this.waitForRemoteWallet();
+    await this.waitForRemoteWallet(this.monitoringEpoch);
     await rpc.registerRemoteCoins({
       walletId: this.remoteWalletId!,
       coinIds: names,
@@ -596,19 +596,40 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       });
   }
 
-  private waitForRemoteWallet(): Promise<void> {
+  private static readonly REMOTE_WALLET_TIMEOUT_MS = 30_000;
+
+  private waitForRemoteWallet(epoch: number): Promise<void> {
     if (this.remoteWalletId !== undefined) return Promise.resolve();
-    this.ensureRemoteWallet();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
       const check = () => {
+        if (epoch !== this.monitoringEpoch) {
+          resolve();
+          return;
+        }
         if (this.remoteWalletId !== undefined) {
           resolve();
-        } else {
-          setTimeout(check, 500);
+          return;
         }
+        if (Date.now() - started > RealBlockchainInterface.REMOTE_WALLET_TIMEOUT_MS) {
+          reject(new Error('Timed out waiting for remote wallet'));
+          return;
+        }
+        // Retry ensure on each tick: a failed getWallets/create clears
+        // remoteWalletPending but the previous loop never called it again.
+        this.ensureRemoteWallet();
+        setTimeout(check, 500);
       };
       check();
     });
+  }
+
+  /** Drop a hung or stale monitoring attempt so reconnect can retry. */
+  private resetMonitoringAttempt() {
+    this.monitoringEpoch++;
+    this.monitoringReady = false;
+    this.monitoringPromise = null;
+    this.remoteWalletPending = false;
   }
 
   private fireConnectionChange(connected: boolean) {
@@ -651,6 +672,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         qrUri: '',
         skipQr: true,
         finalize: async () => {
+          // A prior reload attempt may still be stuck in waitForRemoteWallet;
+          // drop it so this reconnect starts a fresh monitoring pass.
+          this.resetMonitoringAttempt();
           await this.startMonitoring();
         },
       };

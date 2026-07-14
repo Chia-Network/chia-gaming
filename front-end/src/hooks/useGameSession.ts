@@ -982,7 +982,10 @@ export function useGameSession(
     if (!go) return Promise.resolve();
     const wasm = go.getWasmFields();
     if (!wasm) {
-      return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+      // Cradle not loaded yet (common during async restore). Opportunistic
+      // React-driven persists should no-op; real serialize failures throw
+      // from getWasmFields and still reject this Promise.
+      return Promise.resolve();
     }
     const model = createSessionModel({
       channel: {

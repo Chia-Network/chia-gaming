@@ -192,6 +192,41 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
+  it('retries remote-wallet setup after a transient getWallets failure', async () => {
+    jest.useFakeTimers();
+    try {
+      const address = encodePuzzleHashToBech32m('11'.repeat(32));
+      mockGetNextAddress.mockResolvedValue(address);
+      mockGetWallets
+        .mockRejectedValueOnce(new Error('wallet busy'))
+        .mockResolvedValueOnce([{ type: 205, id: 7n }]);
+
+      const blockchain = new RealBlockchainInterface();
+      const events: boolean[] = [];
+      blockchain.onConnectionChange((connected) => events.push(connected));
+
+      mockWalletSession = { topic: 'wallet-1' };
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'connected', connected: true, sessions: 1 });
+      }
+      // Settle getNextAddress + the failing getWallets before the retry tick.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(mockGetWallets).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([]);
+
+      // Retry tick starts getWallets #2; the following tick observes remoteWalletId.
+      jest.advanceTimersByTime(500);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(mockGetWallets).toHaveBeenCalledTimes(2);
+
+      jest.advanceTimersByTime(500);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(events).toEqual([true]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('treats encoded WalletConnect coin record misses as absent coins', async () => {
     const missingName = 'missing-coin-id';
     const presentName = 'present-coin-id';

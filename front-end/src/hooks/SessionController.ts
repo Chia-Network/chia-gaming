@@ -1001,40 +1001,38 @@ export class SessionController implements PollingCradle {
   }
 
   getWasmFields(): WasmFields | null {
+    // Null means the cradle is not loaded yet (e.g. mid-restore). Serialize
+    // failures must throw so callers like durability flush do not treat a
+    // failed snapshot as a successful no-op.
     if (!this.cradle || !this.wc) return null;
-    try {
-      const serializedCradle = this.cradle.serialize();
-      return {
-        serializedCradle,
-        cradleSchemaVersion: BigInt(this.wc.cradle_serialization_schema()),
-        pairingToken: this.pairingToken,
-        messageNumber: this.messageNumber,
-        remoteNumber: this.remoteNumber,
-        channelReady: this.channelReady,
-        iStarted: this.iStarted,
-        myContribution: this.myContribution.toString(),
-        theirContribution: this.theirContribution.toString(),
-        perGameAmount: this.perGameAmount.toString(),
-        unackedMessages: [...this.unackedMessages],
-        wasmNotificationHistory: recentEntries(
-          this.wasmNotificationHistory,
-          WASM_NOTIFICATION_HISTORY_LIMIT,
-        ),
-        diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
-        historicalUnrollCount: this.cradle.historical_unroll_count?.(),
-        durabilityWarning: this.durabilityWarning,
-        activeGameId: this.activeGameId,
-        activeGameIds: [...this.activeGameIds],
-        handState: this.handState,
-        channelStatus: this.lastChannelStatus,
-        myAlias: this.myAlias,
-        opponentAlias: this.opponentAlias,
-        lastOutcomeWin: this.lastOutcomeWin,
-      };
-    } catch (e) {
-      console.error('[wasm] getWasmFields failed:', e);
-      return null;
-    }
+    const serializedCradle = this.cradle.serialize();
+    return {
+      serializedCradle,
+      cradleSchemaVersion: BigInt(this.wc.cradle_serialization_schema()),
+      pairingToken: this.pairingToken,
+      messageNumber: this.messageNumber,
+      remoteNumber: this.remoteNumber,
+      channelReady: this.channelReady,
+      iStarted: this.iStarted,
+      myContribution: this.myContribution.toString(),
+      theirContribution: this.theirContribution.toString(),
+      perGameAmount: this.perGameAmount.toString(),
+      unackedMessages: [...this.unackedMessages],
+      wasmNotificationHistory: recentEntries(
+        this.wasmNotificationHistory,
+        WASM_NOTIFICATION_HISTORY_LIMIT,
+      ),
+      diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
+      historicalUnrollCount: this.cradle.historical_unroll_count?.(),
+      durabilityWarning: this.durabilityWarning,
+      activeGameId: this.activeGameId,
+      activeGameIds: [...this.activeGameIds],
+      handState: this.handState,
+      channelStatus: this.lastChannelStatus,
+      myAlias: this.myAlias,
+      opponentAlias: this.opponentAlias,
+      lastOutcomeWin: this.lastOutcomeWin,
+    };
   }
 
   getProtocolStatePretty(): string | null {
