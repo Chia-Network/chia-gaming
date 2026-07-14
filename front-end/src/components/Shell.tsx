@@ -65,6 +65,8 @@ import {
   selectGameTabDotColor,
   selectStatusBarBalances,
   sessionAmountsFromSave,
+  sessionModelFromSave,
+  snapshotFromSessionModel,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type GameDashboardActionKind,
@@ -1524,6 +1526,21 @@ const Shell = () => {
     }
   }, [deferStateUpdate]);
 
+  const clearSessionTimers = useCallback(() => {
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
+    }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
+    setAbandonEnabled(false);
+    setCleanShutdownGraceActive(false);
+  }, []);
+
   const cancelDashboardSession = useCallback((options?: { retainFinishedGuard?: boolean }) => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
@@ -1539,18 +1556,7 @@ const Shell = () => {
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
     sessionPhaseRef.current = 'none';
-    if (cleanShutdownGraceTimerRef.current !== null) {
-      clearTimeout(cleanShutdownGraceTimerRef.current);
-      cleanShutdownGraceTimerRef.current = null;
-    }
-    if (abandonTimerRef.current !== null) {
-      clearTimeout(abandonTimerRef.current);
-      abandonTimerRef.current = null;
-    }
-    waitingEnteredAtRef.current = null;
-    waitingStateRef.current = null;
-    setAbandonEnabled(false);
-    setCleanShutdownGraceActive(false);
+    clearSessionTimers();
     setSessionPhase('none');
     setSessionError(false);
     setSessionConfig(null);
@@ -1563,17 +1569,80 @@ const Shell = () => {
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
     trackerConnRef.current?.setBusy(false, alias);
-  }, [clearSessionPreservingHistory, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
+  }, [clearSessionPreservingHistory, clearSessionTimers, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
+
+  /**
+   * End live protocol for a terminal channel but keep the dashboard freeze
+   * (Resolved Clean / balances / last status) so the game tab still shows how
+   * the session finished. Persist that freeze + boot marker so reload shows
+   * Resume/Start Over instead of silently booting into tracker prefs alone.
+   */
+  const finishResolvedSessionDisplay = useCallback((hasError: boolean) => {
+    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
+    const model = dashboardSessionModelRef.current;
+    sessionFinishedCleanupRef.current = true;
+    sessionPhaseRef.current = 'resolved';
+    setSessionPhase('resolved');
+    setSessionError(hasError);
+    trackerConnRef.current?.setBusy(false, alias);
+
+    // Stop the live peer route and cradle; do not send session_reject and do
+    // not wipe the dashboard model (that would flash "No Session").
+    resetPeerRelayState();
+    destroySessionController();
+
+    // Clear only live protocol fields. clearSession() would drop the boot
+    // marker and finished channel snapshot — then reload skips Resume while
+    // still auto-connecting the saved tracker.
+    if (model) {
+      const status = model.channel.status;
+      void saveSession({
+        ...snapshotFromSessionModel(model),
+        serializedCradle: undefined,
+        cradleSchemaVersion: undefined,
+        pairingToken: undefined,
+        sessionPeerId: undefined,
+        gameSessionId: undefined,
+        channelReady: false,
+        channelStatus: {
+          state: status.state,
+          advisory: status.advisory,
+          coin: null,
+          our_balance: status.ourBalance,
+          their_balance: status.theirBalance,
+          game_allocated: status.gameAllocated,
+          have_potato: status.havePotato,
+        },
+        cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
+      });
+    } else {
+      void saveSession({
+        serializedCradle: undefined,
+        cradleSchemaVersion: undefined,
+        pairingToken: undefined,
+        sessionPeerId: undefined,
+        gameSessionId: undefined,
+      });
+    }
+    markSavedSession();
+
+    sessionSaveRef.current = null;
+    sessionSavePropRef.current = undefined;
+    sessionStartedRef.current = false;
+    clearSessionTimers();
+    setSessionConfig(null);
+    setPeerConn(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+  }, [clearSessionTimers, resetPeerRelayState]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
       if (sessionFinishedCleanupRef.current) return;
-      sessionFinishedCleanupRef.current = true;
       const previousPhase = sessionPhaseRef.current;
       const switchTracker = shouldSwitchToTrackerOnResolved(previousPhase, !!hasError);
-      // Terminal channel (Failed/Resolved*) means the session is over. Exit fully
-      // so we never sit on a disabled Done control that still counts as in-session.
-      cancelDashboardSession({ retainFinishedGuard: true });
+      finishResolvedSessionDisplay(!!hasError);
       if (switchTracker) {
         setActiveTab('tracker');
       }
@@ -1584,7 +1653,7 @@ const Shell = () => {
     setSessionPhase(phase);
     setSessionError(!!hasError);
     trackerConnRef.current?.setBusy(shouldReportTrackerBusy(phase));
-  }, [cancelDashboardSession, setActiveTab]);
+  }, [finishResolvedSessionDisplay, setActiveTab]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1605,12 +1674,10 @@ const Shell = () => {
   }, []);
 
   const handleTerminal = useCallback(() => {
+    // Phase→resolved owns soft finish (preserves dashboard + sessionError).
+    // Terminal only stops balance polling once the cradle reports done.
     stopBalancePolling();
-    if (sessionFinishedCleanupRef.current) return;
-    sessionFinishedCleanupRef.current = true;
-    // Same full exit as phase→resolved: terminal means nothing left to do.
-    cancelDashboardSession({ retainFinishedGuard: true });
-  }, [stopBalancePolling, cancelDashboardSession]);
+  }, [stopBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreTrackerReconciled);
 
@@ -1641,6 +1708,30 @@ const Shell = () => {
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
+
+  /** Restore a finished/terminal session freeze without remounting live WASM. */
+  const restoreFinishedSessionFromSave = useCallback((save: SessionState) => {
+    const channelState = savedChannelState(save);
+    const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
+    sessionFinishedCleanupRef.current = true;
+    sessionPhaseRef.current = 'resolved';
+    setSessionPhase('resolved');
+    setSessionError(hasError);
+    const model = sessionModelFromSave(save);
+    dashboardSessionModelRef.current = model;
+    setDashboardSessionModel(model);
+    sessionSaveRef.current = save;
+    sessionSavePropRef.current = undefined;
+    sessionStartedRef.current = false;
+    setSessionConfig(null);
+    setPeerConn(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(true);
+    trackerConnRef.current?.setBusy(false, save.myAlias ?? peekAlias());
+    setActiveTab('game');
+    setResuming(false);
+  }, [setActiveTab]);
 
   // Hydrate local UI state from a SessionState and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
@@ -1795,12 +1886,17 @@ const Shell = () => {
     setBootState({ kind: 'ready' });
     if (save.serializedCradle) {
       void performResume(save);
+    } else if (isTerminalChannelState(savedChannelState(save))) {
+      restoreFinishedSessionFromSave(save);
+      if (save.blockchainType) {
+        void handleConnect(save.blockchainType, true);
+      }
     } else if (save.blockchainType) {
       void handleConnect(save.blockchainType, true);
     } else {
       setResuming(false);
     }
-  }, [bootState, performResume, handleConnect]);
+  }, [bootState, performResume, handleConnect, restoreFinishedSessionFromSave]);
 
   // User clicked "Take over" in the tabConflict dialog.
   // Claim the lease in place (this fences the other tab via storage event)
@@ -1814,6 +1910,12 @@ const Shell = () => {
         // Our session is already live — just reclaim the lease.
       } else if (prev.save && prev.save.serializedCradle) {
         void performResume(prev.save);
+      } else if (prev.save && isTerminalChannelState(savedChannelState(prev.save))) {
+        restoreFinishedSessionFromSave(prev.save);
+        const bcType = prev.save.blockchainType ?? getBlockchainType();
+        if (bcType) {
+          void handleConnect(bcType, true);
+        }
       } else {
         const bcType = prev.save?.blockchainType ?? getBlockchainType();
         if (bcType) {
@@ -1822,7 +1924,7 @@ const Shell = () => {
       }
       return { kind: 'ready' };
     });
-  }, [performResume, handleConnect]);
+  }, [performResume, handleConnect, restoreFinishedSessionFromSave]);
 
   const handleCloseTab = useCallback(() => {
     stopBalancePolling();
@@ -2594,7 +2696,9 @@ const Shell = () => {
             ) : (
               <div className='relative w-full h-full'>
                 <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-                  No active game session
+                  {sessionPhase === 'resolved' && dashboardSessionModel
+                    ? 'Session finished'
+                    : 'No active game session'}
                 </div>
                 {sessionConsentOverlay}
               </div>

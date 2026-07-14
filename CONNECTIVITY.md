@@ -253,18 +253,20 @@ any pending hand obligations have finished:
    game actions, the `PeerSession` is destroyed (making it inert), keepalives
    stop, `sessionStartedRef` is reset, and the finished session is treated as a
    read-only display.
-4. The resolved display is intentionally preserved so the user can see what just
-   happened. A reload may restore this finished view, but it should not resume
-   live protocol behavior.
-5. Shell tells the tracker/lobby that the player is not busy.
-6. The player can accept new challenges. This is intentional: terminal sessions
+4. The resolved dashboard is intentionally preserved (channel label such as
+   Resolved Clean, final Me/Opp balances, and related status detritus). Shell
+   must not wipe to "No Session" on clean/terminal finish. A new match replaces
+   this display; there is no manual "Close Session" button.
+5. That finished snapshot is persisted with the boot Resume/Start Over marker
+   (live cradle/pairing cleared). Reload must show Resume/Start Over — not
+   silently auto-connect the tracker with an empty game tab.
+6. Shell tells the tracker/lobby that the player is not busy.
+7. The player can accept new challenges. This is intentional: terminal sessions
    no longer impose a protocol obligation, so the UI should encourage continued
    play instead of making the user manually clear the finished game.
-7. A new match replaces the old resolved display. There is no manual "Close
-   Session" button.
-8. The old peer connection is no longer a live session route. The app may still
-   show the finished session and prior history, but new peer messages must
-   come from a newly accepted session.
+8. Successful/terminal exit does not send `session_reject`.
+9. The old peer connection is no longer a live session route. New peer messages
+   must come from a newly accepted session.
 
 ---
 

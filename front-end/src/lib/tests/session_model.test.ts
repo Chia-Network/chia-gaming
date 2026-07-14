@@ -92,13 +92,35 @@ describe('session model selectors', () => {
     });
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean' } },
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'ResolvedClean',
+          ourBalance: '60',
+          theirBalance: '40',
+        },
+      },
     }))).toMatchObject({
+      channelStatusLabel: 'Resolved Clean',
       actionLabel: 'Done',
       actionEnabled: false,
       actionKind: 'none',
       channelDetail: null,
     });
+    // Resolved display keeps Me/Opp balances (not wiped to "No Session").
+    expect(selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'ResolvedClean',
+          ourBalance: '60',
+          theirBalance: '40',
+        },
+      },
+    }))).toEqual([
+      { label: 'Me', value: '60' },
+      { label: 'Opp', value: '40' },
+    ]);
   });
 
   it('uses a clean-shutdown grace window before offering go-on-chain escalation', () => {

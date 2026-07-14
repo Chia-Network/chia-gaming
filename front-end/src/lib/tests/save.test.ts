@@ -218,6 +218,33 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
+  it('keeps Resume marker for a finished channel snapshot without a live cradle', async () => {
+    saveSession({
+      blockchainType: 'simulator',
+      trackerUrl: 'http://localhost:3000',
+      pairingToken: undefined,
+      serializedCradle: undefined,
+      channelStatus: {
+        state: 'ResolvedClean',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: true,
+      },
+    });
+    await flushSessionState();
+
+    expect(hasSavedSessionMarker()).toBe(true);
+    _resetForTests();
+    expect(hasSavedSessionMarker()).toBe(true);
+    const loaded = await peekSession();
+    expect(loaded?.channelStatus?.state).toBe('ResolvedClean');
+    expect(loaded?.blockchainType).toBe('simulator');
+    expect(hasSavedSessionMarker()).toBe(true);
+  });
+
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({

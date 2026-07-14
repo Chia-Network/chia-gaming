@@ -467,8 +467,24 @@ function loadPreferences(): SessionState {
   return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
+function isTerminalFinishedChannel(state: string | null | undefined): boolean {
+  return state === 'ResolvedClean'
+    || state === 'ResolvedUnrolled'
+    || state === 'ResolvedStale'
+    || state === 'Failed';
+}
+
+/**
+ * True when disk state should keep the boot Resume/Start Over marker.
+ * Includes finished/terminal channel snapshots (no live cradle) so a clean
+ * shutdown does not silently boot into leftover tracker prefs with no dialog.
+ */
 function isResumable(state: SessionState): boolean {
-  return !!(state.serializedCradle || state.pairingToken);
+  return !!(
+    state.serializedCradle
+    || state.pairingToken
+    || (state.channelStatus && isTerminalFinishedChannel(state.channelStatus.state))
+  );
 }
 
 function capPersistedHistories(state: SessionState): void {
@@ -766,8 +782,9 @@ function hasWalletConnectStorage(): boolean {
 
 /**
  * Returns the current state if there's anything worth resuming — a
- * serialized cradle, pairing token, pre-game wallet choice with an active
- * boot marker, or leftover WalletConnect storage from a partial connection.
+ * serialized cradle, pairing token, finished/terminal channel snapshot,
+ * pre-game wallet choice with an active boot marker, or leftover
+ * WalletConnect storage from a partial connection.
  * `blockchainType` alone (preserved across session clears, without a marker)
  * does not count as resumable.
  */
