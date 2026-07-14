@@ -60,13 +60,16 @@ import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, isTerminalChannelState, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
+  isCleanShutdownInProgress,
   selectGameDashboardView,
+  selectGameTabDotColor,
   selectStatusBarBalances,
   sessionAmountsFromSave,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type GameDashboardActionKind,
   type GameDashboardViewModel,
+  type GameTabDotColor,
   type SessionModel,
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
@@ -1524,7 +1527,10 @@ const Shell = () => {
   const cancelDashboardSession = useCallback((options?: { retainFinishedGuard?: boolean }) => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
-    if (peerId) sendSessionReject(peerId);
+    // Terminal/clean finish must not send session_reject — that signal means
+    // decline/abort. Cooperative close already completed through the protocol;
+    // the peer should keep pinging until its own local shutdown finishes.
+    if (peerId && !options?.retainFinishedGuard) sendSessionReject(peerId);
     resetPeerRelayState();
     destroySessionController();
     clearSessionPreservingHistory();
@@ -2234,21 +2240,22 @@ const Shell = () => {
                 dotColor = 'var(--color-canvas-text-subtle)';
               }
               break;
-            case 'game':
-              if (sessionPhase === 'none' || sessionPhase === 'resolved') {
-                dotColor = 'var(--color-canvas-text-subtle)';
-              } else if (sessionError) {
-                dotColor = 'var(--color-alert-solid)';
-              } else if (peerLiveness === 'dead') {
-                dotColor = 'var(--color-alert-solid)';
-              } else if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') {
-                dotColor = 'var(--color-warning-solid)';
-              } else if (peerLiveness === 'connected') {
-                dotColor = 'var(--color-success-solid)';
-              } else {
-                dotColor = 'var(--color-canvas-text-subtle)';
-              }
+            case 'game': {
+              const gameDot: GameTabDotColor = selectGameTabDotColor({
+                sessionPhase,
+                sessionError,
+                peerLiveness,
+                cleanShutdownInProgress: isCleanShutdownInProgress(dashboardSessionModel),
+              });
+              const gameDotCss: Record<GameTabDotColor, string> = {
+                green: 'var(--color-success-solid)',
+                yellow: 'var(--color-warning-solid)',
+                red: 'var(--color-alert-solid)',
+                gray: 'var(--color-canvas-text-subtle)',
+              };
+              dotColor = gameDotCss[gameDot];
               break;
+            }
           }
 
           return (

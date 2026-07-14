@@ -14,6 +14,8 @@ import {
   selectShouldAdvertiseAvailable,
   selectSessionPhase,
   selectShellView,
+  selectGameTabDotColor,
+  isCleanShutdownInProgress,
   sessionAmountsFromSave,
   sessionModelFromSave,
   snapshotFromSessionModel,
@@ -679,6 +681,54 @@ describe('session model selectors', () => {
       canAdvertiseAvailable: false,
       sessionError: false,
     });
+  });
+
+  it('keeps the game tab green during clean shutdown, yellow if peer drops, gray when done', () => {
+    const shuttingDown = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ShuttingDown' },
+        connection: { stateIdentifier: 'running', stateDetail: [] },
+        goOnChainPressed: false,
+        cleanShutdownStarted: true,
+        dismissedChannelState: null,
+        queue: [],
+      },
+    });
+    expect(isCleanShutdownInProgress(shuttingDown)).toBe(true);
+    // Peer stays live through cooperative close (keepalives continue).
+    expect(selectGameTabDotColor({
+      sessionPhase: 'off-chain',
+      sessionError: false,
+      peerLiveness: 'connected',
+      cleanShutdownInProgress: true,
+    })).toBe('green');
+    // Real unreachability (silence / delivery failure) is yellow, not red.
+    expect(selectGameTabDotColor({
+      sessionPhase: 'off-chain',
+      sessionError: false,
+      peerLiveness: 'degraded',
+      cleanShutdownInProgress: true,
+    })).toBe('yellow');
+    // Dead should not occur during clean shutdown; if it does, treat as yellow.
+    expect(selectGameTabDotColor({
+      sessionPhase: 'off-chain',
+      sessionError: false,
+      peerLiveness: 'dead',
+      cleanShutdownInProgress: true,
+    })).toBe('yellow');
+    expect(selectGameTabDotColor({
+      sessionPhase: 'resolved',
+      sessionError: false,
+      peerLiveness: 'connected',
+      cleanShutdownInProgress: false,
+    })).toBe('gray');
+    // Outside clean shutdown, peer dead is still red.
+    expect(selectGameTabDotColor({
+      sessionPhase: 'off-chain',
+      sessionError: false,
+      peerLiveness: 'dead',
+      cleanShutdownInProgress: false,
+    })).toBe('red');
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {

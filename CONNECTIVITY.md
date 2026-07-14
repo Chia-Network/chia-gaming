@@ -477,7 +477,7 @@ purpose.
 |-----|-------|--------|-----|------|
 | Wallet | Connected | — | Disconnected | — |
 | Tracker | Connected | Reconnecting | Inactive (no heartbeat) | Not connected (null / disconnected) |
-| Game | Peer connected | On-chain or peer degraded | Error, or peer dead | No session / resolved |
+| Game | Peer connected (incl. clean shutdown) | On-chain, peer degraded, or peer unreachable during clean shutdown | Error, or peer dead outside clean shutdown | No session / resolved |
 | History | — | — | — | Always gray |
 | Log | — | — | — | Always gray |
 
@@ -487,15 +487,27 @@ The Game tab dot checks conditions in this order:
 
 1. `sessionPhase === 'none' || 'resolved'` → **gray** (no active session)
 2. `sessionError` → **red** (genuine error — always wins)
-3. `peerLiveness === 'dead'` → **red** (terminal — go-on-chain or FOAD)
-4. `sessionPhase === 'on-chain'` or `peerLiveness === 'degraded'` → **yellow** (resolving or stale peer)
-5. `peerLiveness === 'connected'` → **green** (playing normally)
-6. Otherwise → **gray**
+3. Clean shutdown in progress (`ShuttingDown` / `ShutdownTransactionPending` /
+   `cleanShutdownStarted`):
+   - peer degraded (or unexpectedly dead) → **yellow** (unreachable)
+   - otherwise → **green** (cooperative close in flight; keepalives continue)
+4. `peerLiveness === 'dead'` → **red** (terminal — go-on-chain or FOAD)
+5. `sessionPhase === 'on-chain'` or `peerLiveness === 'degraded'` → **yellow** (resolving or stale peer)
+6. `peerLiveness === 'connected'` → **green** (playing normally)
+7. Otherwise → **gray**
+
+Clean shutdown does **not** mark the peer dead on its own. Keepalives and the
+small allowlist of shutdown-related peer messages continue until local
+shutdown completes. Successful/terminal session exit does not send
+`session_reject` (that signal means decline/abort). If a `session_reject`
+does arrive, it is still honored as an abort. When the channel reaches a
+terminal state the session exits and the dot goes gray.
 
 ### Game tab error conditions (red dot)
 
-The Game tab shows a red dot when `sessionError` is true or when
-`peerLiveness === 'dead'` (go-on-chain or FOAD received). `sessionError` is derived from:
+The Game tab shows a red dot when `sessionError` is true, or when
+`peerLiveness === 'dead'` outside a clean shutdown (go-on-chain or FOAD).
+`sessionError` is derived from:
 
 - `Failed` channel state — the channel encountered an unrecoverable error
 - `ResolvedStale` channel state — the channel resolved but the outcome is

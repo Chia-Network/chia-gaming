@@ -1,6 +1,7 @@
 import type {
   ChannelState,
   GameConnectionState,
+  PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
@@ -537,6 +538,43 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
     canAdvertiseAvailable: selectShouldAdvertiseAvailable(model, phase),
     sessionError: model.restore.status === 'failed',
   };
+}
+
+export type GameTabDotColor = 'green' | 'yellow' | 'red' | 'gray';
+
+/** True while a cooperative close is in flight (not yet terminal). */
+export function isCleanShutdownInProgress(model: SessionModel | null): boolean {
+  if (!model) return false;
+  const state = model.channel.status.state;
+  return model.channel.cleanShutdownStarted
+    || state === 'ShuttingDown'
+    || state === 'ShutdownTransactionPending';
+}
+
+/**
+ * Game-tab connectivity dot. Clean shutdown keeps the peer live (keepalives
+ * continue); yellow only if the peer becomes unreachable. Red is for genuine
+ * errors / FOAD-style peer death outside cooperative close.
+ */
+export function selectGameTabDotColor(args: {
+  sessionPhase: SessionPhase;
+  sessionError: boolean;
+  peerLiveness: PeerLiveness;
+  cleanShutdownInProgress: boolean;
+}): GameTabDotColor {
+  const { sessionPhase, sessionError, peerLiveness, cleanShutdownInProgress } = args;
+  if (sessionPhase === 'none' || sessionPhase === 'resolved') return 'gray';
+  if (sessionError) return 'red';
+  if (cleanShutdownInProgress) {
+    // Peer should not be marked dead during cooperative close; if liveness
+    // still reports dead/degraded, treat it as unreachable rather than error.
+    if (peerLiveness === 'dead' || peerLiveness === 'degraded') return 'yellow';
+    return 'green';
+  }
+  if (peerLiveness === 'dead') return 'red';
+  if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') return 'yellow';
+  if (peerLiveness === 'connected') return 'green';
+  return 'gray';
 }
 
 export interface GameDashboardSelectorOptions {
