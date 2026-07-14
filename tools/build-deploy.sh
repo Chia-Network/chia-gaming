@@ -98,7 +98,12 @@ echo "=== Building hub service ==="
 
 # ── Assemble hub staging tree ────────────────────────────────────────
 
-BUILD_NONCE=$(date +%s%3N)
+# Portable millisecond nonce. macOS `date +%s%3N` leaves a literal "3N".
+if command -v python3 >/dev/null 2>&1; then
+  BUILD_NONCE=$(python3 -c 'import time; print(int(time.time() * 1000))')
+else
+  BUILD_NONCE=$(node -e 'process.stdout.write(String(Date.now()))')
+fi
 echo "=== Assembling hub (nonce: $BUILD_NONCE) ==="
 
 HUB_STAGE=$(mktemp -d)

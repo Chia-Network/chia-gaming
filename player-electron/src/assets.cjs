@@ -47,10 +47,16 @@ function mimeFor(filePath) {
 }
 
 // Resolve an app:// URL to an absolute path inside appRoot. Returns null for
-// any path that escapes appRoot (directory traversal).
+// any path that escapes appRoot (directory traversal) or has malformed
+// percent-encoding (decodeURIComponent throws URIError).
 function resolveAppPath(appRoot, requestUrl) {
   const url = new URL(requestUrl);
-  let rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+  let rel;
+  try {
+    rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+  } catch {
+    return null;
+  }
   if (rel === '') rel = 'index.html';
   const resolved = path.normalize(path.join(appRoot, rel));
   const rootWithSep = appRoot.endsWith(path.sep) ? appRoot : appRoot + path.sep;

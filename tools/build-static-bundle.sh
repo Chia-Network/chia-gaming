@@ -96,7 +96,13 @@ echo "=== Building player app ==="
 
 # ── 4. Assemble staging tree ─────────────────────────────────────────
 
-BUILD_NONCE=$(date +%s%3N)
+# Portable millisecond nonce. macOS `date +%s%3N` leaves a literal "3N",
+# which breaks app:// path serving via decodeURIComponent.
+if command -v python3 >/dev/null 2>&1; then
+  BUILD_NONCE=$(python3 -c 'import time; print(int(time.time() * 1000))')
+else
+  BUILD_NONCE=$(node -e 'process.stdout.write(String(Date.now()))')
+fi
 echo "=== Assembling player app into $DEST (nonce: $BUILD_NONCE) ==="
 
 NONCE_DIR="$DEST/app/$BUILD_NONCE"
