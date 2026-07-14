@@ -19,6 +19,41 @@ const PUSH_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
+const CHANGE_ADDRESS_STORAGE_PREFIX = 'appState_wcChangeAddress:';
+
+function changeAddressStorageKey(fingerprint: string): string {
+  return `${CHANGE_ADDRESS_STORAGE_PREFIX}${fingerprint}`;
+}
+
+function loadCachedChangeAddress(fingerprint: string): string | null {
+  try {
+    const puzzleHash = localStorage.getItem(changeAddressStorageKey(fingerprint));
+    return puzzleHash && /^[0-9a-f]{64}$/i.test(puzzleHash) ? puzzleHash.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedChangeAddress(fingerprint: string, puzzleHash: string): void {
+  try {
+    localStorage.setItem(changeAddressStorageKey(fingerprint), puzzleHash.toLowerCase());
+  } catch {
+    // Best-effort cache; a miss only means we ask the wallet again.
+  }
+}
+
+function clearCachedChangeAddresses(): void {
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(CHANGE_ADDRESS_STORAGE_PREFIX)) toRemove.push(key);
+    }
+    for (const key of toRemove) localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
 
 function encodeU64AsClvmHex(val: bigint): string {
   if (val === 0n) return '';
@@ -179,13 +214,24 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private async doStartMonitoring(epoch: number) {
     try {
-      const addr = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
-      const puzzleHash = decodeBech32mPuzzleHash(addr);
+      const fingerprint = walletConnectState.getAddress();
+      if (!fingerprint) {
+        throw new Error('no fingerprint set in walletconnect');
+      }
+
+      let puzzleHash = loadCachedChangeAddress(fingerprint);
       if (!puzzleHash) {
-        throw new Error(`failed to decode change address: ${addr}`);
+        const addr = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
+        puzzleHash = decodeBech32mPuzzleHash(addr);
+        if (!puzzleHash) {
+          throw new Error(`failed to decode change address: ${addr}`);
+        }
+        saveCachedChangeAddress(fingerprint, puzzleHash);
+        log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
+      } else {
+        log(`[wc-blockchain] address restored from cache → ${puzzleHash}`);
       }
       this.blockchainAddressData = { puzzleHash };
-      log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
       this.ensureRemoteWallet();
       await this.waitForRemoteWallet();
       if (epoch !== this.monitoringEpoch || !walletConnectState.getSession()) {
@@ -194,7 +240,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       this.monitoringReady = true;
       this.fireConnectionChange(true);
     } catch (err) {
-      const e = err as any;
       console.error('[wc-blockchain] startMonitoring failed:', err);
       throw err;
     }
@@ -594,6 +639,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
     if (fresh) {
       await clearWalletConnectStorage();
+      clearCachedChangeAddresses();
+      this.blockchainAddressData = { puzzleHash: '' };
       walletConnectState.reset();
     }
     await walletConnectState.init();

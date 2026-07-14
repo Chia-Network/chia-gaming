@@ -13,6 +13,7 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
 
 const mockWalletListeners = new Set<(evt: any) => void>();
 let mockWalletSession: unknown;
+let mockWalletFingerprint = '123456';
 const mockWalletConnectState = {
   getObservable: () => ({
     subscribe: ({ next }: { next: (evt: any) => void }) => {
@@ -22,6 +23,7 @@ const mockWalletConnectState = {
   }),
   init: jest.fn(async () => {}),
   getSession: jest.fn(() => mockWalletSession),
+  getAddress: jest.fn(() => mockWalletFingerprint),
   disconnect: jest.fn(async () => {
     mockWalletSession = undefined;
     for (const next of mockWalletListeners) {
@@ -54,8 +56,29 @@ function encodedWalletConnectError(payload: unknown): string {
   return `[wc:-32603|${encoded}]`;
 }
 
+function makeStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+    removeItem: (key: string) => { store.delete(key); },
+    clear: () => { store.clear(); },
+    get length() { return store.size; },
+    key: (i: number) => [...store.keys()][i] ?? null,
+  };
+}
+
+function setTestGlobal(key: string, value: unknown) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
 describe('RealBlockchainInterface', () => {
   beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
     mockCreateOfferForIds.mockReset();
     mockCreateNewRemoteWallet.mockReset();
     mockGetNextAddress.mockReset();
@@ -66,10 +89,23 @@ describe('RealBlockchainInterface', () => {
     mockSelectCoins.mockReset();
     mockWalletListeners.clear();
     mockWalletSession = undefined;
+    mockWalletFingerprint = '123456';
     mockWalletConnectState.init.mockClear();
     mockWalletConnectState.getSession.mockClear();
+    mockWalletConnectState.getAddress.mockClear();
     mockWalletConnectState.disconnect.mockClear();
   });
+
+  async function connectAndWait(blockchain: RealBlockchainInterface) {
+    mockWalletSession = { topic: 'wallet-1' };
+    for (const next of mockWalletListeners) {
+      next({ stateName: 'connected', connected: true, sessions: 1 });
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    jest.advanceTimersByTime(500);
+    await Promise.resolve();
+  }
 
   it('notifies blockchain readiness after WalletConnect reconnect events', async () => {
     jest.useFakeTimers();
@@ -81,17 +117,11 @@ describe('RealBlockchainInterface', () => {
       const events: boolean[] = [];
       blockchain.onConnectionChange((connected) => events.push(connected));
 
-      mockWalletSession = { topic: 'wallet-1' };
-      for (const next of mockWalletListeners) {
-        next({ stateName: 'connected', connected: true, sessions: 1 });
-      }
-      await Promise.resolve();
-      await Promise.resolve();
-      jest.advanceTimersByTime(500);
-      await Promise.resolve();
+      await connectAndWait(blockchain);
 
       expect(events).toEqual([true]);
       expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+      expect(mockGetNextAddress).toHaveBeenCalledWith({ walletId: 1n, newAddress: true });
 
       mockWalletSession = undefined;
       for (const next of mockWalletListeners) {
@@ -99,17 +129,64 @@ describe('RealBlockchainInterface', () => {
       }
       expect(events).toEqual([true, false]);
 
-      mockWalletSession = { topic: 'wallet-2' };
-      for (const next of mockWalletListeners) {
-        next({ stateName: 'connected', connected: true, sessions: 1 });
-      }
-      await Promise.resolve();
-      await Promise.resolve();
-      jest.advanceTimersByTime(500);
-      await Promise.resolve();
+      // Same wallet fingerprint: reuse the cached change address.
+      await connectAndWait(blockchain);
 
       expect(events).toEqual([true, false, true]);
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+      expect((await blockchain.getAddress()).puzzleHash).toBe('11'.repeat(32));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('reuses a cached change address across reloads without asking the wallet again', async () => {
+    jest.useFakeTimers();
+    try {
+      const puzzleHash = '11'.repeat(32);
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m(puzzleHash));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+
+      const first = new RealBlockchainInterface();
+      first.onConnectionChange(() => {});
+      await connectAndWait(first);
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+
+      // Simulate a page reload: new adapter instance, same fingerprint + cache.
+      const second = new RealBlockchainInterface();
+      second.onConnectionChange(() => {});
+      await connectAndWait(second);
+
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+      expect((await second.getAddress()).puzzleHash).toBe(puzzleHash);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('asks for a new change address when the wallet fingerprint changes', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress
+        .mockResolvedValueOnce(encodePuzzleHashToBech32m('11'.repeat(32)))
+        .mockResolvedValueOnce(encodePuzzleHashToBech32m('22'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onConnectionChange(() => {});
+      await connectAndWait(blockchain);
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
+
+      mockWalletSession = undefined;
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'initialized', connected: false, sessions: 0 });
+      }
+
+      mockWalletFingerprint = '999999';
+      await connectAndWait(blockchain);
+
       expect(mockGetNextAddress).toHaveBeenCalledTimes(2);
+      expect((await blockchain.getAddress()).puzzleHash).toBe('22'.repeat(32));
     } finally {
       jest.useRealTimers();
     }
