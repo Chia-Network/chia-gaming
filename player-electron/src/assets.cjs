@@ -46,6 +46,22 @@ function mimeFor(filePath) {
   return MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 }
 
+// Absolute path of the staged static bundle, given the main-process directory
+// (typically `__dirname` of main.cjs).
+//
+// Dev layout: <player-electron>/app
+// Packaged:   .../app.asar.unpacked/app
+//
+// electron-builder's asarUnpack copies app/** next to the asar, but paths
+// derived from __dirname still point inside app.asar. Electron/Node fs does
+// not remap those reads to the unpacked tree, so rewrite the archive segment.
+function resolveAppRoot(mainDir) {
+  const root = path.join(mainDir, '..', 'app');
+  const asarSeg = `${path.sep}app.asar${path.sep}`;
+  const unpackedSeg = `${path.sep}app.asar.unpacked${path.sep}`;
+  return root.includes(asarSeg) ? root.replace(asarSeg, unpackedSeg) : root;
+}
+
 // Resolve an app:// URL to an absolute path inside appRoot. Returns null for
 // any path that escapes appRoot (directory traversal) or has malformed
 // percent-encoding (decodeURIComponent throws URIError).
@@ -66,4 +82,4 @@ function resolveAppPath(appRoot, requestUrl) {
   return resolved;
 }
 
-module.exports = { CSP, MIME_TYPES, mimeFor, resolveAppPath };
+module.exports = { CSP, MIME_TYPES, mimeFor, resolveAppRoot, resolveAppPath };

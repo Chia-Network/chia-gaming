@@ -10,10 +10,11 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { app, BrowserWindow, protocol, shell } = require('electron');
-const { CSP, mimeFor, resolveAppPath } = require('./assets.cjs');
+const { CSP, mimeFor, resolveAppRoot, resolveAppPath } = require('./assets.cjs');
 
-// Root of the staged static bundle: player-electron/app/
-const APP_ROOT = path.join(__dirname, '..', 'app');
+// Root of the staged static bundle (dev: player-electron/app/; packaged:
+// app.asar.unpacked/app — see resolveAppRoot).
+const APP_ROOT = resolveAppRoot(__dirname);
 
 // The single origin the renderer runs under.
 const APP_ORIGIN = 'app://local';

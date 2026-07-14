@@ -15,8 +15,9 @@ files:
   - "app/**"
   - "package.json"
 
-# Bundle the static assets uncompressed so the app:// protocol handler can read
-# .wasm/.hex files straight off disk without asar overhead surprises.
+# Unpack the static assets so the app:// handler (resolveAppRoot in
+# src/assets.cjs) can read .wasm/.hex from real disk. APP_ROOT must point at
+# app.asar.unpacked/app — fs does not auto-redirect reads from inside the asar.
 asarUnpack:
   - "app/**"
 
