@@ -43,7 +43,6 @@ import {
   claimLease,
   onFenced,
   offFenced,
-  getAlias,
   peekAlias,
   setAlias,
 } from '../hooks/save';
@@ -1027,7 +1026,8 @@ const Shell = () => {
       type: 'session_proposal',
       proposer_amount: advisory.my_amount,
       responder_amount: advisory.their_amount,
-      from_alias: peekAlias() ?? getAlias(),
+      // Lobby-synced alias only — never getAlias(), which invents Player_*.
+      from_alias: peekAlias(),
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
       game_session_id: gameSessionId,
@@ -1570,8 +1570,9 @@ const Shell = () => {
 
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
 
-  // Lobby owns the display name; keep local prefs aligned so getAlias/presence
-  // do not invent a Player_* fallback that later overwrites the tracker.
+  // Lobby owns the display name; keep local prefs aligned so presence and
+  // session_proposal do not invent a Player_* fallback that later overwrites
+  // the tracker.
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       const data = ev.data;
@@ -1817,10 +1818,17 @@ const Shell = () => {
     setWalletConnected(false);
     setBlockchainType(undefined);
     setBalance(undefined);
-    // Drop the pre-game boot marker; keep other preferences. clearSession would
-    // also wipe game IDB, which is appropriate when disconnecting mid-session
-    // cleanup paths call clearSessionPreservingHistory separately.
-    clearSavedSessionMarker();
+    // Pre-game wallet disconnect: drop the boot marker so reload does not
+    // force Resume just for a prior blockchainType. Mid-session / resumable
+    // state must keep the marker — otherwise boot skips Resume while the
+    // cradle remains in IDB and can be clobbered by incidental saves.
+    const hasResumableSession =
+      sessionPhaseRef.current !== 'none'
+      || !!(sessionSaveRef.current?.serializedCradle || sessionSaveRef.current?.pairingToken)
+      || !!sessionConfigRef.current?.pairingToken;
+    if (!hasResumableSession) {
+      clearSavedSessionMarker();
+    }
     saveSession({ blockchainType: undefined });
   }, [stopBalancePolling]);
 
