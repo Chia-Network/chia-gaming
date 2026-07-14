@@ -54,7 +54,6 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FE_DIR="$ROOT_DIR/front-end"
 HUB_DIR="$ROOT_DIR/hub"
 HUB_FRONTEND_DIR="$HUB_DIR/hub-frontend"
 HUB_SERVICE_DIR="$HUB_DIR/hub-service"
