@@ -1229,7 +1229,16 @@ export function useGameSession(
           setHandKey(1);
           handKeyRef.current = 1;
         }
-        setBetweenHandMode('compose-proposal');
+        // A peer proposal may have arrived before Active; promote the queue
+        // into review instead of opening an empty compose dialog.
+        const cached = cachedPeerProposalRef.current;
+        if (cached) {
+          setReviewPeerProposal(cached);
+          setCachedPeerProposal(null);
+          setBetweenHandMode('review-incoming-proposal');
+        } else {
+          setBetweenHandMode('compose-proposal');
+        }
       }
       return;
     }
@@ -1257,10 +1266,17 @@ export function useGameSession(
         return;
       }
 
-      const betweenHandsNow = handKeyRef.current > 0 && gameIdsRef.current.length === 0;
-      if (!betweenHandsNow) {
+      if (gameIdsRef.current.length > 0) {
         log(`[notify] rejecting proposal id=${incoming.id} — game active`);
         try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+        return;
+      }
+
+      // Before the first Active ChannelStatus bump, handKey is still 0. Queue
+      // the proposal so Active can promote it to review instead of cancelling.
+      if (handKeyRef.current === 0) {
+        log(`[notify] ProposalMade id=${incoming.id} queued — channel not active yet`);
+        setCachedPeerProposal(incoming);
         return;
       }
 
@@ -1370,8 +1386,10 @@ export function useGameSession(
       setGameIds(nextGameIds);
       gameIdsRef.current = nextGameIds;
 
+      // For atomic groups (Krunk), seed the whole hand on the first acceptance
+      // so picker/guesser panels both wire immediately.
       const nextCurrentHandIds = isFirstGameOfHand
-        ? [newId]
+        ? activeIdsAfterProposalAccepted([], newId, acceptedGroupIds)
         : currentHandGameIdsRef.current.includes(newId)
           ? currentHandGameIdsRef.current
           : [...currentHandGameIdsRef.current, newId];

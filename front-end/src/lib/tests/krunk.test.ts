@@ -183,6 +183,8 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('exposes the guesser game on the first atomic-group acceptance', () => {
+    // First ProposalAccepted seeds activeIds and currentHandGameIds with the
+    // full atomic group so both Krunk panels wire immediately.
     const activeIds = activeIdsAfterProposalAccepted([], '1', ['1', '3']);
     expect(activeIds).toEqual(['1', '3']);
     expect(activeIdsAfterProposalAccepted(activeIds, '3', ['1', '3']))
