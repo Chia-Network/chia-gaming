@@ -551,10 +551,12 @@ function queueWrite(state: SessionState): Promise<void> {
     if (fenced) return;
     await writeSessionRecord(snapshot);
     if (fenced) return;
+    // Only *set* the boot marker for a durable game session here. Pre-game
+    // wallet connection marks explicitly in Shell; preference-only writes must
+    // not clear that marker (previously saveSession({ blockchainType }) wiped
+    // it, so reload restored the wallet type with no Resume/Start Over).
     if (isResumable(snapshot)) {
       markSavedSession();
-    } else {
-      clearSavedSessionMarker();
     }
   });
   return writeChain;
@@ -583,7 +585,7 @@ export function flushSessionState(): Promise<void> {
     persistPromise = null;
     resolvePersist = null;
     rejectPersist = null;
-    if (!isResumable(cached) && hasSavedSessionMarker()) {
+    if (!isResumable(cached) && hasSavedSessionMarker() && !cached.blockchainType) {
       const error = new Error(
         'Refusing to persist non-resumable in-memory state over a marked saved session',
       );
@@ -782,8 +784,9 @@ function hasWalletConnectStorage(): boolean {
 
 /**
  * Returns the current state if there's anything worth resuming — a
- * serialized cradle or leftover WalletConnect storage from a partial
- * connection. `blockchainType` alone (preserved across session clears)
+ * serialized cradle, pairing token, pre-game wallet choice with an active
+ * boot marker, or leftover WalletConnect storage from a partial connection.
+ * `blockchainType` alone (preserved across session clears, without a marker)
  * does not count as resumable.
  */
 export async function peekSession(): Promise<SessionState | null> {
@@ -810,12 +813,21 @@ export async function peekSession(): Promise<SessionState | null> {
       markSavedSession();
       return cached;
     }
+    // Pre-game: wallet type chosen / connected, marker set by Shell.
+    if (hasSavedSessionMarker() && cached.blockchainType) {
+      return cached;
+    }
     clearSavedSessionMarker();
     return null;
   }
-  clearSavedSessionMarker();
   cached = loadPreferences();
-  if (hasWalletConnectStorage()) return cached;
+  if (hasSavedSessionMarker() && cached.blockchainType) {
+    return cached;
+  }
+  if (hasWalletConnectStorage()) {
+    return cached;
+  }
+  clearSavedSessionMarker();
   return null;
 }
 

@@ -25,6 +25,8 @@ import {
   checkLease,
   isLeaseConflict,
   hasSavedSessionMarker,
+  markSavedSession,
+  clearSavedSessionMarker,
   SessionState,
   _resetForTests,
   _writeRawState,
@@ -161,6 +163,24 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(false);
   });
 
+  it('keeps an explicit pre-game marker across blockchainType preference writes', async () => {
+    markSavedSession();
+    saveSession({ blockchainType: 'simulator' });
+    await flushSessionState();
+
+    expect(hasSavedSessionMarker()).toBe(true);
+    expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
+  });
+
+  it('does not treat leftover blockchainType without a marker as resumable', async () => {
+    saveSession({ blockchainType: 'walletconnect' });
+    await flushSessionState();
+    clearSavedSessionMarker();
+
+    expect(await peekSession()).toBeNull();
+    expect(hasSavedSessionMarker()).toBe(false);
+  });
+
   it('does not set the saved-session marker from startNewSession alone', () => {
     expect(hasSavedSessionMarker()).toBe(false);
     startNewSession();
@@ -187,12 +207,22 @@ describe('session persistence', () => {
     expect(loaded?.diagnosticLog).toEqual(['boot log']);
   });
 
-  it('clears the marker for a present but non-resumable IndexedDB record', async () => {
+  it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
       version: 6n,
       playerId: 'player',
       blockchainType: 'simulator',
+    });
+    expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
+    expect(hasSavedSessionMarker()).toBe(true);
+  });
+
+  it('clears the marker for a present but empty IndexedDB record', async () => {
+    localStorage.setItem('appState_savedSession', '1');
+    await writeSessionRecord({
+      version: 6n,
+      playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(false);

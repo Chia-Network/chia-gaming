@@ -23,6 +23,7 @@ import {
   hasSavedSessionMarker,
   hydrateSessionCacheFromDisk,
   markSavedSession,
+  clearSavedSessionMarker,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -1380,6 +1381,9 @@ const Shell = () => {
     console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
     const poller = activate(iface, pollMs);
+    // Pre-game wallet connection: force Resume/Start Over on reload even
+    // before a cradle exists. Preference writes must not clear this marker.
+    markSavedSession();
     saveSession({ blockchainType: bcType });
     activeBlockchainRef.current = iface;
     setActiveBlockchainPoller(poller);
@@ -1403,6 +1407,7 @@ const Shell = () => {
     wcAbortRef.current = false;
     const { iface, pollMs } = getInterface(bcType);
     try {
+      markSavedSession();
       saveSession({ blockchainType: bcType });
       setBlockchainType(bcType);
       setConnecting(true);
@@ -1768,6 +1773,11 @@ const Shell = () => {
     setWalletConnected(false);
     setBlockchainType(undefined);
     setBalance(undefined);
+    // Drop the pre-game boot marker; keep other preferences. clearSession would
+    // also wipe game IDB, which is appropriate when disconnecting mid-session
+    // cleanup paths call clearSessionPreservingHistory separately.
+    clearSavedSessionMarker();
+    saveSession({ blockchainType: undefined });
   }, [stopBalancePolling]);
 
   const handleDisconnectWallet = useCallback(() => {
