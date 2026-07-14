@@ -126,7 +126,11 @@ export class TrackerConnection {
   private wasDisconnected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
+  // Monotonic backoff: stay out of Firefox's failure queue during cutovers.
+  private static readonly RECONNECT_DELAYS = [5000, 10000, 20000, 30000, 60000];
+  // See FakeBlockchainInterface: Firefox can delay WS opens for many seconds
+  // after failures; aborting early makes the next attempt slower.
+  private static readonly CONNECT_TIMEOUT_MS = 30_000;
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
   private busy = false;
@@ -185,7 +189,7 @@ export class TrackerConnection {
       if (this.ws === ws || this.closed) return;
       log('[tracker] connection timeout, closing attempt');
       try { ws.close(); } catch { /* ignore */ }
-    }, 10_000);
+    }, TrackerConnection.CONNECT_TIMEOUT_MS);
     if (typeof connectTimeout === 'object' && 'unref' in connectTimeout) connectTimeout.unref();
 
     ws.onopen = () => {

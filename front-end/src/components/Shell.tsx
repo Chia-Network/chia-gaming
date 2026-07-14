@@ -642,6 +642,11 @@ const Shell = () => {
     const handler = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
+      // Drop the lobby iframe immediately so its reconnect loop stops now,
+      // not only after the async peekSession → tabConflict re-render.
+      setIframeUrl('about:blank');
+      setTrackerOrigin(null);
+      setTrackerLiveness(null);
       if (blockchainTypeRef.current !== 'walletconnect') {
         activeBlockchainRef.current?.disconnect().catch(() => {});
       }
