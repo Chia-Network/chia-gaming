@@ -34,6 +34,14 @@ export function shouldReportTrackerBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
+/** Channel states that already finished — resume must not keep the lobby busy. */
+export function isTerminalChannelState(state: string | null | undefined): boolean {
+  return state === 'ResolvedClean'
+    || state === 'ResolvedUnrolled'
+    || state === 'ResolvedStale'
+    || state === 'Failed';
+}
+
 export function shouldMountGameSession(
   sessionCanMount: boolean,
   walletConnected: boolean,

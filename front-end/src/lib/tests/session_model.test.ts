@@ -94,6 +94,7 @@ describe('session model selectors', () => {
     }))).toMatchObject({
       actionLabel: 'Done',
       actionEnabled: false,
+      actionKind: 'none',
       channelDetail: null,
     });
   });

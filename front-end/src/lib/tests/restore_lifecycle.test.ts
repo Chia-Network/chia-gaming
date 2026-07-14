@@ -1,5 +1,6 @@
 import {
   isRestoreBlocked,
+  isTerminalChannelState,
   shouldAdvertiseAvailable,
   shouldMountGameSession,
   shouldReportTrackerBusy,
@@ -29,6 +30,16 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportTrackerBusy('resolved')).toBe(false);
     expect(shouldReportTrackerBusy('off-chain')).toBe(true);
     expect(shouldReportTrackerBusy('on-chain')).toBe(true);
+  });
+
+  it('recognizes terminal channel states that must not keep the lobby busy', () => {
+    expect(isTerminalChannelState('Failed')).toBe(true);
+    expect(isTerminalChannelState('ResolvedClean')).toBe(true);
+    expect(isTerminalChannelState('ResolvedUnrolled')).toBe(true);
+    expect(isTerminalChannelState('ResolvedStale')).toBe(true);
+    expect(isTerminalChannelState('Active')).toBe(false);
+    expect(isTerminalChannelState('Handshaking')).toBe(false);
+    expect(isTerminalChannelState(null)).toBe(false);
   });
 
   it('mounts a saved session without requiring a live blockchain connection', () => {

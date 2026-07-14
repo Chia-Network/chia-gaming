@@ -57,7 +57,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, isTerminalChannelState, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   selectGameDashboardView,
@@ -1277,17 +1277,18 @@ const Shell = () => {
           setTrackerLiveness('connected');
           console.log('[Shell] registered as player_id=%s', playerId);
           const save = sessionSaveRef.current;
+          const terminalSave = !!save && isTerminalChannelState(savedChannelState(save));
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
             peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
             bindPeerMessageHandler(peerSessionRef.current);
             setRestoreTrackerReconciled(true);
             // Restore never goes through startFreshSessionWithPeer, which is
-            // otherwise the only place that marks the tracker busy.
-            conn.setBusy(true, save.myAlias ?? peekAlias());
+            // otherwise the only place that marks the tracker busy. Terminal
+            // (Failed/Resolved*) saves must stay available in the lobby.
+            conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
           } else if (save?.serializedCradle || save?.pairingToken) {
-            // Active restore without a peer id still must not look "available".
             setRestoreTrackerReconciled(true);
-            conn.setBusy(true, save.myAlias ?? peekAlias());
+            conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
           }
           if (peerSessionRef.current && sessionController) {
             sessionController.resendUnacked();
@@ -1318,16 +1319,24 @@ const Shell = () => {
         onTrackerActivity: () => {
           lastTrackerActivityRef.current = Date.now();
         },
-        getPresence: () => ({
-          busy: shouldReportTrackerBusy(sessionPhaseRef.current)
-            || !!sessionConfigRef.current?.restoring
-            || !!(sessionSaveRef.current?.serializedCradle || sessionSaveRef.current?.pairingToken),
-          // Prefer session aliases, then the lobby-synced prefs alias. Never call
-          // getAlias() here — inventing Player_* would pollute identify/set_busy.
-          alias: sessionConfigRef.current?.myAlias
-            ?? sessionSaveRef.current?.myAlias
-            ?? peekAlias(),
-        }),
+        getPresence: () => {
+          const phase = sessionPhaseRef.current;
+          const save = sessionSaveRef.current;
+          const restoring = !!sessionConfigRef.current?.restoring;
+          const terminalSave = !!save && isTerminalChannelState(savedChannelState(save));
+          // A leftover cradle must not keep us busy after the session resolved
+          // (wallet/handshake failures often leave Failed + persisted cradle).
+          const busy = shouldReportTrackerBusy(phase)
+            || (restoring && !terminalSave && !!(save?.serializedCradle || save?.pairingToken));
+          return {
+            busy,
+            // Prefer session aliases, then the lobby-synced prefs alias. Never call
+            // getAlias() here — inventing Player_* would pollute identify/set_busy.
+            alias: sessionConfigRef.current?.myAlias
+              ?? save?.myAlias
+              ?? peekAlias(),
+          };
+        },
       });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
@@ -1512,20 +1521,64 @@ const Shell = () => {
     }
   }, [deferStateUpdate]);
 
+  const cancelDashboardSession = useCallback((options?: { retainFinishedGuard?: boolean }) => {
+    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
+    const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+    if (peerId) sendSessionReject(peerId);
+    resetPeerRelayState();
+    destroySessionController();
+    clearSessionPreservingHistory();
+    sessionSaveRef.current = null;
+    sessionSavePropRef.current = undefined;
+    sessionStartedRef.current = false;
+    sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
+    sessionPhaseRef.current = 'none';
+    if (cleanShutdownGraceTimerRef.current !== null) {
+      clearTimeout(cleanShutdownGraceTimerRef.current);
+      cleanShutdownGraceTimerRef.current = null;
+    }
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
+    waitingEnteredAtRef.current = null;
+    waitingStateRef.current = null;
+    setAbandonEnabled(false);
+    setCleanShutdownGraceActive(false);
+    setSessionPhase('none');
+    setSessionError(false);
+    setSessionConfig(null);
+    setPeerConn(null);
+    dashboardSessionModelRef.current = null;
+    setDashboardSessionModel(null);
+    setRestoreStatus('idle');
+    setRestoreError(null);
+    setRestoreTrackerReconciled(false);
+    setPendingAdvisoryState(null);
+    setPendingProposalState(null);
+    trackerConnRef.current?.setBusy(false, alias);
+  }, [clearSessionPreservingHistory, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
+
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
-    const previousPhase = sessionPhaseRef.current;
+    if (phase === 'resolved') {
+      if (sessionFinishedCleanupRef.current) return;
+      sessionFinishedCleanupRef.current = true;
+      const previousPhase = sessionPhaseRef.current;
+      const switchTracker = shouldSwitchToTrackerOnResolved(previousPhase, !!hasError);
+      // Terminal channel (Failed/Resolved*) means the session is over. Exit fully
+      // so we never sit on a disabled Done control that still counts as in-session.
+      cancelDashboardSession({ retainFinishedGuard: true });
+      if (switchTracker) {
+        setActiveTab('tracker');
+      }
+      return;
+    }
+
     sessionPhaseRef.current = phase;
     setSessionPhase(phase);
     setSessionError(!!hasError);
     trackerConnRef.current?.setBusy(shouldReportTrackerBusy(phase));
-
-    if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
-    sessionFinishedCleanupRef.current = true;
-
-    if (shouldSwitchToTrackerOnResolved(previousPhase, !!hasError)) {
-      setActiveTab('tracker');
-    }
-  }, [setActiveTab]);
+  }, [cancelDashboardSession, setActiveTab]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1546,18 +1599,12 @@ const Shell = () => {
   }, []);
 
   const handleTerminal = useCallback(() => {
-    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
-    trackerConnRef.current?.setBusy(false, alias);
     stopBalancePolling();
-    resetPeerRelayState();
-    sessionPhaseRef.current = 'resolved';
-    setSessionPhase('resolved');
+    if (sessionFinishedCleanupRef.current) return;
     sessionFinishedCleanupRef.current = true;
-    sessionSaveRef.current = null;
-    sessionSavePropRef.current = undefined;
-    setPendingAdvisoryState(null);
-    setPendingProposalState(null);
-  }, [stopBalancePolling, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+    // Same full exit as phase→resolved: terminal means nothing left to do.
+    cancelDashboardSession({ retainFinishedGuard: true });
+  }, [stopBalancePolling, cancelDashboardSession]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreTrackerReconciled);
 
@@ -1891,42 +1938,6 @@ const Shell = () => {
       saveSession({ cleanShutdownGraceStartedAt: undefined });
     }, Number(GRACE_DELAY_MS));
   }, []);
-
-  const cancelDashboardSession = useCallback(() => {
-    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
-    const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
-    if (peerId) sendSessionReject(peerId);
-    resetPeerRelayState();
-    destroySessionController();
-    clearSessionPreservingHistory();
-    sessionSaveRef.current = null;
-    sessionSavePropRef.current = undefined;
-    sessionStartedRef.current = false;
-    sessionFinishedCleanupRef.current = false;
-    sessionPhaseRef.current = 'none';
-    if (cleanShutdownGraceTimerRef.current !== null) {
-      clearTimeout(cleanShutdownGraceTimerRef.current);
-      cleanShutdownGraceTimerRef.current = null;
-    }
-    if (abandonTimerRef.current !== null) {
-      clearTimeout(abandonTimerRef.current);
-      abandonTimerRef.current = null;
-    }
-    waitingEnteredAtRef.current = null;
-    waitingStateRef.current = null;
-    setAbandonEnabled(false);
-    setCleanShutdownGraceActive(false);
-    setSessionPhase('none');
-    setSessionError(false);
-    setSessionConfig(null);
-    setPeerConn(null);
-    dashboardSessionModelRef.current = null;
-    setDashboardSessionModel(null);
-    setRestoreStatus('idle');
-    setRestoreError(null);
-    setRestoreTrackerReconciled(false);
-    trackerConnRef.current?.setBusy(false, alias);
-  }, [clearSessionPreservingHistory, resetPeerRelayState, sendSessionReject]);
 
   const requestDashboardCleanShutdown = useCallback(() => {
     startCleanShutdownGrace();
