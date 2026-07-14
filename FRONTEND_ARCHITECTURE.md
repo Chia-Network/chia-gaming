@@ -1002,18 +1002,20 @@ because the sign-client ships as a single minified line — the actual change is
 one helper definition and 5 call-site substitutions.
 
 **Wallet GUI side.** The Chia wallet GUI (`chia-blockchain-gui`) has its own
-mitigations since its WC packages are installed via npm (no pnpm patching):
+mitigations since its WC packages are installed via npm (no pnpm
+`patchedDependencies`):
+
+- **`patch-package` + postinstall rewrite** (`patches/@walletconnect+safe-json+1.0.2.patch`
+  and `scripts/fix-walletconnect-bigint-regex.js`): Same negative-BigInt regex
+  fix as the player app (`/^-?\d+n$/`). The patch covers `@walletconnect/safe-json`;
+  the script also rewrites WC UMD bundles that inline a copy of the parser.
+  Without this, offer amounts like `"-100n"` stay strings and fail in
+  `parseMojos` during `chia_createOfferForIds`.
 
 - **`JSON.stringify` monkey-patch** (`packages/gui/src/index.tsx`): Early in
   the renderer entry point, `JSON.stringify` is replaced with a BigInt-safe
   version using the `"n"` convention. This covers WC's internal hash
   computation paths in the renderer process.
-
-- **`deepFixBrokenBigInts`** (`packages/gui/src/electron/permissions/dispatchAsPair.ts`):
-  A recursive post-processor that walks incoming WC params and converts any
-  string matching `/^-?\d+n$/` back to a real BigInt. This runs in the main
-  process before params reach the daemon, catching negative BigInts that
-  `safeJsonParse` failed to convert.
 
 - **Confirm dialog replacer** (`packages/gui/src/electron/dialogs/Confirm/Confirm.tsx`):
   The "Raw data" display uses `JSON.stringify(data, (_, v) => typeof v === 'bigint' ? String(v) : v, 2)`
