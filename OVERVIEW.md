@@ -182,12 +182,21 @@ is needed — it has the highest sequence number and the correct parity.
 However, the opponent can broadcast *any* unroll we ever sent them (all
 carry valid aggregate signatures from the time they were created).  To
 identify these on-chain, the `ChannelHandler` maintains an
-`unroll_puzzle_hash_map` that maps each sent unroll's puzzle hash to its
-full spend info.  This map grows linearly with session length (one entry
-per state transition) but entries are small.  When a channel coin spend
-is detected, the `CREATE_COIN` puzzle hashes in the on-chain conditions
-are matched against this map to identify which unroll landed and retrieve
-the data needed for preemption or timeout.
+`unroll_puzzle_hash_map` that maps each unroll puzzle hash to a compact
+historical record: state number, committed conditions hash, and timeout
+conditions. The map deliberately does not retain historical signatures or
+preemption conditions; preemption always uses a latest full record. When a
+channel coin spend is detected, the `CREATE_COIN` puzzle hashes in the
+on-chain conditions are matched against this map to identify which unroll
+landed. An old opposite-parity state is preempted, while an old same-parity
+state is resolved with its stored timeout conditions. Those old puzzle hashes
+cannot be discarded: the opponent may publish any previously signed unroll,
+so recognizing every historical hash is the minimum needed to choose the
+correct timeout record safely.
+
+Browser session persistence stores the serialized cradle as raw binary in
+IndexedDB. Compact historical unroll records are therefore part of the durable
+minimum even though obsolete full signatures and preemption conditions are not.
 
 **Key code:** `src/channel_handler/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`

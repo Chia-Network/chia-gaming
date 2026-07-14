@@ -9,6 +9,7 @@ import {
 } from '../../hooks/useKrunkHand';
 import {
   activeIdsAfterProposalAccepted,
+  clearProposalTracking,
   gameplayEventForMoveRejected,
   gameplayEventsForGameStatus,
   isValidKrunkStake,
@@ -17,6 +18,24 @@ import {
 import { krunkGameSlots } from '../../components/Krunk';
 
 describe('Krunk terms', () => {
+  it('clears proposal terms, group links, and outgoing refs together', () => {
+    const terms = {
+      gameType: 'krunk',
+      myContribution: 100n,
+      theirContribution: 100n,
+      gameTimeout: 15n,
+    };
+    const termsById = { '1': terms, '3': terms, stale: terms };
+    const groupsById = { '1': ['1', '3'], '3': ['1', '3'], stale: ['stale'] };
+    const outgoing = new Set(['1', '3', 'stale']);
+
+    clearProposalTracking(['1'], termsById, groupsById, outgoing);
+
+    expect(termsById).toEqual({ stale: terms });
+    expect(groupsById).toEqual({ stale: ['stale'] });
+    expect(outgoing).toEqual(new Set(['stale']));
+  });
+
   it('requires positive 100-mojo stake increments', () => {
     expect(isValidKrunkStake(0n)).toBe(false);
     expect(isValidKrunkStake(99n)).toBe(false);

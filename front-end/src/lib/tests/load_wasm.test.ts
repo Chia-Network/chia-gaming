@@ -478,6 +478,7 @@ it(
         peer_conn1,
         wasm_init1
       );
+      wasm_blob1.onSaveNeeded = () => Promise.resolve();
       cradle1.set_blob(wasm_blob1);
       testLog('after cradle1 init');
 
@@ -498,6 +499,7 @@ it(
         peer_conn2,
         wasm_init2
       );
+      wasm_blob2.onSaveNeeded = () => Promise.resolve();
       cradle2.set_blob(wasm_blob2);
       testLog('after cradle2 init');
 

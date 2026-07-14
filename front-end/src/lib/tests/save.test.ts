@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import {
   saveSession,
   peekSession,
@@ -19,10 +20,21 @@ import {
   flushSessionState,
   getTrackerAlert,
   setTrackerAlert,
+  claimLease,
+  checkLease,
+  isLeaseConflict,
   SessionState,
   _resetForTests,
   _writeRawState,
 } from '../../hooks/save';
+import { SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  HUMAN_HISTORY_LIMIT,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../session/historyLimits';
+
+const testIndexedDb = indexedDB;
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -54,7 +66,7 @@ function clearTestGlobal(key: string) {
 }
 
 const sampleSession: Partial<SessionState> = {
-  serializedCradle: '{"some":"data"}',
+  serializedCradle: new Uint8Array([0, 1, 2, 255]),
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
@@ -63,43 +75,137 @@ const sampleSession: Partial<SessionState> = {
   myContribution: '60',
   theirContribution: '40',
   perGameAmount: '10',
-  unackedMessages: [{ msgno: 4n, msg: 'hello' }],
-  history: ['log1'],
-  log: ['dbg1'],
+  unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
+  humanHistory: ['human1'],
+  wasmNotificationHistory: ['notification1'],
+  diagnosticLog: ['dbg1'],
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   _resetForTests();
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
+  setTestGlobal('indexedDB', testIndexedDb);
+  await new Promise<void>((resolve) => {
+    const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => resolve();
+    request.onblocked = () => resolve();
+  });
 });
 
 afterEach(() => {
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');
-  clearTestGlobal('indexedDB');
 });
 
 describe('session persistence', () => {
-  it('round-trips session fields through save and peek', () => {
-    saveSession(sampleSession);
-    const loaded = peekSession();
+  it('atomically round-trips one raw binary/bigint record through IndexedDB', async () => {
+    const rawBuffer = Uint8Array.from([9, 8, 7]).buffer;
+    saveSession({
+      ...sampleSession,
+      rawBuffer,
+    } as Partial<SessionState>);
+    await flushSessionState();
+
+    const stored = await new Promise<{ count: number; record: SessionState & { rawBuffer: ArrayBuffer } }>(
+      (resolve, reject) => {
+        const open = indexedDB.open(SESSION_DB_NAME, 1);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction('session', 'readonly');
+          const store = tx.objectStore('session');
+          const count = store.count();
+          const record = store.get('current');
+          tx.onerror = () => reject(tx.error);
+          tx.oncomplete = () => {
+            db.close();
+            resolve({
+              count: count.result,
+              record: record.result as SessionState & { rawBuffer: ArrayBuffer },
+            });
+          };
+        };
+      },
+    );
+
+    expect(stored.count).toBe(1);
+    expect(stored.record.serializedCradle).toBeInstanceOf(Uint8Array);
+    expect(stored.record.rawBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(new Uint8Array(stored.record.rawBuffer)).toEqual(new Uint8Array([9, 8, 7]));
+    expect(typeof stored.record.messageNumber).toBe('bigint');
+
+    _resetForTests();
+    const loaded = await peekSession() as (SessionState & { rawBuffer: ArrayBuffer }) | null;
     expect(loaded).toMatchObject(sampleSession);
+    expect(loaded?.serializedCradle).toBeInstanceOf(Uint8Array);
+    expect(loaded?.rawBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(loaded?.unackedMessages?.[0].msg).toBeInstanceOf(Uint8Array);
+    expect(typeof loaded?.messageNumber).toBe('bigint');
+    expect(loaded).not.toHaveProperty('history');
+    expect(loaded).not.toHaveProperty('log');
   });
 
-  it('returns null when nothing is saved', () => {
-    expect(peekSession()).toBeNull();
+  it('propagates IndexedDB write failure to durability callers', async () => {
+    clearTestGlobal('indexedDB');
+    const scheduled = saveSession(sampleSession);
+
+    await expect(flushSessionState()).rejects.toThrow('IndexedDB is unavailable');
+    await expect(scheduled).rejects.toThrow('IndexedDB is unavailable');
+    setTestGlobal('indexedDB', testIndexedDb);
   });
 
-  it('clearSession causes peekSession to return null', () => {
+  it('keeps serialized session bytes out of localStorage', async () => {
     saveSession(sampleSession);
-    clearSession();
-    expect(peekSession()).toBeNull();
+    await flushSessionState();
+
+    expect(localStorage.getItem('appState')).toBeNull();
+    const localValues = Array.from(
+      { length: localStorage.length },
+      (_, i) => localStorage.getItem(localStorage.key(i)!),
+    ).join('\n');
+    expect(localValues).not.toMatch(/serializedCradle|unackedMessages|\$bytes|000102ff|AAEC\/w==/);
   });
 
-  it('saveSession preserves blockchainType', () => {
+  it('persists only the configured recent history entries', async () => {
+    saveSession({
+      ...sampleSession,
+      humanHistory: Array.from({ length: HUMAN_HISTORY_LIMIT + 2 }, (_, i) => `human-${i}`),
+      wasmNotificationHistory: Array.from(
+        { length: WASM_NOTIFICATION_HISTORY_LIMIT + 2 },
+        (_, i) => `wasm-${i}`,
+      ),
+      diagnosticLog: Array.from({ length: DIAGNOSTIC_LOG_LIMIT + 2 }, (_, i) => `diag-${i}`),
+    });
+    await flushSessionState();
+    _resetForTests();
+
+    const loaded = await peekSession();
+    expect(loaded?.humanHistory).toHaveLength(HUMAN_HISTORY_LIMIT);
+    expect(loaded?.humanHistory?.[0]).toBe('human-2');
+    expect(loaded?.wasmNotificationHistory).toHaveLength(WASM_NOTIFICATION_HISTORY_LIMIT);
+    expect(loaded?.wasmNotificationHistory?.[0]).toBe('wasm-2');
+    expect(loaded?.diagnosticLog).toHaveLength(DIAGNOSTIC_LOG_LIMIT);
+    expect(loaded?.diagnosticLog?.[0]).toBe('diag-2');
+  });
+
+  it('returns null when nothing is saved', async () => {
+    expect(await peekSession()).toBeNull();
+  });
+
+  it('clearSession asynchronously deletes resumable state', async () => {
+    saveSession(sampleSession);
+    await flushSessionState();
+    await clearSession();
+    _resetForTests();
+    expect(await peekSession()).toBeNull();
+  });
+
+  it('saveSession preserves blockchainType', async () => {
     saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
-    expect(peekSession()?.blockchainType).toBe('walletconnect');
+    await flushSessionState();
+    expect((await peekSession())?.blockchainType).toBe('walletconnect');
   });
 
   it('saveSession swallows quota-exceeded errors', () => {
@@ -152,17 +258,17 @@ describe('flat state', () => {
     expect(newId).toBe(oldId);
   });
 
-  it('clearSession wipes game state but preserves identity, preferences, and blockchainType', () => {
+  it('clearSession wipes game state but preserves identity, preferences, and blockchainType', async () => {
     const sid = getSessionId();
     saveSession({ ...sampleSession, blockchainType: 'simulator' });
     setAlias('MyName');
 
-    clearSession();
+    await clearSession();
 
     expect(loadAppState().sessionId).toBe(sid);
     expect(getBlockchainType()).toBe('simulator');
-    expect(peekSession()).not.toBeNull();
-    expect(peekSession()!.serializedCradle).toBeUndefined();
+    const remaining = await peekSession();
+    expect(remaining).toBeNull();
     expect(loadAppState().alias).toBe('MyName');
   });
 
@@ -181,62 +287,56 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(3n);
+    expect(state.version).toBe(4n);
   });
 
-  it('old version data is treated as fresh start', () => {
+  it('deletes stale appState wholesale without decoding it', async () => {
     _writeRawState({ version: 2, playerId: 'old-player' });
-    const state = loadAppState();
-    expect(state.playerId).not.toBe('old-player');
-    expect(state.version).toBe(3n);
+    await peekSession();
+    expect(localStorage.getItem('appState')).toBeNull();
+    expect(loadAppState().playerId).not.toBe('old-player');
   });
 
-  it('preserves bigint types through lossless JSON round-trip', () => {
-    _writeRawState({
-      version: 3,
-      playerId: 'p1',
-      messageNumber: 5,
-      remoteNumber: 3,
-      unackedMessages: [{ msgno: 4, msg: 'hello' }],
-      handState: {
-        gameType: 'calpoker',
-        version: 1,
-        state: {
-          playerHand: [1, 2],
-          opponentHand: [3, 4],
-          moveNumber: 2,
-          isPlayerTurn: true,
-          cardSelections: [1],
-          displaySnapshot: {
-            gameState: 'selecting',
-            winner: null,
-            playerBestHandCardIds: [1],
-            opponentBestHandCardIds: [3],
-            playerHaloCardIds: [2],
-            opponentHaloCardIds: [4],
-            playerDisplayText: 'player',
-            opponentDisplayText: 'opponent',
-          },
-        },
-      },
+  it('rejects and deletes a stale IndexedDB record', async () => {
+    localStorage.setItem('appState_savedSession', '1');
+    await writeSessionRecord({
+      version: 3n,
+      playerId: 'old-player',
+      serializedCradle: new Uint8Array([1]),
+    });
+    expect(await peekSession()).toBeNull();
+    expect(localStorage.getItem('appState_savedSession')).toBeNull();
+    _resetForTests();
+    expect(await peekSession()).toBeNull();
+  });
+
+  it('clears a saved-session marker when no matching record exists', async () => {
+    localStorage.setItem('appState_savedSession', '1');
+
+    expect(await peekSession()).toBeNull();
+    expect(localStorage.getItem('appState_savedSession')).toBeNull();
+  });
+
+  it('deletes an incompatible IndexedDB schema instead of migrating it', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB_NAME, 2);
+      request.onupgradeneeded = () => request.result.createObjectStore('stale');
+      request.onsuccess = () => {
+        request.result.close();
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
     });
 
-    const state = loadAppState();
-    const handState = state.handState?.state as any;
-
-    expect(typeof state.messageNumber).toBe('bigint');
-    expect(typeof state.remoteNumber).toBe('bigint');
-    expect(typeof state.unackedMessages?.[0].msgno).toBe('bigint');
-    expect(state.handState?.gameType).toBe('calpoker');
-    expect(typeof state.handState?.version).toBe('bigint');
-    expect(typeof handState.moveNumber).toBe('bigint');
-    expect(typeof handState.playerHand[0]).toBe('bigint');
-    expect(typeof handState.displaySnapshot.playerBestHandCardIds[0]).toBe('bigint');
+    expect(await peekSession()).toBeNull();
+    expect(await peekSession()).toBeNull();
   });
 
-  it('round-trips large bigint values through persisted state without precision loss', () => {
+  it('round-trips large bigint values through persisted state without precision loss', async () => {
     const huge = 9_007_199_254_740_993n;
     saveSession({
+      ...sampleSession,
+      blockchainType: 'simulator',
       defaultFee: huge,
       handState: {
         gameType: 'spacepoker',
@@ -248,10 +348,10 @@ describe('flat state', () => {
         },
       },
     });
-    flushSessionState();
+    await flushSessionState();
     _resetForTests();
 
-    const state = loadAppState();
+    const state = (await peekSession())!;
     const handState = state.handState?.state as any;
 
     expect(state.defaultFee).toBe(huge);
@@ -260,19 +360,19 @@ describe('flat state', () => {
     expect(handState.halfPot).toBe(huge + 2n);
   });
 
-  it('preserves Calpoker hand arrays as bigint through round-trip', () => {
-    _writeRawState({
-      version: 3,
-      playerId: 'p1',
+  it('preserves Calpoker hand arrays as bigint through round-trip', async () => {
+    saveSession({
+      ...sampleSession,
+      blockchainType: 'simulator',
       handState: {
         gameType: 'calpoker',
-        version: 1,
+        version: 1n,
         state: {
-          playerHand: [8, 7, 6, 5],
-          opponentHand: [4, 3, 2, 1],
-          moveNumber: 1,
+          playerHand: [8n, 7n, 6n, 5n],
+          opponentHand: [4n, 3n, 2n, 1n],
+          moveNumber: 1n,
           isPlayerTurn: true,
-          cardSelections: [8, 7],
+          cardSelections: [8n, 7n],
           displaySnapshot: {
             gameState: 'selecting',
             winner: null,
@@ -286,8 +386,10 @@ describe('flat state', () => {
         },
       },
     });
+    await flushSessionState();
+    _resetForTests();
 
-    const handState = loadAppState().handState?.state as any;
+    const handState = (await peekSession())?.handState?.state as any;
 
     expect(handState.playerHand).toEqual([8n, 7n, 6n, 5n]);
     expect(handState.opponentHand).toEqual([4n, 3n, 2n, 1n]);
@@ -295,8 +397,21 @@ describe('flat state', () => {
   });
 });
 
+describe('tab lease', () => {
+  it('detects a conflicting active-tab owner', () => {
+    claimLease();
+    expect(checkLease()).toBe(true);
+    expect(isLeaseConflict()).toBe(false);
+
+    localStorage.setItem('appState_activeTab', 'another-tab');
+
+    expect(checkLease()).toBe(false);
+    expect(isLeaseConflict()).toBe(true);
+  });
+});
+
 describe('hard reset', () => {
-  it('clears localStorage, sessionStorage, and cached session state', () => {
+  it('clears localStorage, sessionStorage, and cached session state', async () => {
     saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
     sessionStorage.setItem('appState_tabId', 'tab-1');
 
@@ -304,7 +419,8 @@ describe('hard reset', () => {
 
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
-    expect(peekSession()).toBeNull();
+    await flushPromises();
+    expect(await peekSession()).toBeNull();
   });
 
   it('starts deletion for every IndexedDB database returned by the browser', async () => {
@@ -343,6 +459,7 @@ describe('hard reset', () => {
     hardReset();
     await flushPromises();
 
+    expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');

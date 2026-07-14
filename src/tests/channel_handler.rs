@@ -16,6 +16,7 @@ pub(crate) mod sim_tests {
 
     use clvm_traits::ToClvm;
 
+    use crate::channel_handler::types::HistoricalUnrollSpendInfo;
     use crate::common::types::{CoinID, GameID};
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
@@ -85,7 +86,7 @@ pub(crate) mod sim_tests {
             .unroll_puzzle_hash_map()
             .iter()
             .find_map(|(ph, info)| {
-                if info.coin.state_number == state_number {
+                if info.state_number == state_number {
                     Some(ph.clone())
                 } else {
                     None
@@ -107,16 +108,18 @@ pub(crate) mod sim_tests {
     ///   latest_sent_unroll.state_number     = 5 (no peer signature)
     ///   latest_received_unroll.state_number = 6 (has peer signature)
     ///
-    /// Case 1 — higher state, wrong parity for preemption:
+    /// Case 1 — ancient same-parity state:
     ///   on-chain = 4.  received parity: (6^4)&1=0 BAD. sent parity: (5^4)&1=1
-    ///   but sent has no peer sig.  Preemption must fail.
+    ///   but sent has no peer sig.  It must use the historical timeout.
     ///
     /// Case 2 — higher state, correct parity:
     ///   on-chain = 3.  received parity: (6^3)&1=1 GOOD, has peer sig.
     ///   Preemption must succeed.
     ///
-    /// Case 3 — state from the future:
-    ///   on-chain = 8 > our 6.  Must fail regardless of parity.
+    /// Case 3 — current state parity is not authoritative:
+    ///   after sending state 7, on-chain = 5 has the same parity as current,
+    ///   but received state 6 has opposite parity and a peer signature.
+    ///   Preemption must use state 6.
     pub(crate) fn test_preemption_parity_constraint() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
@@ -141,19 +144,18 @@ pub(crate) mod sim_tests {
             empty_potato_round_trip(&mut game, &mut env, 0);
         }
 
-        // Case 1: on-chain=4, higher state but wrong parity → must FAIL
+        // Case 1: ancient same-parity state → historical timeout.
         {
             let p0 = &game.player(0).ch;
             let conditions = make_conditions_for_state(&mut env, p0, 4);
             let result = p0.channel_coin_spent(&mut env, false, conditions);
             assert!(
-                result.is_err(),
-                "preemption with matching-parity on-chain state should fail, got: {result:?}"
+                result.is_ok(),
+                "same-parity historical state should time out, got: {result:?}"
             );
-            let err_msg = format!("{:?}", result.unwrap_err());
             assert!(
-                err_msg.contains("parity") || err_msg.contains("signature"),
-                "error should mention parity or signature, got: {err_msg}"
+                result.unwrap().timeout,
+                "same-parity historical state must use timeout"
             );
         }
 
@@ -170,7 +172,122 @@ pub(crate) mod sim_tests {
             assert!(!info.timeout, "should be a preemption, not a timeout");
         }
 
-        // Case 3: unknown puzzle hash (simulates a state we don't recognize) → must FAIL
+        // Case 3: current state → timeout.
+        {
+            let p0 = &game.player(0).ch;
+            let conditions = make_conditions_for_state(&mut env, p0, 6);
+            let result = p0
+                .channel_coin_spent(&mut env, false, conditions)
+                .expect("current state should resolve");
+            assert!(result.timeout, "current state must use timeout");
+        }
+
+        // Case 4: current state has the stale state's parity, but the retained
+        // co-signed adjacent state can preempt.
+        {
+            let state_7_signatures = game
+                .player(0)
+                .ch
+                .send_empty_potato(&mut env)
+                .expect("advance player 0 to state 7");
+            {
+                let p0 = &game.player(0).ch;
+                assert_eq!(p0.state_number(), 7);
+                let conditions = make_conditions_for_state(&mut env, p0, 5);
+                let result = p0
+                    .channel_coin_spent(&mut env, false, conditions)
+                    .expect("co-signed adjacent state should preempt");
+                assert!(
+                    !result.timeout,
+                    "preemption must use retained record parity, not current state parity"
+                );
+            }
+
+            game.player(1)
+                .ch
+                .received_empty_potato(&mut env, &state_7_signatures)
+                .expect("receive state 7");
+            let state_8_signatures = game
+                .player(1)
+                .ch
+                .send_empty_potato(&mut env)
+                .expect("send state 8");
+            game.player(0)
+                .ch
+                .received_empty_potato(&mut env, &state_8_signatures)
+                .expect("complete round trip");
+        }
+
+        // Compact historical records round-trip without full unroll/signature fields.
+        {
+            let p0 = &game.player(0).ch;
+            let historical = p0
+                .unroll_puzzle_hash_map()
+                .values()
+                .find(|info| info.state_number == 3)
+                .expect("state 3 history");
+            let encoded = bencodex::to_vec(historical).expect("serialize history");
+            let decoded: HistoricalUnrollSpendInfo =
+                bencodex::from_slice(&encoded).expect("deserialize history");
+            assert_eq!(decoded.state_number, historical.state_number);
+            assert_eq!(decoded.conditions_hash, historical.conditions_hash);
+            assert_eq!(decoded.timeout_conditions, historical.timeout_conditions);
+            for forbidden in [
+                b"signatures".as_slice(),
+                b"conditions_without_hash".as_slice(),
+                b"signature".as_slice(),
+                b"coin".as_slice(),
+            ] {
+                assert!(
+                    !encoded.windows(forbidden.len()).any(|w| w == forbidden),
+                    "compact history serialized forbidden field {}",
+                    String::from_utf8_lossy(forbidden)
+                );
+            }
+        }
+
+        // Historical growth follows the compact-entry slope rather than retaining
+        // another full signed unroll for every old state.
+        {
+            let (before_count, before_size, compact_entry_size) = {
+                let p0 = &game.player(0).ch;
+                let historical = p0
+                    .unroll_puzzle_hash_map()
+                    .values()
+                    .next()
+                    .expect("historical entry");
+                (
+                    p0.unroll_puzzle_hash_map().len(),
+                    bencodex::to_vec(p0)
+                        .expect("serialize channel before growth")
+                        .len(),
+                    bencodex::to_vec(historical)
+                        .expect("serialize compact entry")
+                        .len(),
+                )
+            };
+
+            for _ in 0..8 {
+                empty_potato_round_trip(&mut game, &mut env, 0);
+            }
+
+            let p0 = &game.player(0).ch;
+            let after_count = p0.unroll_puzzle_hash_map().len();
+            let after_size = bencodex::to_vec(p0)
+                .expect("serialize channel after growth")
+                .len();
+            let added_entries = after_count - before_count;
+            assert_eq!(
+                added_entries, 16,
+                "each exchange should retain one compact state"
+            );
+            assert!(
+                after_size - before_size <= added_entries * (compact_entry_size + 64) + 256,
+                "historical serialization grew faster than compact entries: before={before_size}, after={after_size}, entries={added_entries}, compact_entry={compact_entry_size}"
+            );
+        }
+
+        // Case 5: unknown puzzle hash (simulates a state we don't recognize) → must FAIL
         {
             use crate::common::constants::CREATE_COIN;
             use crate::common::types::{Node, PuzzleHash};

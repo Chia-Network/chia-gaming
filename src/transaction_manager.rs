@@ -918,6 +918,27 @@ mod tests {
         }
     }
 
+    #[derive(Default, Serialize, Deserialize)]
+    struct PersistableMockCradle;
+
+    impl ManagedCradle for PersistableMockCradle {
+        fn cradle_new_block(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+            _height: u64,
+            _report: &WatchReport,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+
+        fn cradle_flush_and_collect(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+        ) -> Result<DrainResult, Error> {
+            Ok(DrainResult::default())
+        }
+    }
+
     fn watch_event(coin: &CoinString, timeout: u64) -> CradleEvent {
         CradleEvent::WatchCoin {
             coin_name: coin.to_coin_id(),
@@ -976,6 +997,24 @@ mod tests {
         assert_eq!(subs[0].name.as_deref(), Some("tx-a"));
         // Draining empties the buffer.
         assert!(mgr.drain_submissions().is_empty());
+    }
+
+    #[test]
+    fn serialization_prunes_transient_event_and_watch_delivery_queues() {
+        let coin = test_coin(2);
+        let mut mgr = TransactionManager::new(PersistableMockCradle);
+        mgr.pending_events
+            .push_back(CradleEvent::Log("transient".to_string()));
+        mgr.pending_watch_coins.push(coin);
+        mgr.pending_resync = Some((7, true));
+
+        let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
+        let decoded: TransactionManager<PersistableMockCradle> =
+            bencodex::from_slice(&encoded).expect("deserialize manager");
+
+        assert!(decoded.pending_events.is_empty());
+        assert!(decoded.pending_watch_coins.is_empty());
+        assert_eq!(decoded.pending_resync, None);
     }
 
     #[test]

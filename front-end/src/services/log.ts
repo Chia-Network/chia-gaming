@@ -1,5 +1,7 @@
+import { appendRecent, DIAGNOSTIC_LOG_LIMIT } from '../lib/session/historyLimits';
+
 type Listener = (line: string) => void;
-const buffer: string[] = [];
+let buffer: string[] = [];
 const listeners: Set<Listener> = new Set();
 
 function timestamp(): string {
@@ -13,7 +15,7 @@ function timestamp(): string {
 
 export function log(line: string) {
   const stamped = `[${timestamp()}] ${line}`;
-  buffer.push(stamped);
+  buffer = appendRecent(buffer, stamped, DIAGNOSTIC_LOG_LIMIT);
   listeners.forEach(fn => fn(stamped));
 }
 

@@ -857,6 +857,13 @@ impl SynchronousGameCradle {
         Ok(crate::protocol_pretty::pretty_print(&value))
     }
 
+    pub fn historical_unroll_count(&self) -> Option<usize> {
+        self.peer
+            .channel_handler()
+            .ok()
+            .map(|channel| channel.unroll_puzzle_hash_map().len())
+    }
+
     /// Labeled coin ids (hex) the dashboard shows above the protocol state so
     /// the user can look them up in a block explorer. Sourced from the active
     /// phase handler; 0-2 entries in practice.

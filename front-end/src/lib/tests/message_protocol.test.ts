@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { isBenignTransactionSubmitError, SessionController } from '../../hooks/SessionController';
 import {
   ChiaGame,
@@ -10,8 +11,13 @@ import {
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { restoreSession } from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { _resetForTests as resetSaveState, type SessionState, uint8ToBase64 } from '../../hooks/save';
+import { _resetForTests as resetSaveState, peekSession, saveSession, type SessionState } from '../../hooks/save';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../session/historyLimits';
 
+const testIndexedDb = indexedDB;
 const mockRpc = new Proxy({} as InternalBlockchainInterface, {
   get: () => () => Promise.resolve(undefined),
 });
@@ -116,6 +122,13 @@ function createReadyBlob(
   blob.setGameCradle(cradle);
   blob.kickSystem(2);
   blob.reportCoinStates(1n, []);
+  blob.onSaveNeeded = () => saveSession({
+    blockchainType: 'simulator',
+    serializedCradle: cradle.serialize(),
+    messageNumber: blob.messageNumber,
+    remoteNumber: blob.remoteNumber,
+    unackedMessages: blob.unackedMessages,
+  });
 
   (cradle.deliver_message as jest.Mock).mockClear();
   (cradle.report_coin_states as jest.Mock).mockClear();
@@ -142,6 +155,13 @@ function createUnreadyBlob(
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameCradle(cradle);
+  blob.onSaveNeeded = () => saveSession({
+    blockchainType: 'simulator',
+    serializedCradle: cradle.serialize(),
+    messageNumber: blob.messageNumber,
+    remoteNumber: blob.remoteNumber,
+    unackedMessages: blob.unackedMessages,
+  });
 
   return { blob, cradle, sentMessages, sentAcks };
 }
@@ -162,13 +182,20 @@ function clearTestGlobal(key: string) {
 
 beforeEach(() => {
   setTestGlobal('localStorage', makeStorage());
+  setTestGlobal('sessionStorage', makeStorage());
+  setTestGlobal('indexedDB', testIndexedDb);
 });
 
-afterEach(() => {
-  activeBlob?.cleanup();
+afterEach(async () => {
+  if (activeBlob) {
+    await activeBlob.flushPendingWork();
+    activeBlob.cleanup();
+    activeBlob.onSaveNeeded = null;
+  }
   activeBlob = null;
   resetSaveState();
   clearTestGlobal('localStorage');
+  clearTestGlobal('sessionStorage');
 });
 
 function flushDeferredWork(blob: SessionController) {
@@ -194,8 +221,9 @@ describe('in-order delivery', () => {
 
     expect(blob.remoteNumber).toBe(3n);
     expect(sentAcks).toEqual([]);
-    flushDeferredWork(blob);
+    await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2, 3]);
+    expect((await peekSession())?.remoteNumber).toBe(3n);
     expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
     expect(
       (cradle.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0]),
@@ -212,7 +240,7 @@ describe('duplicate detection', () => {
     blob.deliverMessage(1n, enc('a'));
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
-    flushDeferredWork(blob);
+    await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 1]);
   });
 });
@@ -232,7 +260,7 @@ describe('out-of-order delivery with reorder queue', () => {
 
     expect(delivered).toEqual([enc('a'), enc('b'), enc('c')]);
     expect(blob.remoteNumber).toBe(3n);
-    flushDeferredWork(blob);
+    await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2, 3]);
   });
 });
@@ -250,7 +278,7 @@ describe('buffering before system ready, then spill', () => {
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
     expect(blob.remoteNumber).toBe(2n);
-    flushDeferredWork(blob);
+    await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2]);
   });
 
@@ -290,10 +318,7 @@ describe('ACK pruning', () => {
 });
 
 describe('outbound message numbering', () => {
-  beforeEach(() => jest.useFakeTimers());
-  afterEach(() => jest.useRealTimers());
-
-  it('assigns sequential numbers and tracks in unackedMessages', () => {
+  it('assigns sequential numbers and tracks in unackedMessages', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages } = createReadyBlob(() => ({
       events: [{ OutboundMessage: helloBytes }],
@@ -301,16 +326,76 @@ describe('outbound message numbering', () => {
     activeBlob = blob;
 
     blob.deliverMessage(1n, enc('trigger'));
-    jest.runAllTimers();
+    blob.flushDeferredWork();
+    await blob.flushPendingWork();
 
     expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
     expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
 
     blob.deliverMessage(2n, enc('trigger2'));
-    jest.runAllTimers();
+    blob.flushDeferredWork();
+    await blob.flushPendingWork();
 
     expect(sentMessages[1]).toEqual({ msgno: 2, msg: helloBytes });
     expect(blob.messageNumber).toBe(3n);
+  });
+});
+
+describe('bounded controller histories', () => {
+  it('keeps only recent WASM notifications and diagnostic lines', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    blob.processResult({
+      events: [
+        ...Array.from(
+          { length: WASM_NOTIFICATION_HISTORY_LIMIT + 2 },
+          (_, i) => ({ Notification: { ActionFailed: { reason: `notification-${i}` } } }),
+        ),
+        ...Array.from(
+          { length: DIAGNOSTIC_LOG_LIMIT + 2 },
+          (_, i) => ({ Log: `diagnostic-${i}` }),
+        ),
+      ],
+    });
+    blob.flushDeferredWork();
+
+    expect(blob.wasmNotificationHistory).toHaveLength(WASM_NOTIFICATION_HISTORY_LIMIT);
+    expect(blob.wasmNotificationHistory[0]).toContain('notification-2');
+    expect(blob.diagnosticLog).toHaveLength(DIAGNOSTIC_LOG_LIMIT);
+    expect(blob.diagnosticLog[0]).toBe('diagnostic-2');
+  });
+});
+
+describe('durability failures', () => {
+  it('warns the user and retains messages and ACKs until a retry succeeds', async () => {
+    const helloBytes = enc('hello');
+    const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({
+      events: [{ OutboundMessage: helloBytes }],
+    }));
+    activeBlob = blob;
+    const warnings: string[] = [];
+    const sub = blob.getObservable().subscribe((event) => {
+      if (event.type === 'durability-error') warnings.push(event.error);
+    });
+    clearTestGlobal('indexedDB');
+
+    blob.deliverMessage(1n, enc('trigger'));
+    blob.flushDeferredWork();
+    await expect(blob.flushPendingWork()).rejects.toThrow('IndexedDB is unavailable');
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('remain queued');
+    expect(sentMessages).toEqual([]);
+    expect(sentAcks).toEqual([]);
+    expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
+
+    setTestGlobal('indexedDB', testIndexedDb);
+    await blob.flushPendingSave();
+    await blob.flushPendingWork();
+
+    expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
+    expect(sentAcks).toEqual([1]);
+    sub.unsubscribe();
   });
 });
 
@@ -354,7 +439,7 @@ describe('restore ordering', () => {
 
     blob.kickSystem(2);
     blob.deliverMessage(1n, enc('already-processed'));
-    flushDeferredWork(blob);
+    await blob.flushPendingWork();
     const statuses: string[] = [];
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
@@ -362,12 +447,14 @@ describe('restore ordering', () => {
       restoreSession(
         blob,
         {
-          version: 3,
+          version: 4n,
           playerId: 'p1',
-          serializedCradle: uint8ToBase64(new Uint8Array([1, 2, 3])),
+          serializedCradle: new Uint8Array([1, 2, 3]),
           messageNumber: 5n,
           remoteNumber: 1n,
-          unackedMessages: [{ msgno: 4n, msg: uint8ToBase64(enc('outbound')) }],
+          unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
+          wasmNotificationHistory: ['notification'],
+          diagnosticLog: ['diagnostic'],
         } as unknown as SessionState,
         wasmStateInit,
       ),
@@ -380,6 +467,8 @@ describe('restore ordering', () => {
     expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);
+    expect(blob.wasmNotificationHistory).toEqual(['notification']);
+    expect(blob.diagnosticLog).toEqual(['diagnostic']);
     expect(statuses).toEqual(['idle', 'restoring', 'restored']);
     expect(blob.getRestoreStatus()).toBe('restored');
   });

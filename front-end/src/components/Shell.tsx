@@ -65,6 +65,12 @@ import {
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
 import { gameDisplayName } from '../lib/gameRegistry';
+import {
+  appendRecent,
+  DIAGNOSTIC_LOG_LIMIT,
+  HUMAN_HISTORY_LIMIT,
+  recentEntries,
+} from '../lib/session/historyLimits';
 import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { Button } from './button';
@@ -95,11 +101,11 @@ function normalizeTrackerOrigin(origin: string): string {
 }
 
 function humanHistoryFromSave(save: SessionState): string[] | undefined {
-  return save.humanHistory ?? save.history;
+  return save.humanHistory;
 }
 
 function diagnosticLogFromSave(save: SessionState): string[] | undefined {
-  return save.diagnosticLog ?? save.log;
+  return save.diagnosticLog;
 }
 
 function reactPropSafeValue<T>(value: T): T {
@@ -589,26 +595,39 @@ const Shell = () => {
   // 'ready') also transitions to 'tabConflict' so the user can take control
   // back.
   type BootState =
+    | { kind: 'loading' }
     | { kind: 'ready' }
     | { kind: 'resumeDialog'; save: SessionState | null }
     | { kind: 'tabConflict'; save: SessionState | null; midSession: boolean }
     | { kind: 'tabDead' };
 
-  const [bootState, setBootState] = useState<BootState>(() => {
-    const save = peekSession();
-    if (save) {
-      console.log('[Shell] boot: save present (bcType=%s token=%s), showing resume dialog',
-        save.blockchainType ?? 'none', save.pairingToken ?? 'none');
-      return { kind: 'resumeDialog', save };
-    }
-    if (isLeaseConflict()) {
-      console.log('[Shell] boot: no save but another tab holds the lease, showing tabConflict');
-      return { kind: 'tabConflict', save: null, midSession: false };
-    }
-    console.log('[Shell] boot: no state, no conflict, claiming lease');
-    claimLease();
-    return { kind: 'ready' };
-  });
+  const [bootState, setBootState] = useState<BootState>({ kind: 'loading' });
+
+  useEffect(() => {
+    let cancelled = false;
+    void peekSession().then((save) => {
+      if (cancelled) return;
+      if (save) {
+        console.log('[Shell] boot: save present (bcType=%s token=%s), showing resume dialog',
+          save.blockchainType ?? 'none', save.pairingToken ?? 'none');
+        setBootState({ kind: 'resumeDialog', save });
+        return;
+      }
+      if (isLeaseConflict()) {
+        console.log('[Shell] boot: no save but another tab holds the lease, showing tabConflict');
+        setBootState({ kind: 'tabConflict', save: null, midSession: false });
+        return;
+      }
+      console.log('[Shell] boot: no state, no conflict, claiming lease');
+      claimLease();
+      setBootState({ kind: 'ready' });
+    }).catch((error) => {
+      if (cancelled) return;
+      console.error('[Shell] boot session load failed:', error);
+      setBootState({ kind: 'resumeDialog', save: null });
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Subscribe to mid-session lease loss. Only meaningful once we're 'ready' —
   // if we're still in a dialog, we haven't claimed the lease yet.
@@ -622,9 +641,10 @@ const Shell = () => {
       deactivate();
       activeBlockchainRef.current = null;
       setActiveBlockchainPoller(null);
-      setBootState(prev => {
-        if (prev.kind !== 'ready') return prev;
-        return { kind: 'tabConflict', save: peekSession(), midSession: true };
+      void peekSession().then((save) => {
+        setBootState(prev => prev.kind === 'ready'
+          ? { kind: 'tabConflict', save, midSession: true }
+          : prev);
       });
     };
     onFenced(handler);
@@ -827,7 +847,7 @@ const Shell = () => {
   const appendHistory = useCallback((line: string) => {
     deferStateUpdate(() => {
       setHistory(prev => {
-        const next = [...prev, line];
+        const next = appendRecent(prev, line, HUMAN_HISTORY_LIMIT);
         historyRef.current = next;
         saveSession({ humanHistory: next });
         return next;
@@ -1042,7 +1062,7 @@ const Shell = () => {
     return subscribeLog((line) => {
       deferStateUpdate(() => {
         setLogLines(prev => {
-          const next = [...prev, line];
+          const next = appendRecent(prev, line, DIAGNOSTIC_LOG_LIMIT);
           saveSession({ diagnosticLog: next });
           return next;
         });
@@ -1152,7 +1172,6 @@ const Shell = () => {
     if (options.resetSession) {
       clearSessionId();
     }
-    const initialSave = peekSession();
     const trackerSessionId = getSessionId();
     setSessionId(trackerSessionId);
 
@@ -1544,8 +1563,8 @@ const Shell = () => {
     }
     const savedHistory = humanHistoryFromSave(save);
     const savedLog = diagnosticLogFromSave(save);
-    if (savedHistory) setHistory(savedHistory);
-    if (savedLog) setLogLines(savedLog);
+    if (savedHistory) setHistory(recentEntries(savedHistory, HUMAN_HISTORY_LIMIT));
+    if (savedLog) setLogLines(recentEntries(savedLog, DIAGNOSTIC_LOG_LIMIT));
     setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
@@ -1873,6 +1892,10 @@ const Shell = () => {
     if (!blockchainType) return;
     handleConnect(blockchainType);
   }, [blockchainType, handleConnect]);
+
+  if (bootState.kind === 'loading') {
+    return null;
+  }
 
   // --- Tab dead (user chose to yield to another tab) ---
   if (bootState.kind === 'tabDead') {

@@ -24,6 +24,12 @@ import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionState } from './save';
 import type { PersistedGameState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
+import {
+  appendRecent,
+  DIAGNOSTIC_LOG_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../lib/session/historyLimits';
 
 export interface WasmFields {
   serializedCradle: Uint8Array;
@@ -36,8 +42,10 @@ export interface WasmFields {
   theirContribution: string;
   perGameAmount: string;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
-  history: string[];
-  log: string[];
+  wasmNotificationHistory: string[];
+  diagnosticLog: string[];
+  historicalUnrollCount: bigint | undefined;
+  durabilityWarning: string | undefined;
   activeGameId: string | null;
   activeGameIds: string[];
   handState: PersistedGameState | null;
@@ -115,8 +123,8 @@ export class SessionController implements PollingCradle {
   private lastLauncherCoinId: string | null = null;
 
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }> = [];
-  history: string[] = [];
-  logHistory: string[] = [];
+  wasmNotificationHistory: string[] = [];
+  diagnosticLog: string[] = [];
   private reorderQueue: Map<bigint, Uint8Array> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
@@ -131,6 +139,7 @@ export class SessionController implements PollingCradle {
   private needsImmediateDurability = false;
   private pendingOutboundSends: Array<{ msgno: bigint; msg: Uint8Array }> = [];
   private pendingAcks: bigint[] = [];
+  private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
   activeGameId: string | null = null;
   activeGameIds: string[] = [];
@@ -139,7 +148,8 @@ export class SessionController implements PollingCradle {
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
-  onSaveNeeded: (() => void) | null = null;
+  durabilityWarning: string | undefined = undefined;
+  onSaveNeeded: (() => void | Promise<void>) | null = null;
   getFee: () => bigint = () => 0n;
 
   get handState(): PersistedGameState | null {
@@ -190,7 +200,7 @@ export class SessionController implements PollingCradle {
     };
     this.beforeUnloadHandler = () => {
       const hadPending = !!this.saveTimer;
-      this.flushPendingSave();
+      void this.flushPendingSave();
       if (hadPending) {
         console.log('[wasm] beforeunload: flushed pending save');
       }
@@ -252,7 +262,7 @@ export class SessionController implements PollingCradle {
       this.durabilityFlushTimer = null;
     }
     this.drainScheduled = false;
-    this.flushDurabilityAndSend();
+    void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
@@ -607,7 +617,7 @@ export class SessionController implements PollingCradle {
       this.durabilityFlushTimer = null;
     }
     this.durabilityFlushScheduled = false;
-    this.flushDurabilityAndSend();
+    void this.flushDurabilityAndSend();
   }
 
   async flushPendingWork(): Promise<void> {
@@ -616,6 +626,7 @@ export class SessionController implements PollingCradle {
       const effects = [...this.pendingEffects];
       await Promise.allSettled(effects);
       await this.transactionSubmitQueue;
+      await this.durabilityFlushPromise;
       this.flushDeferredWork();
       if (this.pendingEffects.size === 0
           && this.eventQueue.length === 0
@@ -668,14 +679,18 @@ export class SessionController implements PollingCradle {
           }
         }
       }
-      this.history.push(jsonStringify(n));
+      this.wasmNotificationHistory = appendRecent(
+        this.wasmNotificationHistory,
+        jsonStringify(n),
+        WASM_NOTIFICATION_HISTORY_LIMIT,
+      );
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
       this.trackEffect(this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest));
     } else if ('Log' in event) {
-      this.logHistory.push(event.Log);
+      this.diagnosticLog = appendRecent(this.diagnosticLog, event.Log, DIAGNOSTIC_LOG_LIMIT);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
     } else if ('NeedLauncherCoin' in event) {
       this.trackEffect(this.handleNeedLauncherCoin());
@@ -851,14 +866,15 @@ export class SessionController implements PollingCradle {
     this.saveTimer = timer;
   }
 
-  flushPendingSave() {
-    this.flushDurabilityAndSend();
+  flushPendingSave(): Promise<void> {
+    const durability = this.flushDurabilityAndSend();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      this.onSaveNeeded?.();
-      flushSessionState();
+      void this.onSaveNeeded?.();
+      return flushSessionState();
     }
+    return durability;
   }
 
   private markNeedsImmediateDurability() {
@@ -876,13 +892,22 @@ export class SessionController implements PollingCradle {
         this.scheduleDurabilityFlush();
         return;
       }
-      this.flushDurabilityAndSend();
+      void this.flushDurabilityAndSend();
     }, 0);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.durabilityFlushTimer = timer;
   }
 
-  private flushDurabilityAndSend() {
+  private flushDurabilityAndSend(): Promise<void> {
+    this.durabilityFlushPromise = this.durabilityFlushPromise.then(
+      () => this.performDurabilityFlushAndSend(),
+      () => this.performDurabilityFlushAndSend(),
+    );
+    void this.durabilityFlushPromise.catch(() => {});
+    return this.durabilityFlushPromise;
+  }
+
+  private async performDurabilityFlushAndSend(): Promise<void> {
     if (!this.needsImmediateDurability && this.pendingOutboundSends.length === 0 && this.pendingAcks.length === 0) {
       return;
     }
@@ -891,9 +916,40 @@ export class SessionController implements PollingCradle {
       this.saveTimer = null;
     }
     if (this.needsImmediateDurability) {
-      this.onSaveNeeded?.();
-      flushSessionState();
-      this.needsImmediateDurability = false;
+      const outboundCount = this.pendingOutboundSends.length;
+      const ackCount = this.pendingAcks.length;
+      if (!this.onSaveNeeded) {
+        throw new Error('Session persistence callback is unavailable at a protocol delivery boundary');
+      }
+      const saveRequest = Promise.resolve(this.onSaveNeeded());
+      void saveRequest.catch(() => {});
+      try {
+        await flushSessionState();
+        await saveRequest;
+      } catch (error) {
+        const detail = extractErrorMessage(error);
+        const warning = `Session storage failed: ${detail}. Protocol messages remain queued and will not be sent until storage succeeds.`;
+        if (this.durabilityWarning !== warning) {
+          this.durabilityWarning = warning;
+          this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+        }
+        throw error;
+      }
+
+      const outbound = this.pendingOutboundSends.splice(0, outboundCount);
+      const acks = this.pendingAcks.splice(0, ackCount);
+      for (const { msgno, msg } of outbound) {
+        this.sendMessage(msgno, msg);
+      }
+      for (const ack of acks) {
+        this.sendAck(ack);
+      }
+      this.needsImmediateDurability =
+        this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
+      if (this.needsImmediateDurability) {
+        this.scheduleDurabilityFlush();
+      }
+      return;
     }
 
     const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
@@ -909,8 +965,9 @@ export class SessionController implements PollingCradle {
   getWasmFields(): WasmFields | null {
     if (!this.cradle) return null;
     try {
+      const serializedCradle = this.cradle.serialize();
       return {
-        serializedCradle: this.cradle.serialize(),
+        serializedCradle,
         pairingToken: this.pairingToken,
         messageNumber: this.messageNumber,
         remoteNumber: this.remoteNumber,
@@ -920,8 +977,13 @@ export class SessionController implements PollingCradle {
         theirContribution: this.theirContribution.toString(),
         perGameAmount: this.perGameAmount.toString(),
         unackedMessages: [...this.unackedMessages],
-        history: [...this.history],
-        log: [...this.logHistory],
+        wasmNotificationHistory: recentEntries(
+          this.wasmNotificationHistory,
+          WASM_NOTIFICATION_HISTORY_LIMIT,
+        ),
+        diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
+        historicalUnrollCount: this.cradle.historical_unroll_count?.(),
+        durabilityWarning: this.durabilityWarning,
         activeGameId: this.activeGameId,
         activeGameIds: [...this.activeGameIds],
         handState: this.handState,

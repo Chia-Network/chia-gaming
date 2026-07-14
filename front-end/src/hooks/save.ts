@@ -1,98 +1,21 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
-import { jsonParseLossless, jsonStringifyLossless } from '../util/jsonSafe';
-
-export function uint8ToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-export function base64ToUint8(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
+import {
+  deleteSessionRecord,
+  readSessionRecord,
+  SESSION_DB_NAME,
+  writeSessionRecord,
+} from '../lib/session/indexedDb';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  HUMAN_HISTORY_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../lib/session/historyLimits';
 
 function randomHex(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-// --- Save-state obfuscation ---
-
-const OBFUSCATION_KEY = new Uint8Array([
-  0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b,
-  0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
-]);
-const SALT_LEN = 16;
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const result = new Uint8Array(hex.length >> 1);
-  for (let i = 0; i < hex.length; i += 2) {
-    result[i >> 1] = parseInt(hex.slice(i, i + 2), 16);
-  }
-  return result;
-}
-
-function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
-  const S = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) S[i] = i;
-  let j = 0;
-  for (let i = 0; i < 256; i++) {
-    j = (j + S[i] + key[i % key.length]) & 0xff;
-    [S[i], S[j]] = [S[j], S[i]];
-  }
-  const stream = new Uint8Array(length);
-  let a = 0;
-  j = 0;
-  for (let k = 0; k < length; k++) {
-    a = (a + 1) & 0xff;
-    j = (j + S[a]) & 0xff;
-    [S[a], S[j]] = [S[j], S[a]];
-    stream[k] = S[(S[a] + S[j]) & 0xff];
-  }
-  return stream;
-}
-
-function obfuscate(json: string): string {
-  const plaintext = new TextEncoder().encode(json);
-  const salt = new Uint8Array(SALT_LEN);
-  crypto.getRandomValues(salt);
-  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
-  key.set(salt);
-  key.set(OBFUSCATION_KEY, SALT_LEN);
-  const stream = rc4Keystream(key, plaintext.length);
-  const out = new Uint8Array(SALT_LEN + plaintext.length);
-  out.set(salt);
-  for (let i = 0; i < plaintext.length; i++) {
-    out[SALT_LEN + i] = plaintext[i] ^ stream[i];
-  }
-  return bytesToHex(out);
-}
-
-function deobfuscate(hex: string): string {
-  const bytes = hexToBytes(hex);
-  const salt = bytes.slice(0, SALT_LEN);
-  const ciphertext = bytes.slice(SALT_LEN);
-  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
-  key.set(salt);
-  key.set(OBFUSCATION_KEY, SALT_LEN);
-  const stream = rc4Keystream(key, ciphertext.length);
-  const plaintext = new Uint8Array(ciphertext.length);
-  for (let i = 0; i < ciphertext.length; i++) {
-    plaintext[i] = ciphertext[i] ^ stream[i];
-  }
-  return new TextDecoder().decode(plaintext);
 }
 
 interface SavedGame {
@@ -131,8 +54,8 @@ export interface PersistedGameState<T = unknown> {
 type BlockchainType = 'simulator' | 'walletconnect';
 
 /**
- * Single flat state object stored in localStorage. Stale version = wipe
- * everything. No nesting, no migration — alpha-mode simplicity.
+ * One complete resumable record stored by IndexedDB structured clone.
+ * Stale versions are deleted rather than migrated.
  */
 export interface SessionState {
   version: bigint;
@@ -157,7 +80,7 @@ export interface SessionState {
 
   // Session / game state
   blockchainType?: BlockchainType;
-  serializedCradle?: string;
+  serializedCradle?: Uint8Array;
   pairingToken?: string;
   sessionPeerId?: string;
   gameSessionId?: string;
@@ -168,12 +91,12 @@ export interface SessionState {
   myContribution?: string;
   theirContribution?: string;
   perGameAmount?: string;
-  unackedMessages?: Array<{ msgno: bigint; msg: string }>;
-  history?: string[];
-  log?: string[];
+  unackedMessages?: Array<{ msgno: bigint; msg: Uint8Array }>;
   humanHistory?: string[];
   wasmNotificationHistory?: string[];
   diagnosticLog?: string[];
+  historicalUnrollCount?: bigint;
+  durabilityWarning?: string;
   activeGameId?: string | null;
   activeGameIds?: string[];
   currentHandGameIds?: string[];
@@ -231,17 +154,23 @@ export interface SessionState {
 export type SessionSave = SessionState;
 
 const STATE_KEY = 'appState';
+const PREFERENCES_KEY = 'appPreferences';
+const SESSION_MARKER_KEY = 'appState_savedSession';
 const RESET_KEY = 'appState_hardReset';
-const CURRENT_VERSION = 3n;
+export const CURRENT_VERSION = 4n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
 // and its dependencies are known to create; deleting a nonexistent one is a
 // harmless no-op.
-const KNOWN_INDEXED_DB_NAMES = [
+const KNOWN_WALLETCONNECT_DB_NAMES = [
   'WALLET_CONNECT_V2_INDEXED_DB',
   'walletconnect',
   'walletconnect-v2',
+];
+const KNOWN_HARD_RESET_DB_NAMES = [
+  SESSION_DB_NAME,
+  ...KNOWN_WALLETCONNECT_DB_NAMES,
 ];
 
 function isWalletConnectStorageKey(key: string): boolean {
@@ -303,7 +232,7 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
   }
 
   await Promise.all(
-    KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+    KNOWN_WALLETCONNECT_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
   );
 }
 
@@ -314,6 +243,7 @@ function stopPersistenceForHardReset(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  settleScheduledPersist();
 }
 
 function signalHardResetToOtherTabs(): void {
@@ -334,7 +264,7 @@ function clearAllIndexedDbForHardReset(): void {
       // WalletConnect's) rather than leaving them behind.
       console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
       void Promise.all(
-        KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
+        KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
       );
       return;
     }
@@ -358,6 +288,10 @@ function clearAllIndexedDbForHardReset(): void {
 
 let cached: SessionState | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistPromise: Promise<void> | null = null;
+let resolvePersist: (() => void) | null = null;
+let rejectPersist: ((reason: unknown) => void) | null = null;
+let writeChain: Promise<void> = Promise.resolve();
 const PERSIST_DEBOUNCE_MS = 300;
 
 // --- Tab lease ---
@@ -441,39 +375,189 @@ function assertNoNumbers(obj: unknown, path: string): void {
   }
 }
 
-function flushToLocalStorage(): void {
-  if (!cached || fenced) return;
+interface StoredPreferences {
+  playerId: string;
+  sessionId?: string;
+  alias?: string;
+  theme?: 'dark' | 'light';
+  defaultFee?: string;
+  feeUnit?: 'mojo' | 'xch';
+  trackerUrl?: string;
+  savedGames?: SavedGame[];
+  activeTab?: string;
+  unreadGame?: boolean;
+  walletAlert?: boolean;
+  trackerAlert?: boolean;
+  blockchainType?: BlockchainType;
+}
+
+function savePreferences(state: SessionState): void {
+  const preferences: StoredPreferences = {
+    playerId: state.playerId,
+    sessionId: state.sessionId,
+    alias: state.alias,
+    theme: state.theme,
+    defaultFee: state.defaultFee?.toString(),
+    feeUnit: state.feeUnit,
+    trackerUrl: state.trackerUrl,
+    savedGames: state.savedGames,
+    activeTab: state.activeTab,
+    unreadGame: state.unreadGame,
+    walletAlert: state.walletAlert,
+    trackerAlert: state.trackerAlert,
+    blockchainType: state.blockchainType,
+  };
+  try {
+    localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
+  } catch (e) {
+    console.error('[save] failed to persist preferences:', e);
+  }
+}
+
+function loadPreferences(): SessionState {
+  try {
+    // The old payload may contain arbitrary stale encoding. Never inspect it.
+    localStorage.removeItem(STATE_KEY);
+    const raw = localStorage.getItem(PREFERENCES_KEY);
+    if (raw) {
+      const preferences = JSON.parse(raw) as StoredPreferences;
+      if (typeof preferences.playerId === 'string') {
+        return {
+          version: CURRENT_VERSION,
+          ...preferences,
+          defaultFee: preferences.defaultFee === undefined
+            ? undefined
+            : BigInt(preferences.defaultFee),
+        };
+      }
+    }
+  } catch (e) {
+    console.error('[save] failed to load preferences:', e);
+  }
+  return { version: CURRENT_VERSION, playerId: randomHex() };
+}
+
+function isResumable(state: SessionState): boolean {
+  return !!(state.serializedCradle || state.pairingToken);
+}
+
+function capPersistedHistories(state: SessionState): void {
+  if (state.humanHistory) {
+    state.humanHistory = recentEntries(state.humanHistory, HUMAN_HISTORY_LIMIT);
+  }
+  if (state.wasmNotificationHistory) {
+    state.wasmNotificationHistory = recentEntries(
+      state.wasmNotificationHistory,
+      WASM_NOTIFICATION_HISTORY_LIMIT,
+    );
+  }
+  if (state.diagnosticLog) {
+    state.diagnosticLog = recentEntries(state.diagnosticLog, DIAGNOSTIC_LOG_LIMIT);
+  }
+}
+
+function estimateRecordBytes(value: unknown, seen = new Set<object>()): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'string') return new TextEncoder().encode(value).byteLength;
+  if (typeof value === 'bigint') return value.toString().length;
+  if (typeof value === 'boolean') return 1;
+  if (typeof value !== 'object') return 8;
+  if (ArrayBuffer.isView(value)) return value.byteLength;
+  if (seen.has(value)) return 0;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + estimateRecordBytes(item, seen), 0);
+  }
+  return Object.entries(value as Record<string, unknown>).reduce(
+    (total, [key, item]) => total + key.length * 2 + estimateRecordBytes(item, seen),
+    0,
+  );
+}
+
+function logPersistenceMetrics(state: SessionState): void {
+  const developmentRuntime = typeof window === 'undefined'
+    ? process.env.NODE_ENV !== 'production'
+    : window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (!developmentRuntime) return;
+  console.debug('[save] persistence metrics', {
+    rawCradleBytes: state.serializedCradle?.byteLength ?? 0,
+    estimatedIndexedDbRecordBytes: estimateRecordBytes(state),
+    historicalUnrollCount: state.historicalUnrollCount?.toString() ?? 'unavailable',
+    humanHistoryCount: state.humanHistory?.length ?? 0,
+    wasmNotificationHistoryCount: state.wasmNotificationHistory?.length ?? 0,
+    diagnosticLogCount: state.diagnosticLog?.length ?? 0,
+  });
+}
+
+function queueWrite(state: SessionState): Promise<void> {
+  const snapshot = structuredClone(state);
+  capPersistedHistories(snapshot);
+  assertNoNumbers(snapshot, 'SessionState');
+  logPersistenceMetrics(snapshot);
+  writeChain = writeChain.catch(() => {}).then(async () => {
+    if (fenced) return;
+    await writeSessionRecord(snapshot);
+    if (fenced) return;
+    if (isResumable(snapshot)) {
+      localStorage.setItem(SESSION_MARKER_KEY, '1');
+    } else {
+      localStorage.removeItem(SESSION_MARKER_KEY);
+    }
+  });
+  return writeChain;
+}
+
+function settleScheduledPersist(error?: unknown): void {
+  const resolve = resolvePersist;
+  const reject = rejectPersist;
+  persistPromise = null;
+  resolvePersist = null;
+  rejectPersist = null;
+  if (error === undefined) resolve?.();
+  else reject?.(error);
+}
+
+export function flushSessionState(): Promise<void> {
+  if (!cached || fenced) return Promise.resolve();
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
-  try {
-    assertNoNumbers(cached, 'SessionState');
-    localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(cached)));
-  } catch (e) {
-    console.error('[save] failed to persist state:', e);
-  }
+  const pending = persistPromise;
+  const resolve = resolvePersist;
+  const reject = rejectPersist;
+  persistPromise = null;
+  resolvePersist = null;
+  rejectPersist = null;
+  const write = queueWrite(cached);
+  void write.then(
+    () => resolve?.(),
+    (error) => {
+      console.error('[save] failed to persist session state:', error);
+      reject?.(error);
+    },
+  );
+  return pending ?? write;
 }
 
-export function flushSessionState(): void {
-  flushToLocalStorage();
-}
-
-function schedulePersist(): void {
-  if (persistTimer || fenced) return;
+function schedulePersist(): Promise<void> {
+  if (fenced) return Promise.resolve();
+  if (persistPromise) return persistPromise;
+  persistPromise = new Promise<void>((resolve, reject) => {
+    resolvePersist = resolve;
+    rejectPersist = reject;
+  });
+  void persistPromise.catch(() => {});
   const timer = setTimeout(() => {
     persistTimer = null;
-    flushToLocalStorage();
+    void flushSessionState();
   }, PERSIST_DEBOUNCE_MS);
   if (typeof timer === 'object' && 'unref' in timer) timer.unref();
   persistTimer = timer;
+  return persistPromise;
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
-    if (!fenced) flushToLocalStorage();
-  });
-
   window.addEventListener('storage', (e: StorageEvent) => {
     if (e.key === RESET_KEY) {
       stopPersistenceForHardReset();
@@ -495,58 +579,43 @@ if (typeof window !== 'undefined') {
   }, 3000);
 }
 
-/** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
+/** @internal — seed the obsolete localStorage payload without decoding it. */
 export function _writeRawState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(obj)));
+  localStorage.setItem(STATE_KEY, JSON.stringify(obj));
 }
 
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  settleScheduledPersist();
   cached = null;
+  writeChain = Promise.resolve();
   fenced = false;
   fencedListeners.clear();
   try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
   try { localStorage.removeItem(RESET_KEY); } catch { /* ignore */ }
 }
 
-function freshState(): SessionState {
-  return { version: CURRENT_VERSION, playerId: randomHex() };
-}
-
 export function loadState(): SessionState {
-  if (cached) return cached;
-  try {
-    const raw = localStorage.getItem(STATE_KEY);
-    if (raw) {
-      const json = deobfuscate(raw);
-      const parsed = jsonParseLossless(json);
-      if (parsed.version == CURRENT_VERSION) {
-        cached = parsed as SessionState;
-        return cached;
-      }
-    }
-  } catch (e) {
-    console.error('[save] failed to load state:', e);
-  }
-  cached = freshState();
+  if (!cached) cached = loadPreferences();
   return cached;
 }
 
 /** @deprecated — alias for loadState() */
 export function loadAppState(): SessionState { return loadState(); }
 
-function mutate(fn: (state: SessionState) => void): void {
+function mutate(fn: (state: SessionState) => void): Promise<void> {
   const state = loadState();
   fn(state);
-  schedulePersist();
+  savePreferences(state);
+  return schedulePersist();
 }
 
 // --- Convenience accessors ---
 
 export function getPlayerId(): string {
   const state = loadState();
-  if (!cached) schedulePersist();
+  savePreferences(state);
   return state.playerId;
 }
 
@@ -554,14 +623,14 @@ export function getSessionId(): string {
   const state = loadState();
   if (state.sessionId) return state.sessionId;
   state.sessionId = randomHex();
-  schedulePersist();
+  savePreferences(state);
   return state.sessionId;
 }
 
 export function regenerateSessionId(): string {
   const state = loadState();
   state.sessionId = randomHex();
-  schedulePersist();
+  savePreferences(state);
   return state.sessionId;
 }
 
@@ -573,9 +642,10 @@ export function getBlockchainType(): BlockchainType | undefined {
   return loadState().blockchainType;
 }
 
-export function saveSession(fields: Partial<SessionState>): void {
-  mutate(s => {
+export function saveSession(fields: Partial<SessionState>): Promise<void> {
+  return mutate(s => {
     Object.assign(s, fields);
+    capPersistedHistories(s);
   });
 }
 
@@ -595,17 +665,36 @@ function hasWalletConnectStorage(): boolean {
  * connection. `blockchainType` alone (preserved across session clears)
  * does not count as resumable.
  */
-export function peekSession(): SessionState | null {
-  const state = loadState();
-  if (state.blockchainType || state.serializedCradle || state.pairingToken) return state;
-  if (hasWalletConnectStorage()) return state;
+export async function peekSession(): Promise<SessionState | null> {
+  const preferences = loadState();
+  if (persistPromise) await flushSessionState();
+  await writeChain;
+  let record = await readSessionRecord();
+  if (record && record.version !== CURRENT_VERSION) {
+    await deleteSessionRecord();
+    localStorage.removeItem(SESSION_MARKER_KEY);
+    record = null;
+  }
+  if (record) {
+    cached = { ...preferences, ...record };
+    savePreferences(cached);
+    return isResumable(cached) ? cached : null;
+  }
+  localStorage.removeItem(SESSION_MARKER_KEY);
+  cached = preferences;
+  if (hasWalletConnectStorage()) return cached;
   return null;
 }
 
-export function clearSession(): void {
+export function clearSession(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  settleScheduledPersist();
   const prev = loadState();
   cached = {
-    version: prev.version,
+    version: CURRENT_VERSION,
     playerId: prev.playerId,
     sessionId: prev.sessionId,
     alias: prev.alias,
@@ -620,7 +709,17 @@ export function clearSession(): void {
     trackerAlert: prev.trackerAlert,
     blockchainType: prev.blockchainType,
   };
-  flushToLocalStorage();
+  savePreferences(cached);
+  const deletePromise = writeChain = writeChain.catch(() => {}).then(async () => {
+    if (isResumable(cached!)) {
+      await writeSessionRecord(structuredClone(cached!));
+      localStorage.setItem(SESSION_MARKER_KEY, '1');
+    } else {
+      await deleteSessionRecord();
+      localStorage.removeItem(SESSION_MARKER_KEY);
+    }
+  });
+  return deletePromise;
 }
 
 export function hardReset(): void {
@@ -646,7 +745,7 @@ export function getAlias(): string {
   if (state.alias) return state.alias;
   const generated = `Player_${randomHex().substring(0, 8)}`;
   state.alias = generated;
-  schedulePersist();
+  savePreferences(state);
   return generated;
 }
 

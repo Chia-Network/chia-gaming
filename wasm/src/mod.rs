@@ -3,6 +3,7 @@ mod gaming_wasm {
 
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
+    use std::convert::TryFrom;
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use hex::FromHexError;
@@ -1061,6 +1062,22 @@ mod gaming_wasm {
     pub fn protocol_state_pretty(cid: i32) -> Result<String, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.protocol_state_pretty()
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn historical_unroll_count(cid: i32) -> Result<Option<u32>, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .historical_unroll_count()
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|_| {
+                    types::Error::StrErr(
+                        "historical unroll count exceeds WASM metric range".to_string(),
+                    )
+                })
         })
     }
 

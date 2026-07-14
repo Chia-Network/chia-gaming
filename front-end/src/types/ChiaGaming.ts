@@ -180,6 +180,7 @@ export type WasmNotification = {
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
+  | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string }
   | { type: 'terminal' };
@@ -274,6 +275,7 @@ export interface WasmConnection {
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   protocol_state_pretty: (cid: number) => string;
+  historical_unroll_count: (cid: number) => number | undefined;
   coins_of_interest: (cid: number) => CoinOfInterestEntry[];
   serialize_cradle: (cid: number) => Uint8Array;
   get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
@@ -334,6 +336,11 @@ export class ChiaGame {
 
   protocol_state_pretty(): string {
     return this.wasm.protocol_state_pretty(this.cradle);
+  }
+
+  historical_unroll_count(): bigint | undefined {
+    const count = this.wasm.historical_unroll_count(this.cradle);
+    return count === undefined ? undefined : BigInt(count);
   }
 
   coins_of_interest(): CoinOfInterestEntry[] {

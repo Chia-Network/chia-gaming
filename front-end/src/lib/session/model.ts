@@ -5,6 +5,12 @@ import type {
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionState } from '../../hooks/save';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  HUMAN_HISTORY_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from './historyLimits';
 
 export type GameTurnState =
   | 'my-turn'
@@ -43,6 +49,7 @@ export type NotificationKind =
   | 'session-over'
   | 'action-failed'
   | 'infra-error'
+  | 'durability-error'
   | 'game-terminal'
   | 'proposal-rejected'
   | 'insufficient-bal';
@@ -1061,9 +1068,12 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       };
     })(),
     history: {
-      humanHistory: save.humanHistory ?? save.history ?? [],
-      wasmNotificationHistory: save.wasmNotificationHistory ?? [],
-      diagnosticLog: save.diagnosticLog ?? save.log ?? [],
+      humanHistory: recentEntries(save.humanHistory ?? [], HUMAN_HISTORY_LIMIT),
+      wasmNotificationHistory: recentEntries(
+        save.wasmNotificationHistory ?? [],
+        WASM_NOTIFICATION_HISTORY_LIMIT,
+      ),
+      diagnosticLog: recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT),
     },
     myRunningBalance: parseBigintString(save.myRunningBalance, 0n),
     lastOutcomeWin: save.lastOutcomeWin,
@@ -1080,9 +1090,15 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
   });
 
   return {
-    humanHistory: model.history.humanHistory.length > 0 ? model.history.humanHistory : undefined,
-    wasmNotificationHistory: model.history.wasmNotificationHistory.length > 0 ? model.history.wasmNotificationHistory : undefined,
-    diagnosticLog: model.history.diagnosticLog.length > 0 ? model.history.diagnosticLog : undefined,
+    humanHistory: model.history.humanHistory.length > 0
+      ? recentEntries(model.history.humanHistory, HUMAN_HISTORY_LIMIT)
+      : undefined,
+    wasmNotificationHistory: model.history.wasmNotificationHistory.length > 0
+      ? recentEntries(model.history.wasmNotificationHistory, WASM_NOTIFICATION_HISTORY_LIMIT)
+      : undefined,
+    diagnosticLog: model.history.diagnosticLog.length > 0
+      ? recentEntries(model.history.diagnosticLog, DIAGNOSTIC_LOG_LIMIT)
+      : undefined,
     gameCoinHex: model.game.coin.coinHex,
     gameTurnState: model.game.coin.turnState,
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,

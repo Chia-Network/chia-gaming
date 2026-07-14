@@ -682,9 +682,9 @@ describe('session model selectors', () => {
 
   it('restores between-hand state into the same game view shape live state uses', () => {
     const save: SessionState = {
-      version: 3,
+      version: 4n,
       playerId: 'p1',
-      serializedCradle: 'abc',
+      serializedCradle: new Uint8Array([1, 2, 3]),
       channelReady: true,
       channelStatus: {
         state: 'Active',
@@ -759,7 +759,7 @@ describe('session model selectors', () => {
 
   it('normalizes restored notification ids to bigint', () => {
     const save = {
-      version: 3,
+      version: 4n,
       playerId: 'p1',
       channelNotifQueue: [
         { id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' },
@@ -787,7 +787,7 @@ describe('session model selectors', () => {
     expect(snapshot.gameHandStatus).toBe('playing-move');
 
     const restored = sessionModelFromSave({
-      version: 3n,
+      version: 4n,
       playerId: 'p1',
       gameHandStatus: snapshot.gameHandStatus,
       gameCoinHex: snapshot.gameCoinHex,
@@ -828,7 +828,7 @@ describe('session model selectors', () => {
 
     const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave({
-      version: 3n,
+      version: 4n,
       playerId: 'p1',
       currentHandGameIds: snapshot.currentHandGameIds,
       gameInstances: snapshot.gameInstances,

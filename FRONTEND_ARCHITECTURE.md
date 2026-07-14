@@ -346,13 +346,14 @@ cryptographic nonces or signatures (BLS signatures are deterministic).
 
 #### What is saved (`SessionState`)
 
-An `appState` key in localStorage holds one flat `SessionState` object. The
-object is JSON-serialized and then obfuscated before storage. This is
-obfuscation, not encryption: it keeps raw localStorage less readable, but it is
-not a security boundary and does not change the same-origin trust model
-described above.
+IndexedDB holds one complete `SessionState` record using structured clone.
+The serialized WASM cradle and unacknowledged protocol messages remain raw
+`Uint8Array` values; they are not base64-expanded or wrapped in JSON.
+localStorage holds only small preferences, the resumable-session marker, and
+tab/reset coordination keys. This storage is not encrypted and remains inside
+the same-origin trust model described above.
 
-The current schema version is `3`; because the project is still alpha, older
+The current schema version is `4`; because the project is still alpha, older
 versions are wiped rather than migrated. The `version` field is kept as a future
 migration hook for when there is an installed base to preserve. All game-specific
 fields are optional — a save may contain only pre-game connection state or the
@@ -360,7 +361,7 @@ full mid-game session state:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `number` | Save schema version; currently `3`. |
+| `version` | `bigint` | Save schema version; currently `4`. |
 | `playerId` | `string` | Stable local lobby/player identity for this browser state. |
 | `sessionId` | `string?` | Stable token linking the lobby iframe and game-channel WebSocket. |
 | `alias` | `string?` | Local lobby display alias preference. |
@@ -374,7 +375,7 @@ full mid-game session state:
 | `walletAlert` | `boolean?` | Whether the Wallet tab should show an alert dot. |
 | `trackerAlert` | `boolean?` | Whether the Tracker tab should show an alert dot. |
 | `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active or should be reconnected. |
-| `serializedCradle` | `string?` | Base64-encoded WASM cradle state via `cradle.serialize()`. |
+| `serializedCradle` | `Uint8Array?` | Raw binary WASM cradle state via `cradle.serialize()`. |
 | `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect. |
 | `messageNumber` | `number?` | Next outbound game-message sequence number. |
 | `remoteNumber` | `number?` | Last delivered inbound game-message sequence number. |
@@ -384,9 +385,12 @@ full mid-game session state:
 | `myContribution` | `string?` | This player's channel buy-in contribution as a decimal bigint string. |
 | `theirContribution` | `string?` | Opponent's channel buy-in contribution as a decimal bigint string. |
 | `perGameAmount` | `string?` | Default per-hand amount as a decimal bigint string. |
-| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound binary game messages, with `msg` base64-encoded for JSON storage, that have not been acknowledged by the peer. |
-| `history` | `string[]?` | Game notification log. |
-| `log` | `string[]?` | Diagnostic log history. |
+| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound binary game messages, with raw `Uint8Array` payloads, that have not been acknowledged by the peer. |
+| `humanHistory` | `string[]?` | Recent user-facing transcript entries (capped at 1,000). |
+| `wasmNotificationHistory` | `string[]?` | Recent serialized WASM notifications (capped at 1,000). |
+| `diagnosticLog` | `string[]?` | Recent diagnostic entries (capped at 2,000). |
+| `historicalUnrollCount` | `bigint?` | Development persistence metric exposed directly by WASM when a channel handler is available. |
+| `durabilityWarning` | `string?` | Last delivery-boundary storage failure warning. |
 | `activeGameId` | `string \| null?` | Current live game ID, if any. |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
@@ -437,7 +441,7 @@ fires in two situations:
 - **WASM state changes** — `SessionController.onSaveNeeded` is wired to
   `persistFullSession`. Inside SessionController, `scheduleSave()` debounces
   (500ms) and fires `onSaveNeeded` for ordinary state changes such as
-  notifications, history/log updates, and ack pruning. Delivery-critical message
+  notifications, bounded history updates, and ack pruning. Delivery-critical message
   state uses a stricter path described below. Transaction submission and
   resubmission bookkeeping is owned by the Rust `TransactionManager`, not by a
   frontend `pendingTransactions` save field.
@@ -459,14 +463,22 @@ At that point `SessionController` performs one immediate durability flush:
 1. Cancel any pending debounced save.
 2. Call `onSaveNeeded`, which serializes the cradle and merges the current
    WASM/JS fields into `SessionState`.
-3. Call `flushSessionState()` to synchronously write the save to `localStorage`.
+3. Await `flushSessionState()` to commit the record through an IndexedDB
+   read/write transaction.
 4. Send all queued outbound messages and acks.
 
 This preserves the transport invariant across reloads: the peer only observes a
 message or ack after the local save contains the corresponding
 `messageNumber`/`unackedMessages` or `remoteNumber`/cradle state. A burst of
 events in one drain still causes only one full cradle serialization and one
-`localStorage` write instead of one write per message.
+IndexedDB transaction instead of one write per message. If the transaction
+fails, the app shows a persistent session-storage warning and leaves the
+messages/acks queued; none cross the protocol boundary until a later durability
+retry succeeds.
+
+Development builds log the raw cradle byte count, an estimated total IndexedDB
+record size, the compact historical-unroll count when available, and all three
+history counts. The record-size walk is skipped in production.
 
 #### Session model ownership
 
@@ -546,7 +558,8 @@ state and reloads.
 
 When the user chooses to resume a full save, `performResume` fires:
 
-1. Hydrate local UI state (game params, history, log) from the save.
+1. Hydrate local UI state (game params, human history, WASM notification
+   history, and diagnostic log) from the save.
 2. Connect to the wallet backend (`beginConnect` + `finalize`).
 3. Connect to the tracker. On `connection_status`, reconcile the tracker's
    pairing state against the save (see
@@ -571,11 +584,11 @@ There are two different reset paths:
 
 The browser storage involved is split across three APIs:
 
-- `localStorage` holds the app's flat `SessionState`, tab lease, and persisted
-  UI preferences.
+- `localStorage` holds small preferences, the resumable-session marker, tab
+  lease, and reset coordination keys.
 - `sessionStorage` holds per-tab identity such as the tab id.
-- IndexedDB is used by WalletConnect and may contain session/client state even
-  after `localStorage` has been cleared.
+- IndexedDB holds the raw binary `SessionState`; WalletConnect may also maintain
+  its own IndexedDB state after localStorage has been cleared.
 
 Because tabs and windows for the same origin can share `localStorage`, a hard
 reset also signals sibling tabs to stop persisting their in-memory cached state.
@@ -960,9 +973,8 @@ conversions happen at the call site with an explicit `Number()` cast — the
 **Persistence.** `SessionState` fields including `version`, `messageNumber`,
 `remoteNumber`, `timestamp`, and all game-specific state use `bigint`. The
 `jsonParseLossless` / `jsonStringifyLossless` helpers encode `bigint` as tagged
-objects in localStorage so values survive serialization round-trips without
-precision loss. On load, `parseBigInt()` normalizes anything that might have
-been stored as a plain number (from older versions) back to `bigint`.
+values directly through IndexedDB structured clone, so no JSON conversion or
+precision loss occurs.
 
 **View layer boundary.** React components that render or edit a value receive
 view-safe props: decimal strings for money and CLVM integers, or small `number`s

@@ -22,7 +22,7 @@ import {
 } from './blobSingleton';
 import { SessionController, RestoreStatus } from './SessionController';
 import type { BlockchainPoller } from './BlockchainPoller';
-import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBase64 } from './save';
+import { SessionState, saveSession, getDefaultFee, getBlockchainType } from './save';
 import { coinIdFromBytes, coerceToBytes } from '../util';
 import { log } from '../services/log';
 import {
@@ -186,6 +186,7 @@ export type NotificationKind =
   | 'session-over'
   | 'action-failed'
   | 'infra-error'
+  | 'durability-error'
   | 'game-terminal'
   | 'proposal-rejected'
   | 'insufficient-bal';
@@ -480,6 +481,23 @@ export interface HandTerms {
   theirContribution: bigint;
   gameTimeout: bigint;
   spacepokerUnitSize?: bigint;
+}
+
+export function clearProposalTracking(
+  ids: readonly string[],
+  termsById: Record<string, HandTerms>,
+  groupIdsById: Record<string, string[]>,
+  outgoingIds: Set<string>,
+): void {
+  const trackedIds = new Set(ids);
+  for (const id of ids) {
+    for (const groupId of groupIdsById[id] ?? []) trackedIds.add(groupId);
+  }
+  for (const id of trackedIds) {
+    delete termsById[id];
+    delete groupIdsById[id];
+    outgoingIds.delete(id);
+  }
 }
 
 export function isValidKrunkStake(stake: bigint): boolean {
@@ -895,6 +913,20 @@ export function useGameSession(
     }
   }, []);
 
+  const clearTrackedProposals = useCallback((ids?: readonly string[]) => {
+    const trackedIds = ids ?? Array.from(new Set([
+      ...Object.keys(proposalTermsByIdRef.current),
+      ...Object.keys(proposalGroupIdsByIdRef.current),
+      ...outgoingProposalIdsRef.current,
+    ]));
+    clearProposalTracking(
+      trackedIds,
+      proposalTermsByIdRef.current,
+      proposalGroupIdsByIdRef.current,
+      outgoingProposalIdsRef.current,
+    );
+  }, []);
+
   gameIdsRef.current = gameIds;
   currentHandGameIdsRef.current = currentHandGameIds;
   gameInstancesRef.current = gameInstances;
@@ -945,10 +977,10 @@ export function useGameSession(
     }
   }, []);
 
-  const persistFullSession = useCallback(() => {
+  const persistFullSession = useCallback((): Promise<void> => {
     const go = scRef.current;
     const wasm = go?.getWasmFields();
-    if (!wasm) return;
+    if (!wasm) return Promise.resolve();
     const model = createSessionModel({
       channel: {
         status: channelStatus,
@@ -988,8 +1020,8 @@ export function useGameSession(
       },
       history: {
         humanHistory: [],
-        wasmNotificationHistory: wasm.history,
-        diagnosticLog: wasm.log,
+        wasmNotificationHistory: wasm.wasmNotificationHistory,
+        diagnosticLog: wasm.diagnosticLog,
       },
       myRunningBalance,
       lastOutcomeWin: wasm.lastOutcomeWin,
@@ -1001,7 +1033,7 @@ export function useGameSession(
 
     const save: Partial<SessionState> = {
       blockchainType: getBlockchainType(),
-      serializedCradle: uint8ToBase64(wasm.serializedCradle),
+      serializedCradle: wasm.serializedCradle,
       pairingToken: wasm.pairingToken,
       messageNumber: wasm.messageNumber,
       remoteNumber: wasm.remoteNumber,
@@ -1010,7 +1042,7 @@ export function useGameSession(
       myContribution: wasm.myContribution,
       theirContribution: wasm.theirContribution,
       perGameAmount: wasm.perGameAmount,
-      unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
+      unackedMessages: wasm.unackedMessages,
       activeGameId: wasm.activeGameId,
       activeGameIds: wasm.activeGameIds,
       iProposedHand,
@@ -1020,9 +1052,11 @@ export function useGameSession(
       myAlias: wasm.myAlias,
       opponentAlias: wasm.opponentAlias,
       lastOutcomeWin: wasm.lastOutcomeWin,
+      historicalUnrollCount: wasm.historicalUnrollCount,
+      durabilityWarning: wasm.durabilityWarning,
       ...modelSnapshot,
     };
-    saveSession(save);
+    return saveSession(save);
   }, [
     gameConnectionState, channelStatus, goOnChainPressed, cleanShutdownStarted,
     gameCoin, handStatus, gameTerminal, handKey, gameIds, currentHandGameIds,
@@ -1316,10 +1350,9 @@ export function useGameSession(
       const isFirstGameOfHand = gameIdsRef.current.length === 0;
       const acceptedGroupIds = proposalGroupIdsByIdRef.current[newId] ?? [newId];
       const weProposed = acceptedGroupIds.some(id => outgoingProposalIdsRef.current.has(id));
+      const acceptedTerms = proposalTermsByIdRef.current[newId];
       log(`[notify] ProposalAccepted id=${newId} first=${isFirstGameOfHand} ours=${weProposed}`);
-      for (const id of acceptedGroupIds) {
-        outgoingProposalIdsRef.current.delete(id);
-      }
+      clearTrackedProposals(acceptedGroupIds);
       const nextGameIds = activeIdsAfterProposalAccepted(
         gameIdsRef.current,
         newId,
@@ -1356,7 +1389,6 @@ export function useGameSession(
         clearExpectingCounterProposal();
         cancelStalePeerProposals(newId);
         setLastDisplayedGameId(newId);
-        const acceptedTerms = proposalTermsByIdRef.current[newId];
         if (acceptedTerms) {
           setLastHandTerms(acceptedTerms);
           setComposePerHandAmount(acceptedTerms.myContribution);
@@ -1418,6 +1450,7 @@ export function useGameSession(
           setBetweenHandMode('decision');
           setCachedPeerProposal(null);
           setReviewPeerProposal(null);
+          clearTrackedProposals();
         }
 
         const terminalEvent = terminalEventForInfo(terminalId, terminalInfo, status);
@@ -1555,6 +1588,7 @@ export function useGameSession(
       replaceGameInstances(Object.fromEntries(
         Object.entries(gameInstancesRef.current).filter(([id]) => !failedSet.has(id))
       ));
+      clearTrackedProposals(failedIds);
       setHandStatus('ended');
       cancelStalePeerProposals();
       setCachedPeerProposal(null);
@@ -1570,8 +1604,8 @@ export function useGameSession(
       const cancelledTerms = proposalId ? proposalTermsByIdRef.current[proposalId] ?? null : null;
       const wasOurs = proposalId ? outgoingProposalIdsRef.current.has(proposalId) : false;
       if (proposalId) {
-        delete proposalTermsByIdRef.current[proposalId];
-        outgoingProposalIdsRef.current.delete(proposalId);
+        const cancelledIds = proposalGroupIdsByIdRef.current[proposalId] ?? [proposalId];
+        clearTrackedProposals(cancelledIds);
         const cachedGroup = cachedPeerProposalRef.current?.groupIds ?? [];
         if (cachedPeerProposalRef.current?.id === proposalId || cachedGroup.includes(proposalId)) {
           setCachedPeerProposal(null);
@@ -1624,7 +1658,7 @@ export function useGameSession(
       log(`[game] action failed: ${reason}`);
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, cancelStalePeerProposals, replaceGameInstances, updateGameInstance]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, replaceGameInstances, updateGameInstance]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -1636,6 +1670,13 @@ export function useGameSession(
             break;
           case 'error':
             pushChannel({ kind: 'infra-error', title: 'Error', message: evt.error });
+            break;
+          case 'durability-error':
+            pushChannel({
+              kind: 'durability-error',
+              title: 'Session Storage Error',
+              message: evt.error,
+            });
             break;
           case 'address':
             break;
@@ -1842,8 +1883,8 @@ export function useGameSession(
     },
     history: {
       humanHistory: [],
-      wasmNotificationHistory: sc.history,
-      diagnosticLog: sc.logHistory,
+      wasmNotificationHistory: sc.wasmNotificationHistory,
+      diagnosticLog: sc.diagnosticLog,
     },
     myRunningBalance,
     lastOutcomeWin: sc.lastOutcomeWin,
@@ -1855,7 +1896,7 @@ export function useGameSession(
     gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
     rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,
     composeGameType, composeProposalSent, newHandRequested, myRunningBalance,
-    sc.history, sc.logHistory,
+    sc.wasmNotificationHistory, sc.diagnosticLog,
     sc.lastOutcomeWin,
   ]);
   const gameSessionView = selectGameSessionView(sessionModel);

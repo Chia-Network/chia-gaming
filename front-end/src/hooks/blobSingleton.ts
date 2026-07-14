@@ -7,10 +7,14 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   startNewSession,
   SessionState,
-  base64ToUint8,
 } from './save';
 import { coerceToBytes } from '../util';
 import { log } from '../services/log';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../lib/session/historyLimits';
 
 export var sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
@@ -95,8 +99,7 @@ export async function restoreSession(
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
 
-  const cradleBytes = base64ToUint8(save.serializedCradle);
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
+  const cradle = wasmStateInit.deserializeGame(wasmConnection, save.serializedCradle);
 
   sc.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
   sc.remoteNumber = parseBigIntCounter(save.remoteNumber, 0n);
@@ -105,10 +108,14 @@ export async function restoreSession(
   sc.pairingToken = save.pairingToken ?? '';
   sc.unackedMessages = (save.unackedMessages ?? []).map(m => ({
     msgno: parseBigIntCounter(m.msgno, 0n),
-    msg: base64ToUint8(m.msg),
+    msg: m.msg,
   }));
-  sc.history = [...(save.history ?? [])];
-  sc.logHistory = [...(save.log ?? [])];
+  sc.wasmNotificationHistory = recentEntries(
+    save.wasmNotificationHistory ?? [],
+    WASM_NOTIFICATION_HISTORY_LIMIT,
+  );
+  sc.diagnosticLog = recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
+  sc.durabilityWarning = save.durabilityWarning;
   sc.activeGameId = save.activeGameId ?? null;
   sc.activeGameIds = save.activeGameIds && save.activeGameIds.length > 0
     ? [...save.activeGameIds]
