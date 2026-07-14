@@ -14,6 +14,7 @@ import {
   loadAppState,
   getAlias,
   setAlias,
+  peekAlias,
   getTheme,
   setTheme,
   hardReset,
@@ -585,6 +586,12 @@ describe('alias and theme', () => {
     expect(alias).toMatch(/^Player_/);
     expect(getAlias()).toBe(alias);
     expect(loadAppState().alias).toBe(alias);
+  });
+
+  it('peekAlias returns undefined until set, without inventing', () => {
+    expect(peekAlias()).toBeUndefined();
+    setAlias('MyName');
+    expect(peekAlias()).toBe('MyName');
   });
 
   it('setAlias stores and retrieves', () => {

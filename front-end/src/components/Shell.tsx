@@ -44,6 +44,8 @@ import {
   onFenced,
   offFenced,
   getAlias,
+  peekAlias,
+  setAlias,
 } from '../hooks/save';
 import { sessionController, destroySessionController } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
@@ -1025,7 +1027,7 @@ const Shell = () => {
       type: 'session_proposal',
       proposer_amount: advisory.my_amount,
       responder_amount: advisory.their_amount,
-      from_alias: getAlias(),
+      from_alias: peekAlias() ?? getAlias(),
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
       game_session_id: gameSessionId,
@@ -1281,11 +1283,11 @@ const Shell = () => {
             setRestoreTrackerReconciled(true);
             // Restore never goes through startFreshSessionWithPeer, which is
             // otherwise the only place that marks the tracker busy.
-            conn.setBusy(true, save.myAlias ?? save.alias);
+            conn.setBusy(true, save.myAlias ?? peekAlias());
           } else if (save?.serializedCradle || save?.pairingToken) {
             // Active restore without a peer id still must not look "available".
             setRestoreTrackerReconciled(true);
-            conn.setBusy(true, save.myAlias ?? save.alias);
+            conn.setBusy(true, save.myAlias ?? peekAlias());
           }
           if (peerSessionRef.current && sessionController) {
             sessionController.resendUnacked();
@@ -1320,7 +1322,11 @@ const Shell = () => {
           busy: shouldReportTrackerBusy(sessionPhaseRef.current)
             || !!sessionConfigRef.current?.restoring
             || !!(sessionSaveRef.current?.serializedCradle || sessionSaveRef.current?.pairingToken),
-          alias: sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias,
+          // Prefer session aliases, then the lobby-synced prefs alias. Never call
+          // getAlias() here — inventing Player_* would pollute identify/set_busy.
+          alias: sessionConfigRef.current?.myAlias
+            ?? sessionSaveRef.current?.myAlias
+            ?? peekAlias(),
         }),
       });
     } catch (err) {
@@ -1534,7 +1540,7 @@ const Shell = () => {
   }, []);
 
   const handleTerminal = useCallback(() => {
-    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     trackerConnRef.current?.setBusy(false, alias);
     stopBalancePolling();
     resetPeerRelayState();
@@ -1557,6 +1563,21 @@ const Shell = () => {
   }, []);
 
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
+
+  // Lobby owns the display name; keep local prefs aligned so getAlias/presence
+  // do not invent a Player_* fallback that later overwrites the tracker.
+  useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      const data = ev.data;
+      if (!data || data.type !== 'lobby-alias' || typeof data.alias !== 'string') return;
+      const trimmed = data.alias.trim();
+      if (!trimmed) return;
+      if (peekAlias() === trimmed) return;
+      setAlias(trimmed);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
@@ -1841,7 +1862,7 @@ const Shell = () => {
   }, []);
 
   const cancelDashboardSession = useCallback(() => {
-    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? sessionSaveRef.current?.alias;
+    const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
     if (peerId) sendSessionReject(peerId);
     resetPeerRelayState();

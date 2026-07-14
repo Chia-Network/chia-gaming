@@ -38,6 +38,12 @@ function formatAmount(mojoStr: string): string {
   return `${whole.toLocaleString()}.${fracStr} XCH`;
 }
 
+/** Keep the parent Shell prefs alias in sync with the lobby display name. */
+function notifyParentAlias(alias: string): void {
+  if (window.parent === window) return;
+  window.parent.postMessage({ type: 'lobby-alias', alias }, '*');
+}
+
 const LobbyScreen = () => {
   const params = getSearchParams();
   const uniqueId = params.uniqueId || '';
@@ -83,6 +89,7 @@ const LobbyScreen = () => {
       autoJoinedRef.current = true;
       setMyAlias(savedAlias);
       setAliasConfirmed(true);
+      notifyParentAlias(savedAlias);
       joinLobby(savedAlias);
     } else {
       lobbyHsLog('alias_missing_waiting_for_user', {
@@ -103,6 +110,7 @@ const LobbyScreen = () => {
     setAlias(trimmed);
     setMyAlias(trimmed);
     setAliasConfirmed(true);
+    notifyParentAlias(trimmed);
     joinLobby(trimmed);
   }
 
@@ -110,6 +118,7 @@ const LobbyScreen = () => {
     const value = e.target.value;
     setEditingAlias(false);
     setMyAlias(value);
+    notifyParentAlias(value.trim());
     setLobbyAlias(publicId ?? '', value);
   }
 

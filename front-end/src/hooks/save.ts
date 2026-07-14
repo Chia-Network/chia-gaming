@@ -891,6 +891,11 @@ export async function hardReset(): Promise<void> {
 
 // --- Alias ---
 
+/** Return the stored lobby alias without inventing a fallback. */
+export function peekAlias(): string | undefined {
+  return loadState().alias;
+}
+
 export function getAlias(): string {
   const state = loadState();
   if (state.alias) return state.alias;

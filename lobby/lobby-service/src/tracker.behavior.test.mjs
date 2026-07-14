@@ -159,6 +159,41 @@ async function identifyGame(origin, sessionId) {
   return game;
 }
 
+test('game-channel identify does not clobber a lobby-chosen alias', async () => {
+  const tracker = await startTracker();
+  try {
+    const sessionId = 'secret-alias-clobber';
+    const { lobby } = await joinLobby(tracker.origin, sessionId, 'Alice');
+
+    const game = await openWs(tracker.origin, '/ws/game');
+    sendGame(game, {
+      type: 'identify',
+      session_id: sessionId,
+      busy: true,
+      alias: 'Player_deadbeef',
+    });
+    await nextGame(game, (msg) => msg.type === 'registered');
+
+    sendGame(game, {
+      type: 'set_busy',
+      session_id: sessionId,
+      busy: false,
+      alias: 'Player_deadbeef',
+    });
+
+    const aliasProbe = await openWs(tracker.origin, '/ws/lobby');
+    sendJson(aliasProbe, { type: 'get_alias', session_id: sessionId });
+    const aliasResult = await nextJson(aliasProbe, (msg) => msg.type === 'alias_result');
+    assert.equal(aliasResult.alias, 'Alice');
+
+    await closeWs(lobby);
+    await closeWs(game);
+    await closeWs(aliasProbe);
+  } finally {
+    await tracker.stop();
+  }
+});
+
 test('public lobby updates never include the secret nonce', async () => {
   const tracker = await startTracker();
   try {

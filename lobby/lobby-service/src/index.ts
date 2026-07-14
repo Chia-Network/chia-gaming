@@ -214,6 +214,10 @@ function aliasForPlayer(playerId: string): string {
 
 function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
   if (!alias) return;
+  // Lobby set_alias / join / change_alias own the display name. Game-channel
+  // identify/set_busy may carry a generated prefs fallback (Player_*) and must
+  // not clobber a name the user already chose in the lobby.
+  if (knownAliases.has(sessionId)) return;
   knownAliases.set(sessionId, alias);
   const player = lobby.players[playerId];
   if (player) {
