@@ -146,6 +146,10 @@ mod gaming_wasm {
         cradle: TransactionManager<SynchronousGameCradle>,
     }
 
+    /// Increment for every incompatible change to the persisted `JsCradle`
+    /// shape, including incompatible shapes owned by nested Rust types.
+    const CRADLE_SERIALIZATION_SCHEMA: u32 = 1;
+
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsWatchReport {
         created_watched: Vec<String>,
@@ -439,6 +443,11 @@ mod gaming_wasm {
         Ok(new_id)
     }
 
+    #[wasm_bindgen]
+    pub fn cradle_serialization_schema() -> u32 {
+        CRADLE_SERIALIZATION_SCHEMA
+    }
+
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
     where
         F: FnOnce(&mut JsCradle) -> Result<T, types::Error>,
@@ -460,6 +469,11 @@ mod gaming_wasm {
         with_game(cid, move |cradle: &mut JsCradle| {
             let bytes = bencodex::to_vec(&cradle)
                 .map_err(|e| types::Error::StrErr(e.to_string()))?;
+            bencodex::from_slice::<JsCradle>(&bytes).map_err(|e| {
+                types::Error::StrErr(format!(
+                    "serialized cradle failed immediate schema verification: {e}"
+                ))
+            })?;
             Ok(js_sys::Uint8Array::from(bytes.as_slice()))
         })
     }

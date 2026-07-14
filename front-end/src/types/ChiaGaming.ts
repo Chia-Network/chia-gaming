@@ -208,6 +208,7 @@ export interface WasmConnection {
   create_rng: (seed: string) => number;
   create_game_cradle: (config: GameCradleCreateConfig) => { id: number; puzzle_hash: string };
   create_serialized_game: (serialized: Uint8Array, new_seed: string) => number;
+  cradle_serialization_schema: () => number;
   deposit_file: (name: string, data: Uint8Array) => void;
 
   // Blockchain

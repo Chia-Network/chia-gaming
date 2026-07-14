@@ -33,6 +33,7 @@ import {
 
 export interface WasmFields {
   serializedCradle: Uint8Array;
+  cradleSchemaVersion: bigint;
   pairingToken: string;
   messageNumber: bigint;
   remoteNumber: bigint;
@@ -62,6 +63,8 @@ function clvmToBytes(value: Program | null): Uint8Array {
 
 const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
+/** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
+const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 
 function extractErrorMessage(e: unknown): string {
   if (e instanceof Error) {
@@ -98,6 +101,7 @@ export class SessionController implements PollingCradle {
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private lastUnackedResendAt = 0;
   messageNumber: bigint;
   remoteNumber: bigint;
   cradle: ChiaGame | undefined;
@@ -277,6 +281,9 @@ export class SessionController implements PollingCradle {
 
   receiveKeepalive() {
     this.notePeerActivity();
+    // Peer is alive but may have missed our outbound frames (e.g. they reloaded
+    // mid-handshake). Retransmit anything still awaiting ack.
+    this.resendUnacked();
   }
 
   startKeepaliveTimer() {
@@ -631,8 +638,16 @@ export class SessionController implements PollingCradle {
       if (this.pendingEffects.size === 0
           && this.eventQueue.length === 0
           && !this.drainScheduled
-          && !this.durabilityFlushScheduled) {
+          && !this.durabilityFlushScheduled
+          && this.pendingOutboundSends.length === 0
+          && this.pendingAcks.length === 0) {
         return;
+      }
+      // A durability pass may have deferred itself while the event queue was
+      // non-empty. Ensure another pass is scheduled before yielding.
+      if ((this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0)
+          && !this.durabilityFlushScheduled) {
+        this.scheduleDurabilityFlush();
       }
     }
     throw new Error('SessionController pending work did not settle');
@@ -751,6 +766,10 @@ export class SessionController implements PollingCradle {
       } else {
         this.sendAck(msgno);
       }
+      // Duplicate inbound usually means the peer retransmitted after a reload or
+      // lost our reply. Re-ack alone is not enough — also replay our unacked
+      // outbound (e.g. OfferSent payload) so handshake can finish.
+      this.resendUnacked();
       return;
     }
     if (msgno > this.remoteNumber + 1n) {
@@ -803,6 +822,9 @@ export class SessionController implements PollingCradle {
 
   resendUnacked() {
     if (this.unackedMessages.length === 0) return;
+    const now = Date.now();
+    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return;
+    this.lastUnackedResendAt = now;
     for (const { msgno, msg } of this.unackedMessages) {
       this.sendMessage(msgno, msg);
     }
@@ -882,6 +904,8 @@ export class SessionController implements PollingCradle {
 
     // Always flush the outer persistence debounce as well: React may have
     // queued a full-session save without SessionController's timer being set.
+    // onSaveNeeded is required to update `cached` synchronously before returning
+    // its Promise so this flush snapshots the new cradle, not a pre-save state.
     const persistence = flushSessionState();
     const durability = this.flushDurabilityAndSend();
     return Promise.all([saveRequest, persistence, durability]).then(() => {});
@@ -934,6 +958,10 @@ export class SessionController implements PollingCradle {
       const saveRequest = Promise.resolve(this.onSaveNeeded());
       void saveRequest.catch(() => {});
       try {
+        // onSaveNeeded must update the in-memory session synchronously before
+        // returning its Promise (see flushPendingSave). Flushing first then
+        // persists that snapshot; awaiting the Promise only waits for the
+        // outer debounce settlement.
         await flushSessionState();
         await saveRequest;
       } catch (error) {
@@ -973,11 +1001,12 @@ export class SessionController implements PollingCradle {
   }
 
   getWasmFields(): WasmFields | null {
-    if (!this.cradle) return null;
+    if (!this.cradle || !this.wc) return null;
     try {
       const serializedCradle = this.cradle.serialize();
       return {
         serializedCradle,
+        cradleSchemaVersion: BigInt(this.wc.cradle_serialization_schema()),
         pairingToken: this.pairingToken,
         messageNumber: this.messageNumber,
         remoteNumber: this.remoteNumber,

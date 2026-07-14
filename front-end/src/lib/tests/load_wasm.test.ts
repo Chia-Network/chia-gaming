@@ -31,6 +31,7 @@ import {
 import {
   _resetForTests as resetSaveState,
   flushSessionState,
+  hasSavedSessionMarker,
   peekSession,
   saveSession,
 } from '../../hooks/save';
@@ -166,6 +167,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
+  resetSaveState();
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
     request.onsuccess = () => resolve();
@@ -316,6 +318,55 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
 
 async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
   await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+}
+
+function assertCradleRoundTrip(
+  stage: string,
+  controller: SessionController,
+): Uint8Array {
+  const wasmFields = controller.getWasmFields();
+  const serialized = wasmFields?.serializedCradle;
+  assert.ok(serialized instanceof Uint8Array, `${stage}: expected serialized cradle bytes`);
+  assert.equal(
+    wasmFields?.cradleSchemaVersion,
+    BigInt(WholeWasmObject.cradle_serialization_schema()),
+    `${stage}: expected current cradle schema`,
+  );
+  assert.ok(serialized.byteLength > 0, `${stage}: expected non-empty serialized cradle`);
+  // Fingerprint immediately: if serialize_cradle returned a WASM-memory view,
+  // later WASM activity would mutate these bytes in place.
+  const ownedFingerprint = Uint8Array.from(serialized);
+  const state = controller.getProtocolStatePretty() ?? 'unknown';
+  const protocolType = state.split('\n', 1)[0];
+  try {
+    const restoredId = WholeWasmObject.create_serialized_game(
+      serialized,
+      `reload-regression-${stage}`,
+    );
+    assert.equal(typeof restoredId, 'number');
+    const reserialized = WholeWasmObject.serialize_cradle(restoredId);
+    assert.deepEqual(
+      serialized,
+      ownedFingerprint,
+      `${stage}: serialized cradle bytes mutated after further WASM use ` +
+      `(byteLength=${serialized.byteLength} byteOffset=${serialized.byteOffset})`,
+    );
+    assert.deepEqual(
+      reserialized,
+      serialized,
+      `${stage}: restored cradle should reserialize identically`,
+    );
+  } catch (e) {
+    throw new Error(
+      `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
+      `protocol=${state}\n${describeThrown(e)}`,
+    );
+  }
+  testLog(
+    `${stage}: bytes=${serialized.byteLength} byteOffset=${serialized.byteOffset} ` +
+    `protocol=${protocolType}`,
+  );
+  return serialized;
 }
 
 async function pollOnce(poller: BlockchainPoller): Promise<void> {
@@ -494,7 +545,16 @@ it(
         peer_conn1,
         wasm_init1
       );
-      wasm_blob1.onSaveNeeded = () => Promise.resolve();
+      wasm_blob1.onSaveNeeded = () => {
+        const fields = wasm_blob1.getWasmFields();
+        if (!fields) {
+          return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+        }
+        return saveSession({
+          ...fields,
+          pairingToken: 'reload-regression-p1',
+        });
+      };
       cradle1.set_blob(wasm_blob1);
       testLog('after cradle1 init');
 
@@ -515,44 +575,98 @@ it(
         peer_conn2,
         wasm_init2
       );
-      wasm_blob2.onSaveNeeded = () => Promise.resolve();
+      wasm_blob2.onSaveNeeded = () => {
+        const fields = wasm_blob2.getWasmFields();
+        if (!fields) {
+          return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+        }
+        return saveSession({
+          ...fields,
+          pairingToken: 'reload-regression-p2',
+        });
+      };
       cradle2.set_blob(wasm_blob2);
       testLog('after cradle2 init');
 
       await flushWrapperDrain([cradle1, cradle2]);
+      assertCradleRoundTrip('initiator-sent-a', wasm_blob1);
+      assertCradleRoundTrip('receiver-waiting-for-a', wasm_blob2);
+
       const sentA = cradle1.outbound_messages();
       assert.equal(sentA.length, 1, 'initiator should have one HandshakeA message');
-      const sentABytes = wasm_blob1.getWasmFields()?.serializedCradle;
-      assert.ok(sentABytes instanceof Uint8Array);
-      assert.ok(sentABytes.byteLength > 0);
-      void saveSession({
-        serializedCradle: sentABytes,
-        pairingToken: 'reload-regression',
-      });
 
       cradle2.deliver_message(sentA[0].msgno, sentA[0].msg);
+      assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       await flushWrapperDrain([cradle2]);
-      const sentBBytes = wasm_blob2.getWasmFields()?.serializedCradle;
-      assert.ok(sentBBytes instanceof Uint8Array);
-      assert.ok(sentBBytes.byteLength > 0);
+      const sentB = cradle2.outbound_messages();
+      assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
+
+      cradle1.deliver_message(sentB[0].msgno, sentB[0].msg);
+      assertCradleRoundTrip('initiator-processed-b-needs-launcher', wasm_blob1);
+      await flushWrapperDrain([cradle1]);
+      assertCradleRoundTrip('initiator-provided-launcher-sent-c', wasm_blob1);
+      const sentC = cradle1.outbound_messages();
+      assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
+
+      cradle2.deliver_message(sentC[0].msgno, sentC[0].msg);
+      assertCradleRoundTrip('receiver-processed-c-sent-d', wasm_blob2);
+      await flushWrapperDrain([cradle2]);
+      const sentD = cradle2.outbound_messages();
+      assert.equal(sentD.length, 1, 'receiver should have one HandshakeD message');
+
+      cradle1.deliver_message(sentD[0].msgno, sentD[0].msg);
+      assertCradleRoundTrip('initiator-processed-d-waiting-for-height', wasm_blob1);
+      await fakeBlockchainInfo.waitForNextBlock();
+      await pollOnce(poller);
+      assertCradleRoundTrip('initiator-height-observed-needs-coin-spend', wasm_blob1);
+      await flushWrapperDrain([cradle1]);
+      assertCradleRoundTrip('initiator-wallet-offer-complete-sent-e', wasm_blob1);
+      const sentE = cradle1.outbound_messages();
+      assert.equal(sentE.length, 1, 'initiator should have one HandshakeE message');
+
+      cradle2.deliver_message(sentE[0].msgno, sentE[0].msg);
+      const makingOfferAcceptanceBytes = assertCradleRoundTrip(
+        'receiver-processed-e-making-offer-acceptance',
+        wasm_blob2,
+      );
       void saveSession({
-        serializedCradle: sentBBytes,
+        serializedCradle: makingOfferAcceptanceBytes,
+        cradleSchemaVersion: BigInt(WholeWasmObject.cradle_serialization_schema()),
         pairingToken: 'reload-regression',
       });
+      await flushSessionState();
+
+      // Simulate marker-only boot + preference patches while resume dialog is open.
+      // Stop live durability saves so they cannot race the boot-patch simulation.
+      wasm_blob1.onSaveNeeded = () => Promise.resolve();
+      wasm_blob2.onSaveNeeded = () => Promise.resolve();
+      resetSaveState();
+      assert.ok(hasSavedSessionMarker());
+      void saveSession({ diagnosticLog: ['boot-before-resume'] });
       await flushSessionState();
 
       resetSaveState();
       const reloaded = await peekSession();
       assert.ok(reloaded?.serializedCradle instanceof Uint8Array);
-      assert.equal(reloaded.serializedCradle.byteLength, sentBBytes.byteLength);
-      assert.deepEqual(reloaded.serializedCradle, sentBBytes);
+      assert.equal(
+        reloaded.serializedCradle.byteLength,
+        makingOfferAcceptanceBytes.byteLength,
+      );
+      assert.deepEqual(reloaded.serializedCradle, makingOfferAcceptanceBytes);
+      assert.ok(
+        reloaded.diagnosticLog?.includes('boot-before-resume'),
+        'preference patch during marker-only boot must be retained',
+      );
       const restoredId = WholeWasmObject.create_serialized_game(
         reloaded.serializedCradle,
         'reload-regression-seed',
       );
       assert.equal(typeof restoredId, 'number');
+
+      await flushWrapperDrain([cradle2]);
+      assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
       testLog(
-        `reload regression sentA=${sentABytes.byteLength} sentB=${sentBBytes.byteLength}` +
+        `reload regression makingOfferAcceptance=${makingOfferAcceptanceBytes.byteLength}` +
         ` restored=${reloaded.serializedCradle.byteLength}`,
       );
 

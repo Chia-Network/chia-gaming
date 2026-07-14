@@ -5,6 +5,7 @@ import {
   SESSION_DB_NAME,
   writeSessionRecord,
 } from '../lib/session/indexedDb';
+import { isDenseNumericByteObject } from '../lib/reactPropSafe';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -81,6 +82,7 @@ export interface SessionState {
   // Session / game state
   blockchainType?: BlockchainType;
   serializedCradle?: Uint8Array;
+  cradleSchemaVersion?: bigint;
   pairingToken?: string;
   sessionPeerId?: string;
   gameSessionId?: string;
@@ -157,7 +159,7 @@ const STATE_KEY = 'appState';
 const PREFERENCES_KEY = 'appPreferences';
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 5n;
+export const CURRENT_VERSION = 6n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
@@ -254,7 +256,29 @@ function signalHardResetToOtherTabs(): void {
   }
 }
 
-function clearAllIndexedDbForHardReset(): void {
+/** Cap IndexedDB work so Start Over always reaches reload (open/databases can hang). */
+export const HARD_RESET_IDB_TIMEOUT_MS = 2000;
+
+function withTimeout(promise: Promise<void>, ms: number, label: string): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      console.warn(`[save] ${label} timed out after ${ms}ms; continuing hard reset`);
+      finish();
+    }, ms);
+    promise.then(finish, (e) => {
+      console.error(`[save] ${label} failed:`, e);
+      finish();
+    }).finally(() => clearTimeout(timer));
+  });
+}
+
+async function clearAllIndexedDbForHardReset(): Promise<void> {
   try {
     if (typeof indexedDB === 'undefined') return;
     const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
@@ -263,24 +287,21 @@ function clearAllIndexedDbForHardReset(): void {
       // enumerated, so fall back to deleting the databases we know about (e.g.
       // WalletConnect's) rather than leaving them behind.
       console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
-      void Promise.all(
+      await Promise.all(
         KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
       );
       return;
     }
 
-    void dynamicDatabaseLookup.databases()
-      .then((databases) => Promise.all(
-        databases
-          .map((db) => db.name)
-          .filter((name): name is string => typeof name === 'string' && name.length > 0)
-          .map((name) => deleteIndexedDb(name, 'hard reset')),
-      ))
-      .catch((e) => {
-        console.error('[save] failed to enumerate IndexedDB databases during hard reset:', e);
-      });
+    const databases = await dynamicDatabaseLookup.databases();
+    await Promise.all(
+      databases
+        .map((db) => db.name)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0)
+        .map((name) => deleteIndexedDb(name, 'hard reset')),
+    );
   } catch (e) {
-    console.error('[save] failed to start IndexedDB cleanup during hard reset:', e);
+    console.error('[save] failed to clear IndexedDB during hard reset:', e);
   }
 }
 
@@ -352,6 +373,28 @@ export function isFenced(): boolean {
   return fenced;
 }
 
+export function hasSavedSessionMarker(): boolean {
+  try {
+    return localStorage.getItem(SESSION_MARKER_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** Force the boot Resume/Start Over dialog on next load. */
+export function markSavedSession(): void {
+  try {
+    localStorage.setItem(SESSION_MARKER_KEY, '1');
+  } catch { /* ignore */ }
+}
+
+/** Clear the boot Resume/Start Over marker. */
+export function clearSavedSessionMarker(): void {
+  try {
+    localStorage.removeItem(SESSION_MARKER_KEY);
+  } catch { /* ignore */ }
+}
+
 function assertNoNumbers(obj: unknown, path: string): void {
   if (obj === null || obj === undefined) return;
   if (typeof obj === 'number') {
@@ -364,6 +407,11 @@ function assertNoNumbers(obj: unknown, path: string): void {
   }
   if (ArrayBuffer.isView(obj)) return;
   if (typeof obj !== 'object') return;
+  if (!Array.isArray(obj) && isDenseNumericByteObject(obj)) {
+    const msg = `[save] BUG: degraded numeric-keyed byte object at "${path}" (refusing to persist)`;
+    console.error(msg);
+    throw new Error(msg);
+  }
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i++) {
       assertNoNumbers(obj[i], `${path}[${i}]`);
@@ -465,6 +513,11 @@ function estimateRecordBytes(value: unknown, seen = new Set<object>()): number {
   if (ArrayBuffer.isView(value)) return value.byteLength;
   if (seen.has(value)) return 0;
   seen.add(value);
+  // Degraded cradles are plain numeric-keyed objects; do not Object.entries them
+  // (enumerating hundreds of thousands of keys can OOM).
+  if (!Array.isArray(value) && isDenseNumericByteObject(value)) {
+    return 4096;
+  }
   if (Array.isArray(value)) {
     return value.reduce((total, item) => total + estimateRecordBytes(item, seen), 0);
   }
@@ -499,9 +552,9 @@ function queueWrite(state: SessionState): Promise<void> {
     await writeSessionRecord(snapshot);
     if (fenced) return;
     if (isResumable(snapshot)) {
-      localStorage.setItem(SESSION_MARKER_KEY, '1');
+      markSavedSession();
     } else {
-      localStorage.removeItem(SESSION_MARKER_KEY);
+      clearSavedSessionMarker();
     }
   });
   return writeChain;
@@ -518,26 +571,36 @@ function settleScheduledPersist(error?: unknown): void {
 }
 
 export function flushSessionState(): Promise<void> {
-  if (!cached || fenced) return Promise.resolve();
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-    persistTimer = null;
-  }
-  const pending = persistPromise;
-  const resolve = resolvePersist;
-  const reject = rejectPersist;
-  persistPromise = null;
-  resolvePersist = null;
-  rejectPersist = null;
-  const write = queueWrite(cached);
-  void write.then(
-    () => resolve?.(),
-    (error) => {
-      console.error('[save] failed to persist session state:', error);
+  return hydrateSessionCacheFromDisk().then(() => {
+    if (!cached || fenced) return Promise.resolve();
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    const pending = persistPromise;
+    const resolve = resolvePersist;
+    const reject = rejectPersist;
+    persistPromise = null;
+    resolvePersist = null;
+    rejectPersist = null;
+    if (!isResumable(cached) && hasSavedSessionMarker()) {
+      const error = new Error(
+        'Refusing to persist non-resumable in-memory state over a marked saved session',
+      );
+      console.error('[save]', error.message);
       reject?.(error);
-    },
-  );
-  return pending ?? write;
+      return Promise.reject(error);
+    }
+    const write = queueWrite(cached);
+    void write.then(
+      () => resolve?.(),
+      (error) => {
+        console.error('[save] failed to persist session state:', error);
+        reject?.(error);
+      },
+    );
+    return pending ?? write;
+  });
 }
 
 function schedulePersist(): Promise<void> {
@@ -604,11 +667,69 @@ export function loadState(): SessionState {
 /** @deprecated — alias for loadState() */
 export function loadAppState(): SessionState { return loadState(); }
 
+/**
+ * Ensure in-memory `cached` includes any resumable IndexedDB record before
+ * mutating/persisting. Boot can show the resume dialog from the sync marker
+ * without reading IndexedDB; without this, preference-only patches (logs,
+ * alerts, etc.) would overwrite the durable cradle with a non-resumable
+ * record and make Resume report "saved session unavailable".
+ */
+export async function hydrateSessionCacheFromDisk(): Promise<void> {
+  if (cached && isResumable(cached)) return;
+  if (!hasSavedSessionMarker()) return;
+
+  // Do not flush a prefs-only cache over disk. Cancel the debounce; the caller
+  // will schedule a new persist after merging with the hydrated record.
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  if (persistPromise && cached && !isResumable(cached)) {
+    settleScheduledPersist();
+  }
+
+  await writeChain;
+  const record = await readSessionRecord();
+  if (!record || record.version !== CURRENT_VERSION || !isResumable(record)) return;
+
+  const mem = cached ?? loadPreferences();
+  cached = {
+    ...record,
+    playerId: mem.playerId,
+    sessionId: mem.sessionId ?? record.sessionId,
+    alias: mem.alias ?? record.alias,
+    theme: mem.theme ?? record.theme,
+    defaultFee: mem.defaultFee ?? record.defaultFee,
+    feeUnit: mem.feeUnit ?? record.feeUnit,
+    trackerUrl: mem.trackerUrl ?? record.trackerUrl,
+    savedGames: mem.savedGames ?? record.savedGames,
+    activeTab: mem.activeTab ?? record.activeTab,
+    unreadGame: mem.unreadGame ?? record.unreadGame,
+    walletAlert: mem.walletAlert ?? record.walletAlert,
+    trackerAlert: mem.trackerAlert ?? record.trackerAlert,
+    blockchainType: mem.blockchainType ?? record.blockchainType,
+    humanHistory: mem.humanHistory ?? record.humanHistory,
+    diagnosticLog: mem.diagnosticLog ?? record.diagnosticLog,
+    wasmNotificationHistory: mem.wasmNotificationHistory ?? record.wasmNotificationHistory,
+  };
+}
+
 function mutate(fn: (state: SessionState) => void): Promise<void> {
-  const state = loadState();
-  fn(state);
-  savePreferences(state);
-  return schedulePersist();
+  // Fast path: memory already has the resumable session, or there is no
+  // marked disk session to protect. Keep this synchronous so preference
+  // helpers can read their own writes immediately.
+  if ((cached && isResumable(cached)) || !hasSavedSessionMarker()) {
+    const state = loadState();
+    fn(state);
+    savePreferences(state);
+    return schedulePersist();
+  }
+  return hydrateSessionCacheFromDisk().then(() => {
+    const state = loadState();
+    fn(state);
+    savePreferences(state);
+    return schedulePersist();
+  });
 }
 
 // --- Convenience accessors ---
@@ -666,22 +787,34 @@ function hasWalletConnectStorage(): boolean {
  * does not count as resumable.
  */
 export async function peekSession(): Promise<SessionState | null> {
-  const preferences = loadState();
+  // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
+  // a durable resumable record that the boot marker is advertising.
+  await hydrateSessionCacheFromDisk();
   if (persistPromise) await flushSessionState();
   await writeChain;
   let record = await readSessionRecord();
   if (record && record.version !== CURRENT_VERSION) {
+    // Wipe the unreadable record but keep the boot marker so reload still
+    // forces Resume/Start Over instead of silently booting into leftover
+    // preference state (e.g. blockchainType).
     await deleteSessionRecord();
-    localStorage.removeItem(SESSION_MARKER_KEY);
-    record = null;
+    markSavedSession();
+    cached = loadPreferences();
+    return null;
   }
   if (record) {
+    const preferences = loadPreferences();
     cached = { ...preferences, ...record };
     savePreferences(cached);
-    return isResumable(cached) ? cached : null;
+    if (isResumable(cached)) {
+      markSavedSession();
+      return cached;
+    }
+    clearSavedSessionMarker();
+    return null;
   }
-  localStorage.removeItem(SESSION_MARKER_KEY);
-  cached = preferences;
+  clearSavedSessionMarker();
+  cached = loadPreferences();
   if (hasWalletConnectStorage()) return cached;
   return null;
 }
@@ -711,20 +844,17 @@ export function clearSession(): Promise<void> {
   };
   savePreferences(cached);
   const deletePromise = writeChain = writeChain.catch(() => {}).then(async () => {
-    if (isResumable(cached!)) {
-      await writeSessionRecord(structuredClone(cached!));
-      localStorage.setItem(SESSION_MARKER_KEY, '1');
-    } else {
-      await deleteSessionRecord();
-      localStorage.removeItem(SESSION_MARKER_KEY);
-    }
+    await deleteSessionRecord();
+    clearSavedSessionMarker();
   });
   return deletePromise;
 }
 
-export function hardReset(): void {
+export async function hardReset(): Promise<void> {
   signalHardResetToOtherTabs();
   stopPersistenceForHardReset();
+  // Clear sync storage first so the boot marker is gone even if IndexedDB hangs
+  // (open / databases() can stall indefinitely with open WalletConnect connections).
   try {
     localStorage.clear();
   } catch (e) {
@@ -735,7 +865,16 @@ export function hardReset(): void {
   } catch (e) {
     console.error('[save] failed to clear sessionStorage during hard reset:', e);
   }
-  clearAllIndexedDbForHardReset();
+  await withTimeout((async () => {
+    if (typeof indexedDB !== 'undefined' && typeof indexedDB.open === 'function') {
+      try {
+        await deleteSessionRecord();
+      } catch (e) {
+        console.error('[save] failed to delete session record during hard reset:', e);
+      }
+    }
+    await clearAllIndexedDbForHardReset();
+  })(), HARD_RESET_IDB_TIMEOUT_MS, 'IndexedDB hard reset cleanup');
 }
 
 // --- Alias ---
@@ -834,6 +973,9 @@ export function getSaveList(): string[] {
 }
 
 export function startNewSession() {
+  // Do not set SESSION_MARKER_KEY here. The marker must mean a durable
+  // resumable IndexedDB record exists; setting it early makes boot show
+  // Resume/Start Over before anything can be resumed.
   mutate(s => { s.savedGames = []; });
 }
 

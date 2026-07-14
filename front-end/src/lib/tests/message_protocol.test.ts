@@ -11,7 +11,14 @@ import {
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { restoreSession } from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { _resetForTests as resetSaveState, peekSession, saveSession, type SessionState } from '../../hooks/save';
+import {
+  _resetForTests as resetSaveState,
+  flushSessionState,
+  hasSavedSessionMarker,
+  peekSession,
+  saveSession,
+  type SessionState,
+} from '../../hooks/save';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   WASM_NOTIFICATION_HISTORY_LIMIT,
@@ -24,7 +31,9 @@ const mockRpc = new Proxy({} as InternalBlockchainInterface, {
 const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 const mockWasmConnection = new Proxy({} as WasmConnection, {
-  get: () => () => undefined,
+  get: (_target, property) => property === 'cradle_serialization_schema'
+    ? () => 1
+    : () => undefined,
 });
 
 function makeStorage(): Storage {
@@ -125,6 +134,7 @@ function createReadyBlob(
   blob.onSaveNeeded = () => saveSession({
     blockchainType: 'simulator',
     serializedCradle: cradle.serialize(),
+    cradleSchemaVersion: 1n,
     messageNumber: blob.messageNumber,
     remoteNumber: blob.remoteNumber,
     unackedMessages: blob.unackedMessages,
@@ -158,6 +168,7 @@ function createUnreadyBlob(
   blob.onSaveNeeded = () => saveSession({
     blockchainType: 'simulator',
     serializedCradle: cradle.serialize(),
+    cradleSchemaVersion: 1n,
     messageNumber: blob.messageNumber,
     remoteNumber: blob.remoteNumber,
     unackedMessages: blob.unackedMessages,
@@ -261,6 +272,47 @@ describe('duplicate detection', () => {
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 1]);
+  });
+
+  it('retransmits unacked outbound when a duplicate inbound arrives (post-reload peer)', async () => {
+    const { blob, sentMessages, sentAcks } = createReadyBlob();
+    activeBlob = blob;
+    const offer = enc('offer-sent-payload');
+    blob.unackedMessages = [{ msgno: 2n, msg: offer }];
+
+    blob.deliverMessage(1n, enc('first'));
+    await blob.flushPendingWork();
+    sentMessages.length = 0;
+    sentAcks.length = 0;
+
+    // Peer reloaded and resent msgno 1; we must replay our still-unacked offer.
+    blob.deliverMessage(1n, enc('first-again'));
+    await blob.flushPendingWork();
+
+    expect(sentAcks).toEqual([1]);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: offer }]);
+  });
+});
+
+describe('keepalive retransmission', () => {
+  it('retransmits unacked outbound when a peer keepalive arrives', () => {
+    const { blob, sentMessages } = createReadyBlob();
+    activeBlob = blob;
+    const pending = enc('pending-offer');
+    blob.unackedMessages = [{ msgno: 3n, msg: pending }];
+
+    blob.receiveKeepalive();
+
+    expect(sentMessages).toEqual([{ msgno: 3, msg: pending }]);
+  });
+
+  it('does not send when there is nothing unacked', () => {
+    const { blob, sentMessages } = createReadyBlob();
+    activeBlob = blob;
+
+    blob.receiveKeepalive();
+
+    expect(sentMessages).toEqual([]);
   });
 });
 
@@ -416,6 +468,73 @@ describe('durability failures', () => {
     expect(sentAcks).toEqual([1]);
     sub.unsubscribe();
   });
+
+  it('requires onSaveNeeded to update cached synchronously before returning', async () => {
+    const { loadAppState } = await import('../../hooks/save');
+    const outbound = enc('outbound');
+    const { blob, cradle, sentMessages } = createReadyBlob(() => ({
+      events: [{ OutboundMessage: outbound }],
+    }));
+    activeBlob = blob;
+
+    const cradleBytes = new Uint8Array([7, 7, 7, 7]);
+    (cradle.serialize as jest.Mock).mockReturnValue(cradleBytes);
+    let saveReturned = false;
+    blob.onSaveNeeded = () => {
+      const pending = saveSession({
+        serializedCradle: cradle.serialize(),
+        cradleSchemaVersion: 1n,
+        pairingToken: 'sync-cradle',
+      });
+      // Cached must already contain the cradle before the returned Promise
+      // settles — durability flushes immediately after starting onSaveNeeded.
+      expect(loadAppState().serializedCradle).toEqual(cradleBytes);
+      saveReturned = true;
+      return pending;
+    };
+
+    blob.deliverMessage(1n, enc('trigger'));
+    await blob.flushPendingWork();
+
+    expect(saveReturned).toBe(true);
+    expect((await peekSession())?.serializedCradle).toEqual(cradleBytes);
+    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+  });
+
+  it('blocks delivery and preserves the durable record when cradle serialization fails', async () => {
+    const outbound = enc('outbound');
+    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
+      events: [{ OutboundMessage: outbound }],
+    }));
+    activeBlob = blob;
+    void saveSession({
+      serializedCradle: new Uint8Array([9, 9, 9]),
+      cradleSchemaVersion: 1n,
+      pairingToken: 'previous-durable-record',
+    });
+    await flushSessionState();
+    (cradle.serialize as jest.Mock).mockImplementation(() => {
+      throw new Error('malformed cradle serialization');
+    });
+    blob.onSaveNeeded = () => {
+      const fields = blob.getWasmFields();
+      if (!fields) {
+        return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+      }
+      return saveSession(fields);
+    };
+
+    blob.deliverMessage(1n, enc('trigger'));
+    await expect(blob.flushPendingWork())
+      .rejects
+      .toThrow('WASM cradle serialization failed');
+
+    expect(sentMessages).toEqual([]);
+    expect(sentAcks).toEqual([]);
+    blob.cleanup();
+    activeBlob = null;
+    expect((await peekSession())?.serializedCradle).toEqual(new Uint8Array([9, 9, 9]));
+  });
 });
 
 describe('resendUnacked', () => {
@@ -450,7 +569,9 @@ describe('restore ordering', () => {
     activeBlob = blob;
 
     const cradle = makeMockCradle();
-    const restoreWasmConnection = {} as unknown as WasmConnection;
+    const restoreWasmConnection = {
+      cradle_serialization_schema: () => 1,
+    } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
       deserializeGame: jest.fn(() => cradle),
@@ -466,9 +587,10 @@ describe('restore ordering', () => {
       restoreSession(
         blob,
         {
-          version: 5n,
+          version: 6n,
           playerId: 'p1',
           serializedCradle: new Uint8Array([1, 2, 3]),
+          cradleSchemaVersion: 1n,
           messageNumber: 5n,
           remoteNumber: 1n,
           unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
@@ -550,6 +672,73 @@ describe('restore ordering', () => {
 
     expect(errors).toEqual(['wallet rejected spend']);
     expect(blob.getRestoreError()).toBe('wallet rejected spend');
+  });
+});
+
+describe('cradle serialization schema restore guard', () => {
+  function makeRestoreHarness(deserializeGame: () => ChiaGame): {
+    blob: SessionController;
+    wasmStateInit: WasmStateInit;
+    deserializeMock: jest.Mock;
+  } {
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn([], []),
+    );
+    activeBlob = blob;
+    const deserializeMock = jest.fn(deserializeGame);
+    const wasmStateInit = {
+      getWasmConnection: jest.fn(async () => ({
+        cradle_serialization_schema: () => 1,
+      } as unknown as WasmConnection)),
+      deserializeGame: deserializeMock,
+    } as unknown as WasmStateInit;
+    return { blob, wasmStateInit, deserializeMock };
+  }
+
+  it.each([
+    ['missing', undefined],
+    ['mismatched', 2n],
+  ])('rejects and deletes a record with a %s cradle schema', async (_label, cradleSchemaVersion) => {
+    void saveSession({
+      serializedCradle: new Uint8Array([1, 2, 3]),
+      cradleSchemaVersion,
+      pairingToken: 'restore-schema-test',
+    });
+    await flushSessionState();
+    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+    const save = (await peekSession())!;
+
+    await expect(restoreSession(blob, save, wasmStateInit))
+      .rejects
+      .toThrow('Unsupported saved game format');
+
+    expect(deserializeMock).not.toHaveBeenCalled();
+    expect(hasSavedSessionMarker()).toBe(true);
+    expect(await peekSession()).toBeNull();
+  });
+
+  it('does not delete same-schema records that fail deserialization', async () => {
+    void saveSession({
+      serializedCradle: new Uint8Array([1, 2, 3]),
+      cradleSchemaVersion: 1n,
+      pairingToken: 'restore-corruption-test',
+    });
+    await flushSessionState();
+    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
+      throw new Error('corrupt current-schema cradle');
+    });
+    const save = (await peekSession())!;
+
+    await expect(restoreSession(blob, save, wasmStateInit))
+      .rejects
+      .toThrow('corrupt current-schema cradle');
+
+    expect(deserializeMock).toHaveBeenCalledTimes(1);
+    expect((await peekSession())?.serializedCradle).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
 

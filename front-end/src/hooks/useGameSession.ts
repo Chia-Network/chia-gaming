@@ -979,8 +979,11 @@ export function useGameSession(
 
   const persistFullSession = useCallback((): Promise<void> => {
     const go = scRef.current;
-    const wasm = go?.getWasmFields();
-    if (!wasm) return Promise.resolve();
+    if (!go) return Promise.resolve();
+    const wasm = go.getWasmFields();
+    if (!wasm) {
+      return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+    }
     const model = createSessionModel({
       channel: {
         status: channelStatus,
@@ -1034,6 +1037,7 @@ export function useGameSession(
     const save: Partial<SessionState> = {
       blockchainType: getBlockchainType(),
       serializedCradle: wasm.serializedCradle,
+      cradleSchemaVersion: wasm.cradleSchemaVersion,
       pairingToken: wasm.pairingToken,
       messageNumber: wasm.messageNumber,
       remoteNumber: wasm.remoteNumber,
@@ -1070,7 +1074,9 @@ export function useGameSession(
 
   // Save when JS-side state changes
   useEffect(() => {
-    persistFullSession();
+    void persistFullSession().catch((error) => {
+      console.error('[session] failed to persist session:', error);
+    });
   }, [persistFullSession]);
 
   // Wire up the wasm-side save trigger

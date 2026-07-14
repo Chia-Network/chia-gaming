@@ -353,7 +353,7 @@ localStorage holds only small preferences, the resumable-session marker, and
 tab/reset coordination keys. This storage is not encrypted and remains inside
 the same-origin trust model described above.
 
-The current schema version is `4`; because the project is still alpha, older
+The current schema version is `6`; because the project is still alpha, older
 versions are wiped rather than migrated. The `version` field is kept as a future
 migration hook for when there is an installed base to preserve. All game-specific
 fields are optional — a save may contain only pre-game connection state or the
@@ -361,7 +361,7 @@ full mid-game session state:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `bigint` | Save schema version; currently `4`. |
+| `version` | `bigint` | Save schema version; currently `6`. |
 | `playerId` | `string` | Stable local lobby/player identity for this browser state. |
 | `sessionId` | `string?` | Stable token linking the lobby iframe and game-channel WebSocket. |
 | `alias` | `string?` | Local lobby display alias preference. |
@@ -376,6 +376,7 @@ full mid-game session state:
 | `trackerAlert` | `boolean?` | Whether the Tracker tab should show an alert dot. |
 | `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active or should be reconnected. |
 | `serializedCradle` | `Uint8Array?` | Raw binary WASM cradle state via `cradle.serialize()`. |
+| `cradleSchemaVersion` | `bigint?` | Rust-owned schema ID for `serializedCradle`; missing or mismatched IDs are unsupported and cleared before deserialization. |
 | `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect. |
 | `messageNumber` | `number?` | Next outbound game-message sequence number. |
 | `remoteNumber` | `number?` | Last delivered inbound game-message sequence number. |

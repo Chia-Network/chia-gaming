@@ -17,12 +17,14 @@ import {
   getTheme,
   setTheme,
   hardReset,
+  HARD_RESET_IDB_TIMEOUT_MS,
   flushSessionState,
   getTrackerAlert,
   setTrackerAlert,
   claimLease,
   checkLease,
   isLeaseConflict,
+  hasSavedSessionMarker,
   SessionState,
   _resetForTests,
   _writeRawState,
@@ -67,6 +69,7 @@ function clearTestGlobal(key: string) {
 
 const sampleSession: Partial<SessionState> = {
   serializedCradle: new Uint8Array([0, 1, 2, 255]),
+  cradleSchemaVersion: 1n,
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
@@ -145,6 +148,54 @@ describe('session persistence', () => {
     expect(typeof loaded?.messageNumber).toBe('bigint');
     expect(loaded).not.toHaveProperty('history');
     expect(loaded).not.toHaveProperty('log');
+  });
+
+  it('sets the saved-session marker when a resumable record is written', async () => {
+    expect(hasSavedSessionMarker()).toBe(false);
+
+    saveSession(sampleSession);
+    await flushSessionState();
+    expect(hasSavedSessionMarker()).toBe(true);
+
+    await clearSession();
+    expect(hasSavedSessionMarker()).toBe(false);
+  });
+
+  it('does not set the saved-session marker from startNewSession alone', () => {
+    expect(hasSavedSessionMarker()).toBe(false);
+    startNewSession();
+    expect(hasSavedSessionMarker()).toBe(false);
+  });
+
+  it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
+    saveSession(sampleSession);
+    await flushSessionState();
+    expect(hasSavedSessionMarker()).toBe(true);
+
+    // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
+    _resetForTests();
+    expect(hasSavedSessionMarker()).toBe(true);
+    expect(loadAppState().serializedCradle).toBeUndefined();
+
+    saveSession({ diagnosticLog: ['boot log'] });
+    await flushSessionState();
+
+    _resetForTests();
+    const loaded = await peekSession();
+    expect(loaded?.serializedCradle).toEqual(sampleSession.serializedCradle);
+    expect(loaded?.pairingToken).toBe(sampleSession.pairingToken);
+    expect(loaded?.diagnosticLog).toEqual(['boot log']);
+  });
+
+  it('clears the marker for a present but non-resumable IndexedDB record', async () => {
+    localStorage.setItem('appState_savedSession', '1');
+    await writeSessionRecord({
+      version: 6n,
+      playerId: 'player',
+      blockchainType: 'simulator',
+    });
+    expect(await peekSession()).toBeNull();
+    expect(hasSavedSessionMarker()).toBe(false);
   });
 
   it('propagates IndexedDB write failure to durability callers', async () => {
@@ -287,7 +338,7 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(5n);
+    expect(state.version).toBe(6n);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {
@@ -297,17 +348,15 @@ describe('flat state', () => {
     expect(loadAppState().playerId).not.toBe('old-player');
   });
 
-  it('rejects and deletes a stale IndexedDB record', async () => {
+  it('rejects and deletes a stale IndexedDB record but keeps the boot marker', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 4n,
+      version: 5n,
       playerId: 'old-player',
       serializedCradle: new Uint8Array([1]),
     });
     expect(await peekSession()).toBeNull();
-    expect(localStorage.getItem('appState_savedSession')).toBeNull();
-    _resetForTests();
-    expect(await peekSession()).toBeNull();
+    expect(localStorage.getItem('appState_savedSession')).toBe('1');
   });
 
   it('clears a saved-session marker when no matching record exists', async () => {
@@ -415,11 +464,10 @@ describe('hard reset', () => {
     saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
     sessionStorage.setItem('appState_tabId', 'tab-1');
 
-    hardReset();
+    await hardReset();
 
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
-    await flushPromises();
     expect(await peekSession()).toBeNull();
   });
 
@@ -438,8 +486,7 @@ describe('hard reset', () => {
       deleteDatabase,
     });
 
-    hardReset();
-    await flushPromises();
+    await hardReset();
 
     expect(deleteDatabase).toHaveBeenCalledWith('app-state');
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
@@ -456,8 +503,7 @@ describe('hard reset', () => {
     // No `databases` function: mimics browsers that can't enumerate.
     setTestGlobal('indexedDB', { deleteDatabase });
 
-    hardReset();
-    await flushPromises();
+    await hardReset();
 
     expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
@@ -479,11 +525,27 @@ describe('hard reset', () => {
       deleteDatabase: jest.fn(),
     });
 
-    expect(() => hardReset()).not.toThrow();
-    await flushPromises();
+    await expect(hardReset()).resolves.toBeUndefined();
 
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it('completes when IndexedDB enumeration never resolves', async () => {
+    jest.useFakeTimers();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    setTestGlobal('indexedDB', {
+      databases: () => new Promise(() => {}),
+      deleteDatabase: jest.fn(),
+    });
+
+    const done = hardReset();
+    await jest.advanceTimersByTimeAsync(HARD_RESET_IDB_TIMEOUT_MS);
+    await expect(done).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    jest.useRealTimers();
   });
 });
 

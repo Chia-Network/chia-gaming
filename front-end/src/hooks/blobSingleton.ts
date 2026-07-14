@@ -5,6 +5,8 @@ import {
 } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
 import {
+  clearSession,
+  markSavedSession,
   startNewSession,
   SessionState,
 } from './save';
@@ -98,8 +100,22 @@ export async function restoreSession(
   }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
+  const currentSchema = BigInt(wasmConnection.cradle_serialization_schema());
+  if (save.cradleSchemaVersion === undefined || save.cradleSchemaVersion !== currentSchema) {
+    const savedSchema = save.cradleSchemaVersion === undefined
+      ? 'missing'
+      : save.cradleSchemaVersion.toString();
+    await clearSession();
+    markSavedSession();
+    throw new Error(
+      `Unsupported saved game format: cradle schema ${savedSchema}; current schema is ${currentSchema}`,
+    );
+  }
 
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, save.serializedCradle);
+  const cradleBytes = save.serializedCradle instanceof Uint8Array
+    ? save.serializedCradle
+    : (() => { throw new Error('restoreSession serializedCradle must be a Uint8Array'); })();
+  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
   sc.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
   sc.remoteNumber = parseBigIntCounter(save.remoteNumber, 0n);
