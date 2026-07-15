@@ -5,6 +5,7 @@ import {
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
   krunkTerminalStatus,
+  krunkWinMessage,
   type KrunkGameState,
 } from '../../hooks/useKrunkHand';
 import {
@@ -110,6 +111,7 @@ describe('Krunk first guess drafting', () => {
       secretWord: 'XXXXX',
       revealedWord: null,
       outcome: null,
+      moverShare: null,
       timeoutByUs: null,
       timeoutForfeited: false,
       error: null,
@@ -151,6 +153,7 @@ describe('Krunk first guess drafting', () => {
       secretWord: null,
       revealedWord: null,
       outcome: 'lose',
+      moverShare: null,
       timeoutByUs: true,
       timeoutForfeited: false,
       error: null,
@@ -166,6 +169,36 @@ describe('Krunk first guess drafting', () => {
       ...timedOut,
       timeoutForfeited: true,
     }, 'Peer')).toBe('We forfeited.');
+  });
+
+  it('leaves bob correct-guess copy to the win-amount UI', () => {
+    const bobWin: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'bob',
+      guesses: [{ word: 'CRANE', clue: [2, 2, 2, 2, 2] }],
+      secretWord: null,
+      revealedWord: 'CRANE',
+      outcome: 'win',
+      moverShare: '100',
+      timeoutByUs: null,
+      timeoutForfeited: false,
+      error: null,
+    };
+    expect(krunkTerminalStatus(bobWin, 'Peer')).toBeNull();
+    expect(krunkTerminalStatus({
+      ...bobWin,
+      outcome: 'lose',
+      moverShare: null,
+      revealedWord: 'CRANE',
+    }, 'Peer')).toBe('Out of guesses. Word was CRANE.');
+  });
+
+  it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {
+    expect(krunkWinMessage('100')).toBe('You won 100 mojo!');
+    expect(krunkWinMessage('999999')).toBe('You won 999999 mojo!');
+    expect(krunkWinMessage('1000000')).toBe('You won 0.000001 chia!');
+    expect(krunkWinMessage('1000000000000')).toBe('You won 1 chia!');
   });
 
   it('routes a typed move rejection with its game id, tag, and message', () => {
@@ -206,6 +239,7 @@ describe('Krunk first guess drafting', () => {
         OpponentMoved: {
           readable: Uint8Array.from([0x80]),
           gameId: '3',
+          moverShare: '0',
         },
       },
     ]);

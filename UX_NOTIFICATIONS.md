@@ -488,13 +488,16 @@ matched to live games and generating spurious terminal notifications.
 
 ## GameplayEvent Mapping
 
-The `useGameSession` hook translates raw `WasmNotification` terminal events
-into game-agnostic `GameplayEvent` variants before forwarding them to
-game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`). Game hooks
-never see raw notifications; they receive one of:
+The `useGameSession` hook translates raw `WasmNotification` events into
+game-agnostic `GameplayEvent` variants before forwarding them to
+game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`).
+Game hooks never see raw notifications; they receive one of:
 
 | Variant | Shape | When |
 |---------|-------|------|
+| `OpponentMoved` | `{ readable, gameId?, moverShare: string }` | Remapped from `GameStatus` with `other_params.readable` and `other_params.mover_share`. `moverShare` is our share after the opponent's move (including on timeout from that move). |
+| `GameMessage` | `{ readable, gameId? }` | Remapped from `GameStatus` with readable but no `mover_share` (advisory / out-of-band message). |
+| `ProposalAccepted` | `{ id }` | A new game is starting |
 | `Timeout` | `{ byUs: boolean, forfeited: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout. `forfeited: true` marks the case where the losing side intentionally skipped its final move (no point paying for an on-chain move that wins nothing), so games can label it "Forfeit" instead of the misleading "Timed Out". `byUs` gives the direction. |
 | `MoveRejected` | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook |
 | `GameError` | `{ reason: string }` | Slashes, cheats, cancellations, errors, insufficient balance |
@@ -514,8 +517,9 @@ to `GameplayEvent`:
 | `game-error` | `GameError` |
 | `insufficient-balance` | `GameError` |
 
-Non-terminal events (`OpponentMoved`, `GameMessage`, `ProposalAccepted`) are
-unchanged and forwarded directly.
+Non-terminal move/status notifications are remapped by
+`gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
+above (including `moverShare` on `OpponentMoved`).
 
 **Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalEventForInfo`,
 `gameplayEventsForGameStatus`)

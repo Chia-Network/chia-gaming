@@ -1082,7 +1082,7 @@ describe('session model selectors', () => {
 
     const terminalEvent = { Timeout: { gameId: '7', byUs: false, forfeited: true } };
     expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
-      { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7' } },
+      { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7', moverShare: '0' } },
       { Timeout: { gameId: '7', byUs: false, forfeited: true } },
     ]);
   });

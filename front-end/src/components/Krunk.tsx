@@ -7,6 +7,7 @@ import {
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
   krunkTerminalStatus,
+  krunkWinMessage,
   KrunkHandler,
   KrunkGuess,
 } from '../hooks/useKrunkHand';
@@ -341,7 +342,13 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const themLabel = opponentName ?? 'Opponent';
 
+  const bobWon =
+    bobHand.gameState.handler === KrunkHandler.Terminal
+    && bobHand.gameState.outcome === 'win'
+    && bobHand.gameState.timeoutByUs === null;
+
   const bobStatus = useMemo(() => {
+    if (bobWon) return null;
     const gs = bobHand.gameState;
     const terminalStatus = krunkTerminalStatus(gs, themLabel);
     if (terminalStatus !== null) return terminalStatus;
@@ -352,7 +359,7 @@ const Krunk: React.FC<KrunkProps> = ({
       return `Guess ${gs.guesses.length + 1} of ${MAX_GUESSES}`;
     }
     return `Waiting for ${themLabel}…`;
-  }, [bobHand.gameState, wordCommitted, queuedGuess, themLabel]);
+  }, [bobHand.gameState, bobWon, wordCommitted, queuedGuess, themLabel]);
 
   const aliceStatus = useMemo(() => {
     const gs = aliceHand.gameState;
@@ -406,9 +413,15 @@ const Krunk: React.FC<KrunkProps> = ({
             </button>
           </div>
 
-          <p className={`text-xs mt-1 ${bobHand.gameState.error ? 'text-red-600' : 'text-canvas-text'}`}>
-            {bobStatus}
-          </p>
+          {bobWon && bobHand.gameState.moverShare != null ? (
+            <p className='text-3xl font-bold mt-1 text-canvas-text-contrast'>
+              {krunkWinMessage(bobHand.gameState.moverShare)}
+            </p>
+          ) : (
+            <p className={`text-xs mt-1 ${bobHand.gameState.error ? 'text-red-600' : 'text-canvas-text'}`}>
+              {bobStatus}
+            </p>
+          )}
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}

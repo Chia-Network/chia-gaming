@@ -44,7 +44,7 @@ import {
 
 export type GameplayEvent =
   | { ProposalAccepted: { id: bigint | number | string } }
-  | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string } }
+  | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
   | { Timeout: { gameId: string; byUs: boolean; forfeited: boolean } }
@@ -104,9 +104,9 @@ export function gameplayEventsForGameStatus(
   const readableArr = asBytes(readable);
   const events: GameplayEvent[] = [];
   if (readableArr) {
-    const hasMoverShare = other?.mover_share != null;
-    if (hasMoverShare) {
-      events.push({ OpponentMoved: { readable: readableArr, gameId: gid } });
+    const moverShare = parseAmount(other?.mover_share);
+    if (moverShare != null) {
+      events.push({ OpponentMoved: { readable: readableArr, gameId: gid, moverShare } });
     } else if (activeIds.includes(gid)) {
       events.push({ GameMessage: { readable: readableArr, gameId: gid } });
     }

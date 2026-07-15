@@ -36,6 +36,8 @@ export interface KrunkGameState {
   // Set at game end: the alice-side word that was being guessed.
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
+  // From OpponentMoved.moverShare when the hand ends on a received reveal.
+  moverShare: string | null;
   timeoutByUs: boolean | null;
   timeoutForfeited: boolean;
   error: string | null;
@@ -129,13 +131,27 @@ export function krunkTerminalStatus(
     return `${opponentLabel} ${state.timeoutForfeited ? 'forfeited' : 'timed out'}.`;
   }
   if (state.role === 'bob') {
-    return state.outcome === 'win'
-      ? 'You guessed it!'
-      : `Out of guesses. Word was ${state.revealedWord ?? '?????'}.`;
+    // Bob win amount is shown from moverShare in the UI (large font).
+    if (state.outcome === 'win') return null;
+    return `Out of guesses. Word was ${state.revealedWord ?? '?????'}.`;
   }
   return state.outcome === 'win'
     ? `${opponentLabel} couldn't guess it!`
     : `${opponentLabel} guessed your word.`;
+}
+
+/** Win banner copy: mojo below 1e6, chia at/above (same crossover as formatAmount). */
+export function krunkWinMessage(moverShare: string): string {
+  const mojos = BigInt(moverShare);
+  if (mojos < 1_000_000n) {
+    return `You won ${mojos} mojo!`;
+  }
+  const TRILLION = 1_000_000_000_000n;
+  const whole = mojos / TRILLION;
+  const frac = mojos % TRILLION;
+  if (frac === 0n) return `You won ${whole} chia!`;
+  const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
+  return `You won ${whole}.${fracStr} chia!`;
 }
 
 const MAX_GUESSES = 5;
@@ -246,6 +262,7 @@ export function useKrunkHand(
     secretWord: null,
     revealedWord: null,
     outcome: null,
+    moverShare: null,
     timeoutByUs: null,
     timeoutForfeited: false,
     error: null,
@@ -274,7 +291,11 @@ export function useKrunkHand(
     onTurnChanged(next.myTurn);
   }, [onTurnChanged]);
 
-  const finishGame = useCallback((revealedWord: string | null, lastClue: KrunkGuess['clue'] | null) => {
+  const finishGame = useCallback((
+    revealedWord: string | null,
+    lastClue: KrunkGuess['clue'] | null,
+    moverShare: string | null = null,
+  ) => {
     const cur = gsRef.current;
     handFinishedRef.current = true;
     // Outcome from local POV: alice wins if bob never guessed correctly
@@ -288,6 +309,7 @@ export function useKrunkHand(
       handler: KrunkHandler.Terminal,
       myTurn: false,
       revealedWord,
+      moverShare,
       outcome:
         (cur.role === 'alice' && aliceWon) || (cur.role === 'bob' && !aliceWon)
           ? 'win'
@@ -375,7 +397,7 @@ export function useKrunkHand(
               next[idx] = { ...next[idx], clue: parsed.clue };
             }
             gsRef.current = { ...cur, guesses: next };
-            finishGame(parsed.word, parsed.clue);
+            finishGame(parsed.word, parsed.clue, evt.OpponentMoved.moverShare);
             return;
           }
         } else if ('MoveRejected' in evt) {

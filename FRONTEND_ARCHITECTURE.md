@@ -1193,7 +1193,8 @@ via the `gameplayEventSubject` RxJS stream:
 
 - `ProposalAccepted` — a new game is starting (also clears stale
   `proposal-rejected` entries from the game queue)
-- `OpponentMoved` — the opponent made a move (with readable data)
+- `OpponentMoved` — the opponent made a move (with readable data and
+  `moverShare`, our share after that move / on timeout from it)
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 - `MoveRejected` — a recoverable local move rejection with game id, tag, and
   message; game hooks roll back only their matching optimistic move
