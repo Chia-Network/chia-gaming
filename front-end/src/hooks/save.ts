@@ -762,12 +762,20 @@ export function loadAppState(): SessionState { return loadState(); }
  * alerts, etc.) would overwrite the durable cradle with a non-resumable
  * record and make Resume report "saved session unavailable".
  *
+ * If memory is already resumable, leave it alone — a newer in-memory cradle
+ * must not be replaced by a stale IndexedDB snapshot on flush.
+ *
  * Also restores tracker identity (sessionId / playerId) from disk when
  * preferences lack them, even if the record is not fully resumable — so a
  * reload never remints session_id over a durable id still on disk.
  */
 export async function hydrateSessionCacheFromDisk(): Promise<void> {
-  if (cached && isResumable(cached) && cached.sessionId) {
+  // Memory already holding durable game state must win over IndexedDB. Do not
+  // require sessionId here: handshake saves often persist a cradle before any
+  // tracker identity exists. The old `&& cached.sessionId` guard fell through
+  // in that case, re-read the older disk snapshot, and clobbered the newer
+  // in-memory cradle on every flush — freezing the first persisted size.
+  if (cached && isResumable(cached)) {
     identityDiskChecked = true;
     return;
   }

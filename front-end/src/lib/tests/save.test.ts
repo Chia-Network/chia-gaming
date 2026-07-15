@@ -249,6 +249,31 @@ describe('session persistence', () => {
     expect(loaded?.diagnosticLog).toEqual(['boot log']);
   });
 
+  it('flush persists a newer in-memory cradle even when sessionId is unset', async () => {
+    const first = new Uint8Array([1, 1, 1, 1]);
+    const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
+    markSavedSession();
+    saveSession({
+      serializedCradle: first,
+      cradleSchemaVersion: 1n,
+      pairingToken: 'tok-v1',
+      // Intentionally omit sessionId — handshake saves often look like this.
+    });
+    await flushSessionState();
+
+    saveSession({
+      serializedCradle: second,
+      cradleSchemaVersion: 1n,
+      pairingToken: 'tok-v2',
+    });
+    await flushSessionState();
+
+    _resetForTests();
+    const loaded = await peekSession();
+    expect(loaded?.serializedCradle).toEqual(second);
+    expect(loaded?.pairingToken).toBe('tok-v2');
+  });
+
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({

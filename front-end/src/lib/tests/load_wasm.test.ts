@@ -629,6 +629,10 @@ it(
         'receiver-processed-e-making-offer-acceptance',
         wasm_blob2,
       );
+      // Stop live durability saves before the explicit snapshot so a late
+      // onSaveNeeded cannot overwrite the cradle under test.
+      wasm_blob1.onSaveNeeded = () => Promise.resolve();
+      wasm_blob2.onSaveNeeded = () => Promise.resolve();
       void saveSession({
         serializedCradle: makingOfferAcceptanceBytes,
         cradleSchemaVersion: BigInt(WholeWasmObject.cradle_serialization_schema()),
@@ -637,9 +641,6 @@ it(
       await flushSessionState();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
-      // Stop live durability saves so they cannot race the boot-patch simulation.
-      wasm_blob1.onSaveNeeded = () => Promise.resolve();
-      wasm_blob2.onSaveNeeded = () => Promise.resolve();
       resetSaveState();
       assert.ok(hasSavedSessionMarker());
       void saveSession({ diagnosticLog: ['boot-before-resume'] });

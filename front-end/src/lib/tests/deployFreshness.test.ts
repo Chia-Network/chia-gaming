@@ -92,7 +92,25 @@ describe('deployFreshness', () => {
 
   it('recoverFromMissingDeployAsset reloads on stale-deploy 404', async () => {
     const reload = jest.fn();
-    sessionStorage.clear();
+    const store = new Map<string, string>();
+    const memoryStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      get length() { return store.size; },
+      key: (i: number) => [...store.keys()][i] ?? null,
+    };
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      writable: true,
+      value: memoryStorage,
+    });
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: memoryStorage,
+    });
     const pending = recoverFromMissingDeployAsset(
       'fetchHexString',
       'clsp/x.hex',
