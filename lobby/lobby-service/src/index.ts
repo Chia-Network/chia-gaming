@@ -126,6 +126,8 @@ function randomPublicId(): string {
 function ensureSession(sessionId: string): string {
   const existing = sessionToPlayer.get(sessionId);
   if (existing) return existing;
+  // Mapping is intentionally retained for the tracker process lifetime —
+  // disconnect / leaveLobby must not mint a new public id for the same secret.
   const playerId = randomPublicId();
   sessionToPlayer.set(sessionId, playerId);
   playerToSession.set(playerId, sessionId);
@@ -693,7 +695,13 @@ function onGameSend(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'sen
   const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
 
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    logTracker('game_send_delivery_failure', { from: meta.playerId, to: targetId });
+    // Includes unknown peer ids and known peers with no live game socket.
+    // Pre-cradle clients cancel; live sessions treat this as peer hard-disconnect.
+    logTracker('game_send_delivery_failure', {
+      from: meta.playerId,
+      to: targetId,
+      reason: targetSessionId ? 'peer_offline' : 'unknown_peer',
+    });
     sendGameWs(ws, 'delivery_failure', { to: targetId });
     return;
   }
@@ -729,7 +737,11 @@ function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): voi
   const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
 
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    logTracker('game_binary_delivery_failure', { from: meta.playerId, to: targetId });
+    logTracker('game_binary_delivery_failure', {
+      from: meta.playerId,
+      to: targetId,
+      reason: targetSessionId ? 'peer_offline' : 'unknown_peer',
+    });
     sendGameWs(ws, 'delivery_failure', { to: targetId });
     return;
   }

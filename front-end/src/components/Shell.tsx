@@ -12,18 +12,23 @@ import { reactPropSafeValue } from '../lib/reactPropSafe';
 import {
   getPlayerId,
   getSessionId,
+  ensureTrackerIdentity,
   clearSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
   peekSession,
   saveSession,
+  flushSessionState,
   clearSession,
   hardReset,
-  hasSavedSessionMarker,
+  shouldOfferResumeOrStartOver,
   hydrateSessionCacheFromDisk,
   markSavedSession,
+  peekAutoResumeOnce,
+  clearAutoResumeOnce,
   clearSavedSessionMarker,
+  loadState,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -57,7 +62,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, isTerminalChannelState, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, isTerminalChannelState, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isCleanShutdownInProgress,
@@ -250,6 +255,13 @@ function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolea
 function savedChannelState(save: SessionState): SessionModel['channel']['status']['state'] | null {
   if (save.channelStatus) return save.channelStatus.state;
   if (save.channelReady) return 'Active';
+  return null;
+}
+
+/** Tab to show before any resume hydrate — session restores always open on Game. */
+function tabForResumedSave(save: SessionState): TabId | null {
+  if (save.serializedCradle || save.pairingToken) return 'game';
+  if (isTerminalChannelState(savedChannelState(save))) return 'game';
   return null;
 }
 
@@ -495,7 +507,9 @@ function LogPanel({ lines }: { lines: string[] }) {
 
 const Shell = () => {
   const uniqueId = getPlayerId();
-  const [, setSessionId] = useState(() => getSessionId());
+  // Do not mint tracker sessionId here — boot must hydrate IndexedDB first
+  // when a saved-session marker is present, or a remint poisons preferences.
+  const [, setSessionId] = useState(() => loadState().sessionId ?? '');
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
@@ -590,8 +604,10 @@ const Shell = () => {
   // to localStorage, which fences any existing tab via the storage event.
   // We must not do that until the user has made a conscious choice.
   //
-  //   1. Saved-session marker exists → 'resumeDialog' without reading IndexedDB.
-  //   2. No marker → if another tab holds the lease, 'tabConflict'
+  //   1. Anything to resume or discard (marker, wallet choice, and/or
+  //      remembered tracker) → 'resumeDialog', or 'autoResuming' when the
+  //      prior navigation was a stale-deploy reload (one-shot, no prompt).
+  //   2. Otherwise if another tab holds the lease → 'tabConflict'
   //      (the other tab is live even if we don't have its save locally);
   //      otherwise claim the lease and go 'ready'.
   //
@@ -599,6 +615,9 @@ const Shell = () => {
   //   - Start over → hardReset() + reload.
   //   - Resume     → load IndexedDB, then if lease conflict, 'tabConflict';
   //                  otherwise claim + hydrate.
+  // From 'autoResuming':
+  //   - Hydrate + mount the real shell invisibly (tracker/GameSession run).
+  //   - Flip to 'ready' only once restore is presentable — one visible paint.
   //
   // From 'tabConflict':
   //   - Take over → claimLease(), hydrate if save available.
@@ -610,30 +629,55 @@ const Shell = () => {
   type BootState =
     | { kind: 'loading' }
     | { kind: 'ready' }
+    | { kind: 'autoResuming' }
     | { kind: 'resumeDialog'; loadError: string | null }
     | { kind: 'tabConflict'; save: SessionState | null; midSession: boolean }
     | { kind: 'tabDead' };
 
-  const [bootState, setBootState] = useState<BootState>({ kind: 'loading' });
+  const [bootState, setBootState] = useState<BootState>(() => {
+    // Decide auto-resume synchronously so the first paint never flashes the
+    // Resume/Start Over dialog (async boot used to clear the flag then remount
+    // into resumeDialog under Strict Mode).
+    if (peekAutoResumeOnce() && shouldOfferResumeOrStartOver()) {
+      return { kind: 'autoResuming' };
+    }
+    return { kind: 'loading' };
+  });
 
   useEffect(() => {
-    if (hasSavedSessionMarker()) {
-      console.log('[Shell] boot: saved-session marker present, showing resume dialog');
-      // Hydrate IndexedDB into the in-memory cache immediately so incidental
-      // saveSession patches (logs, alerts) cannot clobber the durable cradle
-      // while the dialog is open.
-      void hydrateSessionCacheFromDisk();
-      setBootState({ kind: 'resumeDialog', loadError: null });
-      return;
-    }
-    if (isLeaseConflict()) {
-      console.log('[Shell] boot: no save but another tab holds the lease, showing tabConflict');
-      setBootState({ kind: 'tabConflict', save: null, midSession: false });
-      return;
-    }
-    console.log('[Shell] boot: no state, no conflict, claiming lease');
-    claimLease();
-    setBootState({ kind: 'ready' });
+    let cancelled = false;
+    void (async () => {
+      // Restore tracker session_id from disk before any mint / identify.
+      const sid = await ensureTrackerIdentity();
+      if (cancelled) return;
+      setSessionId(sid);
+
+      if (shouldOfferResumeOrStartOver()) {
+        // Hydrate IndexedDB into the in-memory cache immediately so incidental
+        // saveSession patches (logs, alerts) cannot clobber the durable cradle
+        // while the dialog is open (or while auto-resume runs).
+        await hydrateSessionCacheFromDisk();
+        if (cancelled) return;
+        markSavedSession();
+        if (peekAutoResumeOnce()) {
+          console.log('[Shell] boot: stale-deploy auto-resume');
+          setBootState({ kind: 'autoResuming' });
+          return;
+        }
+        console.log('[Shell] boot: wallet/tracker/session state present, showing resume dialog');
+        setBootState({ kind: 'resumeDialog', loadError: null });
+        return;
+      }
+      if (isLeaseConflict()) {
+        console.log('[Shell] boot: no save but another tab holds the lease, showing tabConflict');
+        setBootState({ kind: 'tabConflict', save: null, midSession: false });
+        return;
+      }
+      console.log('[Shell] boot: no state, no conflict, claiming lease');
+      claimLease();
+      setBootState({ kind: 'ready' });
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Subscribe to mid-session lease loss. Only meaningful once we're 'ready' —
@@ -873,9 +917,15 @@ const Shell = () => {
     const humanHistory = historyRef.current;
     const peerId = peerSessionRef.current?.peerId ?? null;
     const gameSessionId = peerSessionRef.current?.sessionId ?? null;
+    const diagnosticLog = loadState().diagnosticLog;
+    const wasmNotificationHistory = loadState().wasmNotificationHistory;
     clearSession();
     const preserved: Record<string, unknown> = {};
     if (humanHistory.length > 0) preserved.humanHistory = humanHistory;
+    if (diagnosticLog && diagnosticLog.length > 0) preserved.diagnosticLog = diagnosticLog;
+    if (wasmNotificationHistory && wasmNotificationHistory.length > 0) {
+      preserved.wasmNotificationHistory = wasmNotificationHistory;
+    }
     if (peerId) preserved.sessionPeerId = peerId;
     if (gameSessionId) preserved.gameSessionId = gameSessionId;
     if (Object.keys(preserved).length > 0) saveSession(preserved as any);
@@ -964,7 +1014,7 @@ const Shell = () => {
     trackerConnRef.current?.setBusy(false);
   }, [clearSessionPreservingHistory, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
-  const startFreshSessionWithPeer = useCallback((request: SessionStartRequest & { gameSessionId?: string }) => {
+  const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
     const conn = trackerConnRef.current;
     if (!conn) return;
 
@@ -974,6 +1024,7 @@ const Shell = () => {
     const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();
     const token = `peer_${request.peerId}_${Date.now()}`;
+    const trackerSessionId = getSessionId();
 
     const existing = peerSessionRef.current;
     if (existing && !existing.isDestroyed() && existing.peerId === request.peerId && existing.sessionId === sessionId) {
@@ -983,7 +1034,27 @@ const Shell = () => {
       peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
       bindPeerMessageHandler(peerSessionRef.current);
     }
-    saveSession({ sessionPeerId: request.peerId, gameSessionId: sessionId });
+    const channelTimeout = parseOptionalBigInt(request.channel_timeout);
+    const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
+    // Persist the full pre-cradle handshake *and flush* before GameSession mounts
+    // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
+    // the same pairing/amounts/peer ids and a stable tracker session_id.
+    await saveSession({
+      pairingToken: token,
+      sessionPeerId: request.peerId,
+      gameSessionId: sessionId,
+      sessionId: trackerSessionId,
+      ...(conn.getPlayerId() ? { myTrackerPlayerId: conn.getPlayerId()! } : {}),
+      iStarted: request.iStarted,
+      myContribution: myContribution.toString(),
+      theirContribution: theirContribution.toString(),
+      perGameAmount: perGame.toString(),
+      opponentAlias: request.opponentAlias,
+      ...(channelTimeout !== undefined ? { channelTimeout: channelTimeout.toString() } : {}),
+      ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
+      ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
+    });
+    await flushSessionState();
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
@@ -1008,7 +1079,9 @@ const Shell = () => {
     dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     destroySessionController();
-    clearSessionPreservingHistory();
+    // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
+    // loadGameHexes, so a deploy-stale reload resumed into an empty session.
+    // blobSingleton.newSession clears after assets load successfully.
     try { getActiveBlockchain().start(); } catch { /* not connected */ }
     setSessionConfig({
       iStarted: request.iStarted,
@@ -1019,19 +1092,24 @@ const Shell = () => {
       pairingToken: token,
       myAlias: undefined,
       opponentAlias: request.opponentAlias,
-      channelTimeout: parseOptionalBigInt(request.channel_timeout),
-      unrollTimeout: parseOptionalBigInt(request.unroll_timeout),
+      channelTimeout,
+      unrollTimeout,
     });
     setPeerConn(stablePeerConn);
     setPeerLiveness(null);
     conn.setBusy(true);
-  }, [clearSessionPreservingHistory, stablePeerConn, bindPeerMessageHandler]);
+  }, [stablePeerConn, bindPeerMessageHandler]);
 
   const acceptPendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
     const conn = trackerConnRef.current;
     if (!conn) return;
     setPendingAdvisoryState(null);
     const gameSessionId = generateSessionId();
+    // Reserve the peer relay before sending so a delivery_failure for this
+    // proposal can cancel the attempt (PeerSession must already exist).
+    peerSessionRef.current?.destroy();
+    peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
+    bindPeerMessageHandler(peerSessionRef.current);
     conn.sendPeerAppMessage(advisory.peer_id, {
       type: 'session_proposal',
       proposer_amount: advisory.my_amount,
@@ -1052,7 +1130,7 @@ const Shell = () => {
       iStarted: true,
       gameSessionId,
     });
-  }, [setPendingAdvisoryState, startFreshSessionWithPeer]);
+  }, [setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler]);
 
   const declinePendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
     setPendingAdvisoryState(null);
@@ -1266,8 +1344,7 @@ const Shell = () => {
             if (ps?.peerId === fromId) {
               markPeerDead();
               const channelState = dashboardSessionModelRef.current?.channel.status.state;
-              const isPreActive = !channelState || PRE_ACTIVE_CHANNEL_STATES.has(channelState);
-              if (sessionPhaseRef.current === 'none' || isPreActive) {
+              if (shouldCancelOnPeerUnreachable(sessionPhaseRef.current, channelState)) {
                 cancelAttemptedSession();
               }
             }
@@ -1276,17 +1353,52 @@ const Shell = () => {
         onDeliveryFailure: (to: string) => {
           console.warn('[Shell] delivery_failure to=%s', to);
           const ps = peerSessionRef.current;
-          if (ps && to === ps.peerId) {
-            ps.markDegraded();
-            syncPeerLiveness();
+          if (!ps || to !== ps.peerId) return;
+          const channelState = dashboardSessionModelRef.current?.channel.status.state;
+          if (shouldCancelOnPeerUnreachable(sessionPhaseRef.current, channelState)) {
+            // Matchmaking / channel setup: abandon the attempt.
+            markPeerDead();
+            cancelAttemptedSession();
+            return;
           }
+          // Live or settling session: peer may be mid-reload. Degrade only —
+          // CONNECTIVITY: delivery failures do not auto-kill or go on-chain.
+          // notePeerActivity recovers when traffic resumes.
+          ps.markDegraded();
+          syncPeerLiveness();
         },
         onRegistered: (playerId: string) => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          console.log('[Shell] registered as player_id=%s', playerId);
+          console.log('[Shell] registered as player_id=%s session_id=%s', playerId, getSessionId());
           const save = sessionSaveRef.current;
+          const prevMine = save?.myTrackerPlayerId ?? loadState().myTrackerPlayerId;
+          // Pre-cradle routing is by peer player_id. If *we* remapped (tracker
+          // restart or session_id churn), abort rather than handshaking at a
+          // stale sessionPeerId. First-ever register (no prior id) is fine.
+          if (
+            prevMine
+            && prevMine !== playerId
+            && (save?.pairingToken || sessionConfigRef.current?.pairingToken)
+            && !save?.serializedCradle
+            && shouldCancelOnPeerUnreachable(
+              sessionPhaseRef.current,
+              dashboardSessionModelRef.current?.channel.status.state,
+            )
+          ) {
+            console.warn(
+              '[Shell] tracker player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+              prevMine,
+              playerId,
+            );
+            log(`[tracker] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`);
+            saveSession({ myTrackerPlayerId: playerId });
+            cancelAttemptedSession();
+            return;
+          }
+          saveSession({ myTrackerPlayerId: playerId });
+          if (save) save.myTrackerPlayerId = playerId;
           const terminalSave = !!save && isTerminalChannelState(savedChannelState(save));
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
             peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
@@ -1377,16 +1489,16 @@ const Shell = () => {
     }
   }, [peerLiveness, sessionPhase, connectToTracker]);
 
-  // Auto-connect to saved tracker once this tab owns the app lease. Tracker
-  // identity is independent of wallet restore, so do not gate this on userReady.
+  // Auto-connect to saved tracker once this tab owns the app lease. Also while
+  // autoResuming (blank UI) so cradle restore can reconcile before first paint.
   useEffect(() => {
-    if (bootState.kind !== 'ready') {
+    if (bootState.kind !== 'ready' && bootState.kind !== 'autoResuming') {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
       return;
     }
     const url = getTrackerUrl();
-    console.log('[Shell] tracker-reconnect effect: ready trackerUrl=%s', url ?? 'none');
+    console.log('[Shell] tracker-reconnect effect: %s trackerUrl=%s', bootState.kind, url ?? 'none');
     if (url && !trackerConnRef.current) {
       connectToTracker(url);
     }
@@ -1716,6 +1828,7 @@ const Shell = () => {
 
   /** Restore a finished/terminal session freeze without remounting live WASM. */
   const restoreFinishedSessionFromSave = useCallback((save: SessionState) => {
+    setActiveTab('game');
     const channelState = savedChannelState(save);
     const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
     sessionFinishedCleanupRef.current = true;
@@ -1734,16 +1847,16 @@ const Shell = () => {
     setRestoreError(null);
     setRestoreTrackerReconciled(true);
     trackerConnRef.current?.setBusy(false, save.myAlias ?? peekAlias());
-    setActiveTab('game');
     setResuming(false);
   }, [setActiveTab]);
 
   // Hydrate local UI state from a SessionState and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
+  // Tab is switched first so the first paint after ready is already on Game.
   const performResume = useCallback((save: SessionState) => {
+    setActiveTab('game');
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
-    setActiveTab('game');
     setResuming(true);
     setRestoreStatus('restoring');
     setRestoreError(null);
@@ -1752,7 +1865,11 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    sessionSavePropRef.current = sessionSaveForReactProps(save);
+    // Cradle-less pairingToken saves are a pre-handshake checkpoint: mount
+    // GameSession without sessionSave so getOrCreate runs newSession, not restore.
+    sessionSavePropRef.current = save.serializedCradle
+      ? sessionSaveForReactProps(save)
+      : undefined;
     const { myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
     if (save.pairingToken) {
       setSessionConfig({
@@ -1760,10 +1877,12 @@ const Shell = () => {
         myContribution,
         theirContribution,
         perGameAmount: perGame,
-        restoring: true,
+        restoring: !!save.serializedCradle,
         pairingToken: save.pairingToken,
         myAlias: save.myAlias,
         opponentAlias: save.opponentAlias,
+        channelTimeout: parseOptionalBigInt(save.channelTimeout),
+        unrollTimeout: parseOptionalBigInt(save.unrollTimeout),
       });
       setPeerConn(stablePeerConn);
     }
@@ -1852,10 +1971,13 @@ const Shell = () => {
     })();
   }, [uniqueId, completeConnection, stablePeerConn, setActiveTab]);
 
-  // User clicked "Resume Session" in the resumeDialog.
+  // User clicked "Resume Session" in the resumeDialog, or boot landed on
+  // autoResuming after a stale-deploy reload.
   // If another tab holds the lease, ask to take over first; otherwise proceed.
   const handleResume = useCallback(async () => {
-    if (bootState.kind !== 'resumeDialog' || bootState.loadError !== null) return;
+    if (bootState.kind === 'resumeDialog' && bootState.loadError !== null) return;
+    if (bootState.kind !== 'resumeDialog' && bootState.kind !== 'autoResuming') return;
+    const fromAutoResume = bootState.kind === 'autoResuming';
     setResuming(true);
     let save: SessionState | null;
     try {
@@ -1863,6 +1985,7 @@ const Shell = () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[Shell] resume session load failed:', error);
+      clearAutoResumeOnce();
       markSavedSession();
       setBootState({ kind: 'resumeDialog', loadError: message });
       setResuming(false);
@@ -1872,6 +1995,7 @@ const Shell = () => {
       // peekSession clears orphan markers when no record exists. Re-arm so a
       // failed Resume cannot fall through to leftover preference state on the
       // next reload — the user must Start Over.
+      clearAutoResumeOnce();
       markSavedSession();
       setBootState({
         kind: 'resumeDialog',
@@ -1882,15 +2006,25 @@ const Shell = () => {
     }
     if (isLeaseConflict()) {
       console.log('[Shell] resume: lease conflict, showing tabConflict dialog');
+      clearAutoResumeOnce();
       setBootState({ kind: 'tabConflict', save, midSession: false });
       setResuming(false);
       return;
     }
-    console.log('[Shell] resume: no conflict, claiming lease and hydrating');
+    console.log(
+      fromAutoResume
+        ? '[Shell] auto-resume: claiming lease and hydrating'
+        : '[Shell] resume: no conflict, claiming lease and hydrating',
+    );
     claimLease();
-    setBootState({ kind: 'ready' });
-    if (save.serializedCradle) {
-      void performResume(save);
+    // Select the destination tab before any hydrate so the first ready paint
+    // is already on the right tab.
+    const resumeTab = tabForResumedSave(save);
+    if (resumeTab) setActiveTab(resumeTab);
+
+    const hasLiveSession = !!(save.serializedCradle || save.pairingToken);
+    if (hasLiveSession) {
+      performResume(save);
     } else if (isTerminalChannelState(savedChannelState(save))) {
       restoreFinishedSessionFromSave(save);
       if (save.blockchainType) {
@@ -1901,7 +2035,54 @@ const Shell = () => {
     } else {
       setResuming(false);
     }
-  }, [bootState, performResume, handleConnect, restoreFinishedSessionFromSave]);
+
+    clearAutoResumeOnce();
+    // Auto-resume with a live session: stay blank until restore is presentable.
+    // Manual Resume can show the shell immediately (user just confirmed).
+    if (fromAutoResume && hasLiveSession) {
+      return;
+    }
+    setBootState({ kind: 'ready' });
+  }, [bootState, performResume, handleConnect, restoreFinishedSessionFromSave, setActiveTab]);
+
+  // Stale-deploy reload: resume without prompting.
+  const autoResumeStartedRef = useRef(false);
+  useEffect(() => {
+    if (bootState.kind !== 'autoResuming') return;
+    if (autoResumeStartedRef.current) return;
+    autoResumeStartedRef.current = true;
+    void handleResume();
+  }, [bootState.kind, handleResume]);
+
+  // After invisible restore finishes, reveal the shell in one paint.
+  useEffect(() => {
+    if (bootState.kind !== 'autoResuming') return;
+    if (!sessionConfig || !peerConn) return;
+    if (restoreStatus === 'failed') {
+      console.log('[Shell] auto-resume: restore failed, showing shell');
+      setBootState({ kind: 'ready' });
+      return;
+    }
+    const restoring = !!sessionConfig.restoring;
+    const blocked = isRestoreBlocked(restoring, restoreStatus, restoreTrackerReconciled);
+    const { keepSession } = shouldMountGameSession(
+      true,
+      walletConnected,
+      restoring,
+      sessionStartedRef.current,
+    );
+    if (keepSession && !blocked) {
+      console.log('[Shell] auto-resume: presentable, showing shell');
+      setBootState({ kind: 'ready' });
+    }
+  }, [
+    bootState.kind,
+    sessionConfig,
+    peerConn,
+    walletConnected,
+    restoreStatus,
+    restoreTrackerReconciled,
+  ]);
 
   // User clicked "Take over" in the tabConflict dialog.
   // Claim the lease in place (this fences the other tab via storage event)
@@ -1913,23 +2094,32 @@ const Shell = () => {
       claimLease();
       if (prev.midSession) {
         // Our session is already live — just reclaim the lease.
-      } else if (prev.save && prev.save.serializedCradle) {
-        void performResume(prev.save);
-      } else if (prev.save && isTerminalChannelState(savedChannelState(prev.save))) {
-        restoreFinishedSessionFromSave(prev.save);
-        const bcType = prev.save.blockchainType ?? getBlockchainType();
-        if (bcType) {
-          void handleConnect(bcType, true);
+      } else if (prev.save) {
+        const resumeTab = tabForResumedSave(prev.save);
+        if (resumeTab) setActiveTab(resumeTab);
+        if (prev.save.serializedCradle || prev.save.pairingToken) {
+          performResume(prev.save);
+        } else if (isTerminalChannelState(savedChannelState(prev.save))) {
+          restoreFinishedSessionFromSave(prev.save);
+          const bcType = prev.save.blockchainType ?? getBlockchainType();
+          if (bcType) {
+            void handleConnect(bcType, true);
+          }
+        } else {
+          const bcType = prev.save.blockchainType ?? getBlockchainType();
+          if (bcType) {
+            void handleConnect(bcType, true);
+          }
         }
       } else {
-        const bcType = prev.save?.blockchainType ?? getBlockchainType();
+        const bcType = getBlockchainType();
         if (bcType) {
           void handleConnect(bcType, true);
         }
       }
       return { kind: 'ready' };
     });
-  }, [performResume, handleConnect, restoreFinishedSessionFromSave]);
+  }, [performResume, handleConnect, restoreFinishedSessionFromSave, setActiveTab]);
 
   const handleCloseTab = useCallback(() => {
     stopBalancePolling();
@@ -2131,6 +2321,11 @@ const Shell = () => {
     return null;
   }
 
+  // Auto-resume before hydrate finishes: stay blank.
+  if (bootState.kind === 'autoResuming' && !sessionConfig) {
+    return null;
+  }
+
   // --- Tab dead (user chose to yield to another tab) ---
   if (bootState.kind === 'tabDead') {
     return (
@@ -2316,9 +2511,22 @@ const Shell = () => {
   ) : null;
 
   // --- Main tabbed app ---
+  // autoResuming with session hydrated: mount the real tree invisibly so
+  // GameSession/tracker can finish restore, then flip to ready in one paint.
+  const shellHidden = bootState.kind === 'autoResuming';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', width: '100vw', height: '100vh' }}
-         className='bg-canvas-bg-subtle text-canvas-text'>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        width: '100vw',
+        height: '100vh',
+        ...(shellHidden ? { visibility: 'hidden' as const } : {}),
+      }}
+      className='bg-canvas-bg-subtle text-canvas-text'
+      aria-hidden={shellHidden || undefined}
+    >
 
       {/* Tab bar with branding */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-active)' }}>

@@ -2,6 +2,8 @@ import {
   isRestoreBlocked,
   isTerminalChannelState,
   shouldAdvertiseAvailable,
+  shouldAwaitShutdownOnPeerUnreachable,
+  shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportTrackerBusy,
   shouldSwitchToTrackerOnResolved,
@@ -40,6 +42,24 @@ describe('restore lifecycle gates', () => {
     expect(isTerminalChannelState('Active')).toBe(false);
     expect(isTerminalChannelState('Handshaking')).toBe(false);
     expect(isTerminalChannelState(null)).toBe(false);
+  });
+
+  it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
+    expect(shouldCancelOnPeerUnreachable('none', null)).toBe(true);
+    expect(shouldCancelOnPeerUnreachable('none', 'Handshaking')).toBe(true);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'Handshaking')).toBe(true);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'MakingOffer')).toBe(true);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
+  });
+
+  it('awaits a pending clean-shutdown transaction instead of escalating on-chain', () => {
+    // Live Active and ShutdownTransactionPending both degrade on delivery_failure
+    // (Shell); this helper is for callers that need the shutdown-specific case.
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'ShutdownTransactionPending')).toBe(false);
+    expect(shouldAwaitShutdownOnPeerUnreachable('ShutdownTransactionPending')).toBe(true);
+    expect(shouldAwaitShutdownOnPeerUnreachable('ShuttingDown')).toBe(false);
+    expect(shouldAwaitShutdownOnPeerUnreachable('Active')).toBe(false);
   });
 
   it('mounts a saved session without requiring a live blockchain connection', () => {

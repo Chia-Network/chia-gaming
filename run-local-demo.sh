@@ -122,18 +122,23 @@ fi
 
 # ── Assemble staging directories ────────────────────────────────────
 
-BUILD_NONCE=$(date +%s%3N)
+# Portable millisecond nonce. macOS `date +%s%3N` leaves a literal "3N".
+if command -v python3 >/dev/null 2>&1; then
+  BUILD_NONCE=$(python3 -c 'import time; print(int(time.time() * 1000))')
+else
+  BUILD_NONCE=$(node -e 'process.stdout.write(String(Date.now()))')
+fi
 echo "=== Build nonce: $BUILD_NONCE ==="
 
 echo "=== Assembling player app staging directory ==="
 GAME_SERVE="$FE_DIR/serve"
-rm -rf "$GAME_SERVE"
+# Write the new nonce tree first, flip build-meta, then prune old nonces so a
+# running static server never serves a half-deleted deploy.
 mkdir -p "$GAME_SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
 if [ -f "$FE_DIR/public/favicon.svg" ]; then
     cp "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
 fi
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
 GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
 cp "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
@@ -149,16 +154,26 @@ done)
 if [ -d "$FE_DIR/public/images" ]; then
     cp -r "$FE_DIR/public/images" "$GAME_NONCE_DIR/images"
 fi
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
+for old in "$GAME_SERVE/app"/*; do
+    [ -d "$old" ] || continue
+    [ "$(basename "$old")" = "$BUILD_NONCE" ] && continue
+    rm -rf "$old"
+done
 
 echo "=== Assembling lobby-frontend staging directory ==="
 LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
-rm -rf "$LOBBY_SERVE"
 mkdir -p "$LOBBY_SERVE/app/$BUILD_NONCE"
 cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
 LOBBY_NONCE_DIR="$LOBBY_SERVE/app/$BUILD_NONCE"
 cp "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_NONCE_DIR/index.js"
 cp "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_NONCE_DIR/index.css"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
+for old in "$LOBBY_SERVE/app"/*; do
+    [ -d "$old" ] || continue
+    [ "$(basename "$old")" = "$BUILD_NONCE" ] && continue
+    rm -rf "$old"
+done
 
 # ── Start services ──────────────────────────────────────────────────
 

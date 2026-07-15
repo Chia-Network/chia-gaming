@@ -6,6 +6,8 @@ import {
 import { BlockchainPoller } from './BlockchainPoller';
 import {
   clearSession,
+  clearGameSessionPreservingHistory,
+  flushSessionState,
   markSavedSession,
   startNewSession,
   SessionState,
@@ -17,6 +19,7 @@ import {
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
+import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 
 export var sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
@@ -47,17 +50,29 @@ export function destroySessionController(): void {
 export { destroySessionController as destroyBlobSingleton };
 
 async function fetchPreset(fetchUrl: string): Promise<Uint8Array> {
-    const resp = await fetch(fetchUrl);
+    const url = resolveDeployAssetUrl(fetchUrl);
+    const resp = await fetch(url);
     if (!resp.ok) {
-        throw new Error(`fetchPreset ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+        await recoverFromMissingDeployAsset(
+            'fetchPreset',
+            url,
+            resp.status,
+            resp.statusText,
+        );
     }
     return new Uint8Array(await resp.arrayBuffer());
 }
 
 async function fetchHexString(fetchUrl: string): Promise<string> {
-    const resp = await fetch(fetchUrl);
+    const url = resolveDeployAssetUrl(fetchUrl);
+    const resp = await fetch(url);
     if (!resp.ok) {
-        throw new Error(`fetchHexString ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+        await recoverFromMissingDeployAsset(
+            'fetchHexString',
+            url,
+            resp.status,
+            resp.statusText,
+        );
     }
     return resp.text();
 }
@@ -210,7 +225,9 @@ export function getOrCreateSessionController(
 
   sessionController.kickSystem(2);
 
-  if (sessionSave) {
+  // Only cradle restores go through restoreSession. pairingToken-only saves are
+  // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
+  if (sessionSave?.serializedCradle) {
     const restoringObject = sessionController;
     const doRestore = async () => {
       try {
@@ -228,15 +245,23 @@ export function getOrCreateSessionController(
     };
     void restoringObject.beginRestore(doRestore()).catch(() => {});
   } else {
+    const owningController = sessionController;
     const newSession = async () => {
       try {
         if (!blockchain) {
           throw new Error('Cannot start a new session without a blockchain connection');
         }
-        startNewSession();
+        // Pending handshake fields must already be on disk (Shell). Flush before
+        // asset fetch so a stale-deploy reload can Resume into newSession again.
+        await flushSessionState();
+        if (sessionController !== owningController) return;
         const gameHexes = await loadGameHexes(fetchHexString);
+        if (sessionController !== owningController) return;
+        await clearGameSessionPreservingHistory();
+        if (sessionController !== owningController) return;
+        startNewSession();
         await configSessionController(
-          sessionController!,
+          owningController,
           iStarted,
           wasmStateInit,
           gameHexes,
@@ -246,12 +271,13 @@ export function getOrCreateSessionController(
           unrollTimeout,
         );
       } catch (e) {
+        if (sessionController !== owningController) return;
         const msg = e instanceof Error ? (e.stack || e.message)
           : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
           : String(e);
         console.error('[sessionController] newSession error:', e);
         log(`[sessionController] newSession error: ${msg}`);
-        sessionController!.rxjsEmitter?.next({ type: 'error', error: msg });
+        owningController.rxjsEmitter?.next({ type: 'error', error: msg });
       }
     };
     newSession();

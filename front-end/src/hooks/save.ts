@@ -85,6 +85,8 @@ export interface SessionState {
   cradleSchemaVersion?: bigint;
   pairingToken?: string;
   sessionPeerId?: string;
+  /** Last player_id from tracker `registered`. Remap during pre-cradle resume means rematch. */
+  myTrackerPlayerId?: string;
   gameSessionId?: string;
   messageNumber?: bigint;
   remoteNumber?: bigint;
@@ -93,6 +95,9 @@ export interface SessionState {
   myContribution?: string;
   theirContribution?: string;
   perGameAmount?: string;
+  /** Blocks; persisted so a deploy-stale reload can resume pre-cradle handshake. */
+  channelTimeout?: string;
+  unrollTimeout?: string;
   unackedMessages?: Array<{ msgno: bigint; msg: Uint8Array }>;
   humanHistory?: string[];
   wasmNotificationHistory?: string[];
@@ -158,6 +163,13 @@ export type SessionSave = SessionState;
 const STATE_KEY = 'appState';
 const PREFERENCES_KEY = 'appPreferences';
 const SESSION_MARKER_KEY = 'appState_savedSession';
+/** One-shot: stale-deploy reload should auto-resume without the prompt. */
+const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
+/**
+ * In-memory latch so a remount (React Strict Mode) after sessionStorage was
+ * cleared mid-resume cannot fall through to the Resume/Start Over dialog.
+ */
+let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
 export const CURRENT_VERSION = 6n;
 
@@ -363,10 +375,72 @@ export function hasSavedSessionMarker(): boolean {
   }
 }
 
+/**
+ * True when prefs remember a wallet choice and/or tracker, or WC left storage.
+ * Independent of whether a game session / cradle exists.
+ */
+export function hasConnectionPreferences(
+  state: SessionState = loadPreferences(),
+): boolean {
+  return !!(
+    state.blockchainType
+    || state.trackerUrl
+    || hasWalletConnectStorage()
+  );
+}
+
+/**
+ * True when boot should offer Resume / Start Over.
+ * Connection prefs count even with no game session; the session marker
+ * covers durable cradles / prior explicit save intent.
+ */
+export function shouldOfferResumeOrStartOver(
+  state: SessionState = loadPreferences(),
+): boolean {
+  return hasConnectionPreferences(state) || hasSavedSessionMarker();
+}
+
 /** Force the boot Resume/Start Over dialog on next load. */
 export function markSavedSession(): void {
   try {
     localStorage.setItem(SESSION_MARKER_KEY, '1');
+  } catch { /* ignore */ }
+}
+
+/**
+ * Mark the next boot to skip Resume/Start Over and resume automatically.
+ * Used only for the stale-deploy asset 404 → reload path.
+ * Stored in sessionStorage so it survives reload of the same tab/origin.
+ */
+export function markAutoResumeOnce(): void {
+  try {
+    sessionStorage.setItem(AUTO_RESUME_ONCE_KEY, '1');
+  } catch { /* ignore */ }
+}
+
+/**
+ * True when this boot should auto-resume. Also latches in memory so clearing
+ * sessionStorage mid-resume cannot re-show the resume dialog on remount.
+ */
+export function peekAutoResumeOnce(): boolean {
+  if (autoResumeLatch) return true;
+  try {
+    if (sessionStorage.getItem(AUTO_RESUME_ONCE_KEY) !== null) {
+      autoResumeLatch = true;
+      return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+/**
+ * Drop the one-shot auto-resume flag after resume has committed (or failed
+ * into an explicit dialog). Safe to call multiple times.
+ */
+export function clearAutoResumeOnce(): void {
+  autoResumeLatch = false;
+  try {
+    sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY);
   } catch { /* ignore */ }
 }
 
@@ -408,6 +482,8 @@ function assertNoNumbers(obj: unknown, path: string): void {
 interface StoredPreferences {
   playerId: string;
   sessionId?: string;
+  /** Last tracker-assigned player_id (public). For remap detection only — never sent to claim identity. */
+  myTrackerPlayerId?: string;
   alias?: string;
   theme?: 'dark' | 'light';
   defaultFee?: string;
@@ -425,6 +501,7 @@ function savePreferences(state: SessionState): void {
   const preferences: StoredPreferences = {
     playerId: state.playerId,
     sessionId: state.sessionId,
+    myTrackerPlayerId: state.myTrackerPlayerId,
     alias: state.alias,
     theme: state.theme,
     defaultFee: state.defaultFee?.toString(),
@@ -583,7 +660,7 @@ export function flushSessionState(): Promise<void> {
     persistPromise = null;
     resolvePersist = null;
     rejectPersist = null;
-    if (!isResumable(cached) && hasSavedSessionMarker() && !cached.blockchainType) {
+    if (!isResumable(cached) && hasSavedSessionMarker() && !hasConnectionPreferences(cached)) {
       const error = new Error(
         'Refusing to persist non-resumable in-memory state over a marked saved session',
       );
@@ -647,6 +724,14 @@ export function _writeRawState(obj: Record<string, unknown>): void {
   localStorage.setItem(STATE_KEY, JSON.stringify(obj));
 }
 
+/**
+ * True once we have either confirmed there is no disk identity to restore, or
+ * finished merging IndexedDB into the cache. Until then, getSessionId must not
+ * mint — a boot-time mint would write a new id into preferences and clobber
+ * the durable tracker session_id on the next peek/hydrate merge.
+ */
+let identityDiskChecked = false;
+
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
@@ -655,8 +740,11 @@ export function _resetForTests(): void {
   writeChain = Promise.resolve();
   fenced = false;
   fencedListeners.clear();
+  identityDiskChecked = false;
+  autoResumeLatch = false;
   try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
   try { localStorage.removeItem(RESET_KEY); } catch { /* ignore */ }
+  try { sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY); } catch { /* ignore */ }
 }
 
 export function loadState(): SessionState {
@@ -673,10 +761,20 @@ export function loadAppState(): SessionState { return loadState(); }
  * without reading IndexedDB; without this, preference-only patches (logs,
  * alerts, etc.) would overwrite the durable cradle with a non-resumable
  * record and make Resume report "saved session unavailable".
+ *
+ * Also restores tracker identity (sessionId / playerId) from disk when
+ * preferences lack them, even if the record is not fully resumable — so a
+ * reload never remints session_id over a durable id still on disk.
  */
 export async function hydrateSessionCacheFromDisk(): Promise<void> {
-  if (cached && isResumable(cached)) return;
-  if (!hasSavedSessionMarker()) return;
+  if (cached && isResumable(cached) && cached.sessionId) {
+    identityDiskChecked = true;
+    return;
+  }
+  if (!hasSavedSessionMarker()) {
+    identityDiskChecked = true;
+    return;
+  }
 
   // Do not flush a prefs-only cache over disk. Cancel the debounce; the caller
   // will schedule a new persist after merging with the hydrated record.
@@ -690,28 +788,50 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
 
   await writeChain;
   const record = await readSessionRecord();
-  if (!record || record.version !== CURRENT_VERSION || !isResumable(record)) return;
+  identityDiskChecked = true;
+  if (!record || record.version !== CURRENT_VERSION) return;
 
   const mem = cached ?? loadPreferences();
-  cached = {
-    ...record,
-    playerId: mem.playerId,
-    sessionId: mem.sessionId ?? record.sessionId,
-    alias: mem.alias ?? record.alias,
-    theme: mem.theme ?? record.theme,
-    defaultFee: mem.defaultFee ?? record.defaultFee,
-    feeUnit: mem.feeUnit ?? record.feeUnit,
-    trackerUrl: mem.trackerUrl ?? record.trackerUrl,
-    savedGames: mem.savedGames ?? record.savedGames,
-    activeTab: mem.activeTab ?? record.activeTab,
-    unreadGame: mem.unreadGame ?? record.unreadGame,
-    walletAlert: mem.walletAlert ?? record.walletAlert,
-    trackerAlert: mem.trackerAlert ?? record.trackerAlert,
-    blockchainType: mem.blockchainType ?? record.blockchainType,
-    humanHistory: mem.humanHistory ?? record.humanHistory,
-    diagnosticLog: mem.diagnosticLog ?? record.diagnosticLog,
-    wasmNotificationHistory: mem.wasmNotificationHistory ?? record.wasmNotificationHistory,
-  };
+  if (isResumable(record)) {
+    cached = {
+      ...record,
+      playerId: mem.playerId || record.playerId,
+      // Prefer disk when prefs are empty so a pre-hydrate remint cannot win.
+      sessionId: mem.sessionId || record.sessionId,
+      myTrackerPlayerId: mem.myTrackerPlayerId || record.myTrackerPlayerId,
+      alias: mem.alias ?? record.alias,
+      theme: mem.theme ?? record.theme,
+      defaultFee: mem.defaultFee ?? record.defaultFee,
+      feeUnit: mem.feeUnit ?? record.feeUnit,
+      trackerUrl: mem.trackerUrl ?? record.trackerUrl,
+      savedGames: mem.savedGames ?? record.savedGames,
+      activeTab: mem.activeTab ?? record.activeTab,
+      unreadGame: mem.unreadGame ?? record.unreadGame,
+      walletAlert: mem.walletAlert ?? record.walletAlert,
+      trackerAlert: mem.trackerAlert ?? record.trackerAlert,
+      blockchainType: mem.blockchainType ?? record.blockchainType,
+      humanHistory: mem.humanHistory ?? record.humanHistory,
+      diagnosticLog: mem.diagnosticLog ?? record.diagnosticLog,
+      wasmNotificationHistory: mem.wasmNotificationHistory ?? record.wasmNotificationHistory,
+    };
+    savePreferences(cached);
+    return;
+  }
+
+  // Non-resumable record: still pull tracker identity if prefs lack it.
+  if (
+    (!mem.sessionId && record.sessionId)
+    || (!mem.playerId && record.playerId)
+    || (!mem.myTrackerPlayerId && record.myTrackerPlayerId)
+  ) {
+    cached = {
+      ...mem,
+      sessionId: mem.sessionId || record.sessionId,
+      playerId: mem.playerId || record.playerId,
+      myTrackerPlayerId: mem.myTrackerPlayerId || record.myTrackerPlayerId,
+    };
+    savePreferences(cached);
+  }
 }
 
 function mutate(fn: (state: SessionState) => void): Promise<void> {
@@ -740,23 +860,58 @@ export function getPlayerId(): string {
   return state.playerId;
 }
 
+/**
+ * Await before identify / tracker connect on boot. Restores sessionId from
+ * IndexedDB when preferences are empty, then mints only if still missing.
+ * Tracker player_id is assigned by the tracker from this secret — never client-chosen.
+ */
+export async function ensureTrackerIdentity(): Promise<string> {
+  if (hasSavedSessionMarker() && !identityDiskChecked) {
+    await hydrateSessionCacheFromDisk();
+  }
+  identityDiskChecked = true;
+  return getSessionId();
+}
+
+export function getMyTrackerPlayerId(): string | undefined {
+  return loadState().myTrackerPlayerId;
+}
+
 export function getSessionId(): string {
   const state = loadState();
   if (state.sessionId) return state.sessionId;
+  // A saved-session marker means disk may still hold the real tracker
+  // session_id. Minting here would poison preferences and win the merge.
+  if (hasSavedSessionMarker() && !identityDiskChecked) {
+    throw new Error(
+      'getSessionId called before ensureTrackerIdentity/hydrate with a saved session marker',
+    );
+  }
   state.sessionId = randomHex();
   savePreferences(state);
+  // Also land in IndexedDB so a later hydrate cannot "lose" the id that only
+  // lived in localStorage preferences.
+  void schedulePersist();
   return state.sessionId;
 }
 
 export function regenerateSessionId(): string {
+  identityDiskChecked = true;
   const state = loadState();
   state.sessionId = randomHex();
+  state.myTrackerPlayerId = undefined;
   savePreferences(state);
+  void schedulePersist();
   return state.sessionId;
 }
 
 export function clearSessionId(): void {
-  mutate(s => { s.sessionId = undefined; });
+  // Intentional clear — next getSessionId may mint a replacement.
+  identityDiskChecked = true;
+  mutate(s => {
+    s.sessionId = undefined;
+    s.myTrackerPlayerId = undefined;
+  });
 }
 
 export function getBlockchainType(): BlockchainType | undefined {
@@ -783,10 +938,7 @@ function hasWalletConnectStorage(): boolean {
 /**
  * Returns the current state if there's anything worth resuming — a
  * serialized cradle, pairing token, finished/terminal channel snapshot,
- * pre-game wallet choice with an active boot marker, or leftover
- * WalletConnect storage from a partial connection.
- * `blockchainType` alone (preserved across session clears, without a marker)
- * does not count as resumable.
+ * remembered wallet and/or tracker choice, or leftover WalletConnect storage.
  */
 export async function peekSession(): Promise<SessionState | null> {
   // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
@@ -806,24 +958,30 @@ export async function peekSession(): Promise<SessionState | null> {
   }
   if (record) {
     const preferences = loadPreferences();
-    cached = { ...preferences, ...record };
+    // Never let a disk record clobber stable local identity. Tracker player_id
+    // is keyed by session_id; reminting on reload breaks pre-cradle routing.
+    cached = {
+      ...preferences,
+      ...record,
+      playerId: preferences.playerId || record.playerId,
+      sessionId: preferences.sessionId || record.sessionId,
+      myTrackerPlayerId: preferences.myTrackerPlayerId || record.myTrackerPlayerId,
+    };
     savePreferences(cached);
     if (isResumable(cached)) {
       markSavedSession();
       return cached;
     }
-    // Pre-game: wallet type chosen / connected, marker set by Shell.
-    if (hasSavedSessionMarker() && cached.blockchainType) {
+    if (hasConnectionPreferences(cached)) {
+      markSavedSession();
       return cached;
     }
     clearSavedSessionMarker();
     return null;
   }
   cached = loadPreferences();
-  if (hasSavedSessionMarker() && cached.blockchainType) {
-    return cached;
-  }
-  if (hasWalletConnectStorage()) {
+  if (hasConnectionPreferences(cached)) {
+    markSavedSession();
     return cached;
   }
   clearSavedSessionMarker();
@@ -841,6 +999,7 @@ export function clearSession(): Promise<void> {
     version: CURRENT_VERSION,
     playerId: prev.playerId,
     sessionId: prev.sessionId,
+    myTrackerPlayerId: prev.myTrackerPlayerId,
     alias: prev.alias,
     theme: prev.theme,
     defaultFee: prev.defaultFee,
@@ -856,9 +1015,65 @@ export function clearSession(): Promise<void> {
   savePreferences(cached);
   const deletePromise = writeChain = writeChain.catch(() => {}).then(async () => {
     await deleteSessionRecord();
-    clearSavedSessionMarker();
+    if (cached?.blockchainType || cached?.trackerUrl) {
+      markSavedSession();
+    } else {
+      clearSavedSessionMarker();
+    }
   });
   return deletePromise;
+}
+
+/**
+ * Drop durable cradle/game state only after we know a new session can start
+ * (e.g. deploy assets loaded). Keeps connection prefs, history/logs, and any
+ * pre-cradle handshake fields (pairingToken, amounts, peer ids, timeouts).
+ */
+export async function clearGameSessionPreservingHistory(): Promise<void> {
+  const prev = loadState();
+  const preserved = {
+    humanHistory: prev.humanHistory,
+    diagnosticLog: prev.diagnosticLog,
+    wasmNotificationHistory: prev.wasmNotificationHistory,
+    sessionPeerId: prev.sessionPeerId,
+    myTrackerPlayerId: prev.myTrackerPlayerId,
+    gameSessionId: prev.gameSessionId,
+    pairingToken: prev.pairingToken,
+    iStarted: prev.iStarted,
+    myContribution: prev.myContribution,
+    theirContribution: prev.theirContribution,
+    perGameAmount: prev.perGameAmount,
+    channelTimeout: prev.channelTimeout,
+    unrollTimeout: prev.unrollTimeout,
+    myAlias: prev.myAlias,
+    opponentAlias: prev.opponentAlias,
+  };
+  await clearSession();
+  const toSave: Partial<SessionState> = {};
+  if (preserved.humanHistory && preserved.humanHistory.length > 0) {
+    toSave.humanHistory = preserved.humanHistory;
+  }
+  if (preserved.diagnosticLog && preserved.diagnosticLog.length > 0) {
+    toSave.diagnosticLog = preserved.diagnosticLog;
+  }
+  if (preserved.wasmNotificationHistory && preserved.wasmNotificationHistory.length > 0) {
+    toSave.wasmNotificationHistory = preserved.wasmNotificationHistory;
+  }
+  if (preserved.sessionPeerId) toSave.sessionPeerId = preserved.sessionPeerId;
+  if (preserved.myTrackerPlayerId) toSave.myTrackerPlayerId = preserved.myTrackerPlayerId;
+  if (preserved.gameSessionId) toSave.gameSessionId = preserved.gameSessionId;
+  if (preserved.pairingToken) toSave.pairingToken = preserved.pairingToken;
+  if (preserved.iStarted !== undefined) toSave.iStarted = preserved.iStarted;
+  if (preserved.myContribution) toSave.myContribution = preserved.myContribution;
+  if (preserved.theirContribution) toSave.theirContribution = preserved.theirContribution;
+  if (preserved.perGameAmount) toSave.perGameAmount = preserved.perGameAmount;
+  if (preserved.channelTimeout) toSave.channelTimeout = preserved.channelTimeout;
+  if (preserved.unrollTimeout) toSave.unrollTimeout = preserved.unrollTimeout;
+  if (preserved.myAlias) toSave.myAlias = preserved.myAlias;
+  if (preserved.opponentAlias) toSave.opponentAlias = preserved.opponentAlias;
+  if (Object.keys(toSave).length === 0) return;
+  saveSession(toSave);
+  await flushSessionState();
 }
 
 export async function hardReset(): Promise<void> {
@@ -972,6 +1187,7 @@ export function getTrackerUrl(): string | undefined {
 
 export function setTrackerUrl(url: string | undefined): void {
   mutate(s => { s.trackerUrl = url || undefined; });
+  if (url) markSavedSession();
 }
 
 // --- Saved games ---

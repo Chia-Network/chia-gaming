@@ -159,6 +159,13 @@ async function identifyGame(origin, sessionId) {
   return game;
 }
 
+async function identifyGameRegistered(origin, sessionId) {
+  const game = await openWs(origin, '/ws/game');
+  sendGame(game, { type: 'identify', session_id: sessionId, busy: false });
+  const registered = await nextGame(game, (msg) => msg.type === 'registered');
+  return { game, playerId: registered.player_id };
+}
+
 test('game-channel identify does not clobber a lobby-chosen alias', async () => {
   const tracker = await startTracker();
   try {
@@ -389,6 +396,56 @@ test('challenges with out-of-range timeouts are rejected by the server', async (
     await closeWs(bob.lobby);
     await closeWs(aliceGame);
     await closeWs(bobGame);
+  } finally {
+    await tracker.stop();
+  }
+});
+
+test('same secret session_id keeps the same player_id across game disconnect', async () => {
+  const tracker = await startTracker();
+  try {
+    const sessionId = 'secret-stable-across-disconnect';
+    const first = await identifyGameRegistered(tracker.origin, sessionId);
+    await closeWs(first.game);
+
+    const second = await identifyGameRegistered(tracker.origin, sessionId);
+    assert.equal(second.playerId, first.playerId);
+    await closeWs(second.game);
+  } finally {
+    await tracker.stop();
+  }
+});
+
+test('same secret session_id keeps the same player_id across lobby leave and rejoin', async () => {
+  const tracker = await startTracker();
+  try {
+    const sessionId = 'secret-stable-lobby-rejoin';
+    const first = await joinLobby(tracker.origin, sessionId, 'Alice');
+    await closeWs(first.lobby);
+
+    const second = await joinLobby(tracker.origin, sessionId, 'Alice');
+    assert.equal(second.id, first.id);
+    await closeWs(second.lobby);
+  } finally {
+    await tracker.stop();
+  }
+});
+
+test('identify ignores client-supplied player_id and assigns from the secret', async () => {
+  const tracker = await startTracker();
+  try {
+    const sessionId = 'secret-ignore-client-player-id';
+    const game = await openWs(tracker.origin, '/ws/game');
+    sendGame(game, {
+      type: 'identify',
+      session_id: sessionId,
+      busy: false,
+      player_id: 'p_attacker_chosen_id_abcdef',
+    });
+    const registered = await nextGame(game, (msg) => msg.type === 'registered');
+    assert.notEqual(registered.player_id, 'p_attacker_chosen_id_abcdef');
+    assert.match(registered.player_id, /^p_/);
+    await closeWs(game);
   } finally {
     await tracker.stop();
   }

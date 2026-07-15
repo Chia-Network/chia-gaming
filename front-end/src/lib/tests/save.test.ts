@@ -3,12 +3,15 @@ import {
   saveSession,
   peekSession,
   clearSession,
+  clearGameSessionPreservingHistory,
   startNewSession,
   saveGame,
   loadSave,
   getSaveList,
   getPlayerId,
   getSessionId,
+  ensureTrackerIdentity,
+  getMyTrackerPlayerId,
   clearSessionId,
   getBlockchainType,
   loadAppState,
@@ -25,8 +28,12 @@ import {
   checkLease,
   isLeaseConflict,
   hasSavedSessionMarker,
+  shouldOfferResumeOrStartOver,
   markSavedSession,
   clearSavedSessionMarker,
+  markAutoResumeOnce,
+  peekAutoResumeOnce,
+  clearAutoResumeOnce,
   SessionState,
   _resetForTests,
   _writeRawState,
@@ -37,6 +44,7 @@ import {
   HUMAN_HISTORY_LIMIT,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../session/historyLimits';
+import { sessionAmountsFromSave } from '../session/model';
 
 const testIndexedDb = indexedDB;
 
@@ -172,13 +180,47 @@ describe('session persistence', () => {
     expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
   });
 
-  it('does not treat leftover blockchainType without a marker as resumable', async () => {
+  it('treats leftover blockchainType without a marker as resume-worthy', async () => {
     saveSession({ blockchainType: 'walletconnect' });
     await flushSessionState();
     clearSavedSessionMarker();
 
-    expect(await peekSession()).toBeNull();
-    expect(hasSavedSessionMarker()).toBe(false);
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
+    expect(await peekSession()).toMatchObject({ blockchainType: 'walletconnect' });
+    expect(hasSavedSessionMarker()).toBe(true);
+  });
+
+  it('treats leftover trackerUrl without a marker as resume-worthy', async () => {
+    saveSession({ trackerUrl: 'http://localhost:3003' });
+    await flushSessionState();
+    clearSavedSessionMarker();
+
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
+    expect(await peekSession()).toMatchObject({ trackerUrl: 'http://localhost:3003' });
+    expect(hasSavedSessionMarker()).toBe(true);
+  });
+
+  it('shouldOfferResumeOrStartOver is false on a clean slate', () => {
+    expect(shouldOfferResumeOrStartOver()).toBe(false);
+  });
+
+  it('auto-resume once flag is one-shot in sessionStorage', () => {
+    expect(peekAutoResumeOnce()).toBe(false);
+    markAutoResumeOnce();
+    expect(peekAutoResumeOnce()).toBe(true);
+    // Second peek still true (latched) until cleared.
+    expect(peekAutoResumeOnce()).toBe(true);
+    clearAutoResumeOnce();
+    expect(peekAutoResumeOnce()).toBe(false);
+  });
+
+  it('auto-resume latch survives clearing sessionStorage until clearAutoResumeOnce', () => {
+    markAutoResumeOnce();
+    expect(peekAutoResumeOnce()).toBe(true);
+    sessionStorage.removeItem('appState_autoResumeOnce');
+    expect(peekAutoResumeOnce()).toBe(true);
+    clearAutoResumeOnce();
+    expect(peekAutoResumeOnce()).toBe(false);
   });
 
   it('does not set the saved-session marker from startNewSession alone', () => {
@@ -346,13 +388,119 @@ describe('flat state', () => {
     expect(getSessionId()).toBe(id);
   });
 
+  it('peekSession keeps preference sessionId when the IndexedDB record omits it', async () => {
+    const sid = getSessionId();
+    markSavedSession();
+    // Durable resumable fields without sessionId (simulates older/partial IDB writes).
+    saveSession({
+      pairingToken: 'tok-keep-sid',
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      blockchainType: 'simulator',
+    });
+    await flushSessionState();
+
+    // Drop sessionId from the IDB record only; preferences still hold sid.
+    const record = await new Promise<SessionState>((resolve, reject) => {
+      const open = indexedDB.open(SESSION_DB_NAME, 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('session', 'readonly');
+        const get = tx.objectStore('session').get('current');
+        tx.oncomplete = () => {
+          db.close();
+          resolve(get.result as SessionState);
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    delete record.sessionId;
+    await writeSessionRecord(record);
+
+    _resetForTests();
+    setTestGlobal('localStorage', makeStorage());
+    // Re-seed preferences with the original sid (reset cleared module cache;
+    // localStorage mock is fresh — write prefs as boot would see them).
+    localStorage.setItem('appPreferences', JSON.stringify({
+      playerId: 'player-keep-sid',
+      sessionId: sid,
+    }));
+    localStorage.setItem('appState_savedSession', '1');
+
+    const loaded = await peekSession();
+    expect(loaded?.pairingToken).toBe('tok-keep-sid');
+    expect(getSessionId()).toBe(sid);
+  });
+
+  it('ensureTrackerIdentity restores sessionId from IndexedDB when preferences omit it', async () => {
+    const sid = getSessionId();
+    markSavedSession();
+    saveSession({
+      pairingToken: 'tok-idb-sid',
+      sessionId: sid,
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      blockchainType: 'simulator',
+    });
+    await flushSessionState();
+
+    _resetForTests();
+    setTestGlobal('localStorage', makeStorage());
+    // Prefs have no sessionId — the remint-before-hydrate bug would mint here.
+    localStorage.setItem('appPreferences', JSON.stringify({
+      playerId: 'player-idb-sid',
+    }));
+    localStorage.setItem('appState_savedSession', '1');
+
+    expect(() => getSessionId()).toThrow(/before ensureTrackerIdentity/);
+    const restored = await ensureTrackerIdentity();
+    expect(restored).toBe(sid);
+    expect(getSessionId()).toBe(sid);
+  });
+
+  it('persists myTrackerPlayerId in preferences and restores it across reload', async () => {
+    const sid = getSessionId();
+    markSavedSession();
+    saveSession({
+      pairingToken: 'tok-pid',
+      sessionId: sid,
+      myTrackerPlayerId: 'p_stable_abc',
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      blockchainType: 'simulator',
+    });
+    await flushSessionState();
+
+    const prefs = JSON.parse(localStorage.getItem('appPreferences')!);
+    expect(prefs.myTrackerPlayerId).toBe('p_stable_abc');
+
+    _resetForTests();
+    setTestGlobal('localStorage', makeStorage());
+    localStorage.setItem('appPreferences', JSON.stringify({
+      playerId: 'player-local',
+      sessionId: sid,
+      myTrackerPlayerId: 'p_stable_abc',
+    }));
+    localStorage.setItem('appState_savedSession', '1');
+
+    await ensureTrackerIdentity();
+    expect(getMyTrackerPlayerId()).toBe('p_stable_abc');
+    expect(getSessionId()).toBe(sid);
+  });
+
   it('clearSessionId wipes only the tracker session ID', () => {
     const id = getSessionId();
     setAlias('MyName');
+    saveSession({ myTrackerPlayerId: 'p_to_clear' });
 
     clearSessionId();
 
     expect(loadAppState().sessionId).toBeUndefined();
+    expect(loadAppState().myTrackerPlayerId).toBeUndefined();
     expect(loadAppState().alias).toBe('MyName');
     expect(getSessionId()).toBeTruthy();
     expect(getSessionId()).not.toBe(id);
@@ -366,18 +514,114 @@ describe('flat state', () => {
     expect(newId).toBe(oldId);
   });
 
-  it('clearSession wipes game state but preserves identity, preferences, and blockchainType', async () => {
+  it('clearSession wipes game state but preserves identity, preferences, blockchainType, and boot marker', async () => {
     const sid = getSessionId();
+    markSavedSession();
     saveSession({ ...sampleSession, blockchainType: 'simulator' });
     setAlias('MyName');
+    await flushSessionState();
 
     await clearSession();
 
     expect(loadAppState().sessionId).toBe(sid);
     expect(getBlockchainType()).toBe('simulator');
+    expect(hasSavedSessionMarker()).toBe(true);
     const remaining = await peekSession();
-    expect(remaining).toBeNull();
+    expect(remaining).not.toBeNull();
+    expect(remaining?.blockchainType).toBe('simulator');
+    expect(remaining?.pairingToken).toBeUndefined();
     expect(loadAppState().alias).toBe('MyName');
+  });
+
+  it('clearSession drops the boot marker when no blockchainType or trackerUrl remains', async () => {
+    markSavedSession();
+    saveSession(sampleSession);
+    await flushSessionState();
+    expect(getBlockchainType()).toBeUndefined();
+
+    await clearSession();
+
+    expect(hasSavedSessionMarker()).toBe(false);
+    expect(await peekSession()).toBeNull();
+  });
+
+  it('clearSession keeps the boot marker when only trackerUrl remains', async () => {
+    markSavedSession();
+    saveSession({ trackerUrl: 'http://localhost:3003' });
+    await flushSessionState();
+
+    await clearSession();
+
+    expect(hasSavedSessionMarker()).toBe(true);
+    expect(await peekSession()).toMatchObject({ trackerUrl: 'http://localhost:3003' });
+  });
+
+  it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-cradle handshake', async () => {
+    markSavedSession();
+    saveSession({
+      ...sampleSession,
+      blockchainType: 'simulator',
+      trackerUrl: 'http://localhost:3003',
+      humanHistory: ['keep-me'],
+      diagnosticLog: ['diag-keep'],
+      sessionPeerId: 'peer-abc',
+      gameSessionId: 'gs-1',
+      channelTimeout: '100',
+      unrollTimeout: '50',
+      opponentAlias: 'Opponent',
+    });
+    await flushSessionState();
+
+    await clearGameSessionPreservingHistory();
+
+    expect(hasSavedSessionMarker()).toBe(true);
+    const remaining = await peekSession();
+    expect(remaining?.blockchainType).toBe('simulator');
+    expect(remaining?.trackerUrl).toBe('http://localhost:3003');
+    expect(remaining?.humanHistory).toEqual(['keep-me']);
+    expect(remaining?.diagnosticLog).toEqual(['diag-keep']);
+    expect(remaining?.serializedCradle).toBeUndefined();
+    // Handshake checkpoint survives so a reload mid-hex-load can Resume.
+    expect(remaining?.pairingToken).toBe('tok-123');
+    expect(remaining?.sessionPeerId).toBe('peer-abc');
+    expect(remaining?.gameSessionId).toBe('gs-1');
+    expect(remaining?.iStarted).toBe(true);
+    expect(remaining?.myContribution).toBe('60');
+    expect(remaining?.theirContribution).toBe('40');
+    expect(remaining?.perGameAmount).toBe('10');
+    expect(remaining?.channelTimeout).toBe('100');
+    expect(remaining?.unrollTimeout).toBe('50');
+    expect(remaining?.opponentAlias).toBe('Opponent');
+  });
+
+  it('pairingToken-only pending handshake is resumable without a cradle', async () => {
+    saveSession({
+      blockchainType: 'simulator',
+      trackerUrl: 'http://localhost:3003',
+      pairingToken: 'peer_x_1',
+      sessionPeerId: 'peer-x',
+      gameSessionId: 'gs-pending',
+      iStarted: false,
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      channelTimeout: '200',
+      unrollTimeout: '80',
+      humanHistory: ['accepted proposal'],
+    });
+    await flushSessionState();
+
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
+    const loaded = await peekSession();
+    expect(loaded?.serializedCradle).toBeUndefined();
+    expect(loaded?.pairingToken).toBe('peer_x_1');
+    expect(loaded?.myContribution).toBe('100');
+    expect(loaded?.sessionPeerId).toBe('peer-x');
+    expect(sessionAmountsFromSave(loaded!)).toEqual({
+      myContribution: 100n,
+      theirContribution: 100n,
+      perGameAmount: 10n,
+    });
   });
 
   it('getBlockchainType reads from flat state', () => {
