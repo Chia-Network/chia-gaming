@@ -98,6 +98,24 @@ function deepNumbersToBigInt(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Convert bigint values to decimal strings before WalletConnect serialization.
+ *
+ * `@walletconnect/safe-json` otherwise encodes them as `"123n"` / `"-100n"`.
+ */
+function deepBigIntToDecimalString(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(deepBigIntToDecimalString);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = deepBigIntToDecimalString(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 async function waitForRelayerConnected(): Promise<void> {
   const client = walletConnectState.getClient();
   if (!client) throw new Error('WalletConnect is not initialized');
@@ -171,10 +189,10 @@ class WalletConnectRpcClient {
       throw new Error('walletconnect fingerprint is not a valid integer');
     }
 
-    const params: Record<string, unknown> = {
+    const params = deepBigIntToDecimalString({
       ...data,
       fingerprint,
-    };
+    }) as Record<string, unknown>;
     const paramKeys = Object.keys(params).join(',');
     const enqueuedAt = Date.now();
 
