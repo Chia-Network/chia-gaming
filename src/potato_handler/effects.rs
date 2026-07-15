@@ -122,6 +122,8 @@ pub enum GameNotification {
 
     ProposalMade {
         id: GameID,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        group_ids: Vec<GameID>,
         my_contribution: Amount,
         their_contribution: Amount,
         timeout: Timeout,
@@ -131,6 +133,7 @@ pub enum GameNotification {
     },
     ProposalAccepted {
         id: GameID,
+        amount: Amount,
     },
     ProposalCancelled {
         id: GameID,
@@ -144,6 +147,11 @@ pub enum GameNotification {
 
     ActionFailed {
         reason: String,
+    },
+    MoveRejected {
+        id: GameID,
+        tag: String,
+        message: String,
     },
     ChannelStatus {
         state: ChannelState,

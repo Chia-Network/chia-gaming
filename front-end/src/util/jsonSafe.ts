@@ -39,7 +39,11 @@ function jsonValue(v: unknown): string {
   if (typeof v === 'bigint') return v.toString();
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (typeof v === 'string') return JSON.stringify(v);
-  if (v instanceof Uint8Array) return JSON.stringify(Array.from(v));
+  if (v instanceof Uint8Array) return JSON.stringify(uint8ToBase64(v));
+  if (ArrayBuffer.isView(v)) {
+    const view = v as ArrayBufferView;
+    return JSON.stringify(uint8ToBase64(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)));
+  }
   if (Array.isArray(v)) return `[${v.map(jsonValue).join(',')}]`;
   const entries = Object.entries(v as Record<string, unknown>)
     .filter(([, val]) => val !== undefined)

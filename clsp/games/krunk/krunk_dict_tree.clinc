@@ -1,0 +1,37 @@
+(import std.relops)
+(import std.li)
+
+; Balanced BST dictionary lookup with signatures at leaves.
+;
+; Tree structure (built in Rust, curried into handlers):
+;   Interior node: (left_node right_node word) — proper 3-element list
+;   Leaf: 96-byte BLS signature atom (aggregated sig for that gap)
+;
+; The lookup carries left_bound and right_bound, adjusting them with +1/-1
+; as it descends. This way the leaf knows the exact gap range it covers.
+;
+; Returns:
+;   () — word IS in the dictionary
+;   (left_bound right_bound signature) — word is NOT in the dictionary;
+;       left_bound/right_bound are the gap boundaries and signature is
+;       the BLS signature certifying that gap.
+
+(defun dict_lookup (left_bound right_bound word node)
+    (if (l node)
+        ; interior: (left_node right_node word_here)
+        (assign
+            left_node (f node)
+            right_node (f (r node))
+            word_here (f (r (r node)))
+            (if (= word word_here)
+                ()
+                (if (> word word_here)
+                    (dict_lookup (+ word_here 1) right_bound word right_node)
+                    (dict_lookup left_bound (- word_here 1) word left_node)
+                )
+            )
+        )
+        ; leaf: signature atom
+        (li left_bound right_bound node)
+    )
+)

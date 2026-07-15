@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
+import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -14,8 +14,14 @@ import {
   CalpokerOutcomeView,
 } from '../types/californiaPoker/CaliforniapokerProps';
 import SpacePoker from './SpacePoker';
+import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
-import { DEFAULT_GAME_TIMEOUT_BLOCKS, selectHideGameInterfaceForBetweenHandDialog, type SessionModel } from '../lib/session/model';
+import {
+  DEFAULT_GAME_TIMEOUT_BLOCKS,
+  selectComposeAmountAfterGameTypeChoice,
+  selectHideGameInterfaceForBetweenHandDialog,
+  type SessionModel,
+} from '../lib/session/model';
 import type { ChannelState } from '../types/ChiaGaming';
 
 const PRE_ACTIVE_STATES: ReadonlySet<ChannelState> = new Set([
@@ -366,7 +372,7 @@ interface CalpokerHandProps {
   playerNumber: number;
   gameplayEvent$: Observable<GameplayEvent>;
   onOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (isMyTurn: boolean) => void;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
   myName?: string;
@@ -422,6 +428,10 @@ function CalpokerHand({
   myName,
   opponentName,
 }: CalpokerHandProps) {
+  const handleTurnChanged = useCallback(
+    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
+    [gameId, onTurnChanged],
+  );
   const {
     playerHand,
     opponentHand,
@@ -443,7 +453,7 @@ function CalpokerHand({
     iStarted,
     gameplayEvent$,
     onOutcome,
-    onTurnChanged,
+    handleTurnChanged,
     gameObject.handState ?? undefined,
   );
 
@@ -500,7 +510,7 @@ interface SpacePokerHandProps {
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: string;
   unitSizeMojos?: string;
-  onTurnChanged: (isMyTurn: boolean) => void;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
   myName?: string;
@@ -522,6 +532,10 @@ function SpacePokerHand({
 }: SpacePokerHandProps) {
   const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : 1n;
   const stackSize = unitMojos > 0n ? perGameAmount / unitMojos : 0n;
+  const handleTurnChanged = useCallback(
+    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
+    [gameId, onTurnChanged],
+  );
 
   const handleGameLog = useCallback((lines: string[]) => {
     appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
@@ -537,13 +551,14 @@ function SpacePokerHand({
       gameplayEvent$={gameplayEvent$}
       betSize={betSize}
       unitSizeMojos={unitSizeMojos}
-      onTurnChanged={onTurnChanged}
+      onTurnChanged={handleTurnChanged}
       onGameLog={handleGameLog}
       myName={myName}
       opponentName={opponentName}
     />
   );
 }
+
 
 function ComposeProposalDialog({
   session,
@@ -554,6 +569,7 @@ function ComposeProposalDialog({
 }) {
   const defaultSpacePokerStackSize = 10;
   const isSpacepoker = session.composeGameType === 'spacepoker';
+  const isKrunk = session.composeGameType === 'krunk';
   const [spUnitSize, setSpUnitSize] = useState(() => {
     const remembered = session.lastHandTerms.gameType === 'spacepoker'
       ? session.lastHandTerms.spacepokerUnitSize
@@ -591,15 +607,32 @@ function ComposeProposalDialog({
     : null;
 
   const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
+  const krunkStakeValid = !isKrunk || isValidKrunkStake(perHandAmount);
+  const standardMaxMojos = isKrunk && maxPerHandMojos != null
+    ? maxPerHandMojos - (maxPerHandMojos % 100n)
+    : maxPerHandMojos;
 
   const submit = () => {
-    if (perHandAmount <= 0n || !timeoutValid || session.composeProposalSent) return;
+    if (
+      perHandAmount <= 0n
+      || !timeoutValid
+      || !krunkStakeValid
+      || session.composeProposalSent
+    ) return;
     session.submitComposedProposal(
       perHandAmount,
       session.composeGameType,
       gameTimeout,
       isSpacepoker ? spUnitSize : undefined,
     );
+  };
+  const selectGameType = (gameType: string) => {
+    session.setComposePerHandAmount(selectComposeAmountAfterGameTypeChoice(
+      session.composeGameType,
+      gameType,
+      session.composePerHandAmount,
+    ));
+    session.setComposeGameType(gameType);
   };
 
   return (
@@ -615,7 +648,7 @@ function ComposeProposalDialog({
                 color={session.composeGameType === gameType ? 'primary' : 'neutral'}
                 size='sm'
                 disabled={session.composeProposalSent}
-                onClick={() => session.setComposeGameType(gameType)}
+                onClick={() => selectGameType(gameType)}
               >
                 {displayName}
               </Button>
@@ -655,15 +688,28 @@ function ComposeProposalDialog({
           <AmountInput
             valueMojos={session.composePerHandAmount}
             onChange={session.setComposePerHandAmount}
-            maxMojos={maxPerHandMojos}
-            onUseMax={maxPerHandMojos != null ? () => session.setComposePerHandAmount(maxPerHandMojos) : undefined}
+            maxMojos={standardMaxMojos}
+            onUseMax={standardMaxMojos != null && standardMaxMojos > 0n
+              ? () => session.setComposePerHandAmount(standardMaxMojos)
+              : undefined}
             disabled={session.composeProposalSent}
             label='Per-player stake'
             exceedsLabel='Exceeds available reserve.'
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n && timeoutValid) submit();
+              if (
+                e.key === 'Enter'
+                && !session.composeProposalSent
+                && session.composePerHandAmount > 0n
+                && timeoutValid
+                && krunkStakeValid
+              ) submit();
             }}
           />
+        )}
+        {isKrunk && perHandAmount > 0n && !krunkStakeValid && (
+          <p className='text-xs text-alert-text'>
+            Krunk stakes must be multiples of 100 mojos.
+          </p>
         )}
 
         <div className='flex w-full flex-col items-center gap-1'>
@@ -692,11 +738,65 @@ function ComposeProposalDialog({
           color='primary'
           size='sm'
           className='self-center'
-          disabled={session.composeProposalSent || perHandAmount <= 0n || !timeoutValid || (isSpacepoker && !spValid)}
+          disabled={
+            session.composeProposalSent ||
+            perHandAmount <= 0n ||
+            !timeoutValid ||
+            !krunkStakeValid ||
+            (isSpacepoker && !spValid)
+          }
           onClick={submit}
         >
           {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewProposalDialog({
+  session,
+}: {
+  session: import('../hooks/useGameSession').UseGameSessionResult;
+}) {
+  const review = session.reviewPeerProposal;
+  if (!review) return null;
+
+  return (
+    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+      <div className='flex flex-col gap-3'>
+        <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
+        <p className='text-xs text-canvas-text'>
+          Game: {gameDisplayName(review.terms.gameType)}
+        </p>
+        <p className='text-xs text-canvas-text'>
+          Per-player stake: {formatMojos(review.terms.myContribution)}
+        </p>
+        <p className='text-xs text-canvas-text'>
+          Timeout: {String(review.terms.gameTimeout)} blocks
+        </p>
+        {review.terms.gameType === 'spacepoker' && (() => {
+          const betSize = review.terms.myContribution;
+          const betUnit = review.terms.spacepokerUnitSize;
+          return betUnit && betUnit > 0n ? (
+            <p className='text-xs text-canvas-text'>
+              Unit size: {formatMojos(betUnit)} · Stack: {String(betSize / betUnit)} units
+            </p>
+          ) : null;
+        })()}
+        <div className='flex flex-wrap items-center gap-3'>
+          <Button
+            variant='solid'
+            color='primary'
+            size='sm'
+            onClick={session.acceptReviewedProposal}
+          >
+            Yes
+          </Button>
+          <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
+            No
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -863,6 +963,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                   myName={params.myAlias}
                   opponentName={params.opponentAlias}
                 />
+              ) : gameSpecificView.gameType === 'krunk' ? (
+                <Krunk
+                  key={session.handKey}
+                  gameObject={session.sessionController}
+                  currentHandGameIds={session.currentHandGameIds}
+                  activeGameIds={session.activeGameIds}
+                  iProposedHand={session.iProposedHand}
+                  gameplayEvent$={session.gameplayEvent$}
+                  betSize={session.currentHandAmount}
+                  onTurnChanged={session.onTurnChanged}
+                  myName={params.myAlias}
+                  opponentName={params.opponentAlias}
+                />
               ) : (
                 <div className='flex items-center justify-center py-20'>
                   <p className='text-canvas-text'>
@@ -921,37 +1034,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             )}
 
             {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
-                <div className='flex flex-col items-center gap-3'>
-                  <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
-                  <p className='text-xs text-canvas-text'>
-                    Game: {gameDisplayName(session.reviewPeerProposal.terms.gameType)}
-                  </p>
-                  <p className='text-xs text-canvas-text'>
-                    Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
-                  </p>
-                  <p className='text-xs text-canvas-text'>
-                    Timeout: {String(session.reviewPeerProposal.terms.gameTimeout)} blocks
-                  </p>
-                  {session.reviewPeerProposal.terms.gameType === 'spacepoker' && (() => {
-                    const betSize = session.reviewPeerProposal!.terms.myContribution;
-                    const betUnit = session.reviewPeerProposal!.terms.spacepokerUnitSize;
-                    return betUnit && betUnit > 0n ? (
-                      <p className='text-xs text-canvas-text'>
-                        Unit size: {formatMojos(betUnit)} · Stack: {String(betSize / betUnit)} units
-                      </p>
-                    ) : null;
-                  })()}
-                  <div className='flex flex-wrap items-center justify-center gap-3'>
-                    <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
-                      Yes
-                    </Button>
-                    <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
-                      No
-                    </Button>
-                  </div>
-                </div>
-              </div>
+              <ReviewProposalDialog session={session} />
             )}
           </>
         )}

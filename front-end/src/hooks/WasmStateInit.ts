@@ -7,8 +7,7 @@ import {
 import { Observable, Subject } from 'rxjs';
 import { SessionController } from './SessionController';
 
-export type GameHexPair = { proposalHex: string; parserHex: string };
-export type GameHexes = Record<string, GameHexPair>;
+export type GameHexes = Record<string, string>;
 
 var chia_gaming_init: WasmInitFn | undefined = undefined;
 var cg: WasmConnection | undefined = undefined;
@@ -30,13 +29,7 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   readyToInit.subscribe(subscriber);
 });
 
-export async function fetchHex(fetchUrl: string): Promise<string> {
-  const resp = await fetch(fetchUrl);
-  if (!resp.ok) {
-    throw new Error(`fetchHex ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
-  }
-  return resp.text();
-}
+
 
 //    gameStateInit.foo().then()
 export async function storeInitArgs(
@@ -53,13 +46,13 @@ const WASM_URL = 'chia_gaming_wasm_bg.wasm';
 
 export class WasmStateInit {
   wasmConnection: WasmConnection | undefined;
-  fetchHex: (key: string) => Promise<string>;
+  fetchPreset: (key: string) => Promise<Uint8Array>;
   deferredWasmConnection: Subject<WasmConnection>;
 
   constructor(
-    fetchHex: (key: string) => Promise<string>,
+    fetchPreset: (key: string) => Promise<Uint8Array>,
   ) {
-    this.fetchHex = fetchHex;
+    this.fetchPreset = fetchPreset;
     this.deferredWasmConnection = new Subject<WasmConnection>();
   }
 
@@ -76,10 +69,10 @@ export class WasmStateInit {
       //'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex', -- now loaded by crates.io::chia_puzzles
       'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
       'clsp/referee/onchain/referee.hex',
-      'clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex',
-      'clsp/games/calpoker/calpoker_include_calpoker_parser.hex',
-      'clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex',
-      'clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
+      'clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex',
+      'clsp/games/krunk/krunk_include_krunk_factory.hex',
+      'clsp/games/krunk/krunk_signed_dict_tree.dat',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -109,10 +102,10 @@ export class WasmStateInit {
 
   loadPresets(presetFiles: string[]) {
     const presetFetches = presetFiles.map((partialUrl) => {
-      return this.fetchHex(partialUrl).then((text) => {
+      return this.fetchPreset(partialUrl).then((bytes) => {
         return {
           name: partialUrl,
-          content: text,
+          content: bytes,
         };
       });
     });
@@ -153,16 +146,14 @@ export class WasmStateInit {
   }
 
   async loadGameHexes(): Promise<GameHexes> {
-    const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
-      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
-      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
-      this.fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
-      this.fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
+    const dec = new TextDecoder();
+    const fetchText = (url: string) => this.fetchPreset(url).then(b => dec.decode(b));
+    const [calpoker, spacepoker, krunk] = await Promise.all([
+      fetchText('clsp/games/calpoker/calpoker_include_calpoker_factory.hex'),
+      fetchText('clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex'),
+      fetchText('clsp/games/krunk/krunk_include_krunk_factory.hex'),
     ]);
-    return {
-      calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },
-      spacepoker: { proposalHex: spacepokerProposal, parserHex: spacepokerParser },
-    };
+    return { calpoker, spacepoker, krunk };
   }
 
   createGame(
@@ -176,9 +167,9 @@ export class WasmStateInit {
     channelTimeout = 15,
     unrollTimeout = 15,
   ): { game: ChiaGame, puzzleHash: string } {
-    const game_types: Record<string, { version: number; hex: string; parser_hex: string }> = {};
-    for (const [name, hexes] of Object.entries(gameHexes)) {
-      game_types[name] = { version: 1, hex: hexes.proposalHex, parser_hex: hexes.parserHex };
+    const game_types: Record<string, { version: number; hex: string }> = {};
+    for (const [name, hex] of Object.entries(gameHexes)) {
+      game_types[name] = { version: 1, hex };
     }
     const result = wasm.create_game_cradle({
       rng_id: rngId,
@@ -210,14 +201,10 @@ export class WasmStateInit {
 }
 
 export async function loadGameHexes(fetchHex: (filename: string) => Promise<string>): Promise<GameHexes> {
-  const [calpokerProposal, calpokerParser, spacepokerProposal, spacepokerParser] = await Promise.all([
-    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
-    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
-    fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex'),
-    fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex'),
+  const [calpoker, spacepoker, krunk] = await Promise.all([
+    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_factory.hex'),
+    fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex'),
+    fetchHex('clsp/games/krunk/krunk_include_krunk_factory.hex'),
   ]);
-  return {
-    calpoker: { proposalHex: calpokerProposal, parserHex: calpokerParser },
-    spacepoker: { proposalHex: spacepokerProposal, parserHex: spacepokerParser },
-  };
+  return { calpoker, spacepoker, krunk };
 }

@@ -95,3 +95,24 @@ server.on('error', (e) => {
   }
   process.exit(1);
 });
+
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Static server received ${signal}; shutting down`);
+  const deadline = setTimeout(() => {
+    server.closeAllConnections?.();
+    process.exit();
+  }, 5_000);
+  server.close((err) => {
+    clearTimeout(deadline);
+    if (err) {
+      console.error(`Static server shutdown failed: ${err.message}`);
+      process.exitCode = 1;
+    }
+  });
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));

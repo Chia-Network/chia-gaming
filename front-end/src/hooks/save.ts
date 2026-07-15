@@ -1,98 +1,22 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
-import { jsonParseLossless, jsonStringifyLossless } from '../util/jsonSafe';
-
-export function uint8ToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-export function base64ToUint8(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
+import {
+  deleteSessionRecord,
+  readSessionRecord,
+  SESSION_DB_NAME,
+  writeSessionRecord,
+} from '../lib/session/indexedDb';
+import { isDenseNumericByteObject } from '../lib/reactPropSafe';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  HUMAN_HISTORY_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../lib/session/historyLimits';
 
 function randomHex(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-// --- Save-state obfuscation ---
-
-const OBFUSCATION_KEY = new Uint8Array([
-  0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b,
-  0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
-]);
-const SALT_LEN = 16;
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const result = new Uint8Array(hex.length >> 1);
-  for (let i = 0; i < hex.length; i += 2) {
-    result[i >> 1] = parseInt(hex.slice(i, i + 2), 16);
-  }
-  return result;
-}
-
-function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
-  const S = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) S[i] = i;
-  let j = 0;
-  for (let i = 0; i < 256; i++) {
-    j = (j + S[i] + key[i % key.length]) & 0xff;
-    [S[i], S[j]] = [S[j], S[i]];
-  }
-  const stream = new Uint8Array(length);
-  let a = 0;
-  j = 0;
-  for (let k = 0; k < length; k++) {
-    a = (a + 1) & 0xff;
-    j = (j + S[a]) & 0xff;
-    [S[a], S[j]] = [S[j], S[a]];
-    stream[k] = S[(S[a] + S[j]) & 0xff];
-  }
-  return stream;
-}
-
-function obfuscate(json: string): string {
-  const plaintext = new TextEncoder().encode(json);
-  const salt = new Uint8Array(SALT_LEN);
-  crypto.getRandomValues(salt);
-  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
-  key.set(salt);
-  key.set(OBFUSCATION_KEY, SALT_LEN);
-  const stream = rc4Keystream(key, plaintext.length);
-  const out = new Uint8Array(SALT_LEN + plaintext.length);
-  out.set(salt);
-  for (let i = 0; i < plaintext.length; i++) {
-    out[SALT_LEN + i] = plaintext[i] ^ stream[i];
-  }
-  return bytesToHex(out);
-}
-
-function deobfuscate(hex: string): string {
-  const bytes = hexToBytes(hex);
-  const salt = bytes.slice(0, SALT_LEN);
-  const ciphertext = bytes.slice(SALT_LEN);
-  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
-  key.set(salt);
-  key.set(OBFUSCATION_KEY, SALT_LEN);
-  const stream = rc4Keystream(key, ciphertext.length);
-  const plaintext = new Uint8Array(ciphertext.length);
-  for (let i = 0; i < ciphertext.length; i++) {
-    plaintext[i] = ciphertext[i] ^ stream[i];
-  }
-  return new TextDecoder().decode(plaintext);
 }
 
 interface SavedGame {
@@ -131,8 +55,8 @@ export interface PersistedGameState<T = unknown> {
 type BlockchainType = 'simulator' | 'walletconnect';
 
 /**
- * Single flat state object stored in localStorage. Stale version = wipe
- * everything. No nesting, no migration — alpha-mode simplicity.
+ * One complete resumable record stored by IndexedDB structured clone.
+ * Stale versions are deleted rather than migrated.
  */
 export interface SessionState {
   version: bigint;
@@ -157,9 +81,12 @@ export interface SessionState {
 
   // Session / game state
   blockchainType?: BlockchainType;
-  serializedCradle?: string;
+  serializedCradle?: Uint8Array;
+  cradleSchemaVersion?: bigint;
   pairingToken?: string;
   sessionPeerId?: string;
+  /** Last player_id from tracker `registered`. Remap during pre-cradle resume means rematch. */
+  myTrackerPlayerId?: string;
   gameSessionId?: string;
   messageNumber?: bigint;
   remoteNumber?: bigint;
@@ -168,13 +95,33 @@ export interface SessionState {
   myContribution?: string;
   theirContribution?: string;
   perGameAmount?: string;
-  unackedMessages?: Array<{ msgno: bigint; msg: string }>;
-  history?: string[];
-  log?: string[];
+  /** Blocks; persisted so a deploy-stale reload can resume pre-cradle handshake. */
+  channelTimeout?: string;
+  unrollTimeout?: string;
+  unackedMessages?: Array<{ msgno: bigint; msg: Uint8Array }>;
   humanHistory?: string[];
   wasmNotificationHistory?: string[];
   diagnosticLog?: string[];
+  historicalUnrollCount?: bigint;
+  durabilityWarning?: string;
   activeGameId?: string | null;
+  activeGameIds?: string[];
+  currentHandGameIds?: string[];
+  gameInstances?: Record<string, {
+    id: string;
+    amount: string;
+    coinHex: string | null;
+    turnState: string;
+    handStatus: string;
+    terminal: {
+      type: string;
+      label: string | null;
+      myReward: string | null;
+      rewardCoinHex: string | null;
+      cleanEnd?: boolean;
+    };
+  }>;
+  iProposedHand?: boolean;
   activeGameType?: string;
   handState?: PersistedGameState | null;
   channelStatus?: ChannelStatusPayload | null;
@@ -201,8 +148,8 @@ export interface SessionState {
   betweenHandComposeGameType?: string;
   betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; groupIds?: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; groupIds?: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 
   // Timer persistence (epoch ms timestamps)
@@ -214,17 +161,30 @@ export interface SessionState {
 export type SessionSave = SessionState;
 
 const STATE_KEY = 'appState';
+const PREFERENCES_KEY = 'appPreferences';
+const SESSION_MARKER_KEY = 'appState_savedSession';
+/** One-shot: stale-deploy reload should auto-resume without the prompt. */
+const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
+/**
+ * In-memory latch so a remount (React Strict Mode) after sessionStorage was
+ * cleared mid-resume cannot fall through to the Resume/Start Over dialog.
+ */
+let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
-const CURRENT_VERSION = 3n;
+export const CURRENT_VERSION = 6n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
 // and its dependencies are known to create; deleting a nonexistent one is a
 // harmless no-op.
-const KNOWN_INDEXED_DB_NAMES = [
+const KNOWN_WALLETCONNECT_DB_NAMES = [
   'WALLET_CONNECT_V2_INDEXED_DB',
   'walletconnect',
   'walletconnect-v2',
+];
+const KNOWN_HARD_RESET_DB_NAMES = [
+  SESSION_DB_NAME,
+  ...KNOWN_WALLETCONNECT_DB_NAMES,
 ];
 
 function isWalletConnectStorageKey(key: string): boolean {
@@ -241,9 +201,11 @@ function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<v
         console.error(`[save] ${context}: failed to delete IndexedDB database "${name}":`, request.error);
         resolve();
       };
+      // Blocked means another connection is still open. Keep waiting for
+      // onsuccess/onerror — resolving early would let hardReset claim a wipe
+      // that has not happened yet.
       request.onblocked = () => {
-        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"`);
-        resolve();
+        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"; waiting for other connections to close`);
       };
     } catch (e) {
       console.error(`[save] ${context}: failed to start IndexedDB database deletion for "${name}":`, e);
@@ -263,9 +225,9 @@ function clearWalletConnectLocalStorageKeys(): void {
   } catch { /* ignore */ }
 }
 
-export function clearWalletConnectStorage(): void {
+export async function clearWalletConnectStorage(): Promise<void> {
   clearWalletConnectLocalStorageKeys();
-  void clearWalletConnectIndexedDb();
+  await clearWalletConnectIndexedDb();
 }
 
 async function clearWalletConnectIndexedDb(): Promise<void> {
@@ -286,7 +248,7 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
   }
 
   await Promise.all(
-    KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+    KNOWN_WALLETCONNECT_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
   );
 }
 
@@ -297,6 +259,7 @@ function stopPersistenceForHardReset(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  settleScheduledPersist();
 }
 
 function signalHardResetToOtherTabs(): void {
@@ -307,33 +270,32 @@ function signalHardResetToOtherTabs(): void {
   }
 }
 
-function clearAllIndexedDbForHardReset(): void {
-  try {
-    if (typeof indexedDB === 'undefined') return;
-    const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
-    if (typeof dynamicDatabaseLookup.databases !== 'function') {
-      // Browsers without `indexedDB.databases()` (notably Safari) can't be
-      // enumerated, so fall back to deleting the databases we know about (e.g.
-      // WalletConnect's) rather than leaving them behind.
-      console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
-      void Promise.all(
-        KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
-      );
-      return;
-    }
+async function clearAllIndexedDbForHardReset(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
 
-    void dynamicDatabaseLookup.databases()
-      .then((databases) => Promise.all(
-        databases
-          .map((db) => db.name)
-          .filter((name): name is string => typeof name === 'string' && name.length > 0)
-          .map((name) => deleteIndexedDb(name, 'hard reset')),
-      ))
-      .catch((e) => {
-        console.error('[save] failed to enumerate IndexedDB databases during hard reset:', e);
-      });
+  // Always wipe known databases first. Enumeration can hang while WalletConnect
+  // (or other) connections are still open; known deletes must not wait on that.
+  await Promise.all(
+    KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')),
+  );
+
+  const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+  if (typeof dynamicDatabaseLookup.databases !== 'function') {
+    console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; known DB names already deleted');
+    return;
+  }
+
+  try {
+    const databases = await dynamicDatabaseLookup.databases();
+    const known = new Set(KNOWN_HARD_RESET_DB_NAMES);
+    await Promise.all(
+      databases
+        .map((db) => db.name)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0 && !known.has(name))
+        .map((name) => deleteIndexedDb(name, 'hard reset')),
+    );
   } catch (e) {
-    console.error('[save] failed to start IndexedDB cleanup during hard reset:', e);
+    console.error('[save] failed to enumerate IndexedDB during hard reset:', e);
   }
 }
 
@@ -341,6 +303,10 @@ function clearAllIndexedDbForHardReset(): void {
 
 let cached: SessionState | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistPromise: Promise<void> | null = null;
+let resolvePersist: (() => void) | null = null;
+let rejectPersist: ((reason: unknown) => void) | null = null;
+let writeChain: Promise<void> = Promise.resolve();
 const PERSIST_DEBOUNCE_MS = 300;
 
 // --- Tab lease ---
@@ -401,6 +367,90 @@ export function isFenced(): boolean {
   return fenced;
 }
 
+export function hasSavedSessionMarker(): boolean {
+  try {
+    return localStorage.getItem(SESSION_MARKER_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when prefs remember a wallet choice and/or tracker, or WC left storage.
+ * Independent of whether a game session / cradle exists.
+ */
+export function hasConnectionPreferences(
+  state: SessionState = loadPreferences(),
+): boolean {
+  return !!(
+    state.blockchainType
+    || state.trackerUrl
+    || hasWalletConnectStorage()
+  );
+}
+
+/**
+ * True when boot should offer Resume / Start Over.
+ * Connection prefs count even with no game session; the session marker
+ * covers durable cradles / prior explicit save intent.
+ */
+export function shouldOfferResumeOrStartOver(
+  state: SessionState = loadPreferences(),
+): boolean {
+  return hasConnectionPreferences(state) || hasSavedSessionMarker();
+}
+
+/** Force the boot Resume/Start Over dialog on next load. */
+export function markSavedSession(): void {
+  try {
+    localStorage.setItem(SESSION_MARKER_KEY, '1');
+  } catch { /* ignore */ }
+}
+
+/**
+ * Mark the next boot to skip Resume/Start Over and resume automatically.
+ * Used only for the stale-deploy asset 404 → reload path.
+ * Stored in sessionStorage so it survives reload of the same tab/origin.
+ */
+export function markAutoResumeOnce(): void {
+  try {
+    sessionStorage.setItem(AUTO_RESUME_ONCE_KEY, '1');
+  } catch { /* ignore */ }
+}
+
+/**
+ * True when this boot should auto-resume. Also latches in memory so clearing
+ * sessionStorage mid-resume cannot re-show the resume dialog on remount.
+ */
+export function peekAutoResumeOnce(): boolean {
+  if (autoResumeLatch) return true;
+  try {
+    if (sessionStorage.getItem(AUTO_RESUME_ONCE_KEY) !== null) {
+      autoResumeLatch = true;
+      return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+/**
+ * Drop the one-shot auto-resume flag after resume has committed (or failed
+ * into an explicit dialog). Safe to call multiple times.
+ */
+export function clearAutoResumeOnce(): void {
+  autoResumeLatch = false;
+  try {
+    sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY);
+  } catch { /* ignore */ }
+}
+
+/** Clear the boot Resume/Start Over marker. */
+export function clearSavedSessionMarker(): void {
+  try {
+    localStorage.removeItem(SESSION_MARKER_KEY);
+  } catch { /* ignore */ }
+}
+
 function assertNoNumbers(obj: unknown, path: string): void {
   if (obj === null || obj === undefined) return;
   if (typeof obj === 'number') {
@@ -413,6 +463,11 @@ function assertNoNumbers(obj: unknown, path: string): void {
   }
   if (ArrayBuffer.isView(obj)) return;
   if (typeof obj !== 'object') return;
+  if (!Array.isArray(obj) && isDenseNumericByteObject(obj)) {
+    const msg = `[save] BUG: degraded numeric-keyed byte object at "${path}" (refusing to persist)`;
+    console.error(msg);
+    throw new Error(msg);
+  }
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i++) {
       assertNoNumbers(obj[i], `${path}[${i}]`);
@@ -424,39 +479,225 @@ function assertNoNumbers(obj: unknown, path: string): void {
   }
 }
 
-function flushToLocalStorage(): void {
-  if (!cached || fenced) return;
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-    persistTimer = null;
-  }
+interface StoredPreferences {
+  playerId: string;
+  sessionId?: string;
+  /** Last tracker-assigned player_id (public). For remap detection only — never sent to claim identity. */
+  myTrackerPlayerId?: string;
+  alias?: string;
+  theme?: 'dark' | 'light';
+  defaultFee?: string;
+  feeUnit?: 'mojo' | 'xch';
+  trackerUrl?: string;
+  savedGames?: SavedGame[];
+  activeTab?: string;
+  unreadGame?: boolean;
+  walletAlert?: boolean;
+  trackerAlert?: boolean;
+  blockchainType?: BlockchainType;
+}
+
+function savePreferences(state: SessionState): void {
+  const preferences: StoredPreferences = {
+    playerId: state.playerId,
+    sessionId: state.sessionId,
+    myTrackerPlayerId: state.myTrackerPlayerId,
+    alias: state.alias,
+    theme: state.theme,
+    defaultFee: state.defaultFee?.toString(),
+    feeUnit: state.feeUnit,
+    trackerUrl: state.trackerUrl,
+    savedGames: state.savedGames,
+    activeTab: state.activeTab,
+    unreadGame: state.unreadGame,
+    walletAlert: state.walletAlert,
+    trackerAlert: state.trackerAlert,
+    blockchainType: state.blockchainType,
+  };
   try {
-    assertNoNumbers(cached, 'SessionState');
-    localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(cached)));
+    localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
   } catch (e) {
-    console.error('[save] failed to persist state:', e);
+    console.error('[save] failed to persist preferences:', e);
   }
 }
 
-export function flushSessionState(): void {
-  flushToLocalStorage();
+function loadPreferences(): SessionState {
+  try {
+    // The old payload may contain arbitrary stale encoding. Never inspect it.
+    localStorage.removeItem(STATE_KEY);
+    const raw = localStorage.getItem(PREFERENCES_KEY);
+    if (raw) {
+      const preferences = JSON.parse(raw) as StoredPreferences;
+      if (typeof preferences.playerId === 'string') {
+        return {
+          version: CURRENT_VERSION,
+          ...preferences,
+          defaultFee: preferences.defaultFee === undefined
+            ? undefined
+            : BigInt(preferences.defaultFee),
+        };
+      }
+    }
+  } catch (e) {
+    console.error('[save] failed to load preferences:', e);
+  }
+  return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
-function schedulePersist(): void {
-  if (persistTimer || fenced) return;
+function isTerminalFinishedChannel(state: string | null | undefined): boolean {
+  return state === 'ResolvedClean'
+    || state === 'ResolvedUnrolled'
+    || state === 'ResolvedStale'
+    || state === 'Failed';
+}
+
+/**
+ * True when disk state should keep the boot Resume/Start Over marker.
+ * Includes finished/terminal channel snapshots (no live cradle) so a clean
+ * shutdown does not silently boot into leftover tracker prefs with no dialog.
+ */
+function isResumable(state: SessionState): boolean {
+  return !!(
+    state.serializedCradle
+    || state.pairingToken
+    || (state.channelStatus && isTerminalFinishedChannel(state.channelStatus.state))
+  );
+}
+
+function capPersistedHistories(state: SessionState): void {
+  if (state.humanHistory) {
+    state.humanHistory = recentEntries(state.humanHistory, HUMAN_HISTORY_LIMIT);
+  }
+  if (state.wasmNotificationHistory) {
+    state.wasmNotificationHistory = recentEntries(
+      state.wasmNotificationHistory,
+      WASM_NOTIFICATION_HISTORY_LIMIT,
+    );
+  }
+  if (state.diagnosticLog) {
+    state.diagnosticLog = recentEntries(state.diagnosticLog, DIAGNOSTIC_LOG_LIMIT);
+  }
+}
+
+function estimateRecordBytes(value: unknown, seen = new Set<object>()): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'string') return new TextEncoder().encode(value).byteLength;
+  if (typeof value === 'bigint') return value.toString().length;
+  if (typeof value === 'boolean') return 1;
+  if (typeof value !== 'object') return 8;
+  if (ArrayBuffer.isView(value)) return value.byteLength;
+  if (seen.has(value)) return 0;
+  seen.add(value);
+  // Degraded cradles are plain numeric-keyed objects; do not Object.entries them
+  // (enumerating hundreds of thousands of keys can OOM).
+  if (!Array.isArray(value) && isDenseNumericByteObject(value)) {
+    return 4096;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + estimateRecordBytes(item, seen), 0);
+  }
+  return Object.entries(value as Record<string, unknown>).reduce(
+    (total, [key, item]) => total + key.length * 2 + estimateRecordBytes(item, seen),
+    0,
+  );
+}
+
+function logPersistenceMetrics(state: SessionState): void {
+  const developmentRuntime = typeof window === 'undefined'
+    ? process.env.NODE_ENV !== 'production'
+    : window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (!developmentRuntime) return;
+  console.debug('[save] persistence metrics', {
+    rawCradleBytes: state.serializedCradle?.byteLength ?? 0,
+    estimatedIndexedDbRecordBytes: estimateRecordBytes(state),
+    historicalUnrollCount: state.historicalUnrollCount?.toString() ?? 'unavailable',
+    humanHistoryCount: state.humanHistory?.length ?? 0,
+    wasmNotificationHistoryCount: state.wasmNotificationHistory?.length ?? 0,
+    diagnosticLogCount: state.diagnosticLog?.length ?? 0,
+  });
+}
+
+function queueWrite(state: SessionState): Promise<void> {
+  const snapshot = structuredClone(state);
+  capPersistedHistories(snapshot);
+  assertNoNumbers(snapshot, 'SessionState');
+  logPersistenceMetrics(snapshot);
+  writeChain = writeChain.catch(() => {}).then(async () => {
+    if (fenced) return;
+    await writeSessionRecord(snapshot);
+    if (fenced) return;
+    // Only *set* the boot marker for a durable game session here. Pre-game
+    // wallet connection marks explicitly in Shell; preference-only writes must
+    // not clear that marker (previously saveSession({ blockchainType }) wiped
+    // it, so reload restored the wallet type with no Resume/Start Over).
+    if (isResumable(snapshot)) {
+      markSavedSession();
+    }
+  });
+  return writeChain;
+}
+
+function settleScheduledPersist(error?: unknown): void {
+  const resolve = resolvePersist;
+  const reject = rejectPersist;
+  persistPromise = null;
+  resolvePersist = null;
+  rejectPersist = null;
+  if (error === undefined) resolve?.();
+  else reject?.(error);
+}
+
+export function flushSessionState(): Promise<void> {
+  return hydrateSessionCacheFromDisk().then(() => {
+    if (!cached || fenced) return Promise.resolve();
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    const pending = persistPromise;
+    const resolve = resolvePersist;
+    const reject = rejectPersist;
+    persistPromise = null;
+    resolvePersist = null;
+    rejectPersist = null;
+    if (!isResumable(cached) && hasSavedSessionMarker() && !hasConnectionPreferences(cached)) {
+      const error = new Error(
+        'Refusing to persist non-resumable in-memory state over a marked saved session',
+      );
+      console.error('[save]', error.message);
+      reject?.(error);
+      return Promise.reject(error);
+    }
+    const write = queueWrite(cached);
+    void write.then(
+      () => resolve?.(),
+      (error) => {
+        console.error('[save] failed to persist session state:', error);
+        reject?.(error);
+      },
+    );
+    return pending ?? write;
+  });
+}
+
+function schedulePersist(): Promise<void> {
+  if (fenced) return Promise.resolve();
+  if (persistPromise) return persistPromise;
+  persistPromise = new Promise<void>((resolve, reject) => {
+    resolvePersist = resolve;
+    rejectPersist = reject;
+  });
+  void persistPromise.catch(() => {});
   const timer = setTimeout(() => {
     persistTimer = null;
-    flushToLocalStorage();
+    void flushSessionState();
   }, PERSIST_DEBOUNCE_MS);
   if (typeof timer === 'object' && 'unref' in timer) timer.unref();
   persistTimer = timer;
+  return persistPromise;
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
-    if (!fenced) flushToLocalStorage();
-  });
-
   window.addEventListener('storage', (e: StorageEvent) => {
     if (e.key === RESET_KEY) {
       stopPersistenceForHardReset();
@@ -478,87 +719,217 @@ if (typeof window !== 'undefined') {
   }, 3000);
 }
 
-/** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
+/** @internal — seed the obsolete localStorage payload without decoding it. */
 export function _writeRawState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, obfuscate(jsonStringifyLossless(obj)));
+  localStorage.setItem(STATE_KEY, JSON.stringify(obj));
 }
+
+/**
+ * True once we have either confirmed there is no disk identity to restore, or
+ * finished merging IndexedDB into the cache. Until then, getSessionId must not
+ * mint — a boot-time mint would write a new id into preferences and clobber
+ * the durable tracker session_id on the next peek/hydrate merge.
+ */
+let identityDiskChecked = false;
 
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  settleScheduledPersist();
   cached = null;
+  writeChain = Promise.resolve();
   fenced = false;
   fencedListeners.clear();
+  identityDiskChecked = false;
+  autoResumeLatch = false;
   try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
   try { localStorage.removeItem(RESET_KEY); } catch { /* ignore */ }
-}
-
-function freshState(): SessionState {
-  return { version: CURRENT_VERSION, playerId: randomHex() };
+  try { sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY); } catch { /* ignore */ }
 }
 
 export function loadState(): SessionState {
-  if (cached) return cached;
-  try {
-    const raw = localStorage.getItem(STATE_KEY);
-    if (raw) {
-      const json = deobfuscate(raw);
-      const parsed = jsonParseLossless(json);
-      if (parsed.version == CURRENT_VERSION) {
-        cached = parsed as SessionState;
-        return cached;
-      }
-    }
-  } catch (e) {
-    console.error('[save] failed to load state:', e);
-  }
-  cached = freshState();
+  if (!cached) cached = loadPreferences();
   return cached;
 }
 
 /** @deprecated — alias for loadState() */
 export function loadAppState(): SessionState { return loadState(); }
 
-function mutate(fn: (state: SessionState) => void): void {
-  const state = loadState();
-  fn(state);
-  schedulePersist();
+/**
+ * Ensure in-memory `cached` includes any resumable IndexedDB record before
+ * mutating/persisting. Boot can show the resume dialog from the sync marker
+ * without reading IndexedDB; without this, preference-only patches (logs,
+ * alerts, etc.) would overwrite the durable cradle with a non-resumable
+ * record and make Resume report "saved session unavailable".
+ *
+ * If memory is already resumable, leave it alone — a newer in-memory cradle
+ * must not be replaced by a stale IndexedDB snapshot on flush.
+ *
+ * Also restores tracker identity (sessionId / playerId) from disk when
+ * preferences lack them, even if the record is not fully resumable — so a
+ * reload never remints session_id over a durable id still on disk.
+ */
+export async function hydrateSessionCacheFromDisk(): Promise<void> {
+  // Memory already holding durable game state must win over IndexedDB. Do not
+  // require sessionId here: handshake saves often persist a cradle before any
+  // tracker identity exists. The old `&& cached.sessionId` guard fell through
+  // in that case, re-read the older disk snapshot, and clobbered the newer
+  // in-memory cradle on every flush — freezing the first persisted size.
+  if (cached && isResumable(cached)) {
+    identityDiskChecked = true;
+    return;
+  }
+  if (!hasSavedSessionMarker()) {
+    identityDiskChecked = true;
+    return;
+  }
+
+  // Do not flush a prefs-only cache over disk. Cancel the debounce; the caller
+  // will schedule a new persist after merging with the hydrated record.
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  if (persistPromise && cached && !isResumable(cached)) {
+    settleScheduledPersist();
+  }
+
+  await writeChain;
+  const record = await readSessionRecord();
+  identityDiskChecked = true;
+  if (!record || record.version !== CURRENT_VERSION) return;
+
+  const mem = cached ?? loadPreferences();
+  if (isResumable(record)) {
+    cached = {
+      ...record,
+      playerId: mem.playerId || record.playerId,
+      // Prefer disk when prefs are empty so a pre-hydrate remint cannot win.
+      sessionId: mem.sessionId || record.sessionId,
+      myTrackerPlayerId: mem.myTrackerPlayerId || record.myTrackerPlayerId,
+      alias: mem.alias ?? record.alias,
+      theme: mem.theme ?? record.theme,
+      defaultFee: mem.defaultFee ?? record.defaultFee,
+      feeUnit: mem.feeUnit ?? record.feeUnit,
+      trackerUrl: mem.trackerUrl ?? record.trackerUrl,
+      savedGames: mem.savedGames ?? record.savedGames,
+      activeTab: mem.activeTab ?? record.activeTab,
+      unreadGame: mem.unreadGame ?? record.unreadGame,
+      walletAlert: mem.walletAlert ?? record.walletAlert,
+      trackerAlert: mem.trackerAlert ?? record.trackerAlert,
+      blockchainType: mem.blockchainType ?? record.blockchainType,
+      humanHistory: mem.humanHistory ?? record.humanHistory,
+      diagnosticLog: mem.diagnosticLog ?? record.diagnosticLog,
+      wasmNotificationHistory: mem.wasmNotificationHistory ?? record.wasmNotificationHistory,
+    };
+    savePreferences(cached);
+    return;
+  }
+
+  // Non-resumable record: still pull tracker identity if prefs lack it.
+  if (
+    (!mem.sessionId && record.sessionId)
+    || (!mem.playerId && record.playerId)
+    || (!mem.myTrackerPlayerId && record.myTrackerPlayerId)
+  ) {
+    cached = {
+      ...mem,
+      sessionId: mem.sessionId || record.sessionId,
+      playerId: mem.playerId || record.playerId,
+      myTrackerPlayerId: mem.myTrackerPlayerId || record.myTrackerPlayerId,
+    };
+    savePreferences(cached);
+  }
+}
+
+function mutate(fn: (state: SessionState) => void): Promise<void> {
+  // Fast path: memory already has the resumable session, or there is no
+  // marked disk session to protect. Keep this synchronous so preference
+  // helpers can read their own writes immediately.
+  if ((cached && isResumable(cached)) || !hasSavedSessionMarker()) {
+    const state = loadState();
+    fn(state);
+    savePreferences(state);
+    return schedulePersist();
+  }
+  return hydrateSessionCacheFromDisk().then(() => {
+    const state = loadState();
+    fn(state);
+    savePreferences(state);
+    return schedulePersist();
+  });
 }
 
 // --- Convenience accessors ---
 
 export function getPlayerId(): string {
   const state = loadState();
-  if (!cached) schedulePersist();
+  savePreferences(state);
   return state.playerId;
+}
+
+/**
+ * Await before identify / tracker connect on boot. Restores sessionId from
+ * IndexedDB when preferences are empty, then mints only if still missing.
+ * Tracker player_id is assigned by the tracker from this secret — never client-chosen.
+ */
+export async function ensureTrackerIdentity(): Promise<string> {
+  if (hasSavedSessionMarker() && !identityDiskChecked) {
+    await hydrateSessionCacheFromDisk();
+  }
+  identityDiskChecked = true;
+  return getSessionId();
+}
+
+export function getMyTrackerPlayerId(): string | undefined {
+  return loadState().myTrackerPlayerId;
 }
 
 export function getSessionId(): string {
   const state = loadState();
   if (state.sessionId) return state.sessionId;
+  // A saved-session marker means disk may still hold the real tracker
+  // session_id. Minting here would poison preferences and win the merge.
+  if (hasSavedSessionMarker() && !identityDiskChecked) {
+    throw new Error(
+      'getSessionId called before ensureTrackerIdentity/hydrate with a saved session marker',
+    );
+  }
   state.sessionId = randomHex();
-  schedulePersist();
+  savePreferences(state);
+  // Also land in IndexedDB so a later hydrate cannot "lose" the id that only
+  // lived in localStorage preferences.
+  void schedulePersist();
   return state.sessionId;
 }
 
 export function regenerateSessionId(): string {
+  identityDiskChecked = true;
   const state = loadState();
   state.sessionId = randomHex();
-  schedulePersist();
+  state.myTrackerPlayerId = undefined;
+  savePreferences(state);
+  void schedulePersist();
   return state.sessionId;
 }
 
 export function clearSessionId(): void {
-  mutate(s => { s.sessionId = undefined; });
+  // Intentional clear — next getSessionId may mint a replacement.
+  identityDiskChecked = true;
+  mutate(s => {
+    s.sessionId = undefined;
+    s.myTrackerPlayerId = undefined;
+  });
 }
 
 export function getBlockchainType(): BlockchainType | undefined {
   return loadState().blockchainType;
 }
 
-export function saveSession(fields: Partial<SessionState>): void {
-  mutate(s => {
+export function saveSession(fields: Partial<SessionState>): Promise<void> {
+  return mutate(s => {
     Object.assign(s, fields);
+    capPersistedHistories(s);
   });
 }
 
@@ -574,23 +945,69 @@ function hasWalletConnectStorage(): boolean {
 
 /**
  * Returns the current state if there's anything worth resuming — a
- * serialized cradle or leftover WalletConnect storage from a partial
- * connection. `blockchainType` alone (preserved across session clears)
- * does not count as resumable.
+ * serialized cradle, pairing token, finished/terminal channel snapshot,
+ * remembered wallet and/or tracker choice, or leftover WalletConnect storage.
  */
-export function peekSession(): SessionState | null {
-  const state = loadState();
-  if (state.blockchainType || state.serializedCradle || state.pairingToken) return state;
-  if (hasWalletConnectStorage()) return state;
+export async function peekSession(): Promise<SessionState | null> {
+  // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
+  // a durable resumable record that the boot marker is advertising.
+  await hydrateSessionCacheFromDisk();
+  if (persistPromise) await flushSessionState();
+  await writeChain;
+  let record = await readSessionRecord();
+  if (record && record.version !== CURRENT_VERSION) {
+    // Wipe the unreadable record but keep the boot marker so reload still
+    // forces Resume/Start Over instead of silently booting into leftover
+    // preference state (e.g. blockchainType).
+    await deleteSessionRecord();
+    markSavedSession();
+    cached = loadPreferences();
+    return null;
+  }
+  if (record) {
+    const preferences = loadPreferences();
+    // Never let a disk record clobber stable local identity. Tracker player_id
+    // is keyed by session_id; reminting on reload breaks pre-cradle routing.
+    cached = {
+      ...preferences,
+      ...record,
+      playerId: preferences.playerId || record.playerId,
+      sessionId: preferences.sessionId || record.sessionId,
+      myTrackerPlayerId: preferences.myTrackerPlayerId || record.myTrackerPlayerId,
+    };
+    savePreferences(cached);
+    if (isResumable(cached)) {
+      markSavedSession();
+      return cached;
+    }
+    if (hasConnectionPreferences(cached)) {
+      markSavedSession();
+      return cached;
+    }
+    clearSavedSessionMarker();
+    return null;
+  }
+  cached = loadPreferences();
+  if (hasConnectionPreferences(cached)) {
+    markSavedSession();
+    return cached;
+  }
+  clearSavedSessionMarker();
   return null;
 }
 
-export function clearSession(): void {
+export function clearSession(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  settleScheduledPersist();
   const prev = loadState();
   cached = {
-    version: prev.version,
+    version: CURRENT_VERSION,
     playerId: prev.playerId,
     sessionId: prev.sessionId,
+    myTrackerPlayerId: prev.myTrackerPlayerId,
     alias: prev.alias,
     theme: prev.theme,
     defaultFee: prev.defaultFee,
@@ -603,12 +1020,76 @@ export function clearSession(): void {
     trackerAlert: prev.trackerAlert,
     blockchainType: prev.blockchainType,
   };
-  flushToLocalStorage();
+  savePreferences(cached);
+  const deletePromise = writeChain = writeChain.catch(() => {}).then(async () => {
+    await deleteSessionRecord();
+    if (cached?.blockchainType || cached?.trackerUrl) {
+      markSavedSession();
+    } else {
+      clearSavedSessionMarker();
+    }
+  });
+  return deletePromise;
 }
 
-export function hardReset(): void {
+/**
+ * Drop durable cradle/game state only after we know a new session can start
+ * (e.g. deploy assets loaded). Keeps connection prefs, history/logs, and any
+ * pre-cradle handshake fields (pairingToken, amounts, peer ids, timeouts).
+ */
+export async function clearGameSessionPreservingHistory(): Promise<void> {
+  const prev = loadState();
+  const preserved = {
+    humanHistory: prev.humanHistory,
+    diagnosticLog: prev.diagnosticLog,
+    wasmNotificationHistory: prev.wasmNotificationHistory,
+    sessionPeerId: prev.sessionPeerId,
+    myTrackerPlayerId: prev.myTrackerPlayerId,
+    gameSessionId: prev.gameSessionId,
+    pairingToken: prev.pairingToken,
+    iStarted: prev.iStarted,
+    myContribution: prev.myContribution,
+    theirContribution: prev.theirContribution,
+    perGameAmount: prev.perGameAmount,
+    channelTimeout: prev.channelTimeout,
+    unrollTimeout: prev.unrollTimeout,
+    myAlias: prev.myAlias,
+    opponentAlias: prev.opponentAlias,
+  };
+  await clearSession();
+  const toSave: Partial<SessionState> = {};
+  if (preserved.humanHistory && preserved.humanHistory.length > 0) {
+    toSave.humanHistory = preserved.humanHistory;
+  }
+  if (preserved.diagnosticLog && preserved.diagnosticLog.length > 0) {
+    toSave.diagnosticLog = preserved.diagnosticLog;
+  }
+  if (preserved.wasmNotificationHistory && preserved.wasmNotificationHistory.length > 0) {
+    toSave.wasmNotificationHistory = preserved.wasmNotificationHistory;
+  }
+  if (preserved.sessionPeerId) toSave.sessionPeerId = preserved.sessionPeerId;
+  if (preserved.myTrackerPlayerId) toSave.myTrackerPlayerId = preserved.myTrackerPlayerId;
+  if (preserved.gameSessionId) toSave.gameSessionId = preserved.gameSessionId;
+  if (preserved.pairingToken) toSave.pairingToken = preserved.pairingToken;
+  if (preserved.iStarted !== undefined) toSave.iStarted = preserved.iStarted;
+  if (preserved.myContribution) toSave.myContribution = preserved.myContribution;
+  if (preserved.theirContribution) toSave.theirContribution = preserved.theirContribution;
+  if (preserved.perGameAmount) toSave.perGameAmount = preserved.perGameAmount;
+  if (preserved.channelTimeout) toSave.channelTimeout = preserved.channelTimeout;
+  if (preserved.unrollTimeout) toSave.unrollTimeout = preserved.unrollTimeout;
+  if (preserved.myAlias) toSave.myAlias = preserved.myAlias;
+  if (preserved.opponentAlias) toSave.opponentAlias = preserved.opponentAlias;
+  if (Object.keys(toSave).length === 0) return;
+  saveSession(toSave);
+  await flushSessionState();
+}
+
+export async function hardReset(): Promise<void> {
   signalHardResetToOtherTabs();
   stopPersistenceForHardReset();
+  // Sync storage first so a later IndexedDB hang cannot leave the boot marker
+  // or preferences behind after the caller reloads. IndexedDB wipe still runs
+  // to completion below — hardReset must obliterate, not time out.
   try {
     localStorage.clear();
   } catch (e) {
@@ -619,17 +1100,22 @@ export function hardReset(): void {
   } catch (e) {
     console.error('[save] failed to clear sessionStorage during hard reset:', e);
   }
-  clearAllIndexedDbForHardReset();
+  await clearAllIndexedDbForHardReset();
 }
 
 // --- Alias ---
+
+/** Return the stored lobby alias without inventing a fallback. */
+export function peekAlias(): string | undefined {
+  return loadState().alias;
+}
 
 export function getAlias(): string {
   const state = loadState();
   if (state.alias) return state.alias;
   const generated = `Player_${randomHex().substring(0, 8)}`;
   state.alias = generated;
-  schedulePersist();
+  savePreferences(state);
   return generated;
 }
 
@@ -709,6 +1195,7 @@ export function getTrackerUrl(): string | undefined {
 
 export function setTrackerUrl(url: string | undefined): void {
   mutate(s => { s.trackerUrl = url || undefined; });
+  if (url) markSavedSession();
 }
 
 // --- Saved games ---
@@ -718,6 +1205,9 @@ export function getSaveList(): string[] {
 }
 
 export function startNewSession() {
+  // Do not set SESSION_MARKER_KEY here. The marker must mean a durable
+  // resumable IndexedDB record exists; setting it early makes boot show
+  // Resume/Start Over before anything can be resumed.
   mutate(s => { s.savedGames = []; });
 }
 

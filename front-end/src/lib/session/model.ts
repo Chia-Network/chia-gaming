@@ -1,10 +1,17 @@
 import type {
   ChannelState,
   GameConnectionState,
+  PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionState } from '../../hooks/save';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  HUMAN_HISTORY_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from './historyLimits';
 
 export type GameTurnState =
   | 'my-turn'
@@ -43,6 +50,7 @@ export type NotificationKind =
   | 'session-over'
   | 'action-failed'
   | 'infra-error'
+  | 'durability-error'
   | 'game-terminal'
   | 'proposal-rejected'
   | 'insufficient-bal';
@@ -71,6 +79,14 @@ export interface GameTerminalModel {
   cleanEnd?: boolean;
 }
 
+export interface GameInstanceModel {
+  id: string;
+  amount: string;
+  coin: GameCoinModel;
+  handStatus: HandStatus;
+  terminal: GameTerminalModel;
+}
+
 export interface QueuedNotificationModel {
   id: bigint;
   kind: NotificationKind;
@@ -89,6 +105,7 @@ export interface HandTermsModel {
 
 export interface BetweenHandProposalModel {
   id: string;
+  groupIds: string[];
   terms: HandTermsModel;
 }
 
@@ -123,6 +140,8 @@ export interface GameModel {
   terminal: GameTerminalModel;
   handKey: number;
   activeIds: string[];
+  currentHandIds: string[];
+  instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: string;
   handState: PersistedGameState | null;
@@ -223,6 +242,12 @@ export interface GameDashboardViewModel {
   channelDetail: string | null;
   handStatusLabel: string;
   handDetail: string | null;
+  lifecycleRows: Array<{
+    id: string;
+    label: string;
+    statusLabel: string;
+    detail: string | null;
+  }>;
   actionLabel: GameDashboardActionLabel;
   actionEnabled: boolean;
   actionKind: GameDashboardActionKind;
@@ -230,8 +255,7 @@ export interface GameDashboardViewModel {
 
 /// One labeled balance shown in the status bar header. `value` is a raw mojo
 /// string the renderer formats, except for the error convention where it may be
-/// a literal like `?`. When `value2` is set the segment renders as
-/// `value / value2` (used for the end-of-hand mine/opp split).
+/// a literal like `?`. `value2` is the opponent side of a terminal payout.
 export interface StatusBarBalanceSegment {
   label: string;
   value: string;
@@ -356,6 +380,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       terminal: INITIAL_GAME_TERMINAL_MODEL,
       handKey: 0,
       activeIds: [],
+      currentHandIds: [],
+      instances: {},
       lastDisplayedId: null,
       activeGameType: 'calpoker',
       handState: null,
@@ -473,6 +499,16 @@ export function selectDefaultCalpokerInitialTurn(iStarted: boolean): GameTurnSta
   return iStarted ? 'their-turn' : 'my-turn';
 }
 
+export function selectComposeAmountAfterGameTypeChoice(
+  currentGameType: string,
+  selectedGameType: string,
+  currentAmount: bigint,
+): bigint {
+  return selectedGameType === 'krunk' && currentGameType !== 'krunk'
+    ? 100n
+    : currentAmount;
+}
+
 export function selectDisplayGameId(model: SessionModel): string | null {
   return model.game.activeIds[0] ?? model.game.lastDisplayedId;
 }
@@ -502,6 +538,43 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
     canAdvertiseAvailable: selectShouldAdvertiseAvailable(model, phase),
     sessionError: model.restore.status === 'failed',
   };
+}
+
+export type GameTabDotColor = 'green' | 'yellow' | 'red' | 'gray';
+
+/** True while a cooperative close is in flight (not yet terminal). */
+export function isCleanShutdownInProgress(model: SessionModel | null): boolean {
+  if (!model) return false;
+  const state = model.channel.status.state;
+  return model.channel.cleanShutdownStarted
+    || state === 'ShuttingDown'
+    || state === 'ShutdownTransactionPending';
+}
+
+/**
+ * Game-tab connectivity dot. Clean shutdown keeps the peer live (keepalives
+ * continue); yellow only if the peer becomes unreachable. Red is for genuine
+ * errors / FOAD-style peer death outside cooperative close.
+ */
+export function selectGameTabDotColor(args: {
+  sessionPhase: SessionPhase;
+  sessionError: boolean;
+  peerLiveness: PeerLiveness;
+  cleanShutdownInProgress: boolean;
+}): GameTabDotColor {
+  const { sessionPhase, sessionError, peerLiveness, cleanShutdownInProgress } = args;
+  if (sessionPhase === 'none' || sessionPhase === 'resolved') return 'gray';
+  if (sessionError) return 'red';
+  if (cleanShutdownInProgress) {
+    // Peer should not be marked dead during cooperative close; if liveness
+    // still reports dead/degraded, treat it as unreachable rather than error.
+    if (peerLiveness === 'dead' || peerLiveness === 'degraded') return 'yellow';
+    return 'green';
+  }
+  if (peerLiveness === 'dead') return 'red';
+  if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') return 'yellow';
+  if (peerLiveness === 'connected') return 'green';
+  return 'gray';
 }
 
 export interface GameDashboardSelectorOptions {
@@ -566,6 +639,39 @@ function collapsedHandDetail(model: SessionModel): string | null {
   return terminal.label;
 }
 
+function instanceHandStatus(instance: GameInstanceModel): HandStatus {
+  if (instance.terminal.type !== 'none' || instance.coin.turnState === 'ended') {
+    return 'ended';
+  }
+  return instance.handStatus;
+}
+
+function instanceTerminalDetail(instance: GameInstanceModel): string | null {
+  const terminal = instance.terminal;
+  if (terminal.type === 'none' || (terminal.cleanEnd && terminal.label !== 'Forfeited')) {
+    return null;
+  }
+  return terminal.label;
+}
+
+function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
+  if (!ON_CHAIN_HAND_STATES.has(model.channel.status.state)
+      || model.channel.status.state === 'ResolvedClean') {
+    return [];
+  }
+  const multiple = model.game.currentHandIds.length > 1;
+  return model.game.currentHandIds.flatMap((id, index) => {
+    const instance = model.game.instances[id];
+    if (!instance) return [];
+    return [{
+      id,
+      label: multiple ? `Hand ${index + 1}` : 'Hand',
+      statusLabel: HAND_STATUS_LABELS[instanceHandStatus(instance)],
+      detail: instanceTerminalDetail(instance),
+    }];
+  });
+}
+
 export const ABANDON_WAITING_STATES = new Set<ChannelState>([
   'OfferSent', 'TransactionPending', 'ShutdownTransactionPending',
   'GoingOnChain', 'Unrolling',
@@ -627,6 +733,7 @@ export function selectGameDashboardView(
       channelDetail: null,
       handStatusLabel: 'No hand',
       handDetail: null,
+      lifecycleRows: [],
       actionLabel: 'No Session',
       actionEnabled: false,
       actionKind: 'none',
@@ -641,26 +748,19 @@ export function selectGameDashboardView(
     channelDetail: channelStatusDetail(model),
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
+    lifecycleRows: selectLifecycleRows(model),
     ...action,
   };
 }
 
-const STATUS_BAR_ERROR_TERMINALS = new Set<GameTerminalType>([
-  'forfeit',
-  'opponent-successfully-cheated',
-  'game-error',
-  'opponent-slashed-us',
-  'insufficient-balance',
-]);
-
 /// Derive the compact balance strip shown in the status bar header.
 ///
-/// Layout is always `Me` / `Opp` / `Hand`:
-/// - Active hand: `Hand` is the in-game pot.
-/// - Hand end: `Hand` is the realized mine/opp split (`myReward / theirReward`),
-///   still shown alongside the updated `Me`/`Opp` stacks.
+/// Layout starts with `Me` / `Opp`, followed by one segment per accepted game:
+/// - `Me` / `Opp` are the channel's out-of-game balances.
+/// - off-chain, only unresolved games show their individual total amount.
+/// - on-chain, the current hand may show terminal player/opponent payout splits.
 /// - Clean shutdown: no hand, so `Me`/`Opp` show the final balances ("change").
-/// - Error: `Me 0` / `Opp ?` (the convention for an unrecoverable channel/game).
+/// - Channel error: `Me 0` / `Opp ?`.
 export function selectStatusBarBalances(
   model: SessionModel | null,
 ): StatusBarBalanceSegment[] | null {
@@ -669,10 +769,9 @@ export function selectStatusBarBalances(
   }
 
   const channel = model.channel.status;
-  const terminal = model.game.terminal;
 
   const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
-  if (channelFailed || STATUS_BAR_ERROR_TERMINALS.has(terminal.type)) {
+  if (channelFailed) {
     return [
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },
@@ -703,32 +802,36 @@ export function selectStatusBarBalances(
     { label: 'Opp', value: theirs },
   ];
 
-  if (terminal.type !== 'none' && terminal.myReward != null) {
-    // Hand ended: the pot (a zero-sum split of both contributions) is realized
-    // as my reward vs theirs. game_allocated is already back to zero here, so
-    // the pot comes from the hand's terms.
-    const terms = model.betweenHand.lastTerms;
-    const pot = terms.myContribution + terms.theirContribution;
-    let theirReward = terminal.myReward;
+  const onChain =
+    ON_CHAIN_HAND_STATES.has(channel.state)
+    && channel.state !== 'ResolvedClean';
+  const displayedIds = onChain
+    ? model.game.currentHandIds
+    : model.game.activeIds;
+  const multiple = displayedIds.length > 1;
+  displayedIds.forEach((id, index) => {
+    const instance = model.game.instances[id];
+    if (!instance) return;
+    const label = multiple ? `Hand ${index + 1}` : 'Hand';
     try {
-      const rem = pot - BigInt(terminal.myReward);
-      theirReward = (rem < 0n ? 0n : rem).toString();
+      const amount = BigInt(instance.amount);
+      if (amount < 0n) return;
+      if (instance.terminal.type === 'none') {
+        segments.push({ label, value: amount.toString() });
+        return;
+      }
+      if (instance.terminal.myReward == null) return;
+      const myReward = BigInt(instance.terminal.myReward);
+      if (myReward < 0n || myReward > amount) return;
+      segments.push({
+        label,
+        value: myReward.toString(),
+        value2: (amount - myReward).toString(),
+      });
     } catch {
-      theirReward = theirs;
+      // A malformed game amount/reward cannot produce a trustworthy display.
     }
-    segments.push({ label: 'Hand', value: terminal.myReward, value2: theirReward });
-  } else if (model.game.activeIds.length > 0) {
-    // Active hand: show the running total in the pot as a single value.  The
-    // pot is both players' contributions for the hand (the same total the
-    // hand-end split is drawn from); derive it from the agreed terms rather
-    // than game_allocated, which reads 0 mid-hand and so showed nothing until
-    // the hand ended.
-    const terms = model.betweenHand.lastTerms;
-    const pot = terms.myContribution + terms.theirContribution;
-    if (pot > 0n) {
-      segments.push({ label: 'Hand', value: pot.toString() });
-    }
-  }
+  });
 
   return segments;
 }
@@ -739,6 +842,7 @@ export interface GameSessionViewModel {
   gameTerminal: GameTerminalModel;
   currentHandAmount: bigint;
   activeGameId: string | null;
+  activeGameIds: string[];
   activeGameType: string;
   displayGameId: string | null;
   betweenHands: boolean;
@@ -753,6 +857,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
     gameTerminal: model.game.terminal,
     currentHandAmount: model.betweenHand.lastTerms.myContribution,
     activeGameId: model.game.activeIds[0] ?? null,
+    activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,
     displayGameId: selectDisplayGameId(model),
     betweenHands: selectBetweenHands(model),
@@ -823,7 +928,7 @@ type SavedHandTerms = {
   spacepoker_unit_size?: string;
 };
 
-type SavedProposal = SavedHandTerms & { id: string };
+type SavedProposal = SavedHandTerms & { id: string; groupIds?: string[] };
 
 function parseTermsSnapshot(
   saved: SavedHandTerms | null | undefined,
@@ -857,6 +962,7 @@ function parseProposalSnapshot(
   if (!saved) return null;
   return {
     id: saved.id,
+    groupIds: saved.groupIds ?? [],
     terms: parseTermsSnapshot(saved, fallbackTerms),
   };
 }
@@ -893,7 +999,31 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  const activeIds = save.activeGameId ? [save.activeGameId] : [];
+  const activeIds = save.activeGameIds && save.activeGameIds.length > 0
+    ? save.activeGameIds
+    : save.activeGameId ? [save.activeGameId] : [];
+  const currentHandIds = save.currentHandGameIds ?? activeIds;
+  const instances: Record<string, GameInstanceModel> = Object.fromEntries(
+    Object.entries(save.gameInstances ?? {}).map(([id, instance]) => [
+      id,
+      {
+        id: instance.id,
+        amount: instance.amount,
+        coin: {
+          coinHex: instance.coinHex,
+          turnState: instance.turnState as GameTurnState,
+        },
+        handStatus: instance.handStatus as HandStatus,
+        terminal: {
+          type: instance.terminal.type as GameTerminalType,
+          label: instance.terminal.label,
+          myReward: instance.terminal.myReward,
+          rewardCoinHex: instance.terminal.rewardCoinHex,
+          cleanEnd: instance.terminal.cleanEnd,
+        },
+      },
+    ]),
+  );
 
   return createSessionModel({
     restore: {
@@ -940,9 +1070,11 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
             cleanEnd: save.gameTerminalCleanEnd,
           }
         : INITIAL_GAME_TERMINAL_MODEL,
-      handKey: (save.activeGameId || save.handState || save.betweenHandLastTerms) ? 1 : 0,
+      handKey: (activeIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
       activeIds,
-      lastDisplayedId: save.activeGameId ?? null,
+      currentHandIds,
+      instances,
+      lastDisplayedId: activeIds[0] ?? null,
       activeGameType: save.activeGameType ?? 'calpoker',
       handState: save.handState ?? null,
       queue: parseQueuedNotifications(save.gameNotifQueue),
@@ -974,9 +1106,12 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       };
     })(),
     history: {
-      humanHistory: save.humanHistory ?? save.history ?? [],
-      wasmNotificationHistory: save.wasmNotificationHistory ?? [],
-      diagnosticLog: save.diagnosticLog ?? save.log ?? [],
+      humanHistory: recentEntries(save.humanHistory ?? [], HUMAN_HISTORY_LIMIT),
+      wasmNotificationHistory: recentEntries(
+        save.wasmNotificationHistory ?? [],
+        WASM_NOTIFICATION_HISTORY_LIMIT,
+      ),
+      diagnosticLog: recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT),
     },
     myRunningBalance: parseBigintString(save.myRunningBalance, 0n),
     lastOutcomeWin: save.lastOutcomeWin,
@@ -993,12 +1128,35 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
   });
 
   return {
-    humanHistory: model.history.humanHistory.length > 0 ? model.history.humanHistory : undefined,
-    wasmNotificationHistory: model.history.wasmNotificationHistory.length > 0 ? model.history.wasmNotificationHistory : undefined,
-    diagnosticLog: model.history.diagnosticLog.length > 0 ? model.history.diagnosticLog : undefined,
+    humanHistory: model.history.humanHistory.length > 0
+      ? recentEntries(model.history.humanHistory, HUMAN_HISTORY_LIMIT)
+      : undefined,
+    wasmNotificationHistory: model.history.wasmNotificationHistory.length > 0
+      ? recentEntries(model.history.wasmNotificationHistory, WASM_NOTIFICATION_HISTORY_LIMIT)
+      : undefined,
+    diagnosticLog: model.history.diagnosticLog.length > 0
+      ? recentEntries(model.history.diagnosticLog, DIAGNOSTIC_LOG_LIMIT)
+      : undefined,
     gameCoinHex: model.game.coin.coinHex,
     gameTurnState: model.game.coin.turnState,
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,
+    currentHandGameIds: model.game.currentHandIds.length > 0
+      ? model.game.currentHandIds
+      : undefined,
+    gameInstances: model.game.currentHandIds.length > 0
+      ? Object.fromEntries(model.game.currentHandIds.flatMap(id => {
+          const instance = model.game.instances[id];
+          if (!instance) return [];
+          return [[id, {
+            id: instance.id,
+            amount: instance.amount,
+            coinHex: instance.coin.coinHex,
+            turnState: instance.coin.turnState,
+            handStatus: instance.handStatus,
+            terminal: instance.terminal,
+          }]];
+        }))
+      : undefined,
     gameTerminalType: model.game.terminal.type !== 'none' ? model.game.terminal.type : undefined,
     gameTerminalLabel: model.game.terminal.label,
     gameTerminalReward: model.game.terminal.myReward,
@@ -1025,12 +1183,14 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     betweenHandCachedPeerProposal: model.betweenHand.cachedPeerProposal
       ? {
           id: model.betweenHand.cachedPeerProposal.id,
+          groupIds: model.betweenHand.cachedPeerProposal.groupIds,
           ...termsSnapshot(model.betweenHand.cachedPeerProposal.terms),
         }
       : undefined,
     betweenHandReviewPeerProposal: model.betweenHand.reviewPeerProposal
       ? {
           id: model.betweenHand.reviewPeerProposal.id,
+          groupIds: model.betweenHand.reviewPeerProposal.groupIds,
           ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
       : undefined,

@@ -7,24 +7,30 @@ programs that drive the game logic on each player's side. They are not
 game-specific — calpoker is one implementation.
 
 
-## Proposal / Parser
-Games are created via a proposal/parser handshake:
+## Game Factory
+Both peers run the same deterministic factory with only the canonical
+parameters program. There is no proposal parser. A factory returns a proper,
+nonempty list of game records. Every record is a proper list with exactly 12
+fields:
 
-Proposal factory: (bet_size) -> (wire_data local_data)
+```
+(sender_contribution receiver_contribution amount sender_goes_first
+ initial_validator_hash initial_move initial_max_move_size initial_state
+ initial_mover_share my_turn_handler their_turn_handler initial_validator)
+```
 
-  wire_data = (my_contribution their_contribution
-               [(amount we_go_first initial_validator_hash
-                 initial_move initial_max_move_size initial_state
-                 initial_mover_share)])
+`sender_goes_first` is canonical nil or `1`. Handler order is always
+my-turn followed by their-turn. Because both peers execute the identical
+factory output, sender/receiver and my/their are interpreted relative to the
+proposal sender when the records are installed.
 
-  local_data = [(initial_handler initial_validator)]
+Canonical parameters:
 
-Parser: (wire_data) -> (readable [(initial_validator initial_handler)]) or error
-
-  The parser receives the wire_data from the proposer, validates it,
-  and returns the initial handler/validator pair for the responder.
-
-See calpoker_make_proposal and calpoker_parser in calpoker_generate.clinc.
+- Calpoker: proper list `(per_player_stake sender_goes_first)`.
+- Space Poker: proper list
+  `(per_player_stake bet_unit sender_goes_first)`.
+- Krunk: the stake atom. Its factory is curried with the dictionary public key
+  and tree and returns the fixed two-game atomic hand.
 
 
 ## Handler parameters
@@ -107,11 +113,13 @@ Their-turn return (normal move, 2-4 elements):
     tests each candidate by running the validator with that evidence;
     if the validator returns nil (slash) rather than a valid payload, the
     slash succeeds. If none of the candidates trigger a slash, the game
-    continues normally. Nil evidence is always tried automatically
-    before the handler is called, so the handler never needs to
-    include it. When the handler is certain the move is fraudulent, it
-    puts the evidence in the list and can return junk for the other
-    fields (they are ignored when a slash succeeds).
+    continues normally. Evidence candidates that do not apply must be
+    rejected by the validator as non-slashes (a non-nil result), not by
+    requiring the handler to pre-filter them. Nil evidence is always
+    tried automatically before the handler is called, so the handler
+    never needs to include it. When the handler is certain the move is
+    fraudulent, it puts the evidence in the list and can return junk for
+    the other fields (they are ignored when a slash succeeds).
   - message is optional (element may be absent). When present and non-empty,
     it is sent out-of-band to the opponent and parsed by their message_parser.
 

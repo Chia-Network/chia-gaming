@@ -143,6 +143,15 @@ pub trait PeerHandler {
             "propose_game: not in off-chain phase".to_string(),
         ))
     }
+    fn propose_games(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _games: &[GameStart],
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
+        Err(Error::StrErr(
+            "propose_games: not in off-chain phase".to_string(),
+        ))
+    }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -355,6 +364,14 @@ pub trait GameCradle {
         &mut self,
         allocator: &mut AllocEncoder,
         game: &GameStart,
+    ) -> Result<Vec<GameID>, Error>;
+
+    /// Propose multiple games as an atomic group. All games share
+    /// a group_id equal to the first game's nonce.
+    fn propose_games(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        games: &[GameStart],
     ) -> Result<Vec<GameID>, Error>;
 
     /// Explicitly accept a proposed game. Moves it from proposed to live,
@@ -742,6 +759,37 @@ pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
 
 impl SynchronousGameCradle {
     #[cfg(test)]
+    pub fn proposal_contributions_for_testing(
+        &self,
+    ) -> Result<Vec<(GameID, Amount, Amount)>, Error> {
+        let handler = self
+            .peer
+            .as_any()
+            .downcast_ref::<PotatoHandler>()
+            .ok_or_else(|| {
+                Error::StrErr("proposal_contributions_for_testing: not a PotatoHandler".to_string())
+            })?;
+        let channel = handler.channel_handler()?;
+        Ok(channel.proposal_contributions_for_testing())
+    }
+
+    #[cfg(test)]
+    pub fn allocated_balances_for_testing(&self) -> Result<(Amount, Amount), Error> {
+        let handler = self
+            .peer
+            .as_any()
+            .downcast_ref::<PotatoHandler>()
+            .ok_or_else(|| {
+                Error::StrErr("allocated_balances_for_testing: not a PotatoHandler".to_string())
+            })?;
+        let channel = handler.channel_handler()?;
+        Ok((
+            channel.my_allocated_balance(),
+            channel.their_allocated_balance(),
+        ))
+    }
+
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
         let ph = self
             .peer
@@ -807,6 +855,13 @@ impl SynchronousGameCradle {
         let value: crate::protocol_pretty::BencodexValue = bencodex::from_slice(&bytes)
             .map_err(|e| Error::StrErr(format!("protocol_state_pretty parse: {e:?}")))?;
         Ok(crate::protocol_pretty::pretty_print(&value))
+    }
+
+    pub fn historical_unroll_count(&self) -> Option<usize> {
+        self.peer
+            .channel_handler()
+            .ok()
+            .map(|channel| channel.unroll_puzzle_hash_map().len())
     }
 
     /// Labeled coin ids (hex) the dashboard shows above the protocol state so
@@ -1420,9 +1475,17 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error> {
+        self.propose_games(allocator, std::slice::from_ref(game))
+    }
+
+    fn propose_games(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        games: &[GameStart],
+    ) -> Result<Vec<GameID>, Error> {
         let (result, reported_effects) = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            self.peer.propose_game(&mut env, game)?
+            self.peer.propose_games(&mut env, games)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)

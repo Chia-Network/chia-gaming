@@ -187,8 +187,9 @@ impl GameHandler {
         };
 
         if pl.len() == 2 {
-            let message_data = allocator.allocator().atom(pl[1]).to_vec();
-            return Err(Error::GameMoveRejected(message_data));
+            let tag = allocator.allocator().atom(pl[0]).to_vec();
+            let message = allocator.allocator().atom(pl[1]).to_vec();
+            return Err(Error::GameMoveRejected { tag, message });
         }
 
         if pl.len() < 9 {

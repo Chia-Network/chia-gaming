@@ -1,3 +1,5 @@
 (include *standard-cl-23*)
-(import krunk_generate)
+
+(import games.krunk.krunk_generate exposing krunk_factory)
+
 (export krunk_factory)

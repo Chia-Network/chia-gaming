@@ -35,6 +35,8 @@ use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 #[cfg(test)]
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 #[cfg(test)]
+use crate::test_support::krunk::test_funs as krunk_sim_tests;
+#[cfg(test)]
 use crate::test_support::spacepoker::test_funs as spacepoker_tests;
 
 #[cfg(test)]
@@ -51,6 +53,12 @@ use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 use crate::tests::channel_handler::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
+#[cfg(test)]
+use crate::tests::dict_tree_lookup::test_funs as dict_tree_lookup_tests;
+#[cfg(test)]
+use crate::tests::krunk_handlers::test_funs as krunk_handler_tests;
+#[cfg(test)]
+use crate::tests::krunk_validation::test_funs as krunk_validation_tests;
 #[cfg(test)]
 use crate::tests::referee_conditions::test_funs as referee_conditions_tests;
 #[cfg(test)]
@@ -967,8 +975,11 @@ pub fn run_simulation_tests() {
         chialisp_tests(),
         calpoker_validation_tests(),
         spacepoker_validation_tests(),
+        krunk_validation_tests(),
+        dict_tree_lookup_tests(),
         spacepoker_handler_tests(),
         calpoker_handler_tests(),
+        krunk_handler_tests(),
         channel_handler_tests(),
         referee_conditions_tests(),
         debug_game_tests(),
@@ -976,6 +987,7 @@ pub fn run_simulation_tests() {
         simulator_tests(),
         calpoker_tests(),
         spacepoker_tests(),
+        krunk_sim_tests(),
         potato_handler_sim_tests(),
     ];
 

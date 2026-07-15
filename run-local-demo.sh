@@ -12,11 +12,11 @@ CLSP_DIR="$SCRIPT_DIR/clsp"
 GAME_PORT=${GAME_PORT:-3002}
 TRACKER_PORT=${TRACKER_PORT:-3003}
 SIM_PORT=${SIM_PORT:-5800}
-SIM_WS_PORT=${SIM_WS_PORT:-5801}
 
 SKIP_BUILD=0
 FORCE_BUILD=0
 PIDS=()
+CLEANED_UP=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -31,26 +31,53 @@ if [ "$SKIP_BUILD" -eq 1 ] && [ "$FORCE_BUILD" -eq 1 ]; then
     exit 1
 fi
 
-# Kill anything still listening on our ports from a previous run.
-# Use -sTCP:LISTEN to avoid killing browsers that have connections to these ports.
-for p in $GAME_PORT $TRACKER_PORT $SIM_PORT $SIM_WS_PORT; do
-    pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
-    [ -n "$pids" ] && kill $pids 2>/dev/null || true
-done
-sleep 0.5
+stop_processes() {
+    local label=$1
+    shift
+    local pids=("$@")
+    [ "${#pids[@]}" -eq 0 ] && return
 
-cleanup() {
-    echo ""
-    echo "=== Stopping all services ==="
-    for pid in "${PIDS[@]}"; do
-        kill "$pid" 2>/dev/null || true
+    for pid in "${pids[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
     done
-    for pid in "${PIDS[@]}"; do
+
+    for _ in $(seq 1 50); do
+        local running=0
+        for pid in "${pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                running=1
+                break
+            fi
+        done
+        [ "$running" -eq 0 ] && break
+        sleep 0.1
+    done
+
+    local forced=0
+    for pid in "${pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+            forced=1
+        fi
+    done
+    [ "$forced" -eq 0 ] || echo "Forced remaining $label to stop."
+
+    for pid in "${pids[@]}"; do
         wait "$pid" 2>/dev/null || true
     done
+}
+
+cleanup() {
+    [ "$CLEANED_UP" -eq 0 ] || return
+    CLEANED_UP=1
+    echo ""
+    echo "=== Stopping all services ==="
+    stop_processes "services" "${PIDS[@]}"
     echo "All services stopped."
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ── Pre-flight checks ───────────────────────────────────────────────
 
@@ -95,18 +122,23 @@ fi
 
 # ── Assemble staging directories ────────────────────────────────────
 
-BUILD_NONCE=$(date +%s%3N)
+# Portable millisecond nonce. macOS `date +%s%3N` leaves a literal "3N".
+if command -v python3 >/dev/null 2>&1; then
+  BUILD_NONCE=$(python3 -c 'import time; print(int(time.time() * 1000))')
+else
+  BUILD_NONCE=$(node -e 'process.stdout.write(String(Date.now()))')
+fi
 echo "=== Build nonce: $BUILD_NONCE ==="
 
 echo "=== Assembling player app staging directory ==="
 GAME_SERVE="$FE_DIR/serve"
-rm -rf "$GAME_SERVE"
+# Write the new nonce tree first, flip build-meta, then prune old nonces so a
+# running static server never serves a half-deleted deploy.
 mkdir -p "$GAME_SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
 if [ -f "$FE_DIR/public/favicon.svg" ]; then
     cp "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
 fi
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
 GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
 cp "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
@@ -115,25 +147,48 @@ cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
 echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"
 echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_NONCE_DIR/urls"
-(cd "$CLSP_DIR" && find . -name '*.hex' | while read -r f; do
+(cd "$CLSP_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
     mkdir -p "$GAME_NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$GAME_NONCE_DIR/clsp/$f"
 done)
 if [ -d "$FE_DIR/public/images" ]; then
     cp -r "$FE_DIR/public/images" "$GAME_NONCE_DIR/images"
 fi
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
+for old in "$GAME_SERVE/app"/*; do
+    [ -d "$old" ] || continue
+    [ "$(basename "$old")" = "$BUILD_NONCE" ] && continue
+    rm -rf "$old"
+done
 
 echo "=== Assembling lobby-frontend staging directory ==="
 LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
-rm -rf "$LOBBY_SERVE"
 mkdir -p "$LOBBY_SERVE/app/$BUILD_NONCE"
 cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
 LOBBY_NONCE_DIR="$LOBBY_SERVE/app/$BUILD_NONCE"
 cp "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_NONCE_DIR/index.js"
 cp "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_NONCE_DIR/index.css"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
+for old in "$LOBBY_SERVE/app"/*; do
+    [ -d "$old" ] || continue
+    [ "$(basename "$old")" = "$BUILD_NONCE" ] && continue
+    rm -rf "$old"
+done
 
 # ── Start services ──────────────────────────────────────────────────
+
+# Keep the previous stack available while building and staging so already-open
+# browser pages do not accumulate reconnect backoff during a long build.
+# Use -sTCP:LISTEN to avoid killing the browsers themselves.
+echo "=== Stopping previous services ==="
+PREVIOUS_PIDS=()
+for p in $GAME_PORT $TRACKER_PORT $SIM_PORT; do
+    pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        PREVIOUS_PIDS+=($pids)
+    fi
+done
+stop_processes "previous services" "${PREVIOUS_PIDS[@]}"
 
 echo "=== Starting simulator (port $SIM_PORT) ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}/debug/chia-gaming-sim"
@@ -142,14 +197,14 @@ PIDS+=($!)
 
 echo "=== Waiting for simulator ==="
 for i in $(seq 1 5); do
-    if curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
+    if curl -s -X POST "http://localhost:$SIM_PORT/health" >/dev/null 2>&1; then
         echo "Simulator ready"
         break
     fi
     sleep 1
 done
 
-if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
+if ! curl -s -X POST "http://localhost:$SIM_PORT/health" >/dev/null 2>&1; then
     echo "Simulator failed to start within 5 seconds"
     exit 1
 fi

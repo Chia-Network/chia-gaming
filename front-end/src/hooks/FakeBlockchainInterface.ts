@@ -50,7 +50,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private connectionListeners = new Set<(connected: boolean) => void>();
   private lastConnectedState = false;
   private autoReconnect = false;
-  private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000, 60000];
+  // Firefox serializes WS connects per host:port and can delay a new
+  // WebSocket for many seconds after recent failures (e.g. reload interrupt).
+  // A short timeout aborts that delayed attempt, counts another failure, and
+  // makes the next try even slower — so wait long enough for FF to finish.
+  private static readonly CONNECT_TIMEOUT_MS = 30_000;
+  // Monotonic backoff: stay out of Firefox's failure queue during cutovers.
+  private static readonly RECONNECT_DELAYS = [5000, 10000, 20000, 30000, 60000];
   private reconnectAttempt = 0;
   private connectLoopPromise: Promise<void> | null = null;
   private blockWaiters = new Set<() => void>();
@@ -78,7 +84,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         log(`[sim-blockchain] connect: timeout (${Math.round(performance.now() - t0)}ms)`);
         try { ws.close(); } catch { /* ignore */ }
         reject(new Error(`WebSocket connection to ${this.wsUrl} timed out`));
-      }, 10_000);
+      }, FakeBlockchainInterface.CONNECT_TIMEOUT_MS);
       ws.onopen = () => {
         if (settled) { try { ws.close(); } catch { /* ignore */ } return; }
         settled = true;
@@ -328,7 +334,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async beginConnect(uniqueId: string): Promise<ConnectionSetup> {
+  async beginConnect(uniqueId: string, _fresh = false): Promise<ConnectionSetup> {
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       fields: {

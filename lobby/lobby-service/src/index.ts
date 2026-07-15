@@ -126,6 +126,8 @@ function randomPublicId(): string {
 function ensureSession(sessionId: string): string {
   const existing = sessionToPlayer.get(sessionId);
   if (existing) return existing;
+  // Mapping is intentionally retained for the tracker process lifetime —
+  // disconnect / leaveLobby must not mint a new public id for the same secret.
   const playerId = randomPublicId();
   sessionToPlayer.set(sessionId, playerId);
   playerToSession.set(playerId, sessionId);
@@ -214,6 +216,10 @@ function aliasForPlayer(playerId: string): string {
 
 function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
   if (!alias) return;
+  // Lobby set_alias / join / change_alias own the display name. Game-channel
+  // identify/set_busy may carry a generated prefs fallback (Player_*) and must
+  // not clobber a name the user already chose in the lobby.
+  if (knownAliases.has(sessionId)) return;
   knownAliases.set(sessionId, alias);
   const player = lobby.players[playerId];
   if (player) {
@@ -689,7 +695,13 @@ function onGameSend(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'sen
   const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
 
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    logTracker('game_send_delivery_failure', { from: meta.playerId, to: targetId });
+    // Includes unknown peer ids and known peers with no live game socket.
+    // Pre-cradle clients cancel; live sessions treat this as peer hard-disconnect.
+    logTracker('game_send_delivery_failure', {
+      from: meta.playerId,
+      to: targetId,
+      reason: targetSessionId ? 'peer_offline' : 'unknown_peer',
+    });
     sendGameWs(ws, 'delivery_failure', { to: targetId });
     return;
   }
@@ -725,7 +737,11 @@ function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): voi
   const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
 
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    logTracker('game_binary_delivery_failure', { from: meta.playerId, to: targetId });
+    logTracker('game_binary_delivery_failure', {
+      from: meta.playerId,
+      to: targetId,
+      reason: targetSessionId ? 'peer_offline' : 'unknown_peer',
+    });
     sendGameWs(ws, 'delivery_failure', { to: targetId });
     return;
   }
@@ -1073,7 +1089,7 @@ function sweepGameConnections(now: number): void {
   }
 }
 
-setInterval(() => {
+const sweepTimer = setInterval(() => {
   const now = Date.now();
   const lobbyChanged = sweepLobbyConnections(now);
   sweepGameConnections(now);
@@ -1097,3 +1113,41 @@ httpServer.headersTimeout = 6_000;
 httpServer.listen({ host: '::', port }, () => {
   console.log(`Server running on port ${port}`);
 });
+
+let shuttingDown = false;
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; shutting down`);
+  clearInterval(sweepTimer);
+
+  for (const ws of [...lobbyWsServer.clients, ...gameWsServer.clients]) {
+    try { ws.close(1001, 'server_shutdown'); } catch {}
+  }
+
+  let pendingClosures = 3;
+  const deadline = setTimeout(() => {
+    for (const ws of [...lobbyWsServer.clients, ...gameWsServer.clients]) {
+      try { ws.terminate(); } catch {}
+    }
+    httpServer.closeAllConnections?.();
+    process.exit();
+  }, 5_000);
+  const closed = (err?: Error): void => {
+    if (err) {
+      console.error(`Shutdown failed: ${err.message}`);
+      process.exitCode = 1;
+    }
+    pendingClosures -= 1;
+    if (pendingClosures === 0) {
+      clearTimeout(deadline);
+    }
+  };
+
+  lobbyWsServer.close(closed);
+  gameWsServer.close(closed);
+  httpServer.close(closed);
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));

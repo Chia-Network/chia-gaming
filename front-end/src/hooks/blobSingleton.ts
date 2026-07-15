@@ -5,12 +5,21 @@ import {
 } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
 import {
+  clearSession,
+  clearGameSessionPreservingHistory,
+  flushSessionState,
+  markSavedSession,
   startNewSession,
   SessionState,
-  base64ToUint8,
 } from './save';
 import { coerceToBytes } from '../util';
 import { log } from '../services/log';
+import {
+  DIAGNOSTIC_LOG_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../lib/session/historyLimits';
+import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 
 export var sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
@@ -40,10 +49,30 @@ export function destroySessionController(): void {
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
 
-async function fetchHex(fetchUrl: string): Promise<string> {
-    const resp = await fetch(fetchUrl);
+async function fetchPreset(fetchUrl: string): Promise<Uint8Array> {
+    const url = resolveDeployAssetUrl(fetchUrl);
+    const resp = await fetch(url);
     if (!resp.ok) {
-        throw new Error(`fetchHex ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+        await recoverFromMissingDeployAsset(
+            'fetchPreset',
+            url,
+            resp.status,
+            resp.statusText,
+        );
+    }
+    return new Uint8Array(await resp.arrayBuffer());
+}
+
+async function fetchHexString(fetchUrl: string): Promise<string> {
+    const url = resolveDeployAssetUrl(fetchUrl);
+    const resp = await fetch(url);
+    if (!resp.ok) {
+        await recoverFromMissingDeployAsset(
+            'fetchHexString',
+            url,
+            resp.status,
+            resp.statusText,
+        );
     }
     return resp.text();
 }
@@ -86,8 +115,21 @@ export async function restoreSession(
   }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
+  const currentSchema = BigInt(wasmConnection.cradle_serialization_schema());
+  if (save.cradleSchemaVersion === undefined || save.cradleSchemaVersion !== currentSchema) {
+    const savedSchema = save.cradleSchemaVersion === undefined
+      ? 'missing'
+      : save.cradleSchemaVersion.toString();
+    await clearSession();
+    markSavedSession();
+    throw new Error(
+      `Unsupported saved game format: cradle schema ${savedSchema}; current schema is ${currentSchema}`,
+    );
+  }
 
-  const cradleBytes = base64ToUint8(save.serializedCradle);
+  const cradleBytes = save.serializedCradle instanceof Uint8Array
+    ? save.serializedCradle
+    : (() => { throw new Error('restoreSession serializedCradle must be a Uint8Array'); })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
   sc.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
@@ -97,11 +139,18 @@ export async function restoreSession(
   sc.pairingToken = save.pairingToken ?? '';
   sc.unackedMessages = (save.unackedMessages ?? []).map(m => ({
     msgno: parseBigIntCounter(m.msgno, 0n),
-    msg: base64ToUint8(m.msg),
+    msg: m.msg,
   }));
-  sc.history = [...(save.history ?? [])];
-  sc.logHistory = [...(save.log ?? [])];
+  sc.wasmNotificationHistory = recentEntries(
+    save.wasmNotificationHistory ?? [],
+    WASM_NOTIFICATION_HISTORY_LIMIT,
+  );
+  sc.diagnosticLog = recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
+  sc.durabilityWarning = save.durabilityWarning;
   sc.activeGameId = save.activeGameId ?? null;
+  sc.activeGameIds = save.activeGameIds && save.activeGameIds.length > 0
+    ? [...save.activeGameIds]
+    : save.activeGameId ? [save.activeGameId] : [];
   sc.handState = save.handState ?? null;
   sc.lastChannelStatus = save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
@@ -135,7 +184,7 @@ export function getOrCreateSessionController(
     return { sessionController };
   }
 
-  const wasmStateInit = new WasmStateInit(fetchHex);
+  const wasmStateInit = new WasmStateInit(fetchPreset);
 
   sessionController = new SessionController(
     blockchain,
@@ -176,7 +225,9 @@ export function getOrCreateSessionController(
 
   sessionController.kickSystem(2);
 
-  if (sessionSave) {
+  // Only cradle restores go through restoreSession. pairingToken-only saves are
+  // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
+  if (sessionSave?.serializedCradle) {
     const restoringObject = sessionController;
     const doRestore = async () => {
       try {
@@ -194,15 +245,23 @@ export function getOrCreateSessionController(
     };
     void restoringObject.beginRestore(doRestore()).catch(() => {});
   } else {
+    const owningController = sessionController;
     const newSession = async () => {
       try {
         if (!blockchain) {
           throw new Error('Cannot start a new session without a blockchain connection');
         }
+        // Pending handshake fields must already be on disk (Shell). Flush before
+        // asset fetch so a stale-deploy reload can Resume into newSession again.
+        await flushSessionState();
+        if (sessionController !== owningController) return;
+        const gameHexes = await loadGameHexes(fetchHexString);
+        if (sessionController !== owningController) return;
+        await clearGameSessionPreservingHistory();
+        if (sessionController !== owningController) return;
         startNewSession();
-        const gameHexes = await loadGameHexes(fetchHex);
         await configSessionController(
-          sessionController!,
+          owningController,
           iStarted,
           wasmStateInit,
           gameHexes,
@@ -212,12 +271,13 @@ export function getOrCreateSessionController(
           unrollTimeout,
         );
       } catch (e) {
+        if (sessionController !== owningController) return;
         const msg = e instanceof Error ? (e.stack || e.message)
           : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
           : String(e);
         console.error('[sessionController] newSession error:', e);
         log(`[sessionController] newSession error: ${msg}`);
-        sessionController!.rxjsEmitter?.next({ type: 'error', error: msg });
+        owningController.rxjsEmitter?.next({ type: 'error', error: msg });
       }
     };
     newSession();

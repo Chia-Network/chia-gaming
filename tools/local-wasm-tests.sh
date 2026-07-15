@@ -87,7 +87,6 @@ echo "=== Running lobby-service tests ==="
 
 # Kill any stale simulator on our port before starting a fresh one
 lsof -ti:5800 -sTCP:LISTEN | xargs kill 2>/dev/null || true
-lsof -ti:5801 -sTCP:LISTEN | xargs kill 2>/dev/null || true
 sleep 0.5
 
 echo "=== Starting simulator ==="
@@ -97,14 +96,14 @@ SIM_PID=$!
 
 echo "=== Waiting for simulator ==="
 for i in $(seq 1 10); do
-    if curl -s -X POST http://localhost:5800/get_peak >/dev/null 2>&1; then
+    if curl -s -X POST http://localhost:5800/health >/dev/null 2>&1; then
         echo "Simulator ready"
         break
     fi
     sleep 1
 done
 
-if ! curl -s -X POST http://localhost:5800/get_peak >/dev/null 2>&1; then
+if ! curl -s -X POST http://localhost:5800/health >/dev/null 2>&1; then
     echo "Simulator failed to start"
     exit 1
 fi

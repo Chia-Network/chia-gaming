@@ -253,18 +253,20 @@ any pending hand obligations have finished:
    game actions, the `PeerSession` is destroyed (making it inert), keepalives
    stop, `sessionStartedRef` is reset, and the finished session is treated as a
    read-only display.
-4. The resolved display is intentionally preserved so the user can see what just
-   happened. A reload may restore this finished view, but it should not resume
-   live protocol behavior.
-5. Shell tells the tracker/lobby that the player is not busy.
-6. The player can accept new challenges. This is intentional: terminal sessions
+4. The resolved dashboard is intentionally preserved (channel label such as
+   Resolved Clean, final Me/Opp balances, and related status detritus). Shell
+   must not wipe to "No Session" on clean/terminal finish. A new match replaces
+   this display; there is no manual "Close Session" button.
+5. That finished snapshot is persisted with the boot Resume/Start Over marker
+   (live cradle/pairing cleared). Reload must show Resume/Start Over — not
+   silently auto-connect the tracker with an empty game tab.
+6. Shell tells the tracker/lobby that the player is not busy.
+7. The player can accept new challenges. This is intentional: terminal sessions
    no longer impose a protocol obligation, so the UI should encourage continued
    play instead of making the user manually clear the finished game.
-7. A new match replaces the old resolved display. There is no manual "Close
-   Session" button.
-8. The old peer connection is no longer a live session route. The app may still
-   show the finished session and prior history, but new peer messages must
-   come from a newly accepted session.
+8. Successful/terminal exit does not send `session_reject`.
+9. The old peer connection is no longer a live session route. New peer messages
+   must come from a newly accepted session.
 
 ---
 
@@ -376,11 +378,16 @@ The tracker does not create a session. It can only advise and relay:
   explicit go-on-chain or FOAD signals. Tracker liveness with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: `SessionState` in localStorage with serialized
-  WASM cradle, message numbers, unacked messages, etc.
+- **Session persistence**: `SessionState` in IndexedDB (raw cradle /
+  unacked bytes via structured clone) plus small preferences and the
+  resumable-session boot marker in localStorage
   (`front-end/src/hooks/save.ts`).
-- **Resume on reload**: Boot state machine with resume dialog, lease system
-  for tab conflict detection (`Shell.tsx`).
+- **Resume on reload**: Marker-first boot state machine with Resume /
+  Start Over dialog, full `hardReset` obliteration, and lease system for tab
+  conflict detection (`Shell.tsx`).
+- **Game dashboard banner**: Selector-driven channel / lifecycle /
+  balance strip from `SessionModel`
+  (`selectGameDashboardView`, `selectStatusBarBalances`).
 - **Channel state tracking**: `ChannelStatus` notifications from WASM with
   full state machine (`useGameSession.ts`). `isWindingDown()` helper for
   UI gating.
@@ -472,7 +479,7 @@ purpose.
 |-----|-------|--------|-----|------|
 | Wallet | Connected | — | Disconnected | — |
 | Tracker | Connected | Reconnecting | Inactive (no heartbeat) | Not connected (null / disconnected) |
-| Game | Peer connected | On-chain or peer degraded | Error, or peer dead | No session / resolved |
+| Game | Peer connected (incl. clean shutdown) | On-chain, peer degraded, or peer unreachable during clean shutdown | Error, or peer dead outside clean shutdown | No session / resolved |
 | History | — | — | — | Always gray |
 | Log | — | — | — | Always gray |
 
@@ -482,15 +489,27 @@ The Game tab dot checks conditions in this order:
 
 1. `sessionPhase === 'none' || 'resolved'` → **gray** (no active session)
 2. `sessionError` → **red** (genuine error — always wins)
-3. `peerLiveness === 'dead'` → **red** (terminal — go-on-chain or FOAD)
-4. `sessionPhase === 'on-chain'` or `peerLiveness === 'degraded'` → **yellow** (resolving or stale peer)
-5. `peerLiveness === 'connected'` → **green** (playing normally)
-6. Otherwise → **gray**
+3. Clean shutdown in progress (`ShuttingDown` / `ShutdownTransactionPending` /
+   `cleanShutdownStarted`):
+   - peer degraded (or unexpectedly dead) → **yellow** (unreachable)
+   - otherwise → **green** (cooperative close in flight; keepalives continue)
+4. `peerLiveness === 'dead'` → **red** (terminal — go-on-chain or FOAD)
+5. `sessionPhase === 'on-chain'` or `peerLiveness === 'degraded'` → **yellow** (resolving or stale peer)
+6. `peerLiveness === 'connected'` → **green** (playing normally)
+7. Otherwise → **gray**
+
+Clean shutdown does **not** mark the peer dead on its own. Keepalives and the
+small allowlist of shutdown-related peer messages continue until local
+shutdown completes. Successful/terminal session exit does not send
+`session_reject` (that signal means decline/abort). If a `session_reject`
+does arrive, it is still honored as an abort. When the channel reaches a
+terminal state the session exits and the dot goes gray.
 
 ### Game tab error conditions (red dot)
 
-The Game tab shows a red dot when `sessionError` is true or when
-`peerLiveness === 'dead'` (go-on-chain or FOAD received). `sessionError` is derived from:
+The Game tab shows a red dot when `sessionError` is true, or when
+`peerLiveness === 'dead'` outside a clean shutdown (go-on-chain or FOAD).
+`sessionError` is derived from:
 
 - `Failed` channel state — the channel encountered an unrecoverable error
 - `ResolvedStale` channel state — the channel resolved but the outcome is

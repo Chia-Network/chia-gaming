@@ -8,7 +8,7 @@ use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
+    Aggsig, AllocEncoder, Error, Hash, PrivateKey, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -20,10 +20,13 @@ pub struct ChannelHandlerPrivateKeys {
 
 impl Distribution<ChannelHandlerPrivateKeys> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ChannelHandlerPrivateKeys {
+        let my_channel_coin_private_key: PrivateKey = rng.random();
+        let my_unroll_coin_private_key: PrivateKey = rng.random();
+        let my_referee_private_key: PrivateKey = rng.random();
         ChannelHandlerPrivateKeys {
-            my_channel_coin_private_key: rng.random(),
-            my_unroll_coin_private_key: rng.random(),
-            my_referee_private_key: rng.random(),
+            my_channel_coin_private_key,
+            my_unroll_coin_private_key,
+            my_referee_private_key,
         }
     }
 }
@@ -41,6 +44,18 @@ pub struct ChannelHandlerUnrollSpendInfo {
     pub coin: UnrollCoin,
     /// Contains the other half of the signature.
     pub signatures: PotatoSignatures,
+}
+
+/// Minimal data retained for identifying and timing out a historical unroll.
+///
+/// Historical states never preempt: preemption uses one of the full latest
+/// sent/received records. The timeout path only needs the values committed
+/// into the historical unroll puzzle and its default solution.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoricalUnrollSpendInfo {
+    pub state_number: usize,
+    pub conditions_hash: PuzzleHash,
+    pub timeout_conditions: ProgramRef,
 }
 
 pub struct ChannelHandlerEnv<'a> {

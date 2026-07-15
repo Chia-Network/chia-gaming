@@ -1,103 +1,202 @@
-(export krunk_factory)
-(import onchain.krunk.commit exposing commit_validate commit_validate_hash)
-(import std.assert)
-(import std.shatree)
-(import std.curry)
+(include *standard-cl-23*)
 
-(defun krunk_factory (i_am_initiator my_contribution their_contribution params)
+(import games.krunk.krunk_helpers exposing
+    expand_clue
+    krunk_should_reveal
+    krunk_reveal_move
+    krunk_reveal_mover_share
+)
+(import games.krunk.krunk_dict_tree exposing dict_lookup)
+(import games.krunk.onchain.krunk_make_clue exposing make_clue)
+(import std.li)
+(import std.curry)
+(import std.assert)
+(import std.len)
+
+; --- deterministic factory ---
+;
+; DICT_TREE and DICT_PUBKEY are curried in at startup from a single .dat file
+; (48-byte BLS pubkey prefix + serialized CLVM tree).
+; The on-chain initial state is (DICT_PUBKEY base_unit); the full tree stays
+; off-chain.
+
+(import games.krunk.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
+(import games.krunk.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
+(import games.krunk.onchain.clue exposing (program as val_clue) (program_hash as clue_hash))
+
+(defconstant MIN_WORD 0x8000000000)
+(defconstant MAX_WORD 0x7fffffffff)
+
+(defun krunk_factory (DICT_PUBKEY DICT_TREE . stake)
     (assert
-        (= my_contribution their_contribution)
+        (> stake 0)
+        (= (% stake 100) 0)
         (assign
-            my_guess (list
-                ; Amount
-                (+ my_contribution their_contribution)
-                ; My turn
-                0
-                ; Handler
-                bob_handler_commit
-                ; My contribution this game
-                0
-                ; Their contribution
-                their_contribution
-                ; Initial validation program
-                commit_validate
-                ; Hash of initial validator program
-                commit_validate_hash
-                ; Initial state
-                0
-                ; Initial move
-                0
-                ; Initial max move size
-                32
-                ; Initial mover share
-                0
+            base_unit (/ stake 100)
+            initial_state (li DICT_PUBKEY base_unit)
+            alice_handler (curry krunk_alice_handler_commit DICT_TREE)
+            bob_handler (curry krunk_bob_handler_commit DICT_TREE)
+            (li
+                ; Slot 0: sender is the picker.
+                (li
+                    stake 0 stake 1 commit_hash 0 32 initial_state 0
+                    alice_handler bob_handler val_commit
+                )
+                ; Slot 1: sender is the guesser.
+                (li
+                    0 stake stake 0 commit_hash 0 32 initial_state 0
+                    alice_handler bob_handler val_commit
+                )
             )
-            their_guess (li
-                ; Amount
-                (+ my_contribution their_contribution)
-                ; My turn
-                1
-                ; Handler
-                alice_handler_commit
-                ; My contribution this game
-                my_contribution
-                ; Their contribution
-                0
-                ; Initial validation program
-                commit_validate
-                ; Hash of initial validator program
-                commit_validate_hash
-                ; Initial state
-                0
-                ; Initial move
-                0
-                ; Initial max move size
-                32
-                ; Initial mover share
-                0
-            )
-            (if i_am_initiator (li my_guess their_guess) (li their_guess my_guess))
         )
     )
 )
 
-; my turn handler
-; local_move is the picked word. Needs to be in the dictionary
-; checks that word is in dictionary
-; next turn handler is a curried alice_handler_guess
-(defun alice_handler_commit (local_move amount split max_move_size entropy)
+; --- Alice handlers ---
+
+(defun krunk_alice_handler_commit (DICT_TREE local_move amount state mover_share entropy)
+    (assign
+        word local_move
+        salt (substr entropy 0 16)
+        move (sha256 salt word)
+        (if (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+            (list "not_in_dictionary" word)
+            (list
+                "krunk_alice_handler_commit"
+                move
+                val_commit
+                commit_hash
+                val_guess
+                guess_hash
+                32
+                0
+                (curry krunk_alice_handler_guess salt word DICT_TREE)
+                0
+            )
+        )
+    )
 )
 
-; their turn handler
-; checks for Bob's guess being in dictionary
-; readable_move is Bob's guess
-; next turn handler is alice_handler_clue or nil if Bob guessed right or ran out of guesses
-(defun alice_handler_guess (PREIMAGE amount state_unused move validation_info_hash max_move_size split)
+(defun krunk_alice_handler_guess (SALT WORD DICT_TREE amount pre_state state move validation_info_hash mover_share)
+    (assign
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        lookup_result (dict_lookup MIN_WORD MAX_WORD move DICT_TREE)
+        (if lookup_result
+            (list 0 (li (concat (f lookup_result) (f (r lookup_result)))) 0)
+            (assign
+                clue (make_clue WORD move)
+                (list
+                    (li move (expand_clue clue))
+                    0
+                    (curry krunk_alice_handler_clue SALT WORD clue DICT_TREE)
+                )
+            )
+        )
+    )
 )
 
-; my turn handler
-; local_move is nil (should be called immediately)
-; next turn handler is alice_handler_guess
-(defun alice_handler_clue (PREIMAGE local_move amount split max_move_size entropy)
+(defun krunk_alice_handler_clue (SALT WORD CLUE DICT_TREE local_move amount state mover_share entropy)
+    (assign
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        num_guesses (len bob_guesses)
+        latest_guess (f bob_guesses)
+        (if (krunk_should_reveal latest_guess WORD num_guesses)
+            (assign
+                reveal (krunk_reveal_move SALT WORD)
+                payout (krunk_reveal_mover_share base_unit bob_guesses WORD)
+                (list
+                    "krunk_alice_handler_clue reveal"
+                    reveal
+                    val_clue
+                    clue_hash
+                    0
+                    0
+                    0
+                    payout
+                    0
+                    0
+                )
+            )
+            (list
+                "krunk_alice_handler_clue"
+                CLUE
+                val_clue
+                clue_hash
+                val_guess
+                guess_hash
+                5
+                0
+                (curry krunk_alice_handler_guess SALT WORD DICT_TREE)
+                0
+            )
+        )
+    )
 )
 
-; their turn handler
-; no special checks
-; readable_move is nil
-; next turn handler is bob_handler_guess
-(defun bob_handler_commit (amount state_unused move validation_info_hash max_move_size split)
+; --- Bob handlers ---
+
+(defun krunk_bob_handler_commit (DICT_TREE amount pre_state state move validation_info_hash mover_share)
+    (list
+        0
+        0
+        (curry krunk_bob_handler_guess DICT_TREE)
+    )
 )
 
-; my turn handler
-; local_move is a guess word. Needs to be in the dictionary
-; next turn handler is bob_handler_clue
-(defun bob_handler_guess (local_move amount split max_move_size entropy)
+(defun krunk_bob_handler_guess (DICT_TREE local_move amount state mover_share entropy)
+    (assign
+        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        guess local_move
+        (if (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE)
+            (list "not_in_dictionary" guess)
+            (list
+                "krunk_bob_handler_guess"
+                guess
+                val_guess
+                guess_hash
+                val_clue
+                clue_hash
+                21
+                0
+                (curry krunk_bob_handler_clue DICT_TREE)
+                0
+            )
+        )
+    )
 )
 
-; their turn handler
-; when there's a reveal, special check is Alice's word being in dictionary
-; when there's a reveal possible evidence is indices of alice clues
-; readable_move is a clue and optionally a reveal of Alice's word if done
-; next turn handler is bob_handler_guess or nil if done
-(defun bob_handler_clue (amount state_unused move validation_info_hash max_move_size split)
+(defconst KRUNK_EVIDENCE_INDICES (li 0 1 2 3 4))
+
+(defun krunk_bob_handler_clue (DICT_TREE amount pre_state state move validation_info_hash mover_share)
+    (if (= (strlen move) 1)
+        ; Non-terminal clue: state is valid.
+        (assign
+            (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+            (list
+                (expand_clue move)
+                0
+                (curry krunk_bob_handler_guess DICT_TREE)
+            )
+        )
+        ; Terminal reveal: framework passes nil state, use pre_state.
+        (assign
+            (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) pre_state
+            word (substr move 16 21)
+            lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+            (if lookup_result
+                (list
+                    (li word (expand_clue (make_clue word (f bob_guesses))))
+                    (li (concat (f lookup_result) (f (r lookup_result))))
+                    0
+                    0
+                )
+                (list
+                    (li word (expand_clue (make_clue word (f bob_guesses))))
+                    KRUNK_EVIDENCE_INDICES
+                    0
+                    0
+                )
+            )
+        )
+    )
 )

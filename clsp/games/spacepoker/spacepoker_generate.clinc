@@ -13,6 +13,7 @@
 (import std.assert)
 (import std.deep_compare)
 (import std.relops)
+(import std.or)
 
 ; ─── hash chain helpers ───────────────────────────────────────────────
 
@@ -97,37 +98,33 @@
     )
 )
 
-; ─── proposal factory / parser ───────────────────────────────────────
+; ─── deterministic factory ───────────────────────────────────────────
 
-; proposal factory: (per_player_stake bet_unit) -> (wire_data local_data)
-; wire_data = (my_contribution their_contribution [(amount we_go_first
-;              initial_validator_hash initial_move initial_max_move_size
-;              initial_state initial_mover_share)])
-; local_data = [(initial_handler initial_validator)]
-(defun spacepoker_make_proposal (@ _args (per_player_stake bet_unit))
+; Parameters: (per_player_stake bet_unit sender_goes_first).
+; Returns one canonical 12-field game record.
+(defun spacepoker_factory (@ _args (per_player_stake bet_unit sender_goes_first))
     (assert
         (> per_player_stake 0)
         (> bet_unit 0)
         (= (% per_player_stake bet_unit) 0)
+        (or (not sender_goes_first) (= sender_goes_first 1))
+        (deep= _args (li per_player_stake bet_unit sender_goes_first))
         (li
             (li
                 per_player_stake
                 per_player_stake
-                (li
-                    (li (* 2 per_player_stake) 1 commitA_hash 0 32 bet_unit 0)
-                )
-            )
-            (li
-                (li spacepoker_alice_commitA val_commitA)
+                (* 2 per_player_stake)
+                sender_goes_first
+                commitA_hash
+                0
+                32
+                bet_unit
+                0
+                spacepoker_alice_commitA
+                spacepoker_bob_handler_commitA
+                val_commitA
             )
         )
-    )
-)
-
-; parser: (wire_data) -> (readable [(initial_validator initial_handler)])
-(defun spacepoker_parser (@ args (per_player_stake _their_stake ((_amount _we_go_first _hash _move _max_move_size bet_unit _mover_share))))
-    (assert (deep= args (f (spacepoker_make_proposal per_player_stake bet_unit)))
-        (li (list per_player_stake bet_unit) (li (li val_commitA spacepoker_bob_handler_commitA)))
     )
 )
 

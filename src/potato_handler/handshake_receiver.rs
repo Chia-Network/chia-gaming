@@ -373,6 +373,7 @@ impl HandshakeReceiverHandler {
                         .private_keys
                         .my_unroll_coin_private_key
                         .sign(unroll_public_key.bytes());
+
                     HandshakeB {
                         channel_public_key,
                         unroll_public_key,
@@ -456,6 +457,7 @@ impl HandshakeReceiverHandler {
                     spend: None,
                 });
                 effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
+
                 self.state = ReceiverState::SentD(Box::new(info));
             }
 

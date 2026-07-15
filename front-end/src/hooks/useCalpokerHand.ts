@@ -136,6 +136,7 @@ export function useCalpokerHand(
     const subscription = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
         if ('OpponentMoved' in evt) {
+          if (evt.OpponentMoved.gameId && evt.OpponentMoved.gameId !== gameIdRef.current) return;
           if (!shouldProcessCalpokerOpponentMoved(handFinishedRef.current, !!outcomeRef.current)) return;
           const currentMove = moveNumberRef.current;
           setMyTurn(true);
@@ -178,6 +179,7 @@ export function useCalpokerHand(
             onOutcome(newOutcome);
           }
         } else if ('GameMessage' in evt) {
+          if (evt.GameMessage.gameId && evt.GameMessage.gameId !== gameIdRef.current) return;
           if (handFinishedRef.current) return;
           try {
             const cards = parseCards(evt.GameMessage.readable, iStarted);
@@ -189,12 +191,14 @@ export function useCalpokerHand(
             console.error('parseCards failed:', e, 'readable:', evt.GameMessage.readable);
           }
         } else if ('Timeout' in evt) {
+          if (evt.Timeout.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
             setTimeoutByUs(evt.Timeout.byUs);
             setTimeoutForfeited(evt.Timeout.forfeited);
           }
         } else if ('GameError' in evt) {
+          if (evt.GameError.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
         }
       },

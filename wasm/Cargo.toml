@@ -18,6 +18,8 @@ path = "src/mod.rs"
 
 [dependencies]
 chia_gaming = { path= "..", features = [] }
+clvm-traits = "=0.38.2"
+clvm-utils = "=0.38.2"
 clvmr = { version = "=0.17.5", features = ["pre-eval"] }
 hex = "=0.4.3"
 lol_alloc = "=0.4.1"

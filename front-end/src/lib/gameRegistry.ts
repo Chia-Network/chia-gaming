@@ -6,6 +6,7 @@ export interface GameRegistryEntry {
 export const GAME_REGISTRY: GameRegistryEntry[] = [
   { gameType: 'calpoker', displayName: 'California Poker' },
   { gameType: 'spacepoker', displayName: 'Space Poker' },
+  { gameType: 'krunk', displayName: 'Krunk' },
 ];
 
 export const GAME_TYPE_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(

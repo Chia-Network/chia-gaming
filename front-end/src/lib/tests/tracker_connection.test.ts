@@ -151,6 +151,7 @@ function makeCallbacks(presence?: { busy: boolean; alias?: string }): TrackerCon
     onTrackerReconnected: jest.fn(),
     onTrackerActivity: jest.fn(),
     getPresence: jest.fn(() => presence ?? { busy: false }),
+    onClosed: jest.fn(),
   };
 }
 
@@ -426,7 +427,8 @@ describe('setBusy', () => {
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
-    jest.advanceTimersByTime(5000);
+    // First reconnect delay is 5000ms ± 25% jitter.
+    jest.advanceTimersByTime(7500);
     await Promise.resolve();
 
     const ws2 = MockWebSocket.instance!;
@@ -447,7 +449,7 @@ describe('setBusy', () => {
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
-    jest.advanceTimersByTime(5000);
+    jest.advanceTimersByTime(7500);
     await Promise.resolve();
 
     const ws2 = MockWebSocket.instance!;

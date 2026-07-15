@@ -326,74 +326,33 @@ struct GameSetup {
 }
 
 fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
-    let make_proposal = read_hex_puzzle(
+    let factory = read_hex_puzzle(
         allocator,
-        "clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex",
+        "clsp/games/calpoker/calpoker_include_calpoker_factory.hex",
     )
-    .expect("load make_proposal");
-    let parser = read_hex_puzzle(
-        allocator,
-        "clsp/games/calpoker/calpoker_include_calpoker_parser.hex",
-    )
-    .expect("load parser");
-
-    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
-    let parser_clvm = parser.to_clvm(allocator).unwrap();
-
-    let bet_args = (BET_SIZE, ()).to_clvm(allocator).unwrap();
-    let proposal_result = run_clvm(allocator, make_proposal_clvm, bet_args);
-
-    // proposal_result is a 2-element list: (wire_data local_data)
-    let proposal_list = proper_list(allocator.allocator(), proposal_result, true).unwrap();
-    assert!(
-        proposal_list.len() >= 2,
-        "make_proposal returned {} elements",
-        proposal_list.len()
-    );
-    let wire_data = proposal_list[0];
-    let local_data = proposal_list[1];
-
-    // wire_data = (bet bet ((amount we_go_first vh im mms is ms)))
-    let wire_data_list = proper_list(allocator.allocator(), wire_data, true).unwrap();
-    let game_specs_wrapper = proper_list(allocator.allocator(), wire_data_list[2], true).unwrap();
-    let game_spec = proper_list(allocator.allocator(), game_specs_wrapper[0], true).unwrap();
-    // game_spec = [amount, we_go_first, vh, im, mms, is, ms]
-    let initial_validator_hash = game_spec[2];
-    let initial_move = game_spec[3];
-    let initial_max_move_size = int_from_node(allocator, game_spec[4]);
-    let initial_state = game_spec[5];
-    let initial_mover_share = int_from_node(allocator, game_spec[6]);
-
-    // local_data = ((handler validator))
-    let local_data_list = proper_list(allocator.allocator(), local_data, true).unwrap();
-    let hv_list = proper_list(allocator.allocator(), local_data_list[0], true).unwrap();
-    assert!(
-        hv_list.len() >= 2,
-        "handler_validator has {} elements",
-        hv_list.len()
-    );
-    let alice_handler = hv_list[0];
-    let alice_validator = hv_list[1];
-
-    // Run parser to get bob's handler and validator
-    let parser_result = run_clvm(allocator, parser_clvm, wire_data);
-    // parser returns (readable ((validator handler)))
-    let parser_list = proper_list(allocator.allocator(), parser_result, true).unwrap();
-    let bob_data_list = proper_list(allocator.allocator(), parser_list[1], true).unwrap();
-    let bob_hv_list = proper_list(allocator.allocator(), bob_data_list[0], true).unwrap();
-    let bob_validator = bob_hv_list[0];
-    let bob_handler = bob_hv_list[1];
+    .expect("load factory");
+    let factory_clvm = factory.to_clvm(allocator).unwrap();
+    let parameters = (BET_SIZE, (1i64, ())).to_clvm(allocator).unwrap();
+    let result = run_clvm(allocator, factory_clvm, parameters);
+    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(records.len(), 1, "Calpoker factory must return one record");
+    let record = proper_list(allocator.allocator(), records[0], true).unwrap();
+    assert_eq!(record.len(), 12, "factory record must have 12 fields");
+    assert_eq!(int_from_node(allocator, record[0]), BET_SIZE);
+    assert_eq!(int_from_node(allocator, record[1]), BET_SIZE);
+    assert_eq!(int_from_node(allocator, record[2]), AMOUNT);
+    assert_eq!(int_from_node(allocator, record[3]), 1);
 
     GameSetup {
-        alice_handler,
-        alice_validator,
-        bob_handler,
-        bob_validator,
-        initial_validator_hash,
-        initial_state,
-        initial_move,
-        initial_max_move_size,
-        initial_mover_share,
+        alice_handler: record[9],
+        alice_validator: record[11],
+        bob_handler: record[10],
+        bob_validator: record[11],
+        initial_validator_hash: record[4],
+        initial_move: record[5],
+        initial_max_move_size: int_from_node(allocator, record[6]),
+        initial_state: record[7],
+        initial_mover_share: int_from_node(allocator, record[8]),
     }
 }
 
@@ -899,77 +858,59 @@ fn bob_terminal_context_after_step_d(
     }
 }
 
-fn calpoker_make_proposal_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
-    let make_proposal = read_hex_puzzle(
+fn calpoker_factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
+    let factory = read_hex_puzzle(
         allocator,
-        "clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex",
+        "clsp/games/calpoker/calpoker_include_calpoker_factory.hex",
     )
-    .expect("load make_proposal");
-    let make_proposal_clvm = make_proposal.to_clvm(allocator).unwrap();
+    .expect("load factory");
+    let factory_clvm = factory.to_clvm(allocator).unwrap();
     run_program(
         allocator.allocator(),
         &chia_dialect(),
-        make_proposal_clvm,
+        factory_clvm,
         args,
         0,
     )
     .is_ok()
 }
 
-fn calpoker_parser_succeeds(allocator: &mut AllocEncoder, wire_data: NodePtr) -> bool {
-    let parser = read_hex_puzzle(
-        allocator,
-        "clsp/games/calpoker/calpoker_include_calpoker_parser.hex",
-    )
-    .expect("load parser");
-    let parser_clvm = parser.to_clvm(allocator).unwrap();
-    run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        parser_clvm,
-        wire_data,
-        0,
-    )
-    .is_ok()
-}
-
 #[test]
-fn test_calpoker_proposal_rejects_zero_stake() {
+fn test_calpoker_factory_rejects_malformed_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    let valid_args = (BET_SIZE, (1i64, ())).to_clvm(&mut allocator).unwrap();
     assert!(
-        calpoker_make_proposal_succeeds(&mut allocator, valid_args),
-        "positive per-player stake should be accepted"
+        calpoker_factory_succeeds(&mut allocator, valid_args),
+        "valid canonical parameters should be accepted"
+    );
+    let valid_nil_bool = (BET_SIZE, (0i64, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        calpoker_factory_succeeds(&mut allocator, valid_nil_bool),
+        "nil sender_goes_first should be accepted"
     );
 
-    let zero_args = (0i64, ()).to_clvm(&mut allocator).unwrap();
+    let zero_args = (0i64, (1i64, ())).to_clvm(&mut allocator).unwrap();
     assert!(
-        !calpoker_make_proposal_succeeds(&mut allocator, zero_args),
-        "Calpoker should reject zero-stake proposals in game code"
+        !calpoker_factory_succeeds(&mut allocator, zero_args),
+        "zero stake must be rejected"
     );
-}
 
-#[test]
-fn test_calpoker_parser_rejects_zero_stake_peer_wire_data() {
-    let mut allocator = AllocEncoder::new();
+    let noncanonical_bool = (BET_SIZE, (2i64, ())).to_clvm(&mut allocator).unwrap();
+    assert!(
+        !calpoker_factory_succeeds(&mut allocator, noncanonical_bool),
+        "sender_goes_first must be nil or 1"
+    );
 
-    let peer_wire_data = (
-        0i64,
-        (
-            0i64,
-            (
-                vec![(0i64, (1i64, (0i64, (0i64, (32i64, (0i64, (0i64, ())))))))],
-                (),
-            ),
-        ),
-    )
+    let missing_bool = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    assert!(!calpoker_factory_succeeds(&mut allocator, missing_bool));
+
+    let extra_parameter = (BET_SIZE, (1i64, (7i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
-
     assert!(
-        !calpoker_parser_succeeds(&mut allocator, peer_wire_data),
-        "peer wire proposals with zero Calpoker stake should make the parser throw"
+        !calpoker_factory_succeeds(&mut allocator, extra_parameter),
+        "parameters must be a two-element proper list"
     );
 }
 
@@ -1024,12 +965,8 @@ fn test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move() {
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         (
-            "test_calpoker_proposal_rejects_zero_stake",
-            &test_calpoker_proposal_rejects_zero_stake,
-        ),
-        (
-            "test_calpoker_parser_rejects_zero_stake_peer_wire_data",
-            &test_calpoker_parser_rejects_zero_stake_peer_wire_data,
+            "test_calpoker_factory_rejects_malformed_parameters",
+            &test_calpoker_factory_rejects_malformed_parameters,
         ),
         (
             "test_calpoker_handlers_happy_path",

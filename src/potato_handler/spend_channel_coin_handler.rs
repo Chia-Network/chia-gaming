@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use clvm_traits::{clvm_curried_args, ToClvm};
+use clvm_utils::CurriedProgram;
 use clvmr::{run_program, NodePtr};
 
 use serde::{Deserialize, Serialize};
@@ -469,13 +471,22 @@ impl SpendChannelCoinHandler {
         on_chain_state: usize,
     ) -> Result<SpendBundle, Error> {
         let player_ch = self.base.channel_handler()?;
-        let matching_unroll = player_ch.get_unroll_for_state(on_chain_state)?;
-        let curried_unroll_puzzle = matching_unroll
-            .coin
-            .make_curried_unroll_puzzle(env, &player_ch.get_aggregate_unroll_public_key())?;
+        let matching_unroll = player_ch.get_historical_unroll_for_state(on_chain_state)?;
+        let curried_unroll_puzzle = CurriedProgram {
+            program: env.unroll_puzzle.clone(),
+            args: clvm_curried_args!(
+                player_ch.get_aggregate_unroll_public_key(),
+                matching_unroll.state_number,
+                matching_unroll.conditions_hash.clone()
+            ),
+        }
+        .to_clvm(env.allocator)
+        .into_gen()?;
         let curried_unroll_program =
             crate::common::types::Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
-        let timeout_solution = matching_unroll.coin.make_timeout_unroll_solution(env)?;
+        let timeout_solution = matching_unroll
+            .timeout_conditions
+            .to_nodeptr(env.allocator)?;
         let timeout_solution_program = Program::from_nodeptr(env.allocator, timeout_solution)?;
 
         Ok(SpendBundle {
@@ -754,7 +765,6 @@ impl SpendChannelCoinHandler {
                     None
                 })
                 .collect();
-
             if is_stale {
                 self.was_stale = true;
             }

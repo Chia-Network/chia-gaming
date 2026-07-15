@@ -565,23 +565,20 @@ pub fn test_peer_smoke() {
 
     let game_ids = {
         let (game_ids, effects1) = {
+            let params_node = (Amount::new(100), (true, ()))
+                .to_clvm(&mut allocator)
+                .into_gen()
+                .expect("encode proposal parameters");
+            let parameters =
+                Program::from_nodeptr(&mut allocator, params_node).expect("proposal parameters");
             let mut env = ChannelHandlerEnv::new(&mut allocator).expect("should work");
-
-            let nil = Program::from_hex("80").unwrap();
             let (game_ids, effects1) = FromLocalUI::propose_game(
                 &mut peers[1],
                 &mut env,
                 &GameStart {
-                    amount: Amount::new(200),
-                    my_contribution: Amount::new(100),
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(15),
-                    my_turn: true,
-                    parameters: nil,
-                    initial_validation_program_hash: None,
-                    initial_state: None,
-                    initial_max_move_size: None,
-                    initial_mover_share: None,
+                    parameters,
                 },
             )
             .expect("should run");

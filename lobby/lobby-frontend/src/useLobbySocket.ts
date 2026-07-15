@@ -119,7 +119,11 @@ export function useLobbySocket(
     closingRef.current = false;
     setReconnectBlocked(false);
 
-    const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
+    // Monotonic backoff: stay out of Firefox's failure queue during cutovers.
+    // Connect timeout is long for the same reason: FF may delay the TCP
+    // attempt for seconds after a reload interrupt; aborting early worsens it.
+    const RECONNECT_DELAYS = [5000, 10000, 20000, 30000, 60000];
+    const CONNECT_TIMEOUT_MS = 30_000;
 
     const connect = () => {
       if (closingRef.current) return;
@@ -140,7 +144,7 @@ export function useLobbySocket(
           elapsed_ms: Date.now() - connectStartedAt,
         });
         try { ws.close(); } catch { /* ignore */ }
-      }, 10_000);
+      }, CONNECT_TIMEOUT_MS);
 
       ws.onopen = () => {
         clearTimeout(connectTimeout);

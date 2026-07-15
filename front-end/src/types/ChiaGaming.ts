@@ -68,9 +68,6 @@ export interface CoinsetOrgBlockSpend {
 export interface ProposeGameParams {
   game_type: string;
   timeout: bigint;
-  amount: bigint;
-  my_contribution: bigint;
-  my_turn: boolean;
   parameters: Program | null;
 }
 
@@ -108,6 +105,7 @@ type WasmNotificationTag =
   | 'GameStatus'
   | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
+  | 'MoveRejected'
   | 'ActionFailed';
 
 export type GameStatusState =
@@ -161,20 +159,35 @@ export interface ChannelStatusPayload {
   have_potato?: boolean | null;
 }
 
+export interface ProposalAcceptedPayload {
+  id: bigint | number | string;
+  amount: bigint | number | string | { amt?: unknown; Amount?: unknown };
+}
+
+export interface MoveRejectedPayload {
+  id: bigint | number | string;
+  tag: string;
+  message: string;
+}
+
 export type WasmNotification = {
-  [K in WasmNotificationTag]?: Record<string, unknown>;
+  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected'>]?: Record<string, unknown>;
+} & {
+  ProposalAccepted?: ProposalAcceptedPayload;
+  MoveRejected?: MoveRejectedPayload;
 };
 
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
+  | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string }
   | { type: 'terminal' };
 
 interface GameCradleCreateConfig {
   rng_id: number;
-  game_types: Record<string, { version: number; hex: string; parser_hex: string }>;
+  game_types: Record<string, { version: number; hex: string }>;
   have_potato: boolean;
   my_contribution: Amount;
   their_contribution: Amount;
@@ -195,7 +208,8 @@ export interface WasmConnection {
   create_rng: (seed: string) => number;
   create_game_cradle: (config: GameCradleCreateConfig) => { id: number; puzzle_hash: string };
   create_serialized_game: (serialized: Uint8Array, new_seed: string) => number;
-  deposit_file: (name: string, data: string) => void;
+  cradle_serialization_schema: () => number;
+  deposit_file: (name: string, data: Uint8Array) => void;
 
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => WasmResult | undefined;
@@ -234,6 +248,7 @@ export interface WasmConnection {
 
   // Game
   propose_game: (cid: number, game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array) => WasmResult | undefined;
+  propose_games: (cid: number, games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]) => WasmResult | undefined;
   accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
   cancel_proposal: (cid: number, game_id: string) => WasmResult | undefined;
@@ -261,6 +276,7 @@ export interface WasmConnection {
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   protocol_state_pretty: (cid: number) => string;
+  historical_unroll_count: (cid: number) => number | undefined;
   coins_of_interest: (cid: number) => CoinOfInterestEntry[];
   serialize_cradle: (cid: number) => Uint8Array;
   get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
@@ -285,6 +301,10 @@ export class ChiaGame {
 
   propose_game(game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array): WasmResult | undefined {
     return this.wasm.propose_game(this.cradle, game, parameters);
+  }
+
+  propose_games(games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]): WasmResult | undefined {
+    return this.wasm.propose_games(this.cradle, games, parameters_list);
   }
 
   accept_proposal(game_id: string): WasmResult | undefined {
@@ -317,6 +337,11 @@ export class ChiaGame {
 
   protocol_state_pretty(): string {
     return this.wasm.protocol_state_pretty(this.cradle);
+  }
+
+  historical_unroll_count(): bigint | undefined {
+    const count = this.wasm.historical_unroll_count(this.cradle);
+    return count === undefined ? undefined : BigInt(count);
   }
 
   coins_of_interest(): CoinOfInterestEntry[] {
@@ -643,7 +668,7 @@ export interface InternalBlockchainInterface {
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
 
-  beginConnect(uniqueId: string): Promise<ConnectionSetup>;
+  beginConnect(uniqueId: string, fresh?: boolean): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
   onConnectionChange(cb: (connected: boolean) => void): () => void;

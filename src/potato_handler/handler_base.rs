@@ -44,7 +44,7 @@ pub fn classify_unroll(
         }
         Ok(_) => Ok(UnrollOutcome::WaitForTimeout),
         Err(e) => {
-            let can_timeout = ch.get_unroll_for_state(on_chain_state).is_ok();
+            let can_timeout = ch.get_historical_unroll_for_state(on_chain_state).is_ok();
             if can_timeout {
                 Ok(UnrollOutcome::WaitForTimeout)
             } else {

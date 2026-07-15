@@ -24,9 +24,16 @@ import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionState } from './save';
 import type { PersistedGameState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
+import {
+  appendRecent,
+  DIAGNOSTIC_LOG_LIMIT,
+  recentEntries,
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+} from '../lib/session/historyLimits';
 
 export interface WasmFields {
   serializedCradle: Uint8Array;
+  cradleSchemaVersion: bigint;
   pairingToken: string;
   messageNumber: bigint;
   remoteNumber: bigint;
@@ -36,9 +43,12 @@ export interface WasmFields {
   theirContribution: string;
   perGameAmount: string;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
-  history: string[];
-  log: string[];
+  wasmNotificationHistory: string[];
+  diagnosticLog: string[];
+  historicalUnrollCount: bigint | undefined;
+  durabilityWarning: string | undefined;
   activeGameId: string | null;
+  activeGameIds: string[];
   handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
@@ -53,6 +63,8 @@ function clvmToBytes(value: Program | null): Uint8Array {
 
 const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
+/** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
+const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 
 function extractErrorMessage(e: unknown): string {
   if (e instanceof Error) {
@@ -89,6 +101,7 @@ export class SessionController implements PollingCradle {
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private lastUnackedResendAt = 0;
   messageNumber: bigint;
   remoteNumber: bigint;
   cradle: ChiaGame | undefined;
@@ -114,8 +127,8 @@ export class SessionController implements PollingCradle {
   private lastLauncherCoinId: string | null = null;
 
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }> = [];
-  history: string[] = [];
-  logHistory: string[] = [];
+  wasmNotificationHistory: string[] = [];
+  diagnosticLog: string[] = [];
   private reorderQueue: Map<bigint, Uint8Array> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
@@ -130,14 +143,17 @@ export class SessionController implements PollingCradle {
   private needsImmediateDurability = false;
   private pendingOutboundSends: Array<{ msgno: bigint; msg: Uint8Array }> = [];
   private pendingAcks: bigint[] = [];
+  private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
   activeGameId: string | null = null;
+  activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
-  onSaveNeeded: (() => void) | null = null;
+  durabilityWarning: string | undefined = undefined;
+  onSaveNeeded: (() => void | Promise<void>) | null = null;
   getFee: () => bigint = () => 0n;
 
   get handState(): PersistedGameState | null {
@@ -188,7 +204,7 @@ export class SessionController implements PollingCradle {
     };
     this.beforeUnloadHandler = () => {
       const hadPending = !!this.saveTimer;
-      this.flushPendingSave();
+      void this.flushPendingSave();
       if (hadPending) {
         console.log('[wasm] beforeunload: flushed pending save');
       }
@@ -250,7 +266,7 @@ export class SessionController implements PollingCradle {
       this.durabilityFlushTimer = null;
     }
     this.drainScheduled = false;
-    this.flushDurabilityAndSend();
+    void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
@@ -265,6 +281,9 @@ export class SessionController implements PollingCradle {
 
   receiveKeepalive() {
     this.notePeerActivity();
+    // Peer is alive but may have missed our outbound frames (e.g. they reloaded
+    // mid-handshake). Retransmit anything still awaiting ack.
+    this.resendUnacked();
   }
 
   startKeepaliveTimer() {
@@ -605,7 +624,7 @@ export class SessionController implements PollingCradle {
       this.durabilityFlushTimer = null;
     }
     this.durabilityFlushScheduled = false;
-    this.flushDurabilityAndSend();
+    void this.flushDurabilityAndSend();
   }
 
   async flushPendingWork(): Promise<void> {
@@ -614,12 +633,21 @@ export class SessionController implements PollingCradle {
       const effects = [...this.pendingEffects];
       await Promise.allSettled(effects);
       await this.transactionSubmitQueue;
+      await this.durabilityFlushPromise;
       this.flushDeferredWork();
       if (this.pendingEffects.size === 0
           && this.eventQueue.length === 0
           && !this.drainScheduled
-          && !this.durabilityFlushScheduled) {
+          && !this.durabilityFlushScheduled
+          && this.pendingOutboundSends.length === 0
+          && this.pendingAcks.length === 0) {
         return;
+      }
+      // A durability pass may have deferred itself while the event queue was
+      // non-empty. Ensure another pass is scheduled before yielding.
+      if ((this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0)
+          && !this.durabilityFlushScheduled) {
+        this.scheduleDurabilityFlush();
       }
     }
     throw new Error('SessionController pending work did not settle');
@@ -650,22 +678,34 @@ export class SessionController implements PollingCradle {
         }
       }
       if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
-        this.activeGameId = String(n.ProposalAccepted.id);
+        const acceptedId = String(n.ProposalAccepted.id);
+        this.activeGameId = acceptedId;
+        if (!this.activeGameIds.includes(acceptedId)) {
+          this.activeGameIds.push(acceptedId);
+        }
       }
       if (tag === 'GameStatus') {
         const gs = (n as Record<string, Record<string, unknown>>).GameStatus;
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
-          this.activeGameId = null;
+          const endedId = gs.id != null ? String(gs.id) : null;
+          this.activeGameIds = this.activeGameIds.filter(id => id !== endedId);
+          if (this.activeGameIds.length === 0) {
+            this.activeGameId = null;
+          }
         }
       }
-      this.history.push(jsonStringify(n));
+      this.wasmNotificationHistory = appendRecent(
+        this.wasmNotificationHistory,
+        jsonStringify(n),
+        WASM_NOTIFICATION_HISTORY_LIMIT,
+      );
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
       this.trackEffect(this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest));
     } else if ('Log' in event) {
-      this.logHistory.push(event.Log);
+      this.diagnosticLog = appendRecent(this.diagnosticLog, event.Log, DIAGNOSTIC_LOG_LIMIT);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
     } else if ('NeedLauncherCoin' in event) {
       this.trackEffect(this.handleNeedLauncherCoin());
@@ -726,6 +766,10 @@ export class SessionController implements PollingCradle {
       } else {
         this.sendAck(msgno);
       }
+      // Duplicate inbound usually means the peer retransmitted after a reload or
+      // lost our reply. Re-ack alone is not enough — also replay our unacked
+      // outbound (e.g. OfferSent payload) so handshake can finish.
+      this.resendUnacked();
       return;
     }
     if (msgno > this.remoteNumber + 1n) {
@@ -778,6 +822,9 @@ export class SessionController implements PollingCradle {
 
   resendUnacked() {
     if (this.unackedMessages.length === 0) return;
+    const now = Date.now();
+    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return;
+    this.lastUnackedResendAt = now;
     for (const { msgno, msg } of this.unackedMessages) {
       this.sendMessage(msgno, msg);
     }
@@ -841,14 +888,27 @@ export class SessionController implements PollingCradle {
     this.saveTimer = timer;
   }
 
-  flushPendingSave() {
-    this.flushDurabilityAndSend();
+  flushPendingSave(): Promise<void> {
+    // Rust intentionally omits transient cradle events from serialization.
+    // Move every event into its durable JS representation (message counters,
+    // unacked messages, notifications) before taking the lifecycle snapshot.
+    this.flushDeferredWork();
+
+    let saveRequest: Promise<void> = Promise.resolve();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      this.onSaveNeeded?.();
-      flushSessionState();
+      saveRequest = Promise.resolve(this.onSaveNeeded?.());
+      void saveRequest.catch(() => {});
     }
+
+    // Always flush the outer persistence debounce as well: React may have
+    // queued a full-session save without SessionController's timer being set.
+    // onSaveNeeded is required to update `cached` synchronously before returning
+    // its Promise so this flush snapshots the new cradle, not a pre-save state.
+    const persistence = flushSessionState();
+    const durability = this.flushDurabilityAndSend();
+    return Promise.all([saveRequest, persistence, durability]).then(() => {});
   }
 
   private markNeedsImmediateDurability() {
@@ -866,13 +926,22 @@ export class SessionController implements PollingCradle {
         this.scheduleDurabilityFlush();
         return;
       }
-      this.flushDurabilityAndSend();
+      void this.flushDurabilityAndSend();
     }, 0);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.durabilityFlushTimer = timer;
   }
 
-  private flushDurabilityAndSend() {
+  private flushDurabilityAndSend(): Promise<void> {
+    this.durabilityFlushPromise = this.durabilityFlushPromise.then(
+      () => this.performDurabilityFlushAndSend(),
+      () => this.performDurabilityFlushAndSend(),
+    );
+    void this.durabilityFlushPromise.catch(() => {});
+    return this.durabilityFlushPromise;
+  }
+
+  private async performDurabilityFlushAndSend(): Promise<void> {
     if (!this.needsImmediateDurability && this.pendingOutboundSends.length === 0 && this.pendingAcks.length === 0) {
       return;
     }
@@ -881,9 +950,44 @@ export class SessionController implements PollingCradle {
       this.saveTimer = null;
     }
     if (this.needsImmediateDurability) {
-      this.onSaveNeeded?.();
-      flushSessionState();
-      this.needsImmediateDurability = false;
+      const outboundCount = this.pendingOutboundSends.length;
+      const ackCount = this.pendingAcks.length;
+      if (!this.onSaveNeeded) {
+        throw new Error('Session persistence callback is unavailable at a protocol delivery boundary');
+      }
+      const saveRequest = Promise.resolve(this.onSaveNeeded());
+      void saveRequest.catch(() => {});
+      try {
+        // onSaveNeeded must update the in-memory session synchronously before
+        // returning its Promise (see flushPendingSave). Flushing first then
+        // persists that snapshot; awaiting the Promise only waits for the
+        // outer debounce settlement.
+        await flushSessionState();
+        await saveRequest;
+      } catch (error) {
+        const detail = extractErrorMessage(error);
+        const warning = `Session storage failed: ${detail}. Protocol messages remain queued and will not be sent until storage succeeds.`;
+        if (this.durabilityWarning !== warning) {
+          this.durabilityWarning = warning;
+          this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+        }
+        throw error;
+      }
+
+      const outbound = this.pendingOutboundSends.splice(0, outboundCount);
+      const acks = this.pendingAcks.splice(0, ackCount);
+      for (const { msgno, msg } of outbound) {
+        this.sendMessage(msgno, msg);
+      }
+      for (const ack of acks) {
+        this.sendAck(ack);
+      }
+      this.needsImmediateDurability =
+        this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
+      if (this.needsImmediateDurability) {
+        this.scheduleDurabilityFlush();
+      }
+      return;
     }
 
     const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
@@ -897,32 +1001,38 @@ export class SessionController implements PollingCradle {
   }
 
   getWasmFields(): WasmFields | null {
-    if (!this.cradle) return null;
-    try {
-      return {
-        serializedCradle: this.cradle.serialize(),
-        pairingToken: this.pairingToken,
-        messageNumber: this.messageNumber,
-        remoteNumber: this.remoteNumber,
-        channelReady: this.channelReady,
-        iStarted: this.iStarted,
-        myContribution: this.myContribution.toString(),
-        theirContribution: this.theirContribution.toString(),
-        perGameAmount: this.perGameAmount.toString(),
-        unackedMessages: [...this.unackedMessages],
-        history: [...this.history],
-        log: [...this.logHistory],
-        activeGameId: this.activeGameId,
-        handState: this.handState,
-        channelStatus: this.lastChannelStatus,
-        myAlias: this.myAlias,
-        opponentAlias: this.opponentAlias,
-        lastOutcomeWin: this.lastOutcomeWin,
-      };
-    } catch (e) {
-      console.error('[wasm] getWasmFields failed:', e);
-      return null;
-    }
+    // Null means the cradle is not loaded yet (e.g. mid-restore). Serialize
+    // failures must throw so callers like durability flush do not treat a
+    // failed snapshot as a successful no-op.
+    if (!this.cradle || !this.wc) return null;
+    const serializedCradle = this.cradle.serialize();
+    return {
+      serializedCradle,
+      cradleSchemaVersion: BigInt(this.wc.cradle_serialization_schema()),
+      pairingToken: this.pairingToken,
+      messageNumber: this.messageNumber,
+      remoteNumber: this.remoteNumber,
+      channelReady: this.channelReady,
+      iStarted: this.iStarted,
+      myContribution: this.myContribution.toString(),
+      theirContribution: this.theirContribution.toString(),
+      perGameAmount: this.perGameAmount.toString(),
+      unackedMessages: [...this.unackedMessages],
+      wasmNotificationHistory: recentEntries(
+        this.wasmNotificationHistory,
+        WASM_NOTIFICATION_HISTORY_LIMIT,
+      ),
+      diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
+      historicalUnrollCount: this.cradle.historical_unroll_count?.(),
+      durabilityWarning: this.durabilityWarning,
+      activeGameId: this.activeGameId,
+      activeGameIds: [...this.activeGameIds],
+      handState: this.handState,
+      channelStatus: this.lastChannelStatus,
+      myAlias: this.myAlias,
+      opponentAlias: this.opponentAlias,
+      lastOutcomeWin: this.lastOutcomeWin,
+    };
   }
 
   getProtocolStatePretty(): string | null {
@@ -959,9 +1069,8 @@ export class SessionController implements PollingCradle {
   proposeGame(params: ProposeGameParams): string[] {
     if (!this.cradle) throw new Error('no cradle');
     try {
-      const paramBytes = clvmToBytes(params.parameters);
-      const { parameters: _drop, ...wasmParams } = params;
-      const result = this.cradle.propose_game(wasmParams, paramBytes);
+      const { parameters, ...wasmParams } = params;
+      const result = this.cradle.propose_game(wasmParams, clvmToBytes(parameters));
       this.processResult(result);
       return result?.ids || [];
     } catch (e) {
@@ -970,6 +1079,13 @@ export class SessionController implements PollingCradle {
       this.rxjsEmitter?.next({ type: 'error', error: msg });
       return [];
     }
+  }
+
+  proposeGames(paramsList: ProposeGameParams[]): string[] {
+    if (paramsList.length !== 1) {
+      throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
+    }
+    return this.proposeGame(paramsList[0]);
   }
 
   acceptProposal(gameId: string): void {

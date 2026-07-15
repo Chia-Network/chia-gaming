@@ -308,7 +308,8 @@ on-chain sequence number against their own latest state:
 
 | On-chain SN vs ours | Action                  | Explanation                                                                         |
 | ------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
-| On-chain < ours     | **Preempt** (immediate) | Spend the unroll coin immediately with our higher SN and more up-to-date conditions |
+| On-chain < ours, opposite parity | **Preempt** (immediate) | Spend the unroll coin immediately with our higher SN and more up-to-date conditions |
+| On-chain < ours, same parity | **Wait for timeout** | The parity rule forbids our latest state from preempting this coin; use its compact historical timeout record |
 | On-chain == ours    | **Wait for timeout**    | The unroll is at the state we expect; wait for it to resolve                        |
 | On-chain > ours     | **Error**               | We've been hacked or something went very wrong                                      |
 
@@ -338,9 +339,17 @@ and the opponent's stale unroll succeeds via timeout, the system enters
 ### Staleness Detection
 
 Staleness is determined by comparing the `on_chain_state` (the sequence
-number retrieved from the `unroll_puzzle_hash_map` when the on-chain
-`CREATE_COIN` puzzle hash is matched) against the latest received unroll's
-state number from `ChannelHandler`.
+number retrieved from the compact `unroll_puzzle_hash_map` record when the
+on-chain `CREATE_COIN` puzzle hash is matched) against the latest received
+unroll's state number from `ChannelHandler`.
+
+The map retains every historical unroll puzzle hash because old does not mean
+unspendable: the opponent may still broadcast any earlier unroll carrying the
+signatures collected at that time. The durable minimum per hash is the state
+number, committed conditions hash, and timeout conditions. Historical full
+signatures and preemption conditions are unnecessary because preemption always
+uses the latest full record. The browser preserves this compact map inside the
+raw binary cradle stored in IndexedDB.
 
 The latest received unroll state number comes from
 `self.latest_received_unroll.as_ref().map(|t| t.coin.state_number)`, and

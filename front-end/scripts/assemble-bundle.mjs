@@ -48,7 +48,7 @@ function copyHex(dir) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) {
       copyHex(p);
-    } else if (p.endsWith(".hex")) {
+    } else if (p.endsWith(".hex") || p.endsWith(".dat")) {
       const dst = join(APP, "clsp", relative(CLSP_DIR, p));
       mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(p, dst);

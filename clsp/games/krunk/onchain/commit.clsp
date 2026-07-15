@@ -1,28 +1,28 @@
 (include *standard-cl-23*)
 
-(export commit)
-(import onchain.krunk.guess exposing guess_validate_hash)
-(import std.assert)
+(import games.krunk.onchain.guess exposing (program_hash as guess_hash))
+(import games.krunk.onchain.clue exposing (program_hash as clue_hash))
+(import std.if_any_fail)
+(import std.and)
+(import std.li)
 
-; Bob challenging
-; state is nil
-; move is an Alice commit to a salted word
-; evidence is empty
-(defun commit_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    state me previous_calidation_program mover_puzzle solution evidence)
+; Bob challenging Alice's commit.
+; previous_state is (dict_pubkey base_unit).
+; MOVE is sha256(salt || word), 32 bytes.
+;
+; clue_hash is threaded through state so that guess.clsp can transition
+; back to itself via clue without importing clue.clsp (breaks the cycle
+; between guess and clue, mirroring the begin_round <-> mid_round trick
+; in spacepoker).
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (dict_pubkey base_unit) previous_validation_program evidence)
 
-    ; check move length is 32
-    ; check state is (0 0 dictionary_public_key alice_commit)
-    ; check max_move_size, mover_share
     (if_any_fail
-        (= (strlen move) 32)
-        (= next_validation_hash (sha256 guess_validate_hash (shatree (li 0 0 dictionary_key move))))
-        (= max_move_size 5)
+        (= (strlen MOVE) 32)
+        (= MOVER_SHARE 0)
         0
-        (x)
+        (list guess_hash (li dict_pubkey base_unit 0 0 MOVE clue_hash) 5)
     )
 )
-
-
-

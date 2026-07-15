@@ -791,7 +791,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
         let channel_coin = channel_handler.state_channel_coin().clone();
         self.channel_handler = Some(channel_handler);
         self.launcher_coin = Some(launcher_coin.clone());
-        self.state = InitiatorState::SentC(Box::new(info));
+        self.state = InitiatorState::SentC(Box::new(info.clone()));
 
         Ok(vec![
             Effect::RegisterCoin {

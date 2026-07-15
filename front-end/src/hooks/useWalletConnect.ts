@@ -136,6 +136,12 @@ class WalletState {
     });
   }
 
+  reset() {
+    this.initPromise = null;
+    this.client = undefined;
+    this.resetSession();
+  }
+
   init(): Promise<void> {
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInit().catch((err) => {

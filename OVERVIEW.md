@@ -182,12 +182,21 @@ is needed — it has the highest sequence number and the correct parity.
 However, the opponent can broadcast *any* unroll we ever sent them (all
 carry valid aggregate signatures from the time they were created).  To
 identify these on-chain, the `ChannelHandler` maintains an
-`unroll_puzzle_hash_map` that maps each sent unroll's puzzle hash to its
-full spend info.  This map grows linearly with session length (one entry
-per state transition) but entries are small.  When a channel coin spend
-is detected, the `CREATE_COIN` puzzle hashes in the on-chain conditions
-are matched against this map to identify which unroll landed and retrieve
-the data needed for preemption or timeout.
+`unroll_puzzle_hash_map` that maps each unroll puzzle hash to a compact
+historical record: state number, committed conditions hash, and timeout
+conditions. The map deliberately does not retain historical signatures or
+preemption conditions; preemption always uses a latest full record. When a
+channel coin spend is detected, the `CREATE_COIN` puzzle hashes in the
+on-chain conditions are matched against this map to identify which unroll
+landed. An old opposite-parity state is preempted, while an old same-parity
+state is resolved with its stored timeout conditions. Those old puzzle hashes
+cannot be discarded: the opponent may publish any previously signed unroll,
+so recognizing every historical hash is the minimum needed to choose the
+correct timeout record safely.
+
+Browser session persistence stores the serialized cradle as raw binary in
+IndexedDB. Compact historical unroll records are therefore part of the durable
+minimum even though obsolete full signatures and preemption conditions are not.
 
 **Key code:** `src/channel_handler/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`
@@ -239,7 +248,7 @@ Every potato pass is a single `PeerMessage::Batch` containing:
 
 1. `**actions: Vec<BatchAction>`** — one or more game operations to apply
   sequentially:
-  - `ProposeGame` — propose a new game
+  - `ProposeGroup` — propose one factory-derived atomic game group
   - `AcceptProposal` — accept a pending game proposal
   - `CancelProposal` — cancel a pending proposal
   - `Move` — make a game move
@@ -489,13 +498,15 @@ puzzle hash and combined amount.
 
 ## Reference Games
 
-The repository includes two reference games. **Calpoker** was implemented first
+The repository includes three reference games. **Calpoker** was implemented first
 and is the simpler example: a five-step commit-reveal poker variant with one
 main hand-evaluation payoff and one optional advisory pre-reveal. **Space Poker**
-is also a reference game; it illustrates a more involved multi-round poker flow,
-repeated betting/open states, and heavier use of advisory message parsers.
-Together they show different ways to structure validators and off-chain handlers
-on the same channel/referee foundation.
+illustrates a more involved multi-round poker flow with repeated betting/open
+states and heavier use of advisory message parsers. **Krunk** is a Wordle-style
+word-guessing game that demonstrates BLS-signed dictionary enforcement and
+on-chain slashing for out-of-dictionary plays. Together they show different ways
+to structure validators and off-chain handlers on the same channel/referee
+foundation.
 
 The Rust game collection also registers `debug` for simulator tests only. It is
 not a user-facing reference game.
@@ -607,6 +618,101 @@ dispatches incoming messages via `received_message`
 - `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
 - `src/test_support/spacepoker.rs` — Rust-side Space Poker helpers
 
+### Krunk
+
+Krunk is a Wordle-style word-guessing game. Alice picks a secret 5-letter word,
+commits to it (salted hash), and Bob has up to 5 guesses. After each wrong
+guess Alice gives a Wordle-style clue (correct/present/absent per letter).
+Bob either guesses correctly (winning a payout that decreases with each guess)
+or exhausts all 5 guesses (Alice keeps everything).
+
+Each Krunk hand is an atomic pair of games with the same stake. One deterministic
+Krunk factory invocation returns both games in a fixed order. In each individual
+game, the word-picker funds the entire pot and the guesser funds nothing;
+because each player is the picker once, both players put up one stake overall.
+Stakes must be positive multiples of 100 mojos.
+
+Payouts are expressed as multiples of `base_unit = game_pot / 100`:
+
+| Guess # | Payout (× base_unit) |
+|---------|---------------------|
+| 1       | 100                 |
+| 2       | 100                 |
+| 3       | 20                  |
+| 4       | 5                   |
+| 5       | 1                   |
+
+#### Dictionary enforcement
+
+Both players must play words from a fixed dictionary (`krunkwords.txt`, 4775
+five-letter words). The dictionary is enforced via **BLS signatures over gap
+ranges**: the sorted dictionary has gaps between consecutive words (byte ranges
+where no valid word exists). Each gap is signed with a BLS key, and the
+signatures are arranged in a binary tree alongside the words. When Bob guesses a
+word not in the dictionary, Alice can produce a signed gap range proving the word
+falls between two adjacent dictionary entries — an `AGG_SIG_UNSAFE` condition
+the blockchain can verify.
+
+#### Pre-signed dictionary tree
+
+The dictionary tree and its signatures are generated once at build time by
+`cargo run --bin gen-krunk-dict`. This binary:
+
+1. Generates an ephemeral BLS keypair (never written to disk)
+2. Signs every gap range in the sorted dictionary
+3. Writes `clsp/games/krunk/krunk_signed_dict_tree.dat` — a single binary file
+   containing the 48-byte BLS public key followed by the CLVM-serialized signed
+   dictionary tree. At runtime the Rust/WASM loader splits the file, and both
+   values are curried into the handler programs.
+
+**The generated `.dat` file is checked in.** It only needs regeneration if the
+dictionary changes. Regenerating requires rebuilding chialisp afterward
+(`./cb.sh`).
+
+The `.dat` file uses a `.dat` extension (not `.hex`) because the chialisp build
+script deletes all `*.hex` files under `clsp/` before rebuilding.
+
+#### Atomic factory proposals
+
+A proposal is one group request containing `game_type`, game-specific
+`parameters`, and a timeout shared by every resulting game. Both peers run the
+same registered deterministic factory. Calpoker and Space Poker factories each
+return one game; Krunk returns two simultaneous games — one where each player
+is Alice (word-picker) and one where each is Bob (guesser).
+
+Each factory result is an ordered list of canonical 12-field records containing
+sender/receiver contributions, amount, `sender_goes_first`, initial move/state/
+validator commitments, fixed my-turn and their-turn handlers, and the validator
+program. The higher layer selects the local initial handler and swaps the
+sender/receiver contribution orientation for the receiving peer.
+
+One `ProposeGroup` wire action carries the whole derived group. Acceptance
+preflights aggregate balances for the complete group; accept and cancel apply
+to every member or none. The receiver
+gets one `ProposalMade` notification with ordered IDs. See
+[Grouped Proposals](GAME_LIFECYCLE.md#grouped-atomic-proposals) for the
+general mechanism.
+
+#### On-chain validators
+
+| Validator | Move | Validates |
+|-----------|------|-----------|
+| `commit.clsp` | `sha256(salt ‖ word)` (32 bytes) | Move is 32 bytes; initializes state with `(dict_pubkey, base_unit)` |
+| `guess.clsp` | 5-letter guess | Word is 5 bytes; evidence = signed gap range for out-of-dictionary slash |
+| `clue.clsp` | clue byte (1 byte) or `salt ‖ word` (21 bytes, reveal) | Clue correctness; reveal verifies `sha256(salt ‖ word) == commit`; wrong-clue slash via evidence index |
+
+**Key code:**
+
+- `clsp/games/krunk/krunk_generate.clinc` — off-chain handlers (Alice/Bob)
+- `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` — on-chain validators
+- `clsp/games/krunk/krunk_helpers.clinc` — clue encoding, payout tables
+- `clsp/games/krunk/krunk_signed_dict_tree.dat` — generated: 48-byte pubkey + signed tree (binary)
+- `src/games/krunk_dict_tree.rs` — tree construction and gap signing logic
+- `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
+- `src/tests/krunk_handlers.rs` — handler tests
+- `src/tests/krunk_validation.rs` — on-chain validation tests
+- `src/test_support/krunk.rs` — Krunk test registration and helpers
+
 ---
 
 ## Handler Architecture
@@ -697,6 +803,9 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
 | `clsp/games/spacepoker/onchain/*.clsp`       | Space Poker validation programs                           |
 | `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
+| `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
+| `clsp/games/krunk/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
+| `clsp/games/krunk/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary (see [Krunk](#krunk)) |
 | `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
@@ -708,6 +817,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | ------------------------------------------- | -------------------------------------------------------- |
 | `src/test_support/calpoker.rs`              | Calpoker test registration and helpers                   |
 | `src/test_support/spacepoker.rs`            | Space Poker test registration and helpers                |
+| `src/test_support/krunk.rs`                 | Krunk test registration and helpers                      |
 | `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
 | `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/potato_handler.rs`   | Test peer helper                                         |
@@ -732,13 +842,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `PotatoHandler`                 | `potato_handler/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
 | `OnChainGameHandler`            | `potato_handler/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
 | `LiveGame`                      | `channel_handler/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
-| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | Pending game proposal (stored in `proposed_games`)                                                           |
+| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | One pending member of a factory-derived atomic group stored in `proposed_games` |
 | `UnrollCoin`                    | `channel_handler/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameCradle`                    | `peer_container.rs`                            | Trait for synchronous game interaction (tests/UI)                                                            |
 | `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
-| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
-| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposal`, `CleanShutdown`, `Cheat`                   |
+| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptTimeout` |
+| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
 | `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, and `GameStatus { status: GameStatusKind, ... }` |

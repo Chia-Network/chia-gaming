@@ -3,6 +3,7 @@ mod gaming_wasm {
 
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
+    use std::convert::TryFrom;
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use hex::FromHexError;
@@ -53,6 +54,8 @@ mod gaming_wasm {
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
 
+    use clvm_traits::{clvm_curried_args, ToClvm};
+    use clvm_utils::CurriedProgram;
     use clvmr::run_program;
 
     #[cfg(target_arch = "wasm32")]
@@ -143,6 +146,10 @@ mod gaming_wasm {
         cradle: TransactionManager<SynchronousGameCradle>,
     }
 
+    /// Increment for every incompatible change to the persisted `JsCradle`
+    /// shape, including incompatible shapes owned by nested Rust types.
+    const CRADLE_SERIALIZATION_SCHEMA: u32 = 1;
+
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsWatchReport {
         created_watched: Vec<String>,
@@ -182,7 +189,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn deposit_file(name: &str, data: &str) {
+    pub fn deposit_file(name: &str, data: &[u8]) {
         wasm_deposit_file(name, data);
     }
 
@@ -207,8 +214,6 @@ mod gaming_wasm {
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameFactory {
         hex: String,
-        #[serde(default)]
-        parser_hex: Option<String>,
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
@@ -234,22 +239,10 @@ mod gaming_wasm {
                 js_factory.hex.len(),
             ))
         })?;
-        let parser_program = if let Some(ref parser_hex) = js_factory.parser_hex {
-            let parser_bytes = hex::decode(parser_hex).map_err(|e| {
-                js_error(&format!(
-                    "game factory '{name}' parser_hex decode: {e:?} (length={})",
-                    parser_hex.len(),
-                ))
-            })?;
-            Some(Program::from_bytes(&parser_bytes).into())
-        } else {
-            None
-        };
         Ok((
             name_data,
             GameFactory {
-                program: Program::from_bytes(&byte_data).into(),
-                parser_program,
+                program: Some(Program::from_bytes(&byte_data).into()),
             },
         ))
     }
@@ -257,9 +250,35 @@ mod gaming_wasm {
     fn convert_game_types(
         collection: &BTreeMap<String, JsGameFactory>,
     ) -> Result<BTreeMap<GameType, GameFactory>, JsValue> {
+        use chia_gaming::common::load_clvm::read_krunk_dict_dat;
+
         let mut result = BTreeMap::new();
         for (name, gf) in collection.iter() {
-            let (name_data, game_factory) = convert_game_factory(name, gf)?;
+            let (name_data, mut game_factory) = convert_game_factory(name, gf)?;
+            if name == "krunk" {
+                let mut allocator = AllocEncoder::new();
+                let (dict_pubkey, dict_tree) = read_krunk_dict_dat(
+                    &mut allocator,
+                    "clsp/games/krunk/krunk_signed_dict_tree.dat",
+                )
+                .map_err(|e| js_error(&format!("load dict dat: {e:?}")))?;
+
+                if let Some(ref prog) = game_factory.program {
+                    let prog_node = prog
+                        .to_nodeptr(&mut allocator)
+                        .map_err(|e| js_error(&format!("proposal to nodeptr: {e:?}")))?;
+                    let curried = CurriedProgram {
+                        program: prog_node,
+                        args: clvm_curried_args!(dict_pubkey, dict_tree),
+                    }
+                    .to_clvm(&mut allocator)
+                    .map_err(|e| js_error(&format!("curry proposal: {e:?}")))?;
+                    game_factory.program =
+                        Some(Program::from_nodeptr(&mut allocator, curried)
+                            .map_err(|e| js_error(&format!("proposal from nodeptr: {e:?}")))?
+                            .into());
+                }
+            }
             result.insert(name_data, game_factory);
         }
         Ok(result)
@@ -413,14 +432,20 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn create_serialized_game(data: &[u8], new_seed: &str) -> Result<i32, JsValue> {
-        let mut cradle: JsCradle = bencodex::from_slice::<JsCradle>(data)
+        let cradle: JsCradle = bencodex::from_slice::<JsCradle>(data)
             .map_err(|e| types::Error::StrErr(e.to_string()))
             .into_js()?;
+        let mut cradle = cradle;
         let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
         cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
         let new_id = get_next_id();
         insert_cradle(new_id, cradle);
         Ok(new_id)
+    }
+
+    #[wasm_bindgen]
+    pub fn cradle_serialization_schema() -> u32 {
+        CRADLE_SERIALIZATION_SCHEMA
     }
 
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -444,6 +469,11 @@ mod gaming_wasm {
         with_game(cid, move |cradle: &mut JsCradle| {
             let bytes = bencodex::to_vec(&cradle)
                 .map_err(|e| types::Error::StrErr(e.to_string()))?;
+            bencodex::from_slice::<JsCradle>(&bytes).map_err(|e| {
+                types::Error::StrErr(format!(
+                    "serialized cradle failed immediate schema verification: {e}"
+                ))
+            })?;
             Ok(js_sys::Uint8Array::from(bytes.as_slice()))
         })
     }
@@ -883,9 +913,6 @@ mod gaming_wasm {
         // Game name
         game_type: String,
         timeout: u64,
-        amount: u64,
-        my_contribution: u64,
-        my_turn: bool,
     }
 
     fn game_id_to_string(id: &GameID) -> String {
@@ -900,30 +927,39 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn propose_game(cid: i32, game: JsValue, parameters: &[u8]) -> Result<JsValue, JsValue> {
-        let js_game_start =
-            serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
-        let parameters_program = Program::from_bytes(parameters);
+        let games_arr = js_sys::Array::new();
+        games_arr.push(&game);
+        let params_arr = js_sys::Array::new();
+        params_arr.push(&js_sys::Uint8Array::from(parameters).into());
+        propose_games(cid, games_arr.into(), params_arr.into())
+    }
+
+    #[wasm_bindgen]
+    pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
+        let js_games: Vec<JsGameStart> =
+            serde_wasm_bindgen::from_value(games).into_js()?;
+        let params_arr: Vec<Vec<u8>> =
+            serde_wasm_bindgen::from_value(parameters_list).into_js()?;
+        if js_games.len() != params_arr.len() {
+            return Err(JsValue::from_str("games and parameters_list must have the same length"));
+        }
         with_game(cid, move |cradle: &mut JsCradle| {
-            let game_start = GameStart {
-                game_type: GameType(js_game_start.game_type.as_bytes().to_vec()),
-                timeout: Timeout::new(js_game_start.timeout),
-                amount: Amount::new(js_game_start.amount),
-                my_contribution: Amount::new(js_game_start.my_contribution),
-                my_turn: js_game_start.my_turn,
-                parameters: parameters_program,
-                initial_validation_program_hash: None,
-                initial_state: None,
-                initial_max_move_size: None,
-                initial_mover_share: None,
-            };
-            let ids = cradle.cradle.propose_game(
+            let game_starts: Vec<GameStart> = js_games
+                .iter()
+                .zip(params_arr.iter())
+                .map(|(g, p)| GameStart {
+                    game_type: GameType(g.game_type.as_bytes().to_vec()),
+                    timeout: Timeout::new(g.timeout),
+                    parameters: Program::from_bytes(p),
+                })
+                .collect();
+            let ids = cradle.cradle.propose_games(
                 &mut cradle.allocator,
-                &game_start,
+                &game_starts,
             )?;
             let dr = cradle
                 .cradle
                 .flush_and_collect(&mut cradle.allocator)?;
-
             let events = collect_drain_events(&dr)?;
             let ids_arr = js_sys::Array::new();
             for id in &ids {
@@ -1040,6 +1076,22 @@ mod gaming_wasm {
     pub fn protocol_state_pretty(cid: i32) -> Result<String, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.protocol_state_pretty()
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn historical_unroll_count(cid: i32) -> Result<Option<u32>, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .historical_unroll_count()
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|_| {
+                    types::Error::StrErr(
+                        "historical unroll count exceeds WASM metric range".to_string(),
+                    )
+                })
         })
     }
 
