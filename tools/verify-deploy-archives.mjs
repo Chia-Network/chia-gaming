@@ -1,6 +1,6 @@
 // Verify deploy archives produced by tools/build-deploy.sh.
 //
-// Usage: node tools/verify-deploy-archives.mjs [--platform=linux|macos]
+// Usage: node tools/verify-deploy-archives.mjs [--platform=linux|macos|windows]
 //
 // Discovers tgz/zip pairs in deploy_player_app/ and deploy_tracker/, extracts
 // each format, runs verify-stage + floor checks, compares tgz vs zip trees,
@@ -63,11 +63,27 @@ function findOneArchive(dir, prefix, ext) {
   return join(dir, matches[0]);
 }
 
+// On Windows, use the built-in bsdtar explicitly: it handles drive-letter
+// paths (Git Bash's GNU tar treats `C:` as a remote host) and extracts zip
+// archives too, so no `unzip` is needed.
+const WINDOWS_TAR = join(
+  process.env.SystemRoot || "C:\\Windows",
+  "System32",
+  "tar.exe",
+);
+
 function extractArchive(archive, dest) {
   if (archive.endsWith(".tgz")) {
-    execFileSync("tar", ["-xzf", archive, "-C", dest], { stdio: "inherit" });
+    const tar = process.platform === "win32" ? WINDOWS_TAR : "tar";
+    execFileSync(tar, ["-xzf", archive, "-C", dest], { stdio: "inherit" });
   } else if (archive.endsWith(".zip")) {
-    execFileSync("unzip", ["-q", archive, "-d", dest], { stdio: "inherit" });
+    if (process.platform === "win32") {
+      execFileSync(WINDOWS_TAR, ["-xf", archive, "-C", dest], {
+        stdio: "inherit",
+      });
+    } else {
+      execFileSync("unzip", ["-q", archive, "-d", dest], { stdio: "inherit" });
+    }
   } else {
     fail(`unsupported archive: ${archive}`);
   }
