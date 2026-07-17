@@ -7,7 +7,7 @@ use clvmr::run_program;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{
+use crate::channel_state::types::{
     Evidence, PotatoMoveCachedData, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
 use crate::common::standard_coin::{

@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs};
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
+use crate::channel_state::types::ReadableMove;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, Error, Hash, Program, Puzzle, Sha256Input,

@@ -61,7 +61,7 @@ no maturity callback into the handlers — `coin_timeout_reached` was removed.
 is registered, the handler pre-builds the claim `SpendBundle` and attaches it to
 the registration. The plumbing carries it end to end:
 `Effect::RegisterCoin { spend: Option<SpendBundle>, .. }` →
-`CradleEvent::WatchCoin { spend, .. }` →
+`GameSessionEvent::WatchCoin { spend, .. }` →
 `TransactionManager::register_watch(.., spend)`. The manager also returns the
 watch registration to the host as a `watchCoins` polling delta. There are three
 eager-claim sites:
@@ -204,16 +204,16 @@ No further peer messages are sent or received by that peer. The other peer is
 **not notified directly** — it only discovers the on-chain transition when it
 sees the channel coin being spent on the blockchain.
 
-This is enforced in `SynchronousGameCradleState`:
+This is enforced in `GameSessionState`:
 
 - A `peer_disconnected: bool` flag is set to `true` at the start of
-`GameCradle::go_on_chain`, before any on-chain logic runs.
+`GameSession::go_on_chain`, before any on-chain logic runs.
 - The same flag is also set from channel status transitions in
 `emit_channel_status_if_changed` when state becomes `GoingOnChain`,
 `Unrolling`, or (`ResolvedUnrolled`/`ResolvedStale` while already on-chain).
 - `PacketSender::send_message` silently drops outbound messages when
 `peer_disconnected` is true.
-- `GameCradle::deliver_message` silently drops inbound messages when
+- `GameSession::deliver_message` silently drops inbound messages when
 `peer_disconnected` is true.
 
 After disconnection, all state updates come from coin-watching events. The
@@ -221,14 +221,14 @@ disconnected peer's own unroll transaction is detected via the same
 `handle_channel_coin_spent` path that handles opponent-initiated unrolls (see
 [Unified Path](ON_CHAIN.md#unified-path)).
 
-Historically, `ChannelHandler` had an `initiated_on_chain` field intended for
+Historically, `ChannelState` had an `initiated_on_chain` field intended for
 transition bookkeeping. In current code, the behavior above is enforced by
-peer disconnection and handler replacement (`PotatoHandler -> SpendChannelCoinHandler`)
+peer disconnection and handler replacement (`OffChainPhase -> SpendChannelCoinPhase`)
 rather than by checking `initiated_on_chain` at runtime.
 
-**Key code:** `src/peer_container.rs` — `go_on_chain`,
+**Key code:** `src/game_session.rs` — `go_on_chain`,
 `emit_channel_status_if_changed`, `send_message`, `deliver_message`;
-`src/potato_handler/mod.rs` — `go_on_chain`, `take_channel_spend_replacement`
+`src/session_phases/mod.rs` — `go_on_chain`, `take_channel_spend_next_phase`
 
 ### Peer Error Escalation
 
@@ -240,7 +240,7 @@ the channel lifecycle stage:
 
 **Before funding transaction is submitted** (early handshake — steps A through
 C/D): No money is on-chain. The handshake handler sets an internal `failed`
-flag, `channel_status_snapshot()` returns `ChannelState::Failed`, and the
+flag, `channel_status_snapshot()` returns `ChannelStatus::Failed`, and the
 session is terminally dead. No dispute is needed because no funds are at risk.
 
 **After funding transaction is submitted but before channel coin confirms**
@@ -252,17 +252,17 @@ inclusion. Two outcomes are possible:
    independently emits a `Failed` channel status. Funds return to the wallets.
 
 2. The channel coin **appears on-chain** despite the peer being hostile.
-   `coin_created` fires, the handshake handler transitions to `PotatoHandler`
+   `coin_created` fires, the handshake handler transitions to `OffChainPhase`
    via `take_replacement()`. After the swap, `process_effects` sees
    `peer_disconnected && handshake_finished() && !is_on_chain` and immediately
-   calls `go_on_chain(true)` on the new `PotatoHandler`, submitting the unroll
+   calls `go_on_chain(true)` on the new `OffChainPhase`, submitting the unroll
    transaction. From this point forward, the normal dispute resolution path
    applies.
 
-**After channel coin is confirmed** (active play in `PotatoHandler`): The
+**After channel coin is confirmed** (active play in `OffChainPhase`): The
 normal `go_on_chain` path runs immediately — cancel proposals, build the
 channel-to-unroll spend bundle, submit it, and transition through
-`SpendChannelCoinHandler` into `OnChainGameHandler`.
+`SpendChannelCoinPhase` into `OnChainPhase`.
 
 This means a hostile peer cannot cause silent data loss regardless of when the
 attack occurs. Pre-funding errors are cheap (just abort). Post-funding errors
@@ -287,7 +287,7 @@ immediately visible and diagnosable without adding rollback complexity.
 
 ## Batch Rollback Scope
 
-When a `PeerMessage::Batch` is received, `pass_on_channel_handler_message`
+When a `PeerMessage::Batch` is received, `pass_on_channel_state_message`
 snapshots both `channel_handler` and `game_action_queue` before calling
 `process_received_batch` and restores them on error. This makes the peer's batch
 actions atomic across the state that matters for later dispute recovery: if any
@@ -301,9 +301,9 @@ that stale queue leaked into `go_on_chain`, the on-chain handler could attempt
 local responses that were only stale because the failed peer batch partially ran.
 The invariant is therefore:
 
-- **Peer batch failure is atomic.** No `ChannelHandler` mutations and no
+- **Peer batch failure is atomic.** No `ChannelState` mutations and no
   peer-induced `game_action_queue` changes survive a failed received batch.
-- **Bad peer data escalates.** Ordinary `PotatoHandler::received_message` errors
+- **Bad peer data escalates.** Ordinary `OffChainPhase::received_message` errors
   call `go_on_chain(..., true)` after rollback. That is the protocol response to
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
@@ -314,7 +314,7 @@ Fields updated after successful signature verification, such as `have_potato`
 and `last_channel_coin_spend_info`, are outside the rollback problem because
 they are only advanced after the received batch is valid.
 
-**Key code:** `src/potato_handler/mod.rs` — `pass_on_channel_handler_message`
+**Key code:** `src/session_phases/mod.rs` — `pass_on_channel_state_message`
 (snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
 `drain_queue_into_batch`; regression:
 `failed_final_move_bad_signature_does_not_queue_accept_settlement`
@@ -368,9 +368,9 @@ This is the "redo" mechanism.
 
 ### Lifecycle
 
-`cached_last_actions` on the `ChannelHandler` is a
+`cached_last_actions` on the `ChannelState` is a
 `Vec<CachedPotatoRegenerateLastHop>` (defined in
-`src/channel_handler/types/potato.rs`) that stores data for unacknowledged
+`src/channel_state/types/potato.rs`) that stores data for unacknowledged
 outgoing actions. Because a single batch can contain multiple moves and game
 acceptances across different games, multiple entries may need to be redone
 on-chain.
@@ -490,14 +490,14 @@ step.
 
 ### How It Works
 
-When `cheat()` is called on a `GameCradle`:
+When `cheat()` is called on a `GameSession`:
 
 1. A `GameAction::Cheat(game_id, mover_share, entropy)` is queued internally.
 2. Like a normal `Move`, the `Cheat` action is deferred until it is the
   player's turn.
 3. When processed (off-chain in `drain_queue_into_batch` or on-chain in
   `do_on_chain_action`), the handler atomically:
-  - Enables cheating on the `ChannelHandler`'s referee for that game,
+  - Enables cheating on the `ChannelState`'s referee for that game,
   substituting `0x80` (nil) as the move bytes and the given `mover_share`
   (which becomes the victim's share on timeout).
   - Executes the move through the normal referee path. The referee bypasses
@@ -516,10 +516,10 @@ When `cheat()` is called on a `GameCradle`:
 
 **Key code:**
 
-- `src/peer_container.rs` — `SynchronousGameCradle::cheat`
-- `src/potato_handler/types.rs` — `GameAction::Cheat`
-- `src/potato_handler/mod.rs` — `cheat_game`, `drain_queue_into_batch` (Cheat arm)
-- `src/potato_handler/on_chain.rs` — `do_on_chain_action` (Cheat arm)
+- `src/game_session.rs` — `GameSession::cheat`
+- `src/session_phases/types.rs` — `GameAction::Cheat`
+- `src/session_phases/mod.rs` — `cheat_game`, `drain_queue_into_batch` (Cheat arm)
+- `src/session_phases/on_chain.rs` — `do_on_chain_action` (Cheat arm)
 - `wasm/src/mod.rs` — WASM `cheat` binding
 
 ---

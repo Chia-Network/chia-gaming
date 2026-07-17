@@ -6,7 +6,7 @@ use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_state::types::ChannelEnv;
 use crate::common::constants::{ASSERT_HEIGHT_RELATIVE, CREATE_COIN, REM};
 use crate::common::standard_coin::{private_to_public_key, unsafe_sign_partial};
 use crate::common::types::{
@@ -46,7 +46,7 @@ pub struct UnrollCoin {
 }
 
 fn prepend_state_number_rem_to_conditions(
-    env: &mut ChannelHandlerEnv<'_>,
+    env: &mut ChannelEnv<'_>,
     state_number: usize,
     conditions: NodePtr,
 ) -> Result<NodePtr, Error> {
@@ -58,7 +58,7 @@ fn prepend_state_number_rem_to_conditions(
 }
 
 pub fn prepend_rem_conditions(
-    env: &mut ChannelHandlerEnv<'_>,
+    env: &mut ChannelEnv<'_>,
     state_number: usize,
     conditions: NodePtr,
 ) -> Result<NodePtr, Error> {
@@ -111,7 +111,7 @@ impl UnrollCoin {
     /// metapuzzle indirection.
     pub fn make_curried_unroll_puzzle(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
@@ -132,7 +132,7 @@ impl UnrollCoin {
     /// (without the timelock).  The puzzle prepends AGG_SIG_UNSAFE inline.
     pub fn make_unroll_puzzle_solution(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<NodePtr, Error> {
         let conditions = self.get_internal_conditions_for_unroll_coin_spend()?;
         conditions.to_nodeptr(env.allocator)
@@ -143,7 +143,7 @@ impl UnrollCoin {
     /// shatree(conditions) == DEFAULT_CONDITIONS_HASH.
     pub fn make_timeout_unroll_solution(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<NodePtr, Error> {
         let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
         timeout_conditions.to_nodeptr(env.allocator)
@@ -157,7 +157,7 @@ impl UnrollCoin {
     /// Needs rem of sequence number and the default conditions hash.
     fn compute_unroll_coin_conditions(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<ProgramRef, Error> {
         let their_first_coin = (
@@ -208,7 +208,7 @@ impl UnrollCoin {
     /// conditions and signature necessary for the channel coin to create it.
     pub fn update(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         unroll_private_key: &PrivateKey,
         their_unroll_coin_public_key: &PublicKey,
         inputs: &UnrollCoinConditionInputs,
@@ -253,7 +253,7 @@ impl UnrollCoin {
 
     pub fn verify(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         aggregate_unroll_public_key: &PublicKey,
         signature: &Aggsig,
     ) -> Result<bool, Error> {

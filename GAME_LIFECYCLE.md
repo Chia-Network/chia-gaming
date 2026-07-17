@@ -166,7 +166,7 @@ a proposal and makes the first move. Internally this translates into two
 distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
 batch.
 
-**Key code:** `src/potato_handler/mod.rs` — `propose_games`,
+**Key code:** `src/session_phases/mod.rs` — `propose_games`,
 `accept_proposal`, `cancel_proposal`;
 `wasm/src/mod.rs` — `propose_games`, `accept_proposal_and_move`
 
@@ -201,7 +201,7 @@ when the potato is held, potentially alongside actions for other games. Multiple
 games can be in flight simultaneously, and any potato pass may carry actions
 for several of them.
 
-The `ChannelHandler` tracks `live_games`, `pending_settlements`,
+The `ChannelState` tracks `live_games`, `pending_settlements`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the
 current `state_number`. Each batch increments the `state_number` once and
 produces a new signed unroll commitment.
@@ -242,7 +242,7 @@ game. The full lifecycle is:
 ### Off-Chain AcceptSettlement
 
 1. `send_accept_settlement_no_finalize` moves the game from `live_games` to
-  `pending_settlements` in the `ChannelHandler` and updates balances.
+  `pending_settlements` in the `ChannelState` and updates balances.
 2. A `CachedAcceptSettlement` entry is added to `cached_last_actions` storing the game ID
   and reward amounts.
 3. The accept-settlement data is bundled into the next potato pass (batch).
@@ -280,7 +280,7 @@ are drained, emitting `GameSettled` before the terminal `ChannelStatus`
 
 When a game is already on-chain and the player calls `AcceptSettlement(game_id)`:
 
-1. `OnChainGameHandler` asserts it is our turn, then sets `accepted = true`
+1. `OnChainPhase` asserts it is our turn, then sets `accepted = true`
   on the `OnChainGameState` entry. No transaction is submitted and no
    notification is emitted yet.
 2. The accepted game's timeout claim is pre-built and registered eagerly, and
@@ -309,31 +309,31 @@ paths that emit `GameSettled` immediately with a forfeit outcome (#3–#5).
 
 **Key code:**
 
-- `src/channel_handler/mod.rs` — `send_accept_settlement_no_finalize`,
+- `src/channel_state/mod.rs` — `send_accept_settlement_no_finalize`,
 `pending_settlements`, `drain_cached_accept_settlements`,
 `drain_preempt_resolved_accept_settlements`
-- `src/potato_handler/on_chain.rs` — `GameAction::AcceptSettlement`,
+- `src/session_phases/on_chain.rs` — `GameAction::AcceptSettlement`,
 `handle_game_coin_spent`, `build_timeout_claim`
 - `src/transaction_manager.rs` — `TransactionManager` (eager claim submission)
 
 ### Automatic AcceptSettlement
 
 When a move arrives whose next handler/validator is nil (the game is over) and
-there are no slashing conditions, `PotatoHandler` automatically queues
+there are no slashing conditions, `OffChainPhase` automatically queues
 `GameAction::AcceptSettlement` for that game. The frontend does **not** need to
 call `acceptSettlement()` explicitly after a game ends.
 
-Detection uses `ChannelHandler::is_game_finished(game_id)`, which returns true
+Detection uses `ChannelState::is_game_finished(game_id)`, which returns true
 when `is_my_turn()` and `is_game_over()` (nil next handler on the `Referee`).
 
 This auto-queue happens in two places:
 
 1. **Off-chain:** In `process_received_batch`, after processing a
    `BatchAction::Move` that leaves the game finished
-   (`src/potato_handler/mod.rs`).
+   (`src/session_phases/mod.rs`).
 2. **On-chain:** In `handle_game_coin_spent`, when the expected spend arrives
    and the resulting game state is finished
-   (`src/potato_handler/on_chain.rs`).
+   (`src/session_phases/on_chain.rs`).
 
 The UX consequence is that the receiver of the final move sees
 `OpponentMoved` followed shortly by `GameSettled { outcome: accept_settlement, … }`

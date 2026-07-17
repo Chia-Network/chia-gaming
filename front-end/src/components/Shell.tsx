@@ -62,7 +62,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, isTerminalChannelState, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isCleanShutdownInProgress,
@@ -131,7 +131,7 @@ function diagnosticLogFromSave(save: SessionState): string[] | undefined {
 function sessionSaveForReactProps(save: SessionState | null): SessionState | undefined {
   if (!save) return undefined;
   const {
-    serializedCradle,
+    serializedGameSession,
     unackedMessages,
     handState,
     ...rest
@@ -139,9 +139,9 @@ function sessionSaveForReactProps(save: SessionState | null): SessionState | und
   const propSafeSave = reactPropSafeValue(rest) as SessionState;
   // Attach binaries by reference and keep them non-enumerable so React/dev
   // tools never walk millions of numeric keys.
-  if (serializedCradle !== undefined) {
-    Object.defineProperty(propSafeSave, 'serializedCradle', {
-      value: serializedCradle,
+  if (serializedGameSession !== undefined) {
+    Object.defineProperty(propSafeSave, 'serializedGameSession', {
+      value: serializedGameSession,
       enumerable: false,
       configurable: true,
       writable: true,
@@ -252,7 +252,7 @@ function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolea
   return abandonEnabled && isAbandonWaitingState(model?.channel.status.state);
 }
 
-function savedChannelState(save: SessionState): SessionModel['channel']['status']['state'] | null {
+function savedChannelStatus(save: SessionState): SessionModel['channel']['status']['state'] | null {
   if (save.channelStatus) return save.channelStatus.state;
   if (save.channelReady) return 'Active';
   return null;
@@ -260,8 +260,8 @@ function savedChannelState(save: SessionState): SessionModel['channel']['status'
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
 function tabForResumedSave(save: SessionState): TabId | null {
-  if (save.serializedCradle || save.pairingToken) return 'game';
-  if (isTerminalChannelState(savedChannelState(save))) return 'game';
+  if (save.serializedGameSession || save.pairingToken) return 'game';
+  if (isTerminalChannelStatus(savedChannelStatus(save))) return 'game';
   return null;
 }
 
@@ -1381,7 +1381,7 @@ const Shell = () => {
             prevMine
             && prevMine !== playerId
             && (save?.pairingToken || sessionConfigRef.current?.pairingToken)
-            && !save?.serializedCradle
+            && !save?.serializedGameSession
             && shouldCancelOnPeerUnreachable(
               sessionPhaseRef.current,
               dashboardSessionModelRef.current?.channel.status.state,
@@ -1399,7 +1399,7 @@ const Shell = () => {
           }
           saveSession({ myTrackerPlayerId: playerId });
           if (save) save.myTrackerPlayerId = playerId;
-          const terminalSave = !!save && isTerminalChannelState(savedChannelState(save));
+          const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
             peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
             bindPeerMessageHandler(peerSessionRef.current);
@@ -1408,7 +1408,7 @@ const Shell = () => {
             // otherwise the only place that marks the tracker busy. Terminal
             // (Failed/Resolved*) saves must stay available in the lobby.
             conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
-          } else if (save?.serializedCradle || save?.pairingToken) {
+          } else if (save?.serializedGameSession || save?.pairingToken) {
             setRestoreTrackerReconciled(true);
             conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
           }
@@ -1445,11 +1445,11 @@ const Shell = () => {
           const phase = sessionPhaseRef.current;
           const save = sessionSaveRef.current;
           const restoring = !!sessionConfigRef.current?.restoring;
-          const terminalSave = !!save && isTerminalChannelState(savedChannelState(save));
+          const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
           // A leftover cradle must not keep us busy after the session resolved
           // (wallet/handshake failures often leave Failed + persisted cradle).
           const busy = shouldReportTrackerBusy(phase)
-            || (restoring && !terminalSave && !!(save?.serializedCradle || save?.pairingToken));
+            || (restoring && !terminalSave && !!(save?.serializedGameSession || save?.pairingToken));
           return {
             busy,
             // Prefer session aliases, then the lobby-synced prefs alias. Never call
@@ -1715,8 +1715,8 @@ const Shell = () => {
       const status = model.channel.status;
       void saveSession({
         ...snapshotFromSessionModel(model),
-        serializedCradle: undefined,
-        cradleSchemaVersion: undefined,
+        serializedGameSession: undefined,
+        gameSessionSchemaVersion: undefined,
         pairingToken: undefined,
         sessionPeerId: undefined,
         gameSessionId: undefined,
@@ -1734,8 +1734,8 @@ const Shell = () => {
       });
     } else {
       void saveSession({
-        serializedCradle: undefined,
-        cradleSchemaVersion: undefined,
+        serializedGameSession: undefined,
+        gameSessionSchemaVersion: undefined,
         pairingToken: undefined,
         sessionPeerId: undefined,
         gameSessionId: undefined,
@@ -1829,7 +1829,7 @@ const Shell = () => {
   /** Restore a finished/terminal session freeze without remounting live WASM. */
   const restoreFinishedSessionFromSave = useCallback((save: SessionState) => {
     setActiveTab('game');
-    const channelState = savedChannelState(save);
+    const channelState = savedChannelStatus(save);
     const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
     sessionFinishedCleanupRef.current = true;
     sessionPhaseRef.current = 'resolved';
@@ -1867,7 +1867,7 @@ const Shell = () => {
     sessionSaveRef.current = save;
     // Cradle-less pairingToken saves are a pre-handshake checkpoint: mount
     // GameSession without sessionSave so getOrCreate runs newSession, not restore.
-    sessionSavePropRef.current = save.serializedCradle
+    sessionSavePropRef.current = save.serializedGameSession
       ? sessionSaveForReactProps(save)
       : undefined;
     const { myContribution, theirContribution, perGameAmount: perGame } = sessionAmountsFromSave(save);
@@ -1877,7 +1877,7 @@ const Shell = () => {
         myContribution,
         theirContribution,
         perGameAmount: perGame,
-        restoring: !!save.serializedCradle,
+        restoring: !!save.serializedGameSession,
         pairingToken: save.pairingToken,
         myAlias: save.myAlias,
         opponentAlias: save.opponentAlias,
@@ -1902,18 +1902,18 @@ const Shell = () => {
       clearTimeout(abandonTimerRef.current);
       abandonTimerRef.current = null;
     }
-    const restoredChannelState = savedChannelState(save);
-    if (save.waitingStateEnteredAt != null && isAbandonWaitingState(restoredChannelState)) {
+    const restoredChannelStatus = savedChannelStatus(save);
+    if (save.waitingStateEnteredAt != null && isAbandonWaitingState(restoredChannelStatus)) {
       const elapsed = BigInt(Date.now()) - save.waitingStateEnteredAt;
       waitingEnteredAtRef.current = save.waitingStateEnteredAt;
-      waitingStateRef.current = restoredChannelState;
+      waitingStateRef.current = restoredChannelStatus;
       if (elapsed >= ABANDON_DELAY_MS) {
         setAbandonEnabled(true);
       } else {
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
-          const currentState = dashboardSessionModelRef.current?.channel.status.state ?? restoredChannelState;
-          if (currentState !== restoredChannelState) return;
+          const currentState = dashboardSessionModelRef.current?.channel.status.state ?? restoredChannelStatus;
+          if (currentState !== restoredChannelStatus) return;
           setAbandonEnabled(true);
         }, Number(ABANDON_DELAY_MS - elapsed));
       }
@@ -2022,10 +2022,10 @@ const Shell = () => {
     const resumeTab = tabForResumedSave(save);
     if (resumeTab) setActiveTab(resumeTab);
 
-    const hasLiveSession = !!(save.serializedCradle || save.pairingToken);
+    const hasLiveSession = !!(save.serializedGameSession || save.pairingToken);
     if (hasLiveSession) {
       performResume(save);
-    } else if (isTerminalChannelState(savedChannelState(save))) {
+    } else if (isTerminalChannelStatus(savedChannelStatus(save))) {
       restoreFinishedSessionFromSave(save);
       if (save.blockchainType) {
         void handleConnect(save.blockchainType, true);
@@ -2097,9 +2097,9 @@ const Shell = () => {
       } else if (prev.save) {
         const resumeTab = tabForResumedSave(prev.save);
         if (resumeTab) setActiveTab(resumeTab);
-        if (prev.save.serializedCradle || prev.save.pairingToken) {
+        if (prev.save.serializedGameSession || prev.save.pairingToken) {
           performResume(prev.save);
-        } else if (isTerminalChannelState(savedChannelState(prev.save))) {
+        } else if (isTerminalChannelStatus(savedChannelStatus(prev.save))) {
           restoreFinishedSessionFromSave(prev.save);
           const bcType = prev.save.blockchainType ?? getBlockchainType();
           if (bcType) {
@@ -2174,7 +2174,7 @@ const Shell = () => {
     // cradle remains in IDB and can be clobbered by incidental saves.
     const hasResumableSession =
       sessionPhaseRef.current !== 'none'
-      || !!(sessionSaveRef.current?.serializedCradle || sessionSaveRef.current?.pairingToken)
+      || !!(sessionSaveRef.current?.serializedGameSession || sessionSaveRef.current?.pairingToken)
       || !!sessionConfigRef.current?.pairingToken;
     if (!hasResumableSession) {
       clearSavedSessionMarker();

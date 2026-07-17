@@ -40,7 +40,7 @@ on-chain behavior:
 - per-game lifecycle: `off-chain -> on-chain move loop (my/their turn) -> settled`
 
 Those are conceptual progression models; the concrete emitted values are still
-`ChannelStatus { state: ChannelState, ... }`, non-terminal
+`ChannelStatus { state: ChannelStatus, ... }`, non-terminal
 `GameStatus { status: GameStatusKind, ... }`, and terminal
 `GameSettled { outcome, our_share, ... }`.
 
@@ -59,7 +59,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 ## WASM Event FIFO and Async Drain
 
-Every communication produced by the Rust cradle starts as a `CradleEvent` in
+Every communication produced by the Rust cradle starts as a `GameSessionEvent` in
 the cradle's FIFO event queue. The `TransactionManager` drains that queue and
 intercepts blockchain bookkeeping events before they reach JavaScript:
 `OutboundTransaction` entries are captured for `drain_submissions()`, and
@@ -71,7 +71,7 @@ logs, receive errors, and puzzle/solution requests — are returned to JS as
 
 Flow:
 
-1. Rust handlers push all `CradleEvent`s onto the cradle queue.
+1. Rust handlers push all `GameSessionEvent`s onto the cradle queue.
 2. `TransactionManager::flush_and_collect` drains that queue, intercepting
    `OutboundTransaction` and `WatchCoin` while preserving order for the events
    still delivered to JS.
@@ -101,7 +101,7 @@ polling deltas before JS dispatch.
 Why async (one event per macrotask):
 
 - Some event handlers trigger additional WASM calls that produce more
-  `CradleEvent`s (for example, a notification handler that calls
+  `GameSessionEvent`s (for example, a notification handler that calls
   `proposeGame`, which returns new events). Those events are appended to
   the queue and drained in subsequent macrotasks.
 - Notification handlers in React check React state (e.g.
@@ -126,16 +126,16 @@ batching artifacts.
 ## Channel Lifecycle Notifications
 
 All channel lifecycle events are delivered as a single `ChannelStatus`
-notification containing the current `ChannelState`, balance information, and
+notification containing the current `ChannelStatus`, balance information, and
 an optional `advisory` string for context (e.g. error reason). The
-`ChannelState` values are:
+`ChannelStatus` values are:
 
-`ChannelState` is the notification-level state model exposed to the UI and
+`ChannelStatus` is the notification-level state model exposed to the UI and
 tests. It is distinct from peer handler ownership and from the on-chain coin
 lifecycle; see [Peer Handlers vs States](OVERVIEW.md#peer-handlers-vs-states)
 for how those lenses relate.
 
-| `ChannelState`        | When                                           | Meaning                                                                                                                                       |
+| `ChannelStatus`        | When                                           | Meaning                                                                                                                                       |
 | --------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Handshaking`         | Handshake in progress                          | Channel negotiation messages are being exchanged (steps A–D)                                                                                  |
 | `WaitingForHeightToOffer` | Handshake waiting on block height gate | Wallet spend inputs are ready, but the protocol is waiting for the configured height to submit the offer                                      |
@@ -163,7 +163,7 @@ the shutdown or the proposals could fail. At that point, immediately reporting
 until the shutdown batch is actually sent. See `ON_CHAIN.md` for the protocol
 details.
 
-Each `ChannelStatus` notification is emitted when the `PeerHandler` is
+Each `ChannelStatus` notification is emitted when the `PeerLifecyclePhase` is
 replaced (handler transition) or when the current handler's snapshot changes
 (e.g. balance update during `Active`). The frontend uses this single
 notification type for its persistent channel state display.
@@ -172,7 +172,7 @@ Monotonicity applies across all three lenses:
 
 - **Handler lens:** phase ownership moves forward through handler replacement;
   handlers may branch by path, but do not rewind to earlier handshake phases.
-- **Notification lens:** `ChannelState` and `GameStatusKind` progress forward in
+- **Notification lens:** `ChannelStatus` and `GameStatusKind` progress forward in
   lifecycle terms (with same-level repeats allowed for updates/advisory changes).
 - **On-chain lifecycle lens:** coin progression is forward-only
   (`created -> unrolling -> resolved` for channels, and
@@ -425,12 +425,12 @@ and terminal game notifications per player per game ID. Every
    notification stream. A cancelled or never-accepted game must never produce
    `GameOnChain`. Enforced by the simulation loop's post-test assertion.
 4. **First post-unroll status classification.** For each game that is still
-   live when `ChannelState::Unrolling` is first observed, the first subsequent
+   live when `ChannelStatus::Unrolling` is first observed, the first subsequent
    terminal or on-chain-turn notification for that game must classify it into a
    valid unroll-resolution bucket: `GameSettled`, `GameStatus` with
    `OnChainMyTurn`, `OnChainTheirTurn`, `Replaying`, `EndedCancelled`, or
    `EndedError`.
-5. **Channel state monotonicity.** `ChannelState` values are serialized to the
+5. **Channel state monotonicity.** `ChannelStatus` values are serialized to the
    frontend by name; the numeric ordinals here are an internal test ordering,
    not wire codes. They must never decrease:
    `Handshaking/WaitingForHeightToOffer/WaitingForHeightToAccept(0) <
@@ -524,8 +524,8 @@ puzzle hashes from the created-coins list before calling
 `set_state_for_coins`. This prevents reward coins from being incorrectly
 matched to live games and generating spurious terminal notifications.
 
-**Key code:** `src/potato_handler/effects.rs`,
-`src/potato_handler/handler_base.rs` (`emit_failure_cleanup`)
+**Key code:** `src/session_phases/effects.rs`,
+`src/session_phases/handler_base.rs` (`emit_failure_cleanup`)
 
 ---
 

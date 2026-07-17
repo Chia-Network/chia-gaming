@@ -6,24 +6,24 @@ use clvmr::{run_program, NodePtr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{ChannelCoinSpendInfo, ChannelHandlerEnv, ReadableMove};
-use crate::channel_handler::ChannelHandler;
+use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
+use crate::channel_state::ChannelState;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
     IntoErr, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
 };
-use crate::peer_container::PeerHandler;
-use crate::potato_handler::effects::{
-    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
+use crate::game_session::PeerLifecyclePhase;
+use crate::session_phases::effects::{
+    format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
     GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
 };
-use crate::potato_handler::handler_base::{
-    build_channel_to_unroll_bundle, classify_unroll, ChannelHandlerBase, UnrollOutcome,
+use crate::session_phases::handler_base::{
+    build_channel_to_unroll_bundle, classify_unroll, ChannelStateBase, UnrollOutcome,
 };
-use crate::potato_handler::on_chain::{
-    OnChainGameHandler, OnChainGameHandlerArgs, PendingMoveKind, PendingMoveSavedState,
+use crate::session_phases::on_chain::{
+    OnChainPhase, OnChainPhaseArgs, PendingMoveKind, PendingMoveSavedState,
 };
-use crate::potato_handler::types::{GameAction, PotatoState, SpendWalletReceiver};
+use crate::session_phases::types::{GameAction, PotatoState, SpendWalletReceiver};
 
 #[derive(Debug, Serialize, Deserialize)]
 enum SpendChannelCoinState {
@@ -49,9 +49,9 @@ enum SpendChannelCoinState {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SpendChannelCoinHandler {
+pub struct SpendChannelCoinPhase {
     state: SpendChannelCoinState,
-    base: ChannelHandlerBase,
+    base: ChannelStateBase,
 
     advisory: Option<String>,
     was_stale: bool,
@@ -62,32 +62,32 @@ pub struct SpendChannelCoinHandler {
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     #[serde(skip)]
-    replacement: Option<Box<OnChainGameHandler>>,
+    replacement: Option<Box<OnChainPhase>>,
 }
 
-impl std::fmt::Debug for SpendChannelCoinHandler {
+impl std::fmt::Debug for SpendChannelCoinPhase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SpendChannelCoinHandler({:?})", self.state)
+        write!(f, "SpendChannelCoinPhase({:?})", self.state)
     }
 }
 
-impl SpendChannelCoinHandler {
+impl SpendChannelCoinPhase {
     pub fn set_advisory(&mut self, advisory: Option<String>) {
         self.advisory = advisory;
     }
 
     pub fn new(
-        channel_handler: Option<ChannelHandler>,
+        channel_state: Option<ChannelState>,
         channel_coin: CoinString,
         game_action_queue: VecDeque<GameAction>,
         have_potato: PotatoState,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
     ) -> Self {
-        SpendChannelCoinHandler {
+        SpendChannelCoinPhase {
             state: SpendChannelCoinState::ChannelSpend { channel_coin },
-            base: ChannelHandlerBase::new(
-                channel_handler,
+            base: ChannelStateBase::new(
+                channel_state,
                 game_action_queue,
                 have_potato,
                 channel_timeout,
@@ -104,10 +104,10 @@ impl SpendChannelCoinHandler {
 
     /// Create a handler that enters at the point where the channel coin has
     /// been detected as spent but we haven't yet received the puzzle/solution.
-    /// Used when PotatoHandler passively detects the channel coin spend
+    /// Used when OffChainPhase passively detects the channel coin spend
     /// (opponent went on-chain).
     pub fn new_at_channel_conditions(
-        channel_handler: Option<ChannelHandler>,
+        channel_state: Option<ChannelState>,
         channel_coin: CoinString,
         game_action_queue: VecDeque<GameAction>,
         have_potato: PotatoState,
@@ -115,10 +115,10 @@ impl SpendChannelCoinHandler {
         unroll_timeout: Timeout,
         expected_clean_shutdown_solution: Option<ProgramRef>,
     ) -> Self {
-        SpendChannelCoinHandler {
+        SpendChannelCoinPhase {
             state: SpendChannelCoinState::ChannelConditions { channel_coin },
-            base: ChannelHandlerBase::new(
-                channel_handler,
+            base: ChannelStateBase::new(
+                channel_state,
                 game_action_queue,
                 have_potato,
                 channel_timeout,
@@ -138,7 +138,7 @@ impl SpendChannelCoinHandler {
     /// or an unroll landed.  We store the exact solution we expect on-chain so
     /// detection is a direct comparison.
     pub fn new_for_clean_shutdown(
-        channel_handler: Option<ChannelHandler>,
+        channel_state: Option<ChannelState>,
         channel_coin: CoinString,
         clean_shutdown_solution: ProgramRef,
         game_action_queue: VecDeque<GameAction>,
@@ -147,10 +147,10 @@ impl SpendChannelCoinHandler {
         unroll_timeout: Timeout,
         last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
     ) -> Self {
-        SpendChannelCoinHandler {
+        SpendChannelCoinPhase {
             state: SpendChannelCoinState::ChannelSpend { channel_coin },
-            base: ChannelHandlerBase::new(
-                channel_handler,
+            base: ChannelStateBase::new(
+                channel_state,
                 game_action_queue,
                 have_potato,
                 channel_timeout,
@@ -182,19 +182,19 @@ impl SpendChannelCoinHandler {
 
     pub fn get_reward_puzzle_hash(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<PuzzleHash, Error> {
         self.base.get_reward_puzzle_hash(env)
     }
 
     pub fn get_game_state_id(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Option<Hash>, Error> {
         self.base.get_game_state_id(env)
     }
 
-    pub fn take_replacement(&mut self) -> Option<Box<OnChainGameHandler>> {
+    pub fn take_next_phase(&mut self) -> Option<Box<OnChainPhase>> {
         self.replacement.take()
     }
 
@@ -202,7 +202,7 @@ impl SpendChannelCoinHandler {
 
     pub fn received_message(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
         self.base.received_message_passive(msg)
@@ -214,7 +214,7 @@ impl SpendChannelCoinHandler {
 
     pub fn process_incoming_message(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
@@ -223,7 +223,7 @@ impl SpendChannelCoinHandler {
 
     pub fn make_move(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
@@ -234,7 +234,7 @@ impl SpendChannelCoinHandler {
 
     pub fn accept_settlement(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         self.base.park_accept_settlement(id);
@@ -243,7 +243,7 @@ impl SpendChannelCoinHandler {
 
     pub fn cheat_game(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
@@ -256,7 +256,7 @@ impl SpendChannelCoinHandler {
     /// for the channel coin to be spent.  Only available when we have cached
     /// spend info (initiator-side clean shutdown that hasn't received a
     /// response yet).
-    pub fn go_on_chain(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+    pub fn go_on_chain(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         let saved = match self.last_channel_coin_spend_info.take() {
             Some(s) => s,
             None => return Ok(vec![]),
@@ -266,7 +266,7 @@ impl SpendChannelCoinHandler {
             | SpendChannelCoinState::ChannelConditions { channel_coin } => channel_coin.clone(),
             _ => return Ok(vec![]),
         };
-        let ch = self.base.channel_handler()?;
+        let ch = self.base.channel_state()?;
         let bundle =
             build_channel_to_unroll_bundle(env, ch, &channel_coin, &saved, "impatience unroll")?;
         Ok(vec![Effect::SpendTransaction(bundle, None)])
@@ -275,7 +275,7 @@ impl SpendChannelCoinHandler {
     #[cfg(test)]
     pub fn force_unroll_spend(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<SpendBundle, Error> {
         let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
             Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
@@ -289,7 +289,7 @@ impl SpendChannelCoinHandler {
                 ))
             }
         };
-        let ch = self.base.channel_handler()?;
+        let ch = self.base.channel_state()?;
         build_channel_to_unroll_bundle(env, ch, channel_coin, saved, "force unroll")
     }
 
@@ -297,7 +297,7 @@ impl SpendChannelCoinHandler {
 
     pub fn coin_spent(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
@@ -357,7 +357,7 @@ impl SpendChannelCoinHandler {
 
     pub fn coin_created(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
         Ok(None)
@@ -365,7 +365,7 @@ impl SpendChannelCoinHandler {
 
     pub fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
@@ -434,11 +434,11 @@ impl SpendChannelCoinHandler {
 
     // --- Internal methods ---
 
-    /// Create a terminal OnChainGameHandler replacement with an empty game map
+    /// Create a terminal OnChainPhase replacement with an empty game map
     /// to represent a failed channel.
     fn transition_to_failed_terminal(&mut self) {
-        let on_chain = OnChainGameHandler::new_terminal(
-            self.base.channel_handler.as_mut(),
+        let on_chain = OnChainPhase::new_terminal(
+            self.base.channel_state.as_mut(),
             self.was_stale,
             false,
             self.terminal_reward_coin.clone(),
@@ -447,11 +447,11 @@ impl SpendChannelCoinHandler {
         self.replacement = Some(Box::new(on_chain));
     }
 
-    /// Create a terminal OnChainGameHandler replacement with an empty game map
+    /// Create a terminal OnChainPhase replacement with an empty game map
     /// to represent a completed channel (clean shutdown or no-game unroll).
     fn transition_to_completed_terminal(&mut self, resolved_clean: bool) {
-        let on_chain = OnChainGameHandler::new_terminal(
-            self.base.channel_handler.as_mut(),
+        let on_chain = OnChainPhase::new_terminal(
+            self.base.channel_state.as_mut(),
             self.was_stale,
             resolved_clean,
             self.terminal_reward_coin.clone(),
@@ -466,11 +466,11 @@ impl SpendChannelCoinHandler {
     /// relative timeout age (and resubmits it across reorgs).
     fn build_unroll_timeout_spend(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         unroll_coin: &CoinString,
         on_chain_state: usize,
     ) -> Result<SpendBundle, Error> {
-        let player_ch = self.base.channel_handler()?;
+        let player_ch = self.base.channel_state()?;
         let matching_unroll = player_ch.get_historical_unroll_for_state(on_chain_state)?;
         let curried_unroll_puzzle = CurriedProgram {
             program: env.unroll_puzzle.clone(),
@@ -504,7 +504,7 @@ impl SpendChannelCoinHandler {
 
     fn handle_channel_coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
@@ -520,7 +520,7 @@ impl SpendChannelCoinHandler {
             if *solution == *expected_solution.pref() {
                 effects.push(Effect::Log("[clean-end] clean shutdown landed".to_string()));
                 {
-                    let ch = self.base.channel_handler_mut()?;
+                    let ch = self.base.channel_state_mut()?;
                     for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
                         effects.push(Effect::Notify(GameNotification::game_settled(
                             id,
@@ -532,11 +532,11 @@ impl SpendChannelCoinHandler {
                 }
                 // Record the change coin we receive so the resolved coin id
                 // stays visible in the protocol-state pretty-print (it flows
-                // into the terminal OnChainGameHandler's terminal_reward_coin).
+                // into the terminal OnChainPhase's terminal_reward_coin).
                 self.terminal_reward_coin = {
                     let conditions =
                         CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
-                    let player_ch = self.base.channel_handler()?;
+                    let player_ch = self.base.channel_state()?;
                     let reward_puzzle_hash = player_ch.get_reward_puzzle_hash(env)?;
                     let channel_coin_id = coin_id.to_coin_id();
                     conditions.iter().find_map(|c| {
@@ -569,7 +569,7 @@ impl SpendChannelCoinHandler {
         // by matching its puzzle hash against our known unroll puzzle hashes.
         let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
         let unroll_coin = {
-            let ch = self.base.channel_handler()?;
+            let ch = self.base.channel_state()?;
             let map = ch.unroll_puzzle_hash_map();
 
             channel_conditions.iter().find_map(|c| {
@@ -593,7 +593,7 @@ impl SpendChannelCoinHandler {
         };
 
         {
-            let ch = self.base.channel_handler_mut()?;
+            let ch = self.base.channel_state_mut()?;
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
@@ -614,21 +614,21 @@ impl SpendChannelCoinHandler {
 
     fn handle_unroll_from_channel_conditions(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         conditions_nodeptr: NodePtr,
         unroll_coin: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
 
         let on_chain_state = {
-            let player_ch = self.base.channel_handler()?;
+            let player_ch = self.base.channel_state()?;
             let (state_number, _) =
                 player_ch.resolve_unroll_from_conditions(env, conditions_nodeptr)?;
             state_number
         };
 
         let outcome = {
-            let player_ch = self.base.channel_handler()?;
+            let player_ch = self.base.channel_state()?;
             classify_unroll(
                 player_ch,
                 env,
@@ -704,7 +704,7 @@ impl SpendChannelCoinHandler {
 
     fn finish_on_chain_transition(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         unroll_coin: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
         on_chain_state: usize,
@@ -714,7 +714,7 @@ impl SpendChannelCoinHandler {
             .ok_or_else(|| Error::StrErr("no conditions for unroll coin".to_string()))?;
 
         let (mut game_map, on_chain_reward_coin, preempt_resolved) = {
-            let player_ch = self.base.channel_handler_mut()?;
+            let player_ch = self.base.channel_state_mut()?;
 
             let mut pre_game_ids: HashSet<GameID> = player_ch.live_game_ids().into_iter().collect();
             let in_flight_proposal_ids: HashSet<GameID> = player_ch
@@ -813,7 +813,7 @@ impl SpendChannelCoinHandler {
 
         // Zero-reward early-out
         {
-            let player_ch = self.base.channel_handler_mut()?;
+            let player_ch = self.base.channel_state_mut()?;
             let mut zero_reward_games = Vec::new();
             for (coin, state) in game_map.iter() {
                 let dominated = if state.timeout_claim_armed {
@@ -863,7 +863,7 @@ impl SpendChannelCoinHandler {
         }
 
         let replaying_ids: HashSet<GameID> = {
-            let player_ch = self.base.channel_handler()?;
+            let player_ch = self.base.channel_state()?;
             game_map
                 .iter()
                 .filter_map(|(coin, state)| {
@@ -892,7 +892,7 @@ impl SpendChannelCoinHandler {
                 other_params: None,
             }));
             // The wallet registration (with the eager timeout claim) is emitted
-            // below by the constructed OnChainGameHandler, which owns the
+            // below by the constructed OnChainPhase, which owns the
             // live games needed to build each claim.
         }
 
@@ -904,7 +904,7 @@ impl SpendChannelCoinHandler {
                 .map(|(coin, state)| (coin.clone(), state.game_id))
                 .collect();
 
-            let player_ch = self.base.channel_handler_mut()?;
+            let player_ch = self.base.channel_state_mut()?;
             for (coin, game_id) in redo_candidates {
                 let cached_move = match player_ch.take_cached_move_for_game(&game_id) {
                     Some(m) => m,
@@ -965,11 +965,11 @@ impl SpendChannelCoinHandler {
 
         let mut player_ch = self
             .base
-            .channel_handler
+            .channel_state
             .take()
             .ok_or_else(|| Error::StrErr("no channel handler yet".to_string()))?;
 
-        let on_chain = OnChainGameHandler::new(OnChainGameHandlerArgs {
+        let on_chain = OnChainPhase::new(OnChainPhaseArgs {
             have_potato: PotatoState::Present,
             channel_timeout: self.base.channel_timeout.clone(),
             game_action_queue: on_chain_queue,
@@ -1001,125 +1001,125 @@ impl SpendChannelCoinHandler {
     }
 }
 
-impl SpendWalletReceiver for SpendChannelCoinHandler {
+impl SpendWalletReceiver for SpendChannelCoinPhase {
     fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        SpendChannelCoinHandler::coin_created(self, env, coin_id)
+        SpendChannelCoinPhase::coin_created(self, env, coin_id)
     }
     fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::coin_spent(self, env, coin_id)
+        SpendChannelCoinPhase::coin_spent(self, env, coin_id)
     }
     fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        SpendChannelCoinHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 }
 
 #[typetag::serde]
-impl PeerHandler for SpendChannelCoinHandler {
+impl PeerLifecyclePhase for SpendChannelCoinPhase {
     fn has_pending_incoming(&self) -> bool {
-        SpendChannelCoinHandler::has_pending_incoming(self)
+        SpendChannelCoinPhase::has_pending_incoming(self)
     }
     fn process_incoming_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::process_incoming_message(self, env)
+        SpendChannelCoinPhase::process_incoming_message(self, env)
     }
     fn received_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::received_message(self, env, msg)
+        SpendChannelCoinPhase::received_message(self, env, msg)
     }
     fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::coin_spent(self, env, coin_id)
+        SpendChannelCoinPhase::coin_spent(self, env, coin_id)
     }
     fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        SpendChannelCoinHandler::coin_created(self, env, coin_id)
+        SpendChannelCoinPhase::coin_created(self, env, coin_id)
     }
     fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        SpendChannelCoinHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
     fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::make_move(self, env, id, readable, new_entropy)
+        SpendChannelCoinPhase::make_move(self, env, id, readable, new_entropy)
     }
     fn accept_settlement(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::accept_settlement(self, env, id)
+        SpendChannelCoinPhase::accept_settlement(self, env, id)
     }
     fn cheat_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::cheat_game(self, env, game_id, mover_share, entropy)
+        SpendChannelCoinPhase::cheat_game(self, env, game_id, mover_share, entropy)
     }
-    fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
-        SpendChannelCoinHandler::take_replacement(self).map(|oc| oc as Box<dyn PeerHandler>)
+    fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
+        SpendChannelCoinPhase::take_next_phase(self).map(|oc| oc as Box<dyn PeerLifecyclePhase>)
     }
     fn go_on_chain(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::go_on_chain(self, env)
+        SpendChannelCoinPhase::go_on_chain(self, env)
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let (state, coin) = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin }
             | SpendChannelCoinState::ChannelConditions { channel_coin } => {
                 let s = if self.expected_clean_shutdown_solution.is_some() {
-                    ChannelState::ShutdownTransactionPending
+                    ChannelStatus::ShutdownTransactionPending
                 } else {
-                    ChannelState::GoingOnChain
+                    ChannelStatus::GoingOnChain
                 };
                 (s, Some(channel_coin.clone()))
             }
             SpendChannelCoinState::UnrollTimeoutOrSpend { unroll_coin, .. }
             | SpendChannelCoinState::UnrollSpend { unroll_coin, .. }
             | SpendChannelCoinState::UnrollConditions { unroll_coin, .. } => {
-                (ChannelState::Unrolling, Some(unroll_coin.clone()))
+                (ChannelStatus::Unrolling, Some(unroll_coin.clone()))
             }
         };
         let (our_balance, their_balance, game_allocated) =
-            if let Some(ch) = self.base.channel_handler.as_ref() {
+            if let Some(ch) = self.base.channel_state.as_ref() {
                 (
                     Some(ch.my_out_of_game_balance()),
                     Some(ch.their_out_of_game_balance()),
@@ -1155,8 +1155,8 @@ impl PeerHandler for SpendChannelCoinHandler {
         }
         coins
     }
-    fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
-        self.base.channel_handler()
+    fn channel_state(&self) -> Result<&ChannelState, Error> {
+        self.base.channel_state()
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

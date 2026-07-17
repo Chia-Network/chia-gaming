@@ -4,15 +4,15 @@ use clvmr::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{ChannelCoinSpendInfo, ChannelHandlerEnv, ReadableMove};
-use crate::channel_handler::ChannelHandler;
+use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
+use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
     Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::GameStatusKind;
-use crate::potato_handler::effects::{CancelReason, Effect, GameNotification};
-use crate::potato_handler::types::{GameAction, PeerMessage, PotatoState};
+use crate::session_phases::effects::GameStatusKind;
+use crate::session_phases::effects::{CancelReason, Effect, GameNotification};
+use crate::session_phases::types::{GameAction, PeerMessage, PotatoState};
 
 pub enum UnrollOutcome {
     Preempted(SpendBundle),
@@ -21,10 +21,10 @@ pub enum UnrollOutcome {
 }
 
 /// Determine whether an unroll can be preempted, needs to wait for timeout, or
-/// is unrecoverable.  Used by SpendChannelCoinHandler.
+/// is unrecoverable.  Used by SpendChannelCoinPhase.
 pub fn classify_unroll(
-    ch: &ChannelHandler,
-    env: &mut ChannelHandlerEnv<'_>,
+    ch: &ChannelState,
+    env: &mut ChannelEnv<'_>,
     conditions_nodeptr: NodePtr,
     unroll_coin: &CoinString,
     on_chain_state: usize,
@@ -59,8 +59,8 @@ pub fn classify_unroll(
 /// Build a SpendBundle that spends the channel coin into an unroll coin using
 /// a previously cached `ChannelCoinSpendInfo`.
 pub fn build_channel_to_unroll_bundle(
-    env: &mut ChannelHandlerEnv<'_>,
-    ch: &ChannelHandler,
+    env: &mut ChannelEnv<'_>,
+    ch: &ChannelState,
     channel_coin: &CoinString,
     saved: &ChannelCoinSpendInfo,
     name: &str,
@@ -81,27 +81,27 @@ pub fn build_channel_to_unroll_bundle(
     })
 }
 
-/// Shared state and methods for handlers that hold a `ChannelHandler` and
+/// Shared state and methods for handlers that hold a `ChannelState` and
 /// park game actions while waiting for on-chain resolution (Phases 2a and 3).
 #[derive(Serialize, Deserialize)]
-pub struct ChannelHandlerBase {
-    pub channel_handler: Option<ChannelHandler>,
+pub struct ChannelStateBase {
+    pub channel_state: Option<ChannelState>,
     pub game_action_queue: VecDeque<GameAction>,
     pub have_potato: PotatoState,
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
 }
 
-impl ChannelHandlerBase {
+impl ChannelStateBase {
     pub fn new(
-        channel_handler: Option<ChannelHandler>,
+        channel_state: Option<ChannelState>,
         game_action_queue: VecDeque<GameAction>,
         have_potato: PotatoState,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
     ) -> Self {
-        ChannelHandlerBase {
-            channel_handler,
+        ChannelStateBase {
+            channel_state,
             game_action_queue,
             have_potato,
             channel_timeout,
@@ -110,36 +110,36 @@ impl ChannelHandlerBase {
     }
 
     pub fn amount(&self) -> Amount {
-        self.channel_handler
+        self.channel_state
             .as_ref()
             .map(|ch| ch.amount(true))
             .unwrap_or_default()
     }
 
     pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.channel_handler
+        self.channel_state
             .as_ref()
             .map(|ch| ch.my_out_of_game_balance())
     }
 
     pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.channel_handler
+        self.channel_state
             .as_ref()
             .map(|ch| ch.their_out_of_game_balance())
     }
 
     pub fn get_reward_puzzle_hash(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<PuzzleHash, Error> {
-        self.channel_handler()?.get_reward_puzzle_hash(env)
+        self.channel_state()?.get_reward_puzzle_hash(env)
     }
 
     pub fn get_game_state_id(
         &self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Option<Hash>, Error> {
-        if let Some(ch) = self.channel_handler.as_ref() {
+        if let Some(ch) = self.channel_state.as_ref() {
             return ch.get_game_state_id(env).map(Some);
         }
         Ok(None)
@@ -149,21 +149,21 @@ impl ChannelHandlerBase {
         matches!(self.have_potato, PotatoState::Present)
     }
 
-    pub fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
-        self.channel_handler
+    pub fn channel_state(&self) -> Result<&ChannelState, Error> {
+        self.channel_state
             .as_ref()
             .ok_or_else(|| Error::StrErr("no channel handler".to_string()))
     }
 
-    pub fn channel_handler_mut(&mut self) -> Result<&mut ChannelHandler, Error> {
-        self.channel_handler
+    pub fn channel_state_mut(&mut self) -> Result<&mut ChannelState, Error> {
+        self.channel_state
             .as_mut()
             .ok_or_else(|| Error::StrErr("no channel handler".to_string()))
     }
 
     pub fn emit_failure_cleanup(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if let Ok(ch) = self.channel_handler_mut() {
+        if let Ok(ch) = self.channel_state_mut() {
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {

@@ -699,7 +699,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: false,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
     });
@@ -720,7 +720,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: false,
         cleanShutdownStarted: true,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
     });
@@ -765,8 +765,8 @@ describe('session model selectors', () => {
     const save: SessionState = {
       version: 6n,
       playerId: 'p1',
-      serializedCradle: new Uint8Array([1, 2, 3]),
-      cradleSchemaVersion: 1n,
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      gameSessionSchemaVersion: 1n,
       channelReady: true,
       channelStatus: {
         state: 'Active',
@@ -800,7 +800,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: false,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
       game: {
@@ -927,7 +927,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: true,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
       game: {
@@ -959,7 +959,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'end', stateDetail: [] },
         goOnChainPressed: true,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
     });

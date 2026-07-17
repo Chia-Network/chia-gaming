@@ -81,8 +81,8 @@ export interface SessionState {
 
   // Session / game state
   blockchainType?: BlockchainType;
-  serializedCradle?: Uint8Array;
-  cradleSchemaVersion?: bigint;
+  serializedGameSession?: Uint8Array;
+  gameSessionSchemaVersion?: bigint;
   pairingToken?: string;
   sessionPeerId?: string;
   /** Last player_id from tracker `registered`. Remap during pre-cradle resume means rematch. */
@@ -139,7 +139,7 @@ export interface SessionState {
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
-  dismissedChannelState?: string;
+  dismissedChannelStatus?: string;
   goOnChainPressed?: boolean;
   cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
@@ -558,7 +558,7 @@ function isTerminalFinishedChannel(state: string | null | undefined): boolean {
  */
 function isResumable(state: SessionState): boolean {
   return !!(
-    state.serializedCradle
+    state.serializedGameSession
     || state.pairingToken
     || (state.channelStatus && isTerminalFinishedChannel(state.channelStatus.state))
   );
@@ -608,7 +608,7 @@ function logPersistenceMetrics(state: SessionState): void {
     : window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
   if (!developmentRuntime) return;
   console.debug('[save] persistence metrics', {
-    rawCradleBytes: state.serializedCradle?.byteLength ?? 0,
+    rawGameSessionBytes: state.serializedGameSession?.byteLength ?? 0,
     estimatedIndexedDbRecordBytes: estimateRecordBytes(state),
     historicalUnrollCount: state.historicalUnrollCount?.toString() ?? 'unavailable',
     humanHistoryCount: state.humanHistory?.length ?? 0,

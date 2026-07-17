@@ -3,7 +3,7 @@ use rand::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
+use crate::channel_state::types::{PotatoSignatures, UnrollCoin};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
@@ -12,18 +12,18 @@ use crate::common::types::{
 };
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ChannelHandlerPrivateKeys {
+pub struct ChannelPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
     pub my_referee_private_key: PrivateKey,
 }
 
-impl Distribution<ChannelHandlerPrivateKeys> for StandardUniform {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ChannelHandlerPrivateKeys {
+impl Distribution<ChannelPrivateKeys> for StandardUniform {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ChannelPrivateKeys {
         let my_channel_coin_private_key: PrivateKey = rng.random();
         let my_unroll_coin_private_key: PrivateKey = rng.random();
         let my_referee_private_key: PrivateKey = rng.random();
-        ChannelHandlerPrivateKeys {
+        ChannelPrivateKeys {
             my_channel_coin_private_key,
             my_unroll_coin_private_key,
             my_referee_private_key,
@@ -32,14 +32,14 @@ impl Distribution<ChannelHandlerPrivateKeys> for StandardUniform {
 }
 
 #[derive(Clone)]
-pub struct ChannelHandlerInitiationResult {
+pub struct ChannelInitiationResult {
     pub channel_puzzle_hash_up: PuzzleHash,
     pub my_initial_channel_half_signature_peer: Aggsig,
 }
 
 /// The channel handler can use these two items to produce a spend on chain.
 #[derive(Default, Clone, Serialize, Deserialize)]
-pub struct ChannelHandlerUnrollSpendInfo {
+pub struct ChannelUnrollSpendInfo {
     /// Contains the half signature, puzzle and conditions needed to spend.
     pub coin: UnrollCoin,
     /// Contains the other half of the signature.
@@ -58,7 +58,7 @@ pub struct HistoricalUnrollSpendInfo {
     pub timeout_conditions: ProgramRef,
 }
 
-pub struct ChannelHandlerEnv<'a> {
+pub struct ChannelEnv<'a> {
     pub allocator: &'a mut AllocEncoder,
     pub unroll_puzzle: Puzzle,
 
@@ -70,8 +70,8 @@ pub struct ChannelHandlerEnv<'a> {
     pub agg_sig_me_additional_data: Hash,
 }
 
-impl<'a> ChannelHandlerEnv<'a> {
-    pub fn new(allocator: &'a mut AllocEncoder) -> Result<ChannelHandlerEnv<'a>, Error> {
+impl<'a> ChannelEnv<'a> {
+    pub fn new(allocator: &'a mut AllocEncoder) -> Result<ChannelEnv<'a>, Error> {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
         let unroll_puzzle = read_hex_puzzle(
             allocator,
@@ -79,7 +79,7 @@ impl<'a> ChannelHandlerEnv<'a> {
         )?;
         let standard_puzzle = get_standard_coin_puzzle(allocator)?;
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
-        Ok(ChannelHandlerEnv {
+        Ok(ChannelEnv {
             allocator,
             referee_coin_puzzle,
             referee_coin_puzzle_hash,

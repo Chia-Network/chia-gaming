@@ -24,9 +24,9 @@ For production builds, tarballs, and step-by-step build instructions, see
 
 ```
 src/
-  channel_handler/  — State channel management and the potato protocol
+  channel_state/  — State channel management and the potato protocol
   referee/          — Referee coin logic (on-chain move validation, slashing)
-  potato_handler/   — High-level game orchestration and on-chain actions
+  session_phases/   — High-level game orchestration and on-chain actions
   games/            — Game registration (calpoker, spacepoker, test-only debug game)
   peer_container.rs — Peer-to-peer game cradle (synchronous wrapper)
   simulator/        — Chia blockchain simulator and integration tests

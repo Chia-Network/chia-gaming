@@ -3,21 +3,21 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::channel_handler::types::{
-    ChannelHandlerPrivateKeys, CoinSpentInformation, LiveGame, OnChainGameState, ReadableMove,
+use crate::channel_state::types::ChannelEnv;
+use crate::channel_state::types::{
+    ChannelPrivateKeys, CoinSpentInformation, LiveGame, OnChainGameState, ReadableMove,
 };
 use crate::common::types::PrivateKey;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
-use crate::peer_container::PeerHandler;
-use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
+use crate::game_session::PeerLifecyclePhase;
+use crate::session_phases::effects::{
+    format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
     GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome,
 };
-use crate::potato_handler::types::{GameAction, PotatoState};
+use crate::session_phases::types::{GameAction, PotatoState};
 use crate::referee::types::{
     GameMoveDetails, ParsedRefereeSolution, SlashOutcome, TheirTurnCoinSpentResult,
 };
@@ -41,15 +41,15 @@ pub struct PendingMoveSavedState {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct OnChainGameHandler {
+pub struct OnChainPhase {
     have_potato: PotatoState,
     channel_timeout: Timeout,
     game_action_queue: VecDeque<GameAction>,
     game_map: HashMap<CoinString, OnChainGameState>,
     pending_moves: HashMap<CoinString, PendingMoveSavedState>,
 
-    // Extracted from ChannelHandler at transition time.
-    private_keys: ChannelHandlerPrivateKeys,
+    // Extracted from ChannelState at transition time.
+    private_keys: ChannelPrivateKeys,
     reward_puzzle_hash: PuzzleHash,
     their_reward_puzzle_hash: PuzzleHash,
     my_out_of_game_balance: Amount,
@@ -67,19 +67,19 @@ pub struct OnChainGameHandler {
     advisory: Option<String>,
 }
 
-impl std::fmt::Debug for OnChainGameHandler {
+impl std::fmt::Debug for OnChainPhase {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(formatter, "OnChainGameHandler(..)")
+        write!(formatter, "OnChainPhase(..)")
     }
 }
 
-pub struct OnChainGameHandlerArgs {
+pub struct OnChainPhaseArgs {
     pub have_potato: PotatoState,
     pub channel_timeout: Timeout,
     pub game_action_queue: VecDeque<GameAction>,
     pub game_map: HashMap<CoinString, OnChainGameState>,
     pub pending_moves: HashMap<CoinString, PendingMoveSavedState>,
-    pub private_keys: ChannelHandlerPrivateKeys,
+    pub private_keys: ChannelPrivateKeys,
     pub reward_puzzle_hash: PuzzleHash,
     pub their_reward_puzzle_hash: PuzzleHash,
     pub my_out_of_game_balance: Amount,
@@ -96,9 +96,9 @@ pub struct OnChainGameHandlerArgs {
     pub terminal_reward_coin: Option<CoinString>,
 }
 
-impl OnChainGameHandler {
-    pub fn new(args: OnChainGameHandlerArgs) -> Self {
-        OnChainGameHandler {
+impl OnChainPhase {
+    pub fn new(args: OnChainPhaseArgs) -> Self {
+        OnChainPhase {
             have_potato: args.have_potato,
             channel_timeout: args.channel_timeout,
             game_action_queue: args.game_action_queue,
@@ -124,10 +124,10 @@ impl OnChainGameHandler {
     }
 
     /// Create a terminal handler with an empty game map.  Used when
-    /// SpendChannelCoinHandler reaches a terminal state (completed or failed)
+    /// SpendChannelCoinPhase reaches a terminal state (completed or failed)
     /// without any on-chain games to track.
     pub fn new_terminal(
-        channel_handler: Option<&mut crate::channel_handler::ChannelHandler>,
+        channel_state: Option<&mut crate::channel_state::ChannelState>,
         was_stale: bool,
         resolved_clean: bool,
         terminal_reward_coin: Option<CoinString>,
@@ -146,7 +146,7 @@ impl OnChainGameHandler {
             unroll_advance_timeout,
             is_initial_potato,
             state_number,
-        ) = if let Some(ch) = channel_handler {
+        ) = if let Some(ch) = channel_state {
             (
                 ch.private_keys().clone(),
                 ch.my_reward_puzzle_hash().clone(),
@@ -163,7 +163,7 @@ impl OnChainGameHandler {
             )
         } else {
             (
-                ChannelHandlerPrivateKeys {
+                ChannelPrivateKeys {
                     my_channel_coin_private_key: PrivateKey::default(),
                     my_unroll_coin_private_key: PrivateKey::default(),
                     my_referee_private_key: PrivateKey::default(),
@@ -181,7 +181,7 @@ impl OnChainGameHandler {
                 0,
             )
         };
-        OnChainGameHandler {
+        OnChainPhase {
             have_potato: PotatoState::Present,
             channel_timeout: Timeout::new(0),
             game_action_queue: VecDeque::new(),
@@ -218,7 +218,7 @@ impl OnChainGameHandler {
         Some(Effect::Notify(notification))
     }
 
-    // --- Getters (duplicated from ChannelHandler) ---
+    // --- Getters (duplicated from ChannelState) ---
 
     pub fn amount(&self) -> Amount {
         self.my_allocated_balance.clone() + self.their_allocated_balance.clone()
@@ -367,7 +367,7 @@ impl OnChainGameHandler {
         self.game_map.is_empty()
     }
 
-    // --- Methods moved from ChannelHandler ---
+    // --- Methods moved from ChannelState ---
 
     fn save_game_state(&self, game_id: &GameID) -> Result<(Rc<Referee>, PuzzleHash), Error> {
         let idx = self.get_game_by_id(game_id)?;
@@ -387,7 +387,7 @@ impl OnChainGameHandler {
 
     fn on_chain_our_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         readable_move: &ReadableMove,
         entropy: Hash,
@@ -421,7 +421,7 @@ impl OnChainGameHandler {
 
     fn game_coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
@@ -539,7 +539,7 @@ impl OnChainGameHandler {
     /// coin's timeout was reached.
     pub fn build_timeout_claim(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         coin: &CoinString,
     ) -> Result<Option<SpendBundle>, Error> {
@@ -589,7 +589,7 @@ impl OnChainGameHandler {
     /// the timeout submissions from the moment the coins are watched.
     pub fn register_initial_game_coins(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
         let coins: Vec<(CoinString, GameID, Timeout)> = self
             .game_map
@@ -627,7 +627,7 @@ impl OnChainGameHandler {
 
     pub fn handle_game_coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
@@ -1404,7 +1404,7 @@ impl OnChainGameHandler {
         Ok((effects, resync_info))
     }
 
-    pub fn next_action(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+    pub fn next_action(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         while let Some(action) = self.game_action_queue.pop_front() {
             let result = self.do_on_chain_action(env, action)?;
             if !result.is_empty() {
@@ -1416,7 +1416,7 @@ impl OnChainGameHandler {
 
     pub fn do_on_chain_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         current_coin: &CoinString,
         game_id: GameID,
         readable_move: ReadableMove,
@@ -1498,7 +1498,7 @@ impl OnChainGameHandler {
 
     pub fn do_on_chain_action(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         action: GameAction,
     ) -> Result<Vec<Effect>, Error> {
         let get_current_coin = |game_id: &GameID| -> Result<CoinString, Error> {
@@ -1617,14 +1617,14 @@ impl OnChainGameHandler {
 
     pub fn process_incoming_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
         self.next_action(env)
     }
 
     pub fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
@@ -1634,7 +1634,7 @@ impl OnChainGameHandler {
 
     pub fn accept_settlement(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         self.do_on_chain_action(env, GameAction::AcceptSettlement(*id))
@@ -1642,7 +1642,7 @@ impl OnChainGameHandler {
 
     pub fn cheat_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
@@ -1652,7 +1652,7 @@ impl OnChainGameHandler {
 
     pub fn coin_spent(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         let (matched, effect) = self.check_game_coin_spent(coin_id)?;
@@ -1676,7 +1676,7 @@ impl OnChainGameHandler {
 
     pub fn coin_created(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
         Ok(None)
@@ -1684,7 +1684,7 @@ impl OnChainGameHandler {
 
     pub fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
@@ -1720,21 +1720,21 @@ impl OnChainGameHandler {
 }
 
 #[typetag::serde]
-impl PeerHandler for OnChainGameHandler {
+impl PeerLifecyclePhase for OnChainPhase {
     fn has_pending_incoming(&self) -> bool {
-        OnChainGameHandler::has_pending_incoming(self)
+        OnChainPhase::has_pending_incoming(self)
     }
 
     fn process_incoming_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::process_incoming_message(self, env)
+        OnChainPhase::process_incoming_message(self, env)
     }
 
     fn received_message(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
@@ -1742,70 +1742,70 @@ impl PeerHandler for OnChainGameHandler {
 
     fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::coin_spent(self, env, coin_id)
+        OnChainPhase::coin_spent(self, env, coin_id)
     }
 
     fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        OnChainGameHandler::coin_created(self, env, coin_id)
+        OnChainPhase::coin_created(self, env, coin_id)
     }
 
     fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        OnChainGameHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        OnChainPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 
     fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::make_move(self, env, id, readable, new_entropy)
+        OnChainPhase::make_move(self, env, id, readable, new_entropy)
     }
 
     fn accept_settlement(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::accept_settlement(self, env, id)
+        OnChainPhase::accept_settlement(self, env, id)
     }
 
     fn cheat_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::cheat_game(self, env, game_id, mover_share, entropy)
+        OnChainPhase::cheat_game(self, env, game_id, mover_share, entropy)
     }
 
-    fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
+    fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
         None
     }
 
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let state = if self.advisory.is_some() {
-            ChannelState::Failed
+            ChannelStatus::Failed
         } else if self.resolved_clean {
-            ChannelState::ResolvedClean
+            ChannelStatus::ResolvedClean
         } else if self.was_stale {
-            ChannelState::ResolvedStale
+            ChannelStatus::ResolvedStale
         } else {
-            ChannelState::ResolvedUnrolled
+            ChannelStatus::ResolvedUnrolled
         };
         Some(ChannelStatusSnapshot {
             state,

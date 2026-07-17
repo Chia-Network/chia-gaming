@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::channel_handler::types::StateUpdateProgram;
+use crate::channel_state::types::StateUpdateProgram;
 use crate::common::types::{AllocEncoder, Hash, Program, Sha256Input, Sha256tree};
 
 /// The pair of state and validation program is the source of the validation hash

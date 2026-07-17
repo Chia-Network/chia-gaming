@@ -5,9 +5,9 @@ use clvmr::{run_program, NodePtr};
 
 use crate::utils::{non_nil, proper_list};
 
-use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::StateUpdateProgram;
+use crate::channel_state::game_handler::GameHandler;
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::StateUpdateProgram;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     GameID, Hash, IntoErr, Program, Puzzle, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,

@@ -1,8 +1,8 @@
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use crate::channel_handler::types::{
-    read_unroll_puzzle, ChannelHandlerEnv, UnrollCoin, UnrollCoinConditionInputs,
+use crate::channel_state::types::{
+    read_unroll_puzzle, ChannelEnv, UnrollCoin, UnrollCoinConditionInputs,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
@@ -16,14 +16,14 @@ pub(crate) mod sim_tests {
 
     use clvm_traits::ToClvm;
 
-    use crate::channel_handler::types::HistoricalUnrollSpendInfo;
+    use crate::channel_state::types::HistoricalUnrollSpendInfo;
     use crate::common::types::{CoinID, GameID};
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
     fn setup_handshake(
         rng: &mut impl rand::Rng,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> ChannelHandlerGame {
         let game_id = GameID(42);
         let launcher_coin = CoinID::default();
@@ -47,7 +47,7 @@ pub(crate) mod sim_tests {
     /// Player `sender` sends first, then `sender^1` sends back.
     fn empty_potato_round_trip(
         game: &mut ChannelHandlerGame,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         sender: usize,
     ) {
         let sigs_a = game
@@ -75,8 +75,8 @@ pub(crate) mod sim_tests {
     /// the unroll puzzle hash for the given state number.  Looks up the
     /// puzzle hash from the handler's map.
     fn make_conditions_for_state(
-        env: &mut ChannelHandlerEnv<'_>,
-        handler: &crate::channel_handler::ChannelHandler,
+        env: &mut ChannelEnv<'_>,
+        handler: &crate::channel_state::ChannelState,
         state_number: usize,
     ) -> clvmr::NodePtr {
         use crate::common::constants::CREATE_COIN;
@@ -128,7 +128,7 @@ pub(crate) mod sim_tests {
         let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
         let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
         let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-        let mut env = ChannelHandlerEnv {
+        let mut env = ChannelEnv {
             allocator: &mut allocator,
             referee_coin_puzzle: ref_coin_puz,
             referee_coin_puzzle_hash: ref_coin_ph,
@@ -333,7 +333,7 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
     let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-    let mut env = ChannelHandlerEnv {
+    let mut env = ChannelEnv {
         allocator: &mut allocator,
         referee_coin_puzzle: ref_coin_puz,
         referee_coin_puzzle_hash: ref_coin_ph.clone(),

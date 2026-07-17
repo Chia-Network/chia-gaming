@@ -6,7 +6,7 @@ use clvm_utils::CurriedProgram;
 
 use crate::common::load_clvm::{read_hex_puzzle, read_krunk_dict_dat};
 use crate::common::types::{AllocEncoder, GameType, Program};
-use crate::potato_handler::types::GameFactory;
+use crate::session_phases::types::GameFactory;
 use std::collections::BTreeMap;
 
 /// Loads the krunk dictionary from `krunkwords.txt`, embedded at compile time.

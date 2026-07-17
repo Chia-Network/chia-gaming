@@ -97,7 +97,7 @@ export async function configSessionController(
   sc.setBlockchainAddress(address);
   const theirContribution = sc.theirContribution;
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
-  sc.setGameCradle(cradle);
+  sc.setGameSession(cradle);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
   sc.activateSpend();
@@ -110,16 +110,16 @@ export async function restoreSession(
   save: SessionState,
   wasmStateInit: WasmStateInit,
 ): Promise<void> {
-  if (!save.serializedCradle) {
-    throw new Error('restoreSession called without serializedCradle');
+  if (!save.serializedGameSession) {
+    throw new Error('restoreSession called without serializedGameSession');
   }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
-  const currentSchema = BigInt(wasmConnection.cradle_serialization_schema());
-  if (save.cradleSchemaVersion === undefined || save.cradleSchemaVersion !== currentSchema) {
-    const savedSchema = save.cradleSchemaVersion === undefined
+  const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
+  if (save.gameSessionSchemaVersion === undefined || save.gameSessionSchemaVersion !== currentSchema) {
+    const savedSchema = save.gameSessionSchemaVersion === undefined
       ? 'missing'
-      : save.cradleSchemaVersion.toString();
+      : save.gameSessionSchemaVersion.toString();
     await clearSession();
     markSavedSession();
     throw new Error(
@@ -127,9 +127,9 @@ export async function restoreSession(
     );
   }
 
-  const cradleBytes = save.serializedCradle instanceof Uint8Array
-    ? save.serializedCradle
-    : (() => { throw new Error('restoreSession serializedCradle must be a Uint8Array'); })();
+  const cradleBytes = save.serializedGameSession instanceof Uint8Array
+    ? save.serializedGameSession
+    : (() => { throw new Error('restoreSession serializedGameSession must be a Uint8Array'); })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
   sc.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
@@ -159,7 +159,7 @@ export async function restoreSession(
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
   sc.markRestored();
-  sc.setGameCradle(cradle);
+  sc.setGameSession(cradle);
 
   log('[restore] session restored');
 }
@@ -227,7 +227,7 @@ export function getOrCreateSessionController(
 
   // Only cradle restores go through restoreSession. pairingToken-only saves are
   // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
-  if (sessionSave?.serializedCradle) {
+  if (sessionSave?.serializedGameSession) {
     const restoringObject = sessionController;
     const doRestore = async () => {
       try {

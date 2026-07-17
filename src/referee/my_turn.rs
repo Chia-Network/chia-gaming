@@ -3,11 +3,11 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{
+use crate::channel_state::game_handler::{
     GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
 };
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{Evidence, ReadableMove, ValidationInfo};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{

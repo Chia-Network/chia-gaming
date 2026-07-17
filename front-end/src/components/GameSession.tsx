@@ -23,9 +23,9 @@ import {
   selectHideGameInterfaceForBetweenHandDialog,
   type SessionModel,
 } from '../lib/session/model';
-import type { ChannelState } from '../types/ChiaGaming';
+import type { ChannelStatus } from '../types/ChiaGaming';
 
-const PRE_ACTIVE_STATES: ReadonlySet<ChannelState> = new Set([
+const PRE_ACTIVE_STATES: ReadonlySet<ChannelStatus> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
   'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
@@ -264,7 +264,7 @@ function useViewportClampedDragWithInsets(
 }
 
 
-function ChannelStateContent({ info }: { info: ChannelStatusInfo }) {
+function ChannelStatusContent({ info }: { info: ChannelStatusInfo }) {
   return (
     <>
       {info.advisory && (
@@ -346,7 +346,7 @@ function NotificationOverlay({
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
-            <ChannelStateContent info={notification.payload as ChannelStatusInfo} />
+            <ChannelStatusContent info={notification.payload as ChannelStatusInfo} />
           )}
           {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
             <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />

@@ -3,17 +3,17 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{
+    ChannelEnv, ChannelPrivateKeys, PotatoSignatures, ReadableMove,
 };
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
     PuzzleHash, SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{Effect, ResyncInfo};
-use crate::potato_handler::handshake::{HandshakeB, HandshakeC, HandshakeD};
-use crate::potato_handler::start::GameStart;
+use crate::session_phases::effects::{Effect, ResyncInfo};
+use crate::session_phases::handshake::{HandshakeB, HandshakeC, HandshakeD};
+use crate::session_phases::start::GameStart;
 use crate::referee::types::GameMoveDetails;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -68,17 +68,17 @@ pub trait BootstrapTowardWallet {
 pub trait SpendWalletReceiver {
     fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error>;
     fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>;
     fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
@@ -112,7 +112,7 @@ pub trait WalletSpendInterface {
 pub trait ToLocalUI {
     fn notification(
         &mut self,
-        notification: &crate::potato_handler::effects::GameNotification,
+        notification: &crate::session_phases::effects::GameNotification,
     ) -> Result<(), Error>;
 
     fn log(&mut self, _line: &str) -> Result<(), Error> {
@@ -123,31 +123,31 @@ pub trait ToLocalUI {
 pub trait FromLocalUI {
     fn propose_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
     fn propose_games(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         games: &[GameStart],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
     fn accept_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
     fn cancel_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
     fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
@@ -155,11 +155,11 @@ pub trait FromLocalUI {
 
     fn accept_settlement(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn shut_down(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error>;
+    fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -267,9 +267,9 @@ pub struct GameFactory {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct PotatoHandlerInit {
+pub struct OffChainPhaseInit {
     pub have_potato: bool,
-    pub private_keys: ChannelHandlerPrivateKeys,
+    pub private_keys: ChannelPrivateKeys,
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,

@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{ReadableMove, ValidationInfo};
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, PublicKey,

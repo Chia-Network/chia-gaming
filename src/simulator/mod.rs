@@ -44,13 +44,13 @@ use crate::common::types::divmod::test_funs as divmod_tests;
 #[cfg(test)]
 use crate::test_support::debug_game::test_funs as debug_game_tests;
 #[cfg(test)]
-use crate::test_support::peer::potato_handler::test_funs as potato_handler_tests;
+use crate::test_support::peer::session_phases::test_funs as potato_handler_tests;
 #[cfg(test)]
 use crate::tests::calpoker_handlers::test_funs as calpoker_handler_tests;
 #[cfg(test)]
 use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 #[cfg(test)]
-use crate::tests::channel_handler::test_funs as channel_handler_tests;
+use crate::tests::channel_state::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
 #[cfg(test)]

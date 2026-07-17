@@ -1,14 +1,14 @@
 use std::rc::Rc;
 
-use crate::channel_handler::{
-    ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
+use crate::channel_state::{
+    ChannelState, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys,
 };
 
 use crate::common::types::{Aggsig, Amount, CoinID, Error, PublicKey, Puzzle, PuzzleHash, Timeout};
 
 pub struct ChannelHandlerParty {
-    pub ch: ChannelHandler,
-    pub init_data: ChannelHandlerInitiationResult,
+    pub ch: ChannelState,
+    pub init_data: ChannelInitiationResult,
     pub referee: Rc<Puzzle>,
     pub ref_puzzle_hash: PuzzleHash,
     pub contribution: Amount,
@@ -16,8 +16,8 @@ pub struct ChannelHandlerParty {
 
 impl ChannelHandlerParty {
     pub fn new(
-        env: &mut ChannelHandlerEnv<'_>,
-        private_keys: ChannelHandlerPrivateKeys,
+        env: &mut ChannelEnv<'_>,
+        private_keys: ChannelPrivateKeys,
         referee: Rc<Puzzle>,
         ref_puzzle_hash: PuzzleHash,
         launcher_coin_id: CoinID,
@@ -32,7 +32,7 @@ impl ChannelHandlerParty {
         unroll_advance_timeout: Timeout,
         reward_puzzle_hash: PuzzleHash,
     ) -> Result<ChannelHandlerParty, Error> {
-        let (ch, init_data) = ChannelHandler::new(
+        let (ch, init_data) = ChannelState::new(
             env,
             private_keys,
             launcher_coin_id,

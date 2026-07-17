@@ -1,5 +1,5 @@
 import type {
-  ChannelState,
+  ChannelStatus,
   GameConnectionState,
   PeerLiveness,
   SessionPhase,
@@ -53,7 +53,7 @@ export type NotificationKind =
   | 'insufficient-bal';
 
 export interface ChannelStatusModel {
-  state: ChannelState;
+  state: ChannelStatus;
   advisory: string | null;
   coinHex: string | null;
   coinAmount: string | null;
@@ -127,7 +127,7 @@ export interface ChannelModel {
   connection: GameConnectionState;
   goOnChainPressed: boolean;
   cleanShutdownStarted: boolean;
-  dismissedChannelState: ChannelState | null;
+  dismissedChannelStatus: ChannelStatus | null;
   queue: QueuedNotificationModel[];
 }
 
@@ -289,14 +289,14 @@ export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
   gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
 };
 
-const RESOLVED_STATES = new Set<ChannelState>([
+const RESOLVED_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
   'Failed',
 ]);
 
-const WINDING_DOWN_STATES = new Set<ChannelState>([
+const WINDING_DOWN_STATES = new Set<ChannelStatus>([
   'ShutdownTransactionPending',
   'GoingOnChain',
   'Unrolling',
@@ -306,7 +306,7 @@ const WINDING_DOWN_STATES = new Set<ChannelState>([
   'Failed',
 ]);
 
-const ON_CHAIN_HAND_STATES = new Set<ChannelState>([
+const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
@@ -314,7 +314,7 @@ const ON_CHAIN_HAND_STATES = new Set<ChannelState>([
   'ResolvedStale',
 ]);
 
-const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
+const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
   WaitingForHeightToAccept: 'Waiting For Height To Accept',
@@ -368,7 +368,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       connection: { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: false,
       cleanShutdownStarted: false,
-      dismissedChannelState: null,
+      dismissedChannelStatus: null,
       queue: [],
       ...channel,
     },
@@ -460,7 +460,7 @@ export function updateSessionModel(model: SessionModel, event: SessionEvent): Se
   }
 }
 
-export function isWindingDownChannelState(state: ChannelState): boolean {
+export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
   return WINDING_DOWN_STATES.has(state);
 }
 
@@ -474,7 +474,7 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
   }
   if (RESOLVED_STATES.has(model.channel.status.state)) return 'resolved';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
-  if (model.channel.goOnChainPressed || isWindingDownChannelState(model.channel.status.state)) {
+  if (model.channel.goOnChainPressed || isWindingDownChannelStatus(model.channel.status.state)) {
     return 'on-chain';
   }
   return 'off-chain';
@@ -667,7 +667,7 @@ function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifec
   });
 }
 
-export const ABANDON_WAITING_STATES = new Set<ChannelState>([
+export const ABANDON_WAITING_STATES = new Set<ChannelStatus>([
   'OfferSent', 'TransactionPending', 'ShutdownTransactionPending',
   'GoingOnChain', 'Unrolling',
 ]);
@@ -739,7 +739,7 @@ export function selectGameDashboardView(
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false, options.abandonEnabled ?? false);
 
   return {
-    channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],
+    channelStatusLabel: CHANNEL_STATUS_LABELS[channel.state],
     channelDetail: channelStatusDetail(model),
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
@@ -1024,8 +1024,8 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
 
   return createSessionModel({
     restore: {
-      restoring: !!save.serializedCradle,
-      status: save.serializedCradle ? 'restoring' : 'idle',
+      restoring: !!save.serializedGameSession,
+      status: save.serializedGameSession ? 'restoring' : 'idle',
       error: null,
       trackerReconciled: false,
     },
@@ -1049,7 +1049,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: save.goOnChainPressed ?? false,
       cleanShutdownStarted: save.cleanShutdownStarted ?? false,
-      dismissedChannelState: (save.dismissedChannelState as ChannelState | undefined) ?? null,
+      dismissedChannelStatus: (save.dismissedChannelStatus as ChannelStatus | undefined) ?? null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
     },
     game: {
@@ -1168,7 +1168,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     gameNotifQueue: model.game.queue.length > 0
       ? model.game.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
       : undefined,
-    dismissedChannelState: model.channel.dismissedChannelState ?? undefined,
+    dismissedChannelStatus: model.channel.dismissedChannelStatus ?? undefined,
     goOnChainPressed: model.channel.goOnChainPressed || undefined,
     cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
     betweenHandMode: model.betweenHand.mode,

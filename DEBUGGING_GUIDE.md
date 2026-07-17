@@ -153,7 +153,7 @@ their input data is the bug.
 ## Simulation Test Infrastructure
 
 Simulation tests exercise the full off-chain/on-chain game lifecycle by running
-two `SynchronousGameCradle` instances against a local `Simulator` blockchain.
+two `GameSession` instances against a local `Simulator` blockchain.
 For the complete `GameAction` catalog, explicit `GameID` rules, `ProposeTrigger`
 semantics, and test-writing reference, see `SIMULATOR_TESTING.md`.
 

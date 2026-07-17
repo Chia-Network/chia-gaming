@@ -302,7 +302,7 @@ The app is available for a new session when the broader session phase is `none`
 or `resolved` and there is no consent prompt, reserved peer id, buffered
 handshake, or live message handler. A consent prompt is a temporary unavailable
 state: while it is open, the app sends `set_busy: true` and declines any other
-incoming advisory/proposal. Raw `ChannelState` is more detailed than this
+incoming advisory/proposal. Raw `ChannelStatus` is more detailed than this
 (`Handshaking`, funding/offer states, `Active`, shutdown states, on-chain
 transition states, resolved channel states, `Failed`, etc.) and must not be
 treated as the lobby availability state directly. The broader session phase

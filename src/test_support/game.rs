@@ -6,7 +6,7 @@ lazy_static! {
 }
 
 #[cfg(test)]
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::types::ReadableMove;
 
 // In unit tests (without the `sim-tests` feature), we only need `Timeout` and `Move`.
 #[cfg(all(test, not(feature = "sim-tests")))]
@@ -32,11 +32,11 @@ impl std::fmt::Debug for GameAction {
 mod sim_tests {
     use super::*;
 
-    use crate::channel_handler::game::Game;
-    use crate::channel_handler::game_start_info::GameStartInfo;
-    use crate::channel_handler::runner::ChannelHandlerParty;
-    use crate::channel_handler::types::{
-        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, HandshakeResult,
+    use crate::channel_state::game::Game;
+    use crate::channel_state::game_start_info::GameStartInfo;
+    use crate::channel_state::runner::ChannelHandlerParty;
+    use crate::channel_state::types::{
+        ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, HandshakeResult,
     };
     use crate::common::standard_coin::{
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key,
@@ -60,16 +60,16 @@ mod sim_tests {
     impl ChannelHandlerGame {
         pub fn new<R: Rng>(
             rng: &mut R,
-            env: &mut ChannelHandlerEnv<'_>,
+            env: &mut ChannelEnv<'_>,
             game_id: GameID,
             launcher_coin_id: &CoinID,
             contributions: &[Amount; 2],
             unroll_advance_timeout: Timeout,
         ) -> Result<ChannelHandlerGame, Error> {
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
+            let private_keys: [ChannelPrivateKeys; 2] = rng.random();
 
             let make_ref_info =
-                |env: &mut ChannelHandlerEnv<'_>,
+                |env: &mut ChannelEnv<'_>,
                  id: usize|
                  -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
                     let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
@@ -86,7 +86,7 @@ mod sim_tests {
             let ref2 = make_ref_info(env, 1)?;
             let referees = [ref1, ref2];
 
-            let make_party = |env: &mut ChannelHandlerEnv<'_>,
+            let make_party = |env: &mut ChannelEnv<'_>,
                               id: usize|
              -> Result<ChannelHandlerParty, Error> {
                 ChannelHandlerParty::new(
@@ -124,7 +124,7 @@ mod sim_tests {
 
         pub fn finish_handshake(
             &mut self,
-            env: &mut ChannelHandlerEnv<'_>,
+            env: &mut ChannelEnv<'_>,
             who: usize,
         ) -> Result<(), Error> {
             let channel_coin_0_aggsig = self.players[who ^ 1]
@@ -347,7 +347,7 @@ mod sim_tests {
     pub fn new_channel_handler_game<R: Rng>(
         simulator: &Simulator,
         rng: &mut R,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         alice_game: &Game,
         bob_game: &Game,

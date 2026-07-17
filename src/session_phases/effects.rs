@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 
-use crate::channel_handler::types::PotatoSignatures;
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::types::PotatoSignatures;
+use crate::channel_state::types::ReadableMove;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, ProgramRef, PuzzleHash,
     SpendBundle, Timeout,
 };
-use crate::potato_handler::handshake::{CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD};
-use crate::potato_handler::types::{BatchAction, PeerMessage};
+use crate::session_phases::handshake::{CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD};
+use crate::session_phases::types::{BatchAction, PeerMessage};
 
 pub fn format_coin(coin: &CoinString) -> String {
     match coin.to_parts() {
@@ -24,7 +24,7 @@ pub struct ResyncInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ChannelState {
+pub enum ChannelStatus {
     Handshaking,
     WaitingForHeightToOffer,
     WaitingForHeightToAccept,
@@ -45,7 +45,7 @@ pub enum ChannelState {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
-    pub state: ChannelState,
+    pub state: ChannelStatus,
     pub advisory: Option<String>,
     pub coin: Option<CoinString>,
     pub our_balance: Option<Amount>,
@@ -184,7 +184,7 @@ pub enum GameNotification {
         message: String,
     },
     ChannelStatus {
-        state: ChannelState,
+        state: ChannelStatus,
         advisory: Option<String>,
         coin: Option<CoinString>,
         our_balance: Option<Amount>,
@@ -248,7 +248,7 @@ impl GameNotification {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub enum CradleEvent {
+pub enum GameSessionEvent {
     OutboundMessage(Vec<u8>),
     /// A spend bundle to submit, with the optional absolute height at/after
     /// which it can no longer be included (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
@@ -270,8 +270,8 @@ pub enum CradleEvent {
     },
 }
 
-/// Collect CradleEvents in insertion order.
-pub type CradleEventQueue = VecDeque<CradleEvent>;
+/// Collect GameSessionEvents in insertion order.
+pub type GameSessionEventQueue = VecDeque<GameSessionEvent>;
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -330,10 +330,10 @@ pub enum Effect {
 pub fn apply_effects(
     effects: Vec<Effect>,
     _allocator: &mut crate::common::types::AllocEncoder,
-    system: &mut (impl crate::potato_handler::types::ToLocalUI
-              + crate::potato_handler::types::PacketSender
-              + crate::potato_handler::types::WalletSpendInterface
-              + crate::potato_handler::types::BootstrapTowardWallet),
+    system: &mut (impl crate::session_phases::types::ToLocalUI
+              + crate::session_phases::types::PacketSender
+              + crate::session_phases::types::WalletSpendInterface
+              + crate::session_phases::types::BootstrapTowardWallet),
 ) -> Result<(), crate::common::types::Error> {
     for effect in effects.into_iter() {
         match effect {

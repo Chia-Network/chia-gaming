@@ -1,5 +1,5 @@
 mod channel_coin;
-mod channel_handler;
+mod channel_state;
 mod coin_spent;
 mod evidence;
 mod live_game;
@@ -15,9 +15,9 @@ mod timeout_claim_state;
 mod unroll_coin;
 mod validation_info;
 pub use channel_coin::{ChannelCoinSpendInfo, ChannelCoinSpentResult};
-pub use channel_handler::{
-    ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
-    ChannelHandlerUnrollSpendInfo, HistoricalUnrollSpendInfo,
+pub use channel_state::{
+    ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys,
+    ChannelUnrollSpendInfo, HistoricalUnrollSpendInfo,
 };
 pub use coin_spent::{
     CoinSpentAcceptSettlement, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp,
@@ -28,7 +28,7 @@ pub use live_game::LiveGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;
 pub use potato::{
-    CachedPotatoRegenerateLastHop, ChannelHandlerMoveResult, CachedAcceptSettlement,
+    CachedPotatoRegenerateLastHop, ChannelMoveResult, CachedAcceptSettlement,
     PotatoMoveCachedData, PotatoSignatures,
 };
 pub use timeout_claim_state::TimeoutClaimState;

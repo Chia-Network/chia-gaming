@@ -26,13 +26,13 @@ solution constraints, trust categories), see `CLVM_DOS.md`.
 ## Going On-Chain: Dispute Resolution
 
 When something goes wrong (opponent offline, invalid move detected, explicit
-`GoOnChain` action), the off-chain `PotatoHandler` — which manages the potato
+`GoOnChain` action), the off-chain `OffChainPhase` — which manages the potato
 protocol, peer messages, and batch exchanges — is effectively done. A
-fundamentally different component, `OnChainGameHandler`, takes over. It is
+fundamentally different component, `OnChainPhase`, takes over. It is
 driven entirely by blockchain coin-watching events (coin created, coin spent,
-timeout reached) rather than peer messages. The `PotatoHandler` creates an
-`SpendChannelCoinHandler` replacement, which in turn creates the
-`OnChainGameHandler`. At that point all game actions (moves, `AcceptSettlement`) are routed to the
+timeout reached) rather than peer messages. The `OffChainPhase` creates an
+`SpendChannelCoinPhase` replacement, which in turn creates the
+`OnChainPhase`. At that point all game actions (moves, `AcceptSettlement`) are routed to the
 on-chain handler. It maintains its own `game_map` tracking each game coin's
 state. There is no potato, no batching, no turn-taking — just monitoring the
 blockchain and submitting transactions in response to what it sees.
@@ -74,7 +74,7 @@ emitted.
 
 ### Step 3: Forward-Align State
 
-`ChannelHandler::set_state_for_coins` matches each created game coin's puzzle
+`ChannelState::set_state_for_coins` matches each created game coin's puzzle
 hash against known states. It searches both `live_games` and
 `pending_settlements` (see [AcceptSettlement Lifecycle](GAME_LIFECYCLE.md#acceptsettlement-lifecycle)). All
 state tracking is **forward-only** — there is no rewind logic. Two cases:
@@ -99,11 +99,11 @@ the actual coin the chain created.
 ### Step 4: Redo (if needed)
 
 If the game coin landed at the pre-move state, the redo transaction is emitted
-immediately during `finish_on_chain_transition` — before the `OnChainGameHandler`
+immediately during `finish_on_chain_transition` — before the `OnChainPhase`
 is created. For each game with a cached move, the code temporarily restores the
 referee to the post-move state, generates the spend transaction, and inserts a
 `PendingMoveSavedState` entry into the handler's `pending_moves` map. The
-`OnChainGameHandler` never distinguishes between redo transactions and fresh
+`OnChainPhase` never distinguishes between redo transactions and fresh
 moves; it just tracks pending spends per game coin and reconciles them when
 on-chain confirmation arrives.
 
@@ -164,13 +164,13 @@ emitted and the channel can be closed.
 
 **Key code:**
 
-- `src/potato_handler/mod.rs` — `go_on_chain`
-- `src/potato_handler/spend_channel_coin_handler.rs` — `handle_channel_coin_spent`,
+- `src/session_phases/mod.rs` — `go_on_chain`
+- `src/session_phases/spend_channel_coin_phase.rs` — `handle_channel_coin_spent`,
 `finish_on_chain_transition`
-- `src/potato_handler/on_chain.rs` — `OnChainGameHandler`,
+- `src/session_phases/on_chain.rs` — `OnChainPhase`,
 `build_timeout_claim`, `register_initial_game_coins`, `handle_game_coin_spent`
 - `src/transaction_manager.rs` — `TransactionManager` (eager claim submission)
-- `src/channel_handler/mod.rs` — `set_state_for_coins`, `game_coin_spent`
+- `src/channel_state/mod.rs` — `set_state_for_coins`, `game_coin_spent`
 
 ---
 
@@ -198,18 +198,18 @@ immediately goes on-chain instead of cooperating.
    to reward conditions (each player's balance goes directly to their reward
    puzzle hash, with no game coins). The `clean_shutdown` field is separate
    from the `actions` list, so it is structurally processed after all actions
-   on the receive side. The initiator remains in `PotatoHandler` after sending
-   this batch — it does **not** transition to `SpendChannelCoinHandler` yet.
-   While waiting for the response, `PotatoHandler` rejects any peer message
+   on the receive side. The initiator remains in `OffChainPhase` after sending
+   this batch — it does **not** transition to `SpendChannelCoinPhase` yet.
+   While waiting for the response, `OffChainPhase` rejects any peer message
    other than `CleanShutdownComplete` as a protocol violation (triggering
    go-on-chain).
 2. The responder receives the batch, processes any actions, then combines the
   initiator's half-signature with their own to produce a complete `CoinSpend`.
    They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
    standalone message outside the normal potato flow. The responder transitions
-   to `SpendChannelCoinHandler` immediately (it already has the complete spend).
+   to `SpendChannelCoinPhase` immediately (it already has the complete spend).
 3. The initiator receives `CleanShutdownComplete`, submits the transaction,
-   and transitions to `SpendChannelCoinHandler`. Either side can submit the
+   and transitions to `SpendChannelCoinPhase`. Either side can submit the
    completed spend on-chain; duplicate submissions are harmless.
 
 ### Assumes Single-Handing
@@ -218,7 +218,7 @@ The current implementation assumes **single-handing** (at most one outstanding
 proposal at a time). Under this assumption, when the user requests a clean
 shutdown, there is never a pending proposal that could interfere — the shutdown
 batch is the only thing queued. This allows the front-end to immediately report
-`ShuttingDown` status, and allows `PotatoHandler` to reject any unexpected
+`ShuttingDown` status, and allows `OffChainPhase` to reject any unexpected
 peer messages while waiting for `CleanShutdownComplete`.
 
 In a future **multi-handing** model, the initiator might have outstanding
@@ -228,7 +228,7 @@ sent. This means:
 
 - The `ShuttingDown` status could not be emitted immediately — the system
   would still be processing proposals.
-- The message-rejection guard in `PotatoHandler` (which currently rejects
+- The message-rejection guard in `OffChainPhase` (which currently rejects
   everything except `CleanShutdownComplete`) would need to also accept
   proposal-resolution messages during the wind-down phase.
 - The precondition check (`has_active_games()`) would need to account for
@@ -247,7 +247,7 @@ initiate an unroll (via `go_on_chain`) around the same time. Both spend the
 channel coin, so only one can land on-chain.
 
 Because of this, the system never blindly trusts that the clean shutdown
-landed. When `SpendChannelCoinHandler` is created for the clean shutdown
+landed. When `SpendChannelCoinPhase` is created for the clean shutdown
 path, it stores the exact on-chain solution (`ProgramRef`) that was
 co-signed for the shutdown.  When the channel coin spend is detected, the
 handler compares the on-chain solution directly against the stored one:
@@ -260,7 +260,7 @@ handler compares the on-chain solution directly against the stored one:
    hashes against the `unroll_puzzle_hash_map` to identify which unroll
    state landed.  Since no games are active, the unroll creates only reward
    coins; `finish_on_chain_transition` finds an empty game map and
-   transitions to `OnChainGameHandler`. The outcome is the same correct
+   transitions to `OnChainPhase`. The outcome is the same correct
    balances, just with more on-chain transactions.
 
 ### Griefing Bound
@@ -292,11 +292,11 @@ cannot redirect the victim's share to a different address.
 
 ### Key Code
 
-- `src/potato_handler/mod.rs` — `pending_clean_shutdown` field,
+- `src/session_phases/mod.rs` — `pending_clean_shutdown` field,
   `drain_queue_into_batch` (stores shutdown metadata),
   `process_incoming_message` (receives `CleanShutdownComplete` and creates
-  `SpendChannelCoinHandler`)
-- `src/potato_handler/spend_channel_coin_handler.rs` —
+  `SpendChannelCoinPhase`)
+- `src/session_phases/spend_channel_coin_phase.rs` —
   `handle_channel_coin_spent`, `handle_unroll_from_channel_conditions`
 
 ---
@@ -329,7 +329,7 @@ Regardless of which path resolved the unroll coin, the result is the same: game
 coins and reward coins are created. The game code then uses
 `set_state_for_coins` to determine if a redo is needed (see Step 3 above).
 
-**Key code:** `src/channel_handler/mod.rs` — `channel_coin_spent`,
+**Key code:** `src/channel_state/mod.rs` — `channel_coin_spent`,
 `make_preemption_unroll_spend`
 
 ## Stale Unroll Handling
@@ -343,7 +343,7 @@ and the opponent's stale unroll succeeds via timeout, the system enters
 Staleness is determined by comparing the `on_chain_state` (the sequence
 number retrieved from the compact `unroll_puzzle_hash_map` record when the
 on-chain `CREATE_COIN` puzzle hash is matched) against the latest received
-unroll's state number from `ChannelHandler`.
+unroll's state number from `ChannelState`.
 
 The map retains every historical unroll puzzle hash because old does not mean
 unspendable: the opponent may still broadcast any earlier unroll carrying the
@@ -431,8 +431,8 @@ intentional for several reasons:
 | `EndedCancelled { id }`                          | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
 
-**Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
-`finish_on_chain_transition`, `src/channel_handler/mod.rs` —
+**Key code:** `src/session_phases/spend_channel_coin_phase.rs` —
+`finish_on_chain_transition`, `src/channel_state/mod.rs` —
 `set_state_for_coins`
 
 ---
@@ -549,16 +549,16 @@ The `AcceptSettlement` handler covers three cases:
 ### Already handled (no new code)
 
 Off-chain `AcceptSettlement` with zero reward is already handled by
-`drain_cached_accept_settlements` in `src/channel_handler/mod.rs`, which emits
+`drain_cached_accept_settlements` in `src/channel_state/mod.rs`, which emits
 `GameSettled { outcome: accept_settlement, our_share }` with whatever share
 amount applies, including zero.
 
-**Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
+**Key code:** `src/session_phases/spend_channel_coin_phase.rs` —
 `finish_on_chain_transition` (unroll scan),
-`src/potato_handler/on_chain.rs` — `should_auto_settle`, `do_on_chain_move`
+`src/session_phases/on_chain.rs` — `should_auto_settle`, `do_on_chain_move`
 (scenario 4), `do_on_chain_action` (scenario 5),
 `build_timeout_claim`, `register_initial_game_coins`,
-`src/channel_handler/mod.rs` — `is_redo_zero_reward`,
+`src/channel_state/mod.rs` — `is_redo_zero_reward`,
 `get_game_our_current_share`, `get_game_amount`
 
 ---
@@ -629,7 +629,7 @@ collide with the opponent's. Because the nonce is curried into the referee
 puzzle, distinct nonces guarantee distinct puzzle hashes even for otherwise
 identical game parameters.
 
-When receiving a proposal, the `ChannelHandler` validates that the incoming
+When receiving a proposal, the `ChannelState` validates that the incoming
 nonce has the correct parity for the sender's role and is monotonically
 increasing (nonces may be skipped if the sender proposed and cancelled
 a game before the potato arrived). Both players use the same `GameID` to
@@ -843,7 +843,7 @@ infohash and prove that the optimistic move commitment was invalid.
 
 ## On-Chain Game State Tracking (our_turn)
 
-The `OnChainGameHandler` maintains a `game_map: HashMap<CoinString, OnChainGameState>` that tracks each game coin's state, including an `our_turn`
+The `OnChainPhase` maintains a `game_map: HashMap<CoinString, OnChainGameState>` that tracks each game coin's state, including an `our_turn`
 flag.
 
 ### How our_turn is Set

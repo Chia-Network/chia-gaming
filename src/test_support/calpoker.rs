@@ -2,10 +2,10 @@ use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::types::ReadableMove;
 use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
-use crate::peer_container::SynchronousGameCradle;
+use crate::game_session::GameSession;
 use crate::test_support::game::GameAction;
 use crate::transaction_manager::TransactionManager;
 
@@ -96,9 +96,9 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<G
 #[allow(clippy::type_complexity)]
 pub fn calpoker_ran_all_the_moves_predicate(
     want_move_number: usize,
-) -> Box<dyn Fn(usize, &[TransactionManager<SynchronousGameCradle>]) -> bool> {
+) -> Box<dyn Fn(usize, &[TransactionManager<GameSession>]) -> bool> {
     Box::new(
-        move |move_number: usize, _: &[TransactionManager<SynchronousGameCradle>]| {
+        move |move_number: usize, _: &[TransactionManager<GameSession>]| {
             move_number >= want_move_number
         },
     )
@@ -113,7 +113,7 @@ mod sim_tests {
     use crate::common::types::Error;
     use crate::common::types::Hash;
     use crate::common::types::{atom_from_clvm, i64_from_atom};
-    use crate::potato_handler::effects::ChannelState;
+    use crate::session_phases::effects::ChannelStatus;
     use crate::simulator::tests::potato_handler_sim::{
         assert_event_sequence, game_accepted, game_proposed, parse_card_lists_from_readable,
         run_calpoker_container_with_action_list,
@@ -479,17 +479,17 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShuttingDown,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ShuttingDown,
                     )),
                     ExpectedEvent::Notification(
                         ExpectedNotification::GameSettledOpponentSide,
                     ),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShutdownTransactionPending,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ShutdownTransactionPending,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedClean,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedClean,
                     )),
                 ],
                 "endgame p0",
@@ -510,11 +510,11 @@ mod sim_tests {
                         mover_share: Amount::new(200),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShutdownTransactionPending,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ShutdownTransactionPending,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedClean,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedClean,
                     )),
                 ],
                 "endgame p1",
@@ -591,15 +591,15 @@ mod sim_tests {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(
                         ExpectedNotification::GameSettledOpponentSide,
@@ -615,15 +615,15 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -651,15 +651,15 @@ mod sim_tests {
                     &outcome.local_uis[0].events,
                     &[
                         game_accepted(),
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                            ChannelState::GoingOnChain,
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                            ChannelStatus::GoingOnChain,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                            ChannelState::Unrolling,
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                            ChannelStatus::Unrolling,
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                            ChannelState::ResolvedUnrolled,
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                            ChannelStatus::ResolvedUnrolled,
                         )),
                         ExpectedEvent::Notification(
                             ExpectedNotification::GameSettledOpponentSide,
@@ -675,15 +675,15 @@ mod sim_tests {
                         ExpectedEvent::OpponentMoved {
                             mover_share: Amount::new(0),
                         },
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                            ChannelState::GoingOnChain,
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                            ChannelStatus::GoingOnChain,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                            ChannelState::Unrolling,
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                            ChannelStatus::Unrolling,
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                            ChannelState::ResolvedUnrolled,
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                            ChannelStatus::ResolvedUnrolled,
                         )),
                         ExpectedEvent::Notification(
                             ExpectedNotification::GameSettledOurSide,
@@ -710,15 +710,15 @@ mod sim_tests {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(
                         ExpectedNotification::GameSettledOpponentSide,
@@ -734,15 +734,15 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -766,15 +766,15 @@ mod sim_tests {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
@@ -792,15 +792,15 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -831,15 +831,15 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -853,15 +853,15 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::GoingOnChain,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::GoingOnChain,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::Unrolling,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedUnrolled,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedUnrolled,
                     )),
                     ExpectedEvent::Notification(
                         ExpectedNotification::GameSettledOpponentSide,
@@ -894,17 +894,17 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShuttingDown,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ShuttingDown,
                     )),
                     ExpectedEvent::Notification(
                         ExpectedNotification::GameSettledOpponentSide,
                     ),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShutdownTransactionPending,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ShutdownTransactionPending,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedClean,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedClean,
                     )),
                 ],
                 "end_game_reward p0",
@@ -925,11 +925,11 @@ mod sim_tests {
                         mover_share: Amount::new(200),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShutdownTransactionPending,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ShutdownTransactionPending,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ResolvedClean,
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
+                        ChannelStatus::ResolvedClean,
                     )),
                 ],
                 "end_game_reward p1",

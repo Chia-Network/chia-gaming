@@ -78,8 +78,8 @@ function clearTestGlobal(key: string) {
 }
 
 const sampleSession: Partial<SessionState> = {
-  serializedCradle: new Uint8Array([0, 1, 2, 255]),
-  cradleSchemaVersion: 1n,
+  serializedGameSession: new Uint8Array([0, 1, 2, 255]),
+  gameSessionSchemaVersion: 1n,
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
@@ -144,7 +144,7 @@ describe('session persistence', () => {
     );
 
     expect(stored.count).toBe(1);
-    expect(stored.record.serializedCradle).toBeInstanceOf(Uint8Array);
+    expect(stored.record.serializedGameSession).toBeInstanceOf(Uint8Array);
     expect(stored.record.rawBuffer).toBeInstanceOf(ArrayBuffer);
     expect(new Uint8Array(stored.record.rawBuffer)).toEqual(new Uint8Array([9, 8, 7]));
     expect(typeof stored.record.messageNumber).toBe('bigint');
@@ -152,7 +152,7 @@ describe('session persistence', () => {
     _resetForTests();
     const loaded = await peekSession() as (SessionState & { rawBuffer: ArrayBuffer }) | null;
     expect(loaded).toMatchObject(sampleSession);
-    expect(loaded?.serializedCradle).toBeInstanceOf(Uint8Array);
+    expect(loaded?.serializedGameSession).toBeInstanceOf(Uint8Array);
     expect(loaded?.rawBuffer).toBeInstanceOf(ArrayBuffer);
     expect(loaded?.unackedMessages?.[0].msg).toBeInstanceOf(Uint8Array);
     expect(typeof loaded?.messageNumber).toBe('bigint');
@@ -237,14 +237,14 @@ describe('session persistence', () => {
     // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
     _resetForTests();
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(loadAppState().serializedCradle).toBeUndefined();
+    expect(loadAppState().serializedGameSession).toBeUndefined();
 
     saveSession({ diagnosticLog: ['boot log'] });
     await flushSessionState();
 
     _resetForTests();
     const loaded = await peekSession();
-    expect(loaded?.serializedCradle).toEqual(sampleSession.serializedCradle);
+    expect(loaded?.serializedGameSession).toEqual(sampleSession.serializedGameSession);
     expect(loaded?.pairingToken).toBe(sampleSession.pairingToken);
     expect(loaded?.diagnosticLog).toEqual(['boot log']);
   });
@@ -254,23 +254,23 @@ describe('session persistence', () => {
     const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
     markSavedSession();
     saveSession({
-      serializedCradle: first,
-      cradleSchemaVersion: 1n,
+      serializedGameSession: first,
+      gameSessionSchemaVersion: 1n,
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
     await flushSessionState();
 
     saveSession({
-      serializedCradle: second,
-      cradleSchemaVersion: 1n,
+      serializedGameSession: second,
+      gameSessionSchemaVersion: 1n,
       pairingToken: 'tok-v2',
     });
     await flushSessionState();
 
     _resetForTests();
     const loaded = await peekSession();
-    expect(loaded?.serializedCradle).toEqual(second);
+    expect(loaded?.serializedGameSession).toEqual(second);
     expect(loaded?.pairingToken).toBe('tok-v2');
   });
 
@@ -290,7 +290,7 @@ describe('session persistence', () => {
       blockchainType: 'simulator',
       trackerUrl: 'http://localhost:3000',
       pairingToken: undefined,
-      serializedCradle: undefined,
+      serializedGameSession: undefined,
       channelStatus: {
         state: 'ResolvedClean',
         advisory: null,
@@ -340,7 +340,7 @@ describe('session persistence', () => {
       { length: localStorage.length },
       (_, i) => localStorage.getItem(localStorage.key(i)!),
     ).join('\n');
-    expect(localValues).not.toMatch(/serializedCradle|unackedMessages|\$bytes|000102ff|AAEC\/w==/);
+    expect(localValues).not.toMatch(/serializedGameSession|unackedMessages|\$bytes|000102ff|AAEC\/w==/);
   });
 
   it('persists only the configured recent history entries', async () => {
@@ -605,7 +605,7 @@ describe('flat state', () => {
     expect(remaining?.trackerUrl).toBe('http://localhost:3003');
     expect(remaining?.humanHistory).toEqual(['keep-me']);
     expect(remaining?.diagnosticLog).toEqual(['diag-keep']);
-    expect(remaining?.serializedCradle).toBeUndefined();
+    expect(remaining?.serializedGameSession).toBeUndefined();
     // Handshake checkpoint survives so a reload mid-hex-load can Resume.
     expect(remaining?.pairingToken).toBe('tok-123');
     expect(remaining?.sessionPeerId).toBe('peer-abc');
@@ -638,7 +638,7 @@ describe('flat state', () => {
 
     expect(shouldOfferResumeOrStartOver()).toBe(true);
     const loaded = await peekSession();
-    expect(loaded?.serializedCradle).toBeUndefined();
+    expect(loaded?.serializedGameSession).toBeUndefined();
     expect(loaded?.pairingToken).toBe('peer_x_1');
     expect(loaded?.myContribution).toBe('100');
     expect(loaded?.sessionPeerId).toBe('peer-x');
@@ -658,7 +658,7 @@ describe('flat state', () => {
   it('saveSession merges fields into the flat state', () => {
     saveSession(sampleSession);
     const state = loadAppState();
-    expect(state.serializedCradle).toBe(sampleSession.serializedCradle);
+    expect(state.serializedGameSession).toBe(sampleSession.serializedGameSession);
     expect(state.pairingToken).toBe(sampleSession.pairingToken);
   });
 
@@ -679,7 +679,7 @@ describe('flat state', () => {
     await writeSessionRecord({
       version: 5n,
       playerId: 'old-player',
-      serializedCradle: new Uint8Array([1]),
+      serializedGameSession: new Uint8Array([1]),
     });
     expect(await peekSession()).toBeNull();
     expect(localStorage.getItem('appState_savedSession')).toBe('1');

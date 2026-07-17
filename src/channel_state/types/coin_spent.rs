@@ -1,4 +1,4 @@
-use crate::channel_handler::types::OnChainGameCoin;
+use crate::channel_state::types::OnChainGameCoin;
 use crate::common::types::{Amount, CoinSpend, CoinString, GameID, PuzzleHash};
 use crate::referee::types::TheirTurnCoinSpentResult;
 

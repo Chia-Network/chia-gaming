@@ -1,4 +1,4 @@
-use crate::channel_handler::types::PotatoSignatures;
+use crate::channel_state::types::PotatoSignatures;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, PublicKey, PuzzleHash, SpendBundle,
 };

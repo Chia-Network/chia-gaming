@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::types::ReadableMove;
 use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program};
-use crate::peer_container::SynchronousGameCradle;
+use crate::game_session::GameSession;
 use crate::test_support::game::GameAction;
 use crate::transaction_manager::TransactionManager;
 
@@ -61,9 +61,9 @@ pub fn prefix_test_moves(_allocator: &mut AllocEncoder, game_id: GameID) -> Vec<
 #[allow(clippy::type_complexity)]
 pub fn spacepoker_ran_all_the_moves_predicate(
     want_move_number: usize,
-) -> Box<dyn Fn(usize, &[TransactionManager<SynchronousGameCradle>]) -> bool> {
+) -> Box<dyn Fn(usize, &[TransactionManager<GameSession>]) -> bool> {
     Box::new(
-        move |move_number: usize, _: &[TransactionManager<SynchronousGameCradle>]| {
+        move |move_number: usize, _: &[TransactionManager<GameSession>]| {
             move_number >= want_move_number
         },
     )

@@ -2,10 +2,10 @@ use std::rc::Rc;
 
 use clvm_traits::ClvmEncoder;
 
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::types::ReadableMove;
 use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program};
-use crate::peer_container::SynchronousGameCradle;
+use crate::game_session::GameSession;
 use crate::test_support::game::GameAction;
 use crate::transaction_manager::TransactionManager;
 
@@ -63,9 +63,9 @@ fn test_moves_for_picker(
 #[allow(clippy::type_complexity)]
 pub fn krunk_ran_all_the_moves_predicate(
     want_move_number: usize,
-) -> Box<dyn Fn(usize, &[TransactionManager<SynchronousGameCradle>]) -> bool> {
+) -> Box<dyn Fn(usize, &[TransactionManager<GameSession>]) -> bool> {
     Box::new(
-        move |move_number: usize, _: &[TransactionManager<SynchronousGameCradle>]| {
+        move |move_number: usize, _: &[TransactionManager<GameSession>]| {
             move_number >= want_move_number
         },
     )
@@ -75,7 +75,7 @@ pub fn krunk_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
-    use crate::potato_handler::effects::{ChannelState, GameNotification, GameStatusKind};
+    use crate::session_phases::effects::{ChannelStatus, GameNotification, GameStatusKind};
     use crate::simulator::tests::potato_handler_sim::{
         run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
@@ -203,8 +203,8 @@ mod sim_tests {
                 notification,
                 GameNotification::GameSettled { .. }
                     | GameNotification::GameStatus {
-                        status: crate::potato_handler::effects::GameStatusKind::EndedCancelled
-                            | crate::potato_handler::effects::GameStatusKind::EndedError,
+                        status: crate::session_phases::effects::GameStatusKind::EndedCancelled
+                            | crate::session_phases::effects::GameStatusKind::EndedError,
                         ..
                     }
             )));
@@ -248,7 +248,7 @@ mod sim_tests {
                     ui.notifications.iter().any(|notification| matches!(
                         notification,
                         GameNotification::ChannelStatus {
-                            state: ChannelState::ResolvedUnrolled,
+                            state: ChannelStatus::ResolvedUnrolled,
                             ..
                         }
                     )),
@@ -259,7 +259,7 @@ mod sim_tests {
                     !ui.notifications.iter().any(|notification| matches!(
                         notification,
                         GameNotification::ChannelStatus {
-                            state: ChannelState::Failed,
+                            state: ChannelStatus::Failed,
                             ..
                         }
                     )),

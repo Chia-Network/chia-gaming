@@ -7,7 +7,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::run_program;
 use clvmr::NodePtr;
 
-use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
+use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef, MAX_BLOCK_COST_CLVM,

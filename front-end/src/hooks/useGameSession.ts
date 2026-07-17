@@ -8,7 +8,7 @@ import {
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
-  ChannelState,
+  ChannelStatus,
   ChannelStatusPayload,
   GameSettledPayload,
   GameStatusPayload,
@@ -214,7 +214,7 @@ export interface QueuedNotification {
 }
 
 export interface ChannelStatusInfo {
-  state: ChannelState;
+  state: ChannelStatus;
   advisory: string | null;
   coinHex: string | null;
   coinAmount: string | null;
@@ -263,21 +263,21 @@ const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
 
 // Channel states that still warrant a pop-up. Routine transitions are shown in
 // the status bar instead; only error resolutions interrupt the user.
-const ERROR_CHANNEL_STATES: ChannelState[] = ['ResolvedStale', 'Failed'];
+const ERROR_CHANNEL_STATUSES: ChannelStatus[] = ['ResolvedStale', 'Failed'];
 
-const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+const WINDING_DOWN_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
   'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
 ]);
 
-const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
 ]);
 
 export function nextGameTurnAfterLocalTurn(
   current: GameTurnState,
   isMyTurn: boolean,
-  channelState: ChannelState,
+  channelState: ChannelStatus,
 ): GameTurnState {
   if (current === 'ended') {
     return 'ended';
@@ -291,7 +291,7 @@ export function nextGameTurnAfterLocalTurn(
 export function nextGameInstanceAfterLocalTurn(
   instance: GameInstanceModel,
   isMyTurn: boolean,
-  channelState: ChannelState,
+  channelState: ChannelStatus,
 ): GameInstanceModel {
   const turnState = nextGameTurnAfterLocalTurn(
     instance.coin.turnState,
@@ -335,16 +335,16 @@ const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
   'GameActive',
 ]);
 
-export function isWindingDown(state: ChannelState): boolean {
+export function isWindingDown(state: ChannelStatus): boolean {
   return WINDING_DOWN_STATES.has(state);
 }
 
-const RESOLVED_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+const RESOLVED_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
 ]);
 
 export function deriveSessionPhase(
-  channelState: ChannelState,
+  channelState: ChannelStatus,
   goOnChainPressed: boolean,
   activeGameId?: string | null,
 ): Exclude<SessionPhase, 'none'> {
@@ -662,15 +662,15 @@ export function useGameSession(
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
     return restoredModel?.channel.status ?? INITIAL_CHANNEL_STATUS;
   });
-  const channelStateRef = useRef<ChannelState>(
+  const channelStatusRef = useRef<ChannelStatus>(
     restoredModel?.channel.status.state ?? INITIAL_CHANNEL_STATUS.state
   );
 
-  const [dismissedChannelState, setDismissedChannelState] = useState<ChannelState | null>(
-    () => restoredModel?.channel.dismissedChannelState ?? null
+  const [dismissedChannelStatus, setDismissedChannelStatus] = useState<ChannelStatus | null>(
+    () => restoredModel?.channel.dismissedChannelStatus ?? null
   );
-  const dismissedChannelStateRef = useRef<ChannelState | null>(dismissedChannelState);
-  dismissedChannelStateRef.current = dismissedChannelState;
+  const dismissedChannelStatusRef = useRef<ChannelStatus | null>(dismissedChannelStatus);
+  dismissedChannelStatusRef.current = dismissedChannelStatus;
 
   const [channelQueue, setChannelQueue] = useState<QueuedNotification[]>(() =>
     restoredModel?.channel.queue as QueuedNotification[] ?? []
@@ -705,7 +705,7 @@ export function useGameSession(
       if (dismissed?.kind === 'channel-state') {
         // Remember: user dismissed the notification for the current channel
         // state. Don't re-notify for the same state on reload or re-event.
-        setDismissedChannelState(channelStateRef.current);
+        setDismissedChannelStatus(channelStatusRef.current);
       }
       return prev.slice(1);
     });
@@ -929,7 +929,7 @@ export function useGameSession(
         connection: gameConnectionState,
         goOnChainPressed,
         cleanShutdownStarted,
-        dismissedChannelState,
+        dismissedChannelStatus,
         queue: channelQueue,
       },
       game: {
@@ -975,8 +975,8 @@ export function useGameSession(
 
     const save: Partial<SessionState> = {
       blockchainType: getBlockchainType(),
-      serializedCradle: wasm.serializedCradle,
-      cradleSchemaVersion: wasm.cradleSchemaVersion,
+      serializedGameSession: wasm.serializedGameSession,
+      gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
       pairingToken: wasm.pairingToken,
       messageNumber: wasm.messageNumber,
       remoteNumber: wasm.remoteNumber,
@@ -1008,7 +1008,7 @@ export function useGameSession(
     composePerHandAmount, composeGameTimeout, composeGameType, lastHandTerms, rejectedOnceTerms,
     activeGameType, composeProposalSent, newHandRequested,
     cachedPeerProposal, reviewPeerProposal,
-    channelQueue, dismissedChannelState, gameQueue,
+    channelQueue, dismissedChannelStatus, gameQueue,
   ]);
 
   // Save when JS-side state changes
@@ -1084,13 +1084,13 @@ export function useGameSession(
 
   const onTurnChanged = useCallback((gameId: string, isMyTurn: boolean) => {
     updateGameInstance(gameId, instance =>
-      nextGameInstanceAfterLocalTurn(instance, isMyTurn, channelStateRef.current)
+      nextGameInstanceAfterLocalTurn(instance, isMyTurn, channelStatusRef.current)
     );
 
     const ts = nextGameTurnAfterLocalTurn(
       turnStateRef.current,
       isMyTurn,
-      channelStateRef.current,
+      channelStatusRef.current,
     );
     if (ts === turnStateRef.current) {
       return;
@@ -1101,7 +1101,7 @@ export function useGameSession(
       setHandStatus(prev => prev === 'ended' ? prev : 'active');
     } else if (isMyTurn) {
       setHandStatus('our-turn');
-    } else if (ON_CHAIN_FLOW_STATES.has(channelStateRef.current)) {
+    } else if (ON_CHAIN_FLOW_STATES.has(channelStatusRef.current)) {
       setHandStatus('playing-move');
     } else {
       setHandStatus('active');
@@ -1124,18 +1124,18 @@ export function useGameSession(
       if (!cs) return;
       const coinHex = await coinIdHex(cs.coin);
       const info = channelStatusFromPayload(cs, coinHex);
-      channelStateRef.current = info.state;
+      channelStatusRef.current = info.state;
       setChannelStatus(info);
       // If the channel state has moved away from (or to something other than)
       // the state the user previously dismissed a notification for, forget
       // that dismissal so future events for this state will notify again.
-      if (dismissedChannelStateRef.current !== null
-          && dismissedChannelStateRef.current !== cs.state) {
-        dismissedChannelStateRef.current = null;
-        setDismissedChannelState(null);
+      if (dismissedChannelStatusRef.current !== null
+          && dismissedChannelStatusRef.current !== cs.state) {
+        dismissedChannelStatusRef.current = null;
+        setDismissedChannelStatus(null);
       }
-      if (ERROR_CHANNEL_STATES.includes(cs.state)
-          && dismissedChannelStateRef.current !== cs.state) {
+      if (ERROR_CHANNEL_STATUSES.includes(cs.state)
+          && dismissedChannelStatusRef.current !== cs.state) {
         pushChannel({ kind: 'channel-state', title: 'Error', message: info.advisory ?? '', payload: info });
       }
       if (cs.state === 'Active' && info.gameAllocated === '0') {
@@ -1414,7 +1414,7 @@ export function useGameSession(
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;
       const status = gs.status;
-      const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStateRef.current);
+      const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStatusRef.current);
       const isOnChainTurnStatus =
         status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
       const isLocalTurnStatus = status === 'my-turn' || status === 'their-turn';
@@ -1852,7 +1852,7 @@ export function useGameSession(
       connection: gameConnectionState,
       goOnChainPressed,
       cleanShutdownStarted,
-      dismissedChannelState,
+      dismissedChannelStatus,
       queue: channelQueue,
     },
     game: {
@@ -1893,7 +1893,7 @@ export function useGameSession(
   }), [
     params.restoring, restoreStatus, restoreError,
     channelStatus, gameConnectionState, goOnChainPressed, cleanShutdownStarted,
-    dismissedChannelState, channelQueue, gameCoin, handStatus, gameTerminal, handKey,
+    dismissedChannelStatus, channelQueue, gameCoin, handStatus, gameTerminal, handKey,
     gameIds, currentHandGameIds, gameInstances, lastDisplayedGameId, activeGameType, sc.handState,
     gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
     rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,

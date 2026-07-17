@@ -6,8 +6,8 @@ use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::StateUpdateProgram;
+use crate::channel_state::game_handler::GameHandler;
+use crate::channel_state::types::StateUpdateProgram;
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash, Program,
     ProgramRef, Timeout,

@@ -7,9 +7,9 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
-use crate::channel_handler::types::ChannelCoinSpendInfo;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::channel_handler::ChannelHandler;
+use crate::channel_state::types::ChannelCoinSpendInfo;
+use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
+use crate::channel_state::ChannelState;
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
@@ -19,66 +19,66 @@ use crate::common::types::{
     Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle,
     Timeout, ToQuotedProgram,
 };
-use crate::potato_handler::effects::{
-    apply_effects, ChannelState, ChannelStatusSnapshot, CoinOfInterest, CradleEvent,
-    CradleEventQueue, Effect, GameNotification, ResyncInfo,
+use crate::session_phases::effects::{
+    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, GameSessionEvent,
+    GameSessionEventQueue, Effect, GameNotification, ResyncInfo,
 };
-use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
-use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
-use crate::potato_handler::start::GameStart;
-use crate::potato_handler::types::{
-    BootstrapTowardWallet, GameFactory, PacketSender, PeerMessage, PotatoHandlerInit,
+use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
+use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
+use crate::session_phases::start::GameStart;
+use crate::session_phases::types::{
+    BootstrapTowardWallet, GameFactory, PacketSender, PeerMessage, OffChainPhaseInit,
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 
 #[cfg(test)]
-use crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler;
+use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
 #[cfg(test)]
-use crate::potato_handler::PotatoHandler;
+use crate::session_phases::OffChainPhase;
 
 #[typetag::serde]
-pub trait PeerHandler {
+pub trait PeerLifecyclePhase {
     fn has_pending_incoming(&self) -> bool;
     fn process_incoming_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error>;
     fn received_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error>;
     fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>;
     fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error>;
     fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
     fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
     fn accept_settlement(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
     fn cheat_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
@@ -86,14 +86,14 @@ pub trait PeerHandler {
     #[cfg(test)]
     fn self_accept_proposal(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
             "self_accept_proposal: not in off-chain phase".to_string(),
         ))
     }
-    fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>>;
+    fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
 
     fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
@@ -104,21 +104,21 @@ pub trait PeerHandler {
     }
     fn channel_offer(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _bundle: SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         Ok(None)
     }
     fn channel_transaction_completion(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         Ok(None)
     }
     fn provide_launcher_coin(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _launcher_coin: CoinString,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
@@ -127,7 +127,7 @@ pub trait PeerHandler {
     }
     fn provide_coin_spend_bundle(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
@@ -136,7 +136,7 @@ pub trait PeerHandler {
     }
     fn propose_game(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         Err(Error::StrErr(
@@ -145,7 +145,7 @@ pub trait PeerHandler {
     }
     fn propose_games(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _games: &[GameStart],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         Err(Error::StrErr(
@@ -154,7 +154,7 @@ pub trait PeerHandler {
     }
     fn accept_proposal(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
@@ -163,32 +163,32 @@ pub trait PeerHandler {
     }
     fn cancel_proposal(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
             "cancel_proposal: not in off-chain phase".to_string(),
         ))
     }
-    fn shut_down(&mut self, _env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+    fn shut_down(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
             "shut_down: not in off-chain phase".to_string(),
         ))
     }
     fn go_on_chain(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
     fn flush_pending_actions(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
-    fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
+    fn channel_state(&self) -> Result<&ChannelState, Error> {
         Err(Error::StrErr(
             "no channel handler in this phase".to_string(),
         ))
@@ -215,24 +215,24 @@ pub trait PeerHandler {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
-impl SpendWalletReceiver for Box<dyn PeerHandler> {
+impl SpendWalletReceiver for Box<dyn PeerLifecyclePhase> {
     fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
         (**self).coin_created(env, coin_id)
     }
     fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         (**self).coin_spent(env, coin_id)
     }
     fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
@@ -343,150 +343,12 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 
 #[derive(Default)]
 pub struct DrainResult {
-    pub events: CradleEventQueue,
+    pub events: GameSessionEventQueue,
     pub resync: Option<(usize, bool)>,
 }
 
-pub trait GameCradle {
-    /// Tell this cradle to use this coin for funding.
-    fn opening_coin(&mut self, allocator: &mut AllocEncoder, coin: CoinString)
-        -> Result<(), Error>;
-
-    /// Start handshake without selecting a funding coin up-front.
-    fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error>;
-
-    /// Tell the user that handshake has finished.
-    fn handshake_finished(&self) -> bool;
-
-    /// Propose a new game. The game enters the proposed state and is
-    /// communicated to the peer as metadata (no unroll/balance impact).
-    fn propose_game(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        game: &GameStart,
-    ) -> Result<Vec<GameID>, Error>;
-
-    /// Propose multiple games as an atomic group. All games share
-    /// a group_id equal to the first game's nonce.
-    fn propose_games(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        games: &[GameStart],
-    ) -> Result<Vec<GameID>, Error>;
-
-    /// Explicitly accept a proposed game. Moves it from proposed to live,
-    /// deducting balances and updating the unroll commitment.
-    fn accept_proposal(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        game_id: &GameID,
-    ) -> Result<(), Error>;
-
-    /// Cancel a proposed game.
-    fn cancel_proposal(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        game_id: &GameID,
-    ) -> Result<(), Error>;
-
-    /// Signal making a move.  Forwards to FromLocalUI::make_move.
-    fn make_move(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-        new_entropy: Hash,
-    ) -> Result<(), Error>;
-
-    /// Accept a proposed game and immediately make a move in it.
-    /// The peer protocol sends these as two separate batch actions.
-    fn accept_proposal_and_move(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-        new_entropy: Hash,
-    ) -> Result<(), Error>;
-
-    fn identity(&self) -> ChiaIdentity;
-
-    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_settlement.
-    fn accept_settlement(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error>;
-
-    /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
-    fn shut_down(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error>;
-
-    /// Tell the game cradle that a new block arrived, giving a watch report.
-    fn new_block(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        height: u64,
-        report: &WatchReport,
-    ) -> Result<(), Error>;
-
-    /// Queue a message from the peer for processing by `flush_and_collect`.
-    fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error>;
-
-    /// Cheat in a game: enable cheating on the referee (substituting fake
-    /// move bytes and the given mover_share), then queue a normal move.
-    /// For testing and demonstration purposes only.
-    fn cheat(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        game_id: &GameID,
-        mover_share: Amount,
-    ) -> Result<(), Error>;
-
-    /// Force a self-accept: bypass the local parity check and send
-    /// AcceptProposal for our own game_id. For testing SEC-975 only.
-    #[cfg(test)]
-    fn self_accept_proposal(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        game_id: &GameID,
-    ) -> Result<(), Error>;
-
-    /// Check whether we're on chain.
-    fn is_on_chain(&self) -> bool;
-
-    /// Check whether the channel has failed.
-    fn is_failed(&self) -> bool;
-
-    /// Trigger going on chain.
-    fn go_on_chain(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        local_ui: &mut dyn ToLocalUI,
-        got_error: bool,
-    ) -> Result<(), Error>;
-
-    /// Report a puzzle and solution for a spent coin.
-    fn report_puzzle_and_solution(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        coin_id: &CoinString,
-        puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(), Error>;
-
-    /// Report that a wallet callback (selectCoins, createOfferForIds) failed
-    /// during the handshake.  The handshake handler transitions to Failed with
-    /// the reason as an advisory.
-    fn wallet_callback_failed(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        reason: String,
-    ) -> Result<(), Error>;
-
-    /// Get the reward puzzle hash
-    fn get_reward_puzzle_hash(&mut self, allocator: &mut AllocEncoder)
-        -> Result<PuzzleHash, Error>;
-
-    /// Get an id which uniquely identifies this game state.
-    fn get_game_state_id(&mut self, allocator: &mut AllocEncoder) -> Result<Option<Hash>, Error>;
-}
-
 #[derive(Serialize, Deserialize)]
-struct SynchronousGameCradleState {
+struct GameSessionState {
     current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
 
@@ -505,29 +367,29 @@ struct SynchronousGameCradleState {
     pub is_on_chain: bool,
 
     #[serde(skip)]
-    events: CradleEventQueue,
+    events: GameSessionEventQueue,
 }
 
-impl PacketSender for SynchronousGameCradleState {
+impl PacketSender for GameSessionState {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         if self.peer_disconnected {
             return Ok(());
         }
         let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.events
-            .push_back(CradleEvent::OutboundMessage(msg_data));
+            .push_back(GameSessionEvent::OutboundMessage(msg_data));
         Ok(())
     }
 }
 
-impl WalletSpendInterface for SynchronousGameCradleState {
+impl WalletSpendInterface for GameSessionState {
     fn spend_transaction_and_add_fee(
         &mut self,
         bundle: &SpendBundle,
         expiry: Option<u64>,
     ) -> Result<(), Error> {
         self.events
-            .push_back(CradleEvent::OutboundTransaction(bundle.clone(), expiry));
+            .push_back(GameSessionEvent::OutboundTransaction(bundle.clone(), expiry));
         Ok(())
     }
     fn register_coin(
@@ -545,7 +407,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
             },
         );
 
-        self.events.push_back(CradleEvent::WatchCoin {
+        self.events.push_back(GameSessionEvent::WatchCoin {
             coin_name: coin_id.to_coin_id(),
             coin_string: coin_id.clone(),
             timeout: timeout.clone(),
@@ -556,17 +418,17 @@ impl WalletSpendInterface for SynchronousGameCradleState {
     }
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
         self.events
-            .push_back(CradleEvent::CoinSolutionRequest(coin_id.clone()));
+            .push_back(GameSessionEvent::CoinSolutionRequest(coin_id.clone()));
         Ok(())
     }
 }
 
-/// A game cradle that operates synchronously.  It can be composed with a game cradle that
-/// operates message pipes to become asynchronous.
+/// Production game-session host: owns the current [`PeerLifecyclePhase`], inbound
+/// queues, and outbound [`GameSessionEvent`]s.
 #[derive(Serialize, Deserialize)]
-pub struct SynchronousGameCradle {
-    state: SynchronousGameCradleState,
-    peer: Box<dyn PeerHandler>,
+pub struct GameSession {
+    state: GameSessionState,
+    peer: Box<dyn PeerLifecyclePhase>,
     amount: Amount,
     last_channel_status: Option<ChannelStatusSnapshot>,
     #[cfg(test)]
@@ -575,7 +437,7 @@ pub struct SynchronousGameCradle {
 }
 
 #[derive(Debug, Clone)]
-pub struct SynchronousGameCradleConfig {
+pub struct GameSessionConfig {
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub have_potato: bool,
     pub identity: ChiaIdentity,
@@ -645,13 +507,13 @@ fn claim_settlement_coins(allocator: &mut AllocEncoder, bundle: SpendBundle) -> 
     }
 }
 
-impl SynchronousGameCradle {
+impl GameSession {
     pub fn new_with_keys(
-        config: SynchronousGameCradleConfig,
-        private_keys: ChannelHandlerPrivateKeys,
+        config: GameSessionConfig,
+        private_keys: ChannelPrivateKeys,
     ) -> Self {
-        SynchronousGameCradle {
-            state: SynchronousGameCradleState {
+        GameSession {
+            state: GameSessionState {
                 is_initiator: config.have_potato,
                 current_height: 0,
                 watching_coins: HashMap::default(),
@@ -665,11 +527,11 @@ impl SynchronousGameCradle {
                 peer_disconnected: false,
                 is_failed: false,
                 is_on_chain: false,
-                events: CradleEventQueue::default(),
+                events: GameSessionEventQueue::default(),
                 inbound_messages: VecDeque::default(),
             },
             peer: {
-                let phi = PotatoHandlerInit {
+                let phi = OffChainPhaseInit {
                     have_potato: config.have_potato,
                     private_keys,
                     game_types: config.game_types,
@@ -680,9 +542,9 @@ impl SynchronousGameCradle {
                     reward_puzzle_hash: config.reward_puzzle_hash,
                 };
                 if config.have_potato {
-                    Box::new(HandshakeInitiatorHandler::new(phi)) as Box<dyn PeerHandler>
+                    Box::new(HandshakeInitiatorPhase::new(phi)) as Box<dyn PeerLifecyclePhase>
                 } else {
-                    Box::new(HandshakeReceiverHandler::new(phi)) as Box<dyn PeerHandler>
+                    Box::new(HandshakeReceiverPhase::new(phi)) as Box<dyn PeerLifecyclePhase>
                 }
             },
             amount: config.my_contribution + config.their_contribution,
@@ -691,13 +553,13 @@ impl SynchronousGameCradle {
             saved_unroll_snapshot: None,
         }
     }
-    pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
-        let private_keys: ChannelHandlerPrivateKeys = rng.random();
-        SynchronousGameCradle::new_with_keys(config, private_keys)
+    pub fn new<R: Rng>(rng: &mut R, config: GameSessionConfig) -> Self {
+        let private_keys: ChannelPrivateKeys = rng.random();
+        GameSession::new_with_keys(config, private_keys)
     }
 }
 
-impl BootstrapTowardWallet for SynchronousGameCradleState {
+impl BootstrapTowardWallet for GameSessionState {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
         Ok(())
@@ -709,15 +571,15 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
     }
 }
 
-impl ToLocalUI for SynchronousGameCradleState {
+impl ToLocalUI for GameSessionState {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         self.events
-            .push_back(CradleEvent::Notification(notification.clone()));
+            .push_back(GameSessionEvent::Notification(notification.clone()));
         Ok(())
     }
 
     fn log(&mut self, line: &str) -> Result<(), Error> {
-        self.events.push_back(CradleEvent::Log(line.to_string()));
+        self.events.push_back(GameSessionEvent::Log(line.to_string()));
         Ok(())
     }
 }
@@ -735,7 +597,7 @@ pub enum CoinReportPhase {
 }
 
 pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
-    env: &mut ChannelHandlerEnv<'_>,
+    env: &mut ChannelEnv<'_>,
     peer: &mut P,
     watch_report: &WatchReport,
     phase: CoinReportPhase,
@@ -757,7 +619,7 @@ pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
     Ok(effects)
 }
 
-impl SynchronousGameCradle {
+impl GameSession {
     #[cfg(test)]
     pub fn proposal_contributions_for_testing(
         &self,
@@ -765,11 +627,11 @@ impl SynchronousGameCradle {
         let handler = self
             .peer
             .as_any()
-            .downcast_ref::<PotatoHandler>()
+            .downcast_ref::<OffChainPhase>()
             .ok_or_else(|| {
-                Error::StrErr("proposal_contributions_for_testing: not a PotatoHandler".to_string())
+                Error::StrErr("proposal_contributions_for_testing: not a OffChainPhase".to_string())
             })?;
-        let channel = handler.channel_handler()?;
+        let channel = handler.channel_state()?;
         Ok(channel.proposal_contributions_for_testing())
     }
 
@@ -778,11 +640,11 @@ impl SynchronousGameCradle {
         let handler = self
             .peer
             .as_any()
-            .downcast_ref::<PotatoHandler>()
+            .downcast_ref::<OffChainPhase>()
             .ok_or_else(|| {
-                Error::StrErr("allocated_balances_for_testing: not a PotatoHandler".to_string())
+                Error::StrErr("allocated_balances_for_testing: not a OffChainPhase".to_string())
             })?;
-        let channel = handler.channel_handler()?;
+        let channel = handler.channel_state()?;
         Ok((
             channel.my_allocated_balance(),
             channel.their_allocated_balance(),
@@ -794,20 +656,20 @@ impl SynchronousGameCradle {
         let ph = self
             .peer
             .as_any_mut()
-            .downcast_mut::<PotatoHandler>()
+            .downcast_mut::<OffChainPhase>()
             .ok_or_else(|| {
-                Error::StrErr("corrupt_state_for_testing: not a PotatoHandler".to_string())
+                Error::StrErr("corrupt_state_for_testing: not a OffChainPhase".to_string())
             })?;
         ph.corrupt_state_for_testing(new_sn)
     }
 
     #[cfg(test)]
     pub fn force_unroll_spend(&self, allocator: &mut AllocEncoder) -> Result<SpendBundle, Error> {
-        let mut env = ChannelHandlerEnv::new(allocator)?;
-        if let Some(ph) = self.peer.as_any().downcast_ref::<PotatoHandler>() {
+        let mut env = ChannelEnv::new(allocator)?;
+        if let Some(ph) = self.peer.as_any().downcast_ref::<OffChainPhase>() {
             return ph.force_unroll_spend(&mut env);
         }
-        if let Some(h) = self.peer.as_any().downcast_ref::<SpendChannelCoinHandler>() {
+        if let Some(h) = self.peer.as_any().downcast_ref::<SpendChannelCoinPhase>() {
             return h.force_unroll_spend(&mut env);
         }
         Err(Error::StrErr(
@@ -817,7 +679,7 @@ impl SynchronousGameCradle {
 
     #[cfg(test)]
     pub fn save_unroll_snapshot(&mut self) {
-        if let Some(ph) = self.peer.as_any().downcast_ref::<PotatoHandler>() {
+        if let Some(ph) = self.peer.as_any().downcast_ref::<OffChainPhase>() {
             self.saved_unroll_snapshot = ph.get_last_channel_coin_spend_info().cloned();
         }
     }
@@ -830,13 +692,13 @@ impl SynchronousGameCradle {
         let saved = self.saved_unroll_snapshot.as_ref().ok_or_else(|| {
             Error::StrErr("force_stale_unroll_spend: no snapshot saved".to_string())
         })?;
-        let mut env = ChannelHandlerEnv::new(allocator)?;
+        let mut env = ChannelEnv::new(allocator)?;
         let ph = self
             .peer
             .as_any()
-            .downcast_ref::<PotatoHandler>()
+            .downcast_ref::<OffChainPhase>()
             .ok_or_else(|| {
-                Error::StrErr("force_stale_unroll_spend: not a PotatoHandler".to_string())
+                Error::StrErr("force_stale_unroll_spend: not a OffChainPhase".to_string())
             })?;
         ph.force_stale_unroll_spend(&mut env, saved)
     }
@@ -859,7 +721,7 @@ impl SynchronousGameCradle {
 
     pub fn historical_unroll_count(&self) -> Option<usize> {
         self.peer
-            .channel_handler()
+            .channel_state()
             .ok()
             .map(|channel| channel.unroll_puzzle_hash_map().len())
     }
@@ -877,14 +739,14 @@ impl SynchronousGameCradle {
 
     pub fn get_our_current_share(&self) -> Option<Amount> {
         self.peer
-            .channel_handler()
+            .channel_state()
             .ok()
             .map(|ch| ch.get_our_current_share())
     }
 
     pub fn get_their_current_share(&self) -> Option<Amount> {
         self.peer
-            .channel_handler()
+            .channel_state()
             .ok()
             .map(|ch| ch.get_their_current_share())
     }
@@ -898,10 +760,10 @@ impl SynchronousGameCradle {
         matches!(
             self.last_channel_status.as_ref().map(|s| &s.state),
             Some(
-                ChannelState::ResolvedClean
-                    | ChannelState::ResolvedUnrolled
-                    | ChannelState::ResolvedStale
-                    | ChannelState::Failed,
+                ChannelStatus::ResolvedClean
+                    | ChannelStatus::ResolvedUnrolled
+                    | ChannelStatus::ResolvedStale
+                    | ChannelStatus::Failed,
             )
         )
     }
@@ -922,7 +784,7 @@ impl SynchronousGameCradle {
         launcher_coin: CoinString,
     ) -> Result<(), Error> {
         let effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.provide_launcher_coin(&mut env, launcher_coin)?
         };
         self.process_effects(effects, allocator)?;
@@ -936,7 +798,7 @@ impl SynchronousGameCradle {
     ) -> Result<(), Error> {
         let bundle = claim_settlement_coins(allocator, bundle);
         let effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.provide_coin_spend_bundle(&mut env, bundle)?
         };
         self.process_effects(effects, allocator)?;
@@ -963,7 +825,7 @@ impl SynchronousGameCradle {
     ) -> Result<DrainResult, Error> {
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
-                let mut env = ChannelHandlerEnv::new(allocator)?;
+                let mut env = ChannelEnv::new(allocator)?;
                 self.peer.received_message(&mut env, msg)
             };
             match recv_result {
@@ -971,10 +833,10 @@ impl SynchronousGameCradle {
                 Err(e) => {
                     self.state
                         .events
-                        .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                        .push_back(GameSessionEvent::ReceiveError(format!("{e:?}")));
                     self.state.peer_disconnected = true;
                     let go_effects = {
-                        let mut env = ChannelHandlerEnv::new(allocator)?;
+                        let mut env = ChannelEnv::new(allocator)?;
                         self.peer.go_on_chain(&mut env, true)?
                     };
                     self.process_effects(go_effects, allocator)?;
@@ -984,13 +846,13 @@ impl SynchronousGameCradle {
         }
 
         let res = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.flush_pending_actions(&mut env)
         };
         match res {
             Ok(effects) => self.process_effects(effects, allocator)?,
             Err(e) => {
-                self.state.events.push_back(CradleEvent::Notification(
+                self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
                         reason: format!("{e:?}"),
                     },
@@ -1005,21 +867,21 @@ impl SynchronousGameCradle {
     }
 
     fn detect_phase_transition(&mut self) {
-        if let Some(next) = self.peer.take_replacement() {
+        if let Some(next) = self.peer.take_next_phase() {
             self.peer = next;
         }
         // Update phase metadata from current handler
-        use crate::potato_handler::on_chain::OnChainGameHandler;
+        use crate::session_phases::on_chain::OnChainPhase;
 
         self.state.is_on_chain = self
             .peer
             .as_any()
-            .downcast_ref::<OnChainGameHandler>()
+            .downcast_ref::<OnChainPhase>()
             .is_some();
         self.state.is_failed = self
             .peer
             .channel_status_snapshot()
-            .is_some_and(|s| s.state == ChannelState::Failed);
+            .is_some_and(|s| s.state == ChannelStatus::Failed);
 
         self.emit_channel_status_if_changed();
     }
@@ -1039,7 +901,7 @@ impl SynchronousGameCradle {
         // In Active state, re-emit on balance changes (potato firings).
         // In other states, suppress same-state re-emissions (e.g. coin
         // changes within Unrolling).
-        new_state == Some(&ChannelState::Active)
+        new_state == Some(&ChannelStatus::Active)
     }
 
     fn make_channel_status_notification(snap: &ChannelStatusSnapshot) -> GameNotification {
@@ -1059,24 +921,24 @@ impl SynchronousGameCradle {
         if Self::should_emit_status(&self.last_channel_status, &snapshot) {
             if let Some(ref snap) = snapshot {
                 match snap.state {
-                    ChannelState::ShuttingDown | ChannelState::ShutdownTransactionPending => {
+                    ChannelStatus::ShuttingDown | ChannelStatus::ShutdownTransactionPending => {
                         self.state.clean_shutdown_received = true;
                     }
-                    ChannelState::ResolvedClean => {
+                    ChannelStatus::ResolvedClean => {
                         self.state.clean_shutdown = snap.coin.clone();
                     }
-                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale
+                    ChannelStatus::ResolvedUnrolled | ChannelStatus::ResolvedStale
                         if self.state.is_on_chain =>
                     {
                         self.state.peer_disconnected = true;
                     }
-                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale => {}
-                    ChannelState::GoingOnChain | ChannelState::Unrolling => {
+                    ChannelStatus::ResolvedUnrolled | ChannelStatus::ResolvedStale => {}
+                    ChannelStatus::GoingOnChain | ChannelStatus::Unrolling => {
                         self.state.peer_disconnected = true;
                     }
                     _ => {}
                 }
-                self.state.events.push_back(CradleEvent::Notification(
+                self.state.events.push_back(GameSessionEvent::Notification(
                     Self::make_channel_status_notification(snap),
                 ));
             }
@@ -1084,7 +946,7 @@ impl SynchronousGameCradle {
         }
     }
 
-    pub fn push_event(&mut self, event: CradleEvent) {
+    pub fn push_event(&mut self, event: GameSessionEvent) {
         self.state.events.push_back(event);
     }
 
@@ -1096,9 +958,9 @@ impl SynchronousGameCradle {
         let mut passthrough = Vec::new();
         for effect in effects {
             if matches!(effect, Effect::NeedLauncherCoinId) {
-                self.state.events.push_back(CradleEvent::NeedLauncherCoin);
+                self.state.events.push_back(GameSessionEvent::NeedLauncherCoin);
             } else if let Effect::NeedCoinSpend(req) = effect {
-                self.state.events.push_back(CradleEvent::NeedCoinSpend(req));
+                self.state.events.push_back(GameSessionEvent::NeedCoinSpend(req));
             } else {
                 passthrough.push(effect);
             }
@@ -1109,7 +971,7 @@ impl SynchronousGameCradle {
         if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain
         {
             let go_effects = {
-                let mut env = ChannelHandlerEnv::new(allocator)?;
+                let mut env = ChannelEnv::new(allocator)?;
                 self.peer.go_on_chain(&mut env, true)?
             };
             if !go_effects.is_empty() {
@@ -1117,7 +979,7 @@ impl SynchronousGameCradle {
             }
         }
 
-        if self.peer.channel_handler().is_ok() {
+        if self.peer.channel_state().is_ok() {
             if let Some(ph) = self.state.channel_puzzle_hash.take() {
                 if !self.create_partial_spend_for_channel_coin(allocator, ph.clone())? {
                     self.state.channel_puzzle_hash = Some(ph);
@@ -1133,7 +995,7 @@ impl SynchronousGameCradle {
         if self.peer.handshake_finished() {
             while self.peer.has_pending_incoming() {
                 let recv_result = {
-                    let mut env = ChannelHandlerEnv::new(allocator)?;
+                    let mut env = ChannelEnv::new(allocator)?;
                     self.peer.process_incoming_message(&mut env)
                 };
                 match recv_result {
@@ -1147,10 +1009,10 @@ impl SynchronousGameCradle {
                     Err(e) => {
                         self.state
                             .events
-                            .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                            .push_back(GameSessionEvent::ReceiveError(format!("{e:?}")));
                         self.state.peer_disconnected = true;
                         let go_effects = {
-                            let mut env = ChannelHandlerEnv::new(allocator)?;
+                            let mut env = ChannelEnv::new(allocator)?;
                             self.peer.go_on_chain(&mut env, true)?
                         };
                         self.process_effects(go_effects, allocator)?;
@@ -1179,7 +1041,7 @@ impl SynchronousGameCradle {
         self.state.channel_puzzle_hash = None;
 
         let channel_coin_amt = {
-            let ch = self.peer.channel_handler()?;
+            let ch = self.peer.channel_state()?;
             let channel_coin = ch.state_channel_coin();
             if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
                 game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
@@ -1202,7 +1064,7 @@ impl SynchronousGameCradle {
         .into_gen()?;
 
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             let spend = standard_solution_partial(
                 env.allocator,
                 &self.state.identity.synthetic_private_key,
@@ -1248,7 +1110,7 @@ impl SynchronousGameCradle {
         self.state.unfunded_offer = None;
 
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
             let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
             let solution = solution_for_conditions(env.allocator, empty_conditions)?;
@@ -1281,7 +1143,7 @@ impl SynchronousGameCradle {
 
             self.state
                 .events
-                .push_back(CradleEvent::OutboundTransaction(spends, None));
+                .push_back(GameSessionEvent::OutboundTransaction(spends, None));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
@@ -1294,11 +1156,11 @@ impl SynchronousGameCradle {
     }
 }
 
-impl SynchronousGameCradle {
+impl GameSession {
     #[cfg(test)]
     pub fn flush_pending(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.flush_pending_actions(&mut env)?
         };
         self.process_effects(effects, allocator)?;
@@ -1313,10 +1175,10 @@ impl SynchronousGameCradle {
             .state
             .events
             .iter()
-            .rposition(|e| matches!(e, CradleEvent::OutboundMessage(_)))
+            .rposition(|e| matches!(e, GameSessionEvent::OutboundMessage(_)))
             .ok_or_else(|| Error::StrErr("no message to replace".to_string()))?;
         let msg = match self.state.events.remove(idx) {
-            Some(CradleEvent::OutboundMessage(data)) => data,
+            Some(GameSessionEvent::OutboundMessage(data)) => data,
             _ => unreachable!(),
         };
 
@@ -1355,22 +1217,22 @@ impl SynchronousGameCradle {
     }
 }
 
-impl GameCradle for SynchronousGameCradle {
+impl GameSession {
     #[cfg(test)]
-    fn self_accept_proposal(
+    pub fn self_accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
         game_id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.self_accept_proposal(&mut env, game_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
 
-    fn cheat(
+    pub fn cheat(
         &mut self,
         allocator: &mut AllocEncoder,
         game_id: &GameID,
@@ -1378,7 +1240,7 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         let entropy: Hash = Hash::default();
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer
                 .cheat_game(&mut env, game_id, mover_share, entropy)?
         };
@@ -1386,33 +1248,33 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    fn is_on_chain(&self) -> bool {
+    pub fn is_on_chain(&self) -> bool {
         self.state.is_on_chain
     }
 
-    fn is_failed(&self) -> bool {
+    pub fn is_failed(&self) -> bool {
         self.state.is_failed
     }
 
-    fn get_reward_puzzle_hash(
+    pub fn get_reward_puzzle_hash(
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
-        let mut env = ChannelHandlerEnv::new(allocator)?;
+        let mut env = ChannelEnv::new(allocator)?;
         self.peer
-            .channel_handler()?
+            .channel_state()?
             .get_reward_puzzle_hash(&mut env)
     }
 
-    fn get_game_state_id(&mut self, allocator: &mut AllocEncoder) -> Result<Option<Hash>, Error> {
-        let mut env = ChannelHandlerEnv::new(allocator)?;
-        match self.peer.channel_handler() {
+    pub fn get_game_state_id(&mut self, allocator: &mut AllocEncoder) -> Result<Option<Hash>, Error> {
+        let mut env = ChannelEnv::new(allocator)?;
+        match self.peer.channel_state() {
             Ok(ch) => ch.get_game_state_id(&mut env).map(Some),
             Err(_) => Ok(None),
         }
     }
 
-    fn opening_coin(
+    pub fn opening_coin(
         &mut self,
         allocator: &mut AllocEncoder,
         coin: CoinString,
@@ -1424,11 +1286,11 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         let start_effect = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             if let Some(hh) = self
                 .peer
                 .as_any_mut()
-                .downcast_mut::<HandshakeInitiatorHandler>()
+                .downcast_mut::<HandshakeInitiatorPhase>()
             {
                 hh.start(&mut env)?
             } else {
@@ -1442,17 +1304,17 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+    pub fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         if !self.state.is_initiator {
             return Ok(());
         }
 
         let start_effect = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             if let Some(hh) = self
                 .peer
                 .as_any_mut()
-                .downcast_mut::<HandshakeInitiatorHandler>()
+                .downcast_mut::<HandshakeInitiatorPhase>()
             {
                 hh.start(&mut env)?
             } else {
@@ -1466,11 +1328,11 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    fn handshake_finished(&self) -> bool {
+    pub fn handshake_finished(&self) -> bool {
         self.peer.handshake_finished()
     }
 
-    fn propose_game(
+    pub fn propose_game(
         &mut self,
         allocator: &mut AllocEncoder,
         game: &GameStart,
@@ -1478,51 +1340,51 @@ impl GameCradle for SynchronousGameCradle {
         self.propose_games(allocator, std::slice::from_ref(game))
     }
 
-    fn propose_games(
+    pub fn propose_games(
         &mut self,
         allocator: &mut AllocEncoder,
         games: &[GameStart],
     ) -> Result<Vec<GameID>, Error> {
         let (result, reported_effects) = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.propose_games(&mut env, games)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)
     }
 
-    fn accept_proposal(
+    pub fn accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
         game_id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.accept_proposal(&mut env, game_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
 
-    fn cancel_proposal(
+    pub fn cancel_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
         game_id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.cancel_proposal(&mut env, game_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
 
-    fn identity(&self) -> ChiaIdentity {
+    pub fn identity(&self) -> ChiaIdentity {
         self.state.identity.clone()
     }
 
     /// Signal making a move.  Forwards to FromLocalUI::make_move.
-    fn make_move(
+    pub fn make_move(
         &mut self,
         allocator: &mut AllocEncoder,
         id: &GameID,
@@ -1530,14 +1392,14 @@ impl GameCradle for SynchronousGameCradle {
         new_entropy: Hash,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.make_move(&mut env, id, &readable, new_entropy)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
 
-    fn accept_proposal_and_move(
+    pub fn accept_proposal_and_move(
         &mut self,
         allocator: &mut AllocEncoder,
         id: &GameID,
@@ -1545,7 +1407,7 @@ impl GameCradle for SynchronousGameCradle {
         new_entropy: Hash,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
             effects.extend(self.peer.make_move(&mut env, id, &readable, new_entropy)?);
             effects
@@ -1555,9 +1417,9 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_settlement.
-    fn accept_settlement(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error> {
+    pub fn accept_settlement(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.accept_settlement(&mut env, id)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1565,9 +1427,9 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
-    fn shut_down(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+    pub fn shut_down(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.shut_down(&mut env)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1575,7 +1437,7 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
-    fn new_block(
+    pub fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
         height: u64,
@@ -1587,9 +1449,9 @@ impl GameCradle for SynchronousGameCradle {
         // process_effects, THEN process spends against the (possibly now-swapped)
         // peer.  A channel coin first seen already-spent arrives as a
         // created-then-spent pair: coin_created transitions a handshake handler
-        // to PotatoHandler, and the spend must reach that new handler.
+        // to OffChainPhase, and the spend must reach that new handler.
         let created_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             report_coin_changes_to_peer(
                 &mut env,
                 &mut self.peer,
@@ -1599,7 +1461,7 @@ impl GameCradle for SynchronousGameCradle {
         };
         self.process_effects(created_effects, allocator)?;
         let spent_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             report_coin_changes_to_peer(
                 &mut env,
                 &mut self.peer,
@@ -1614,7 +1476,7 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Queue a message from the peer for processing by `flush_and_collect`.
-    fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
+    pub fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
         if self.state.peer_disconnected {
             return Ok(());
         }
@@ -1633,7 +1495,7 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Trigger going on chain.
-    fn go_on_chain(
+    pub fn go_on_chain(
         &mut self,
         allocator: &mut AllocEncoder,
         _local_ui: &mut dyn ToLocalUI,
@@ -1641,21 +1503,21 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         self.state.peer_disconnected = true;
         let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer.go_on_chain(&mut env, got_error)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
 
-    fn report_puzzle_and_solution(
+    pub fn report_puzzle_and_solution(
         &mut self,
         allocator: &mut AllocEncoder,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error> {
         let (reported_effects, resync) = {
-            let mut env = ChannelHandlerEnv::new(allocator)?;
+            let mut env = ChannelEnv::new(allocator)?;
             self.peer
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
@@ -1666,22 +1528,15 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    fn wallet_callback_failed(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        reason: String,
-    ) -> Result<(), Error> {
-        self.wallet_callback_failed(allocator, reason)
-    }
 }
 
 #[cfg(test)]
-impl SynchronousGameCradle {
+impl GameSession {
     /// Get the on-chain game coin for a game (test harness only). Downcasts to
-    /// OnChainGameHandler when the cradle is in on-chain phase.
+    /// OnChainPhase when the cradle is in on-chain phase.
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
-        use crate::potato_handler::on_chain::OnChainGameHandler;
-        if let Some(och) = self.peer.as_any().downcast_ref::<OnChainGameHandler>() {
+        use crate::session_phases::on_chain::OnChainPhase;
+        if let Some(och) = self.peer.as_any().downcast_ref::<OnChainPhase>() {
             return och.get_game_coin(game_id);
         }
         None
@@ -1701,7 +1556,7 @@ mod sequencing_tests {
         spent: Vec<CoinString>,
     }
 
-    /// Stand-in for the handler a handshake transitions into (e.g. PotatoHandler):
+    /// Stand-in for the handler a handshake transitions into (e.g. OffChainPhase):
     /// records the coin events it receives.
     struct PostTransitionHandler {
         rec: Rc<RefCell<Recorder>>,
@@ -1710,7 +1565,7 @@ mod sequencing_tests {
     impl SpendWalletReceiver for PostTransitionHandler {
         fn coin_created(
             &mut self,
-            _env: &mut ChannelHandlerEnv<'_>,
+            _env: &mut ChannelEnv<'_>,
             coin: &CoinString,
         ) -> Result<Option<Vec<Effect>>, Error> {
             self.rec.borrow_mut().created.push(coin.clone());
@@ -1718,7 +1573,7 @@ mod sequencing_tests {
         }
         fn coin_spent(
             &mut self,
-            _env: &mut ChannelHandlerEnv<'_>,
+            _env: &mut ChannelEnv<'_>,
             coin: &CoinString,
         ) -> Result<Vec<Effect>, Error> {
             self.rec.borrow_mut().spent.push(coin.clone());
@@ -1726,7 +1581,7 @@ mod sequencing_tests {
         }
         fn coin_puzzle_and_solution(
             &mut self,
-            _env: &mut ChannelHandlerEnv<'_>,
+            _env: &mut ChannelEnv<'_>,
             _coin: &CoinString,
             _puzzle_and_solution: Option<(&Program, &Program)>,
         ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
@@ -1745,7 +1600,7 @@ mod sequencing_tests {
     }
 
     impl HandshakeLikeHandler {
-        fn take_replacement(&mut self) -> Option<PostTransitionHandler> {
+        fn take_next_phase(&mut self) -> Option<PostTransitionHandler> {
             self.replacement.take()
         }
     }
@@ -1753,7 +1608,7 @@ mod sequencing_tests {
     impl SpendWalletReceiver for HandshakeLikeHandler {
         fn coin_created(
             &mut self,
-            _env: &mut ChannelHandlerEnv<'_>,
+            _env: &mut ChannelEnv<'_>,
             coin: &CoinString,
         ) -> Result<Option<Vec<Effect>>, Error> {
             self.own.borrow_mut().created.push(coin.clone());
@@ -1764,7 +1619,7 @@ mod sequencing_tests {
         }
         fn coin_spent(
             &mut self,
-            _env: &mut ChannelHandlerEnv<'_>,
+            _env: &mut ChannelEnv<'_>,
             coin: &CoinString,
         ) -> Result<Vec<Effect>, Error> {
             self.own.borrow_mut().spent.push(coin.clone());
@@ -1772,7 +1627,7 @@ mod sequencing_tests {
         }
         fn coin_puzzle_and_solution(
             &mut self,
-            _env: &mut ChannelHandlerEnv<'_>,
+            _env: &mut ChannelEnv<'_>,
             _coin: &CoinString,
             _puzzle_and_solution: Option<(&Program, &Program)>,
         ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
@@ -1785,11 +1640,11 @@ mod sequencing_tests {
     /// phase, applies the handler transition, then processes the spent phase.
     /// This guarantees the spend reaches the post-transition handler rather than
     /// the handshake handler that ignores it.  See
-    /// `SynchronousGameCradle::new_block` for the sequencing this mirrors.
+    /// `GameSession::new_block` for the sequencing this mirrors.
     #[test]
     fn first_seen_spent_pair_delivers_spend_to_post_transition_handler() {
         let mut allocator = AllocEncoder::new();
-        let mut env = ChannelHandlerEnv::new(&mut allocator).expect("env");
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
 
         let coin = CoinString::from_parts(
             &CoinID::new(Hash::from_bytes([7; 32])),
@@ -1814,7 +1669,7 @@ mod sequencing_tests {
         // Transition checkpoint (what detect_phase_transition does inside
         // process_effects between the two phases).
         let mut replacement = handshake
-            .take_replacement()
+            .take_next_phase()
             .expect("coin_created must trigger the transition");
         // Spent phase: delivered to the post-transition handler.
         report_coin_changes_to_peer(&mut env, &mut replacement, &report, CoinReportPhase::Spent)

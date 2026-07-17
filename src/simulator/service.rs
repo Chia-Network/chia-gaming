@@ -21,7 +21,7 @@ use serde_json::{self, Value};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 
-use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_state::types::ChannelEnv;
 use crate::common::constants::{
     ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
 };
@@ -32,7 +32,7 @@ use crate::common::types::{
     Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
     Error, Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
-use crate::peer_container::{FullCoinSetAdapter, WatchReport};
+use crate::game_session::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
 use clvm_traits::Atom;
 use clvm_traits::ClvmEncoder;
@@ -473,7 +473,7 @@ impl GameRunner {
             }
         }
 
-        let env = ChannelHandlerEnv::new(&mut self.allocator)?;
+        let env = ChannelEnv::new(&mut self.allocator)?;
         let mut condition_nodes: Vec<Node> = create_targets
             .iter()
             .map(|(ph, amt)| {

@@ -1,4 +1,4 @@
-use crate::channel_handler::types::LiveGame;
+use crate::channel_state::types::LiveGame;
 use crate::common::types::{Aggsig, Amount, GameID, Program, PuzzleHash};
 use crate::referee::Referee;
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ pub enum CachedPotatoRegenerateLastHop {
     ProposalAccepted(GameID),
 }
 
-pub struct ChannelHandlerMoveResult {
+pub struct ChannelMoveResult {
     pub state_number: usize,
     pub readable_their_move: Rc<Program>,
     pub message: Vec<u8>,

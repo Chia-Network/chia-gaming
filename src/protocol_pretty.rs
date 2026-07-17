@@ -1,6 +1,6 @@
 //! Pretty-printer for the protocol-level peer state.
 //!
-//! The cradle's `peer` (`Box<dyn PeerHandler>`) is serialized to bencodex via
+//! The cradle's `peer` (`Box<dyn PeerLifecyclePhase>`) is serialized to bencodex via
 //! typetag, then re-read into an untyped [`BencodexValue`] tree and rendered as
 //! indented text for the dashboard. Working from the serialized tree (rather
 //! than the typed structs) keeps the renderer decoupled from the concrete
@@ -222,7 +222,7 @@ fn write_value(out: &mut String, indent: usize, value: &BencodexValue) {
 }
 
 /// Render a [`BencodexValue`] tree as indented text. The top level is usually
-/// the typetag map (`{ "PotatoHandler": { ... } }`), so the concrete handler
+/// the typetag map (`{ "OffChainPhase": { ... } }`), so the concrete handler
 /// type appears as the first line.
 pub fn pretty_print(value: &BencodexValue) -> String {
     let mut out = String::new();
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn renders_nested_map_with_elision_and_redaction() {
-        // Mimics the typetag shape: { "PotatoHandler": { ...fields... } }.
+        // Mimics the typetag shape: { "OffChainPhase": { ...fields... } }.
         let inner = BencodexValue::Map(vec![
             (text("have_potato"), BencodexValue::Bool(true)),
             (text("state_number"), BencodexValue::Int(7)),
@@ -292,11 +292,11 @@ mod tests {
                 BencodexValue::List(vec![text("a"), text("b")]),
             ),
         ]);
-        let root = BencodexValue::Map(vec![(text("PotatoHandler"), inner)]);
+        let root = BencodexValue::Map(vec![(text("OffChainPhase"), inner)]);
 
         let rendered = pretty_print(&root);
         let expected = "\
-PotatoHandler:
+OffChainPhase:
   have_potato: true
   state_number: 7
   coin: 0xabababababababababababababababababababababababababababababababab

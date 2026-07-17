@@ -31,7 +31,7 @@ const mockRpc = new Proxy({} as InternalBlockchainInterface, {
 const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 const mockWasmConnection = new Proxy({} as WasmConnection, {
-  get: (_target, property) => property === 'cradle_serialization_schema'
+  get: (_target, property) => property === 'game_session_serialization_schema'
     ? () => 1
     : () => undefined,
 });
@@ -111,7 +111,7 @@ interface TestHarness {
 
 /**
  * Returns a SessionController at qualifyingEvents=7 (system ready).
- * Setup: loadWasm → setGameCradle → kickSystem(2) → qe=7.
+ * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
  */
 function createReadyBlob(
   onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
@@ -128,13 +128,13 @@ function createReadyBlob(
   const cradle = makeMockCradle(onDeliver);
 
   blob.loadWasm(mockWasmConnection);
-  blob.setGameCradle(cradle);
+  blob.setGameSession(cradle);
   blob.kickSystem(2);
   blob.reportCoinStates(1n, []);
   blob.onSaveNeeded = () => saveSession({
     blockchainType: 'simulator',
-    serializedCradle: cradle.serialize(),
-    cradleSchemaVersion: 1n,
+    serializedGameSession: cradle.serialize(),
+    gameSessionSchemaVersion: 1n,
     messageNumber: blob.messageNumber,
     remoteNumber: blob.remoteNumber,
     unackedMessages: blob.unackedMessages,
@@ -164,11 +164,11 @@ function createUnreadyBlob(
   const cradle = makeMockCradle(onDeliver);
 
   blob.loadWasm(mockWasmConnection);
-  blob.setGameCradle(cradle);
+  blob.setGameSession(cradle);
   blob.onSaveNeeded = () => saveSession({
     blockchainType: 'simulator',
-    serializedCradle: cradle.serialize(),
-    cradleSchemaVersion: 1n,
+    serializedGameSession: cradle.serialize(),
+    gameSessionSchemaVersion: 1n,
     messageNumber: blob.messageNumber,
     remoteNumber: blob.remoteNumber,
     unackedMessages: blob.unackedMessages,
@@ -482,13 +482,13 @@ describe('durability failures', () => {
     let saveReturned = false;
     blob.onSaveNeeded = () => {
       const pending = saveSession({
-        serializedCradle: cradle.serialize(),
-        cradleSchemaVersion: 1n,
+        serializedGameSession: cradle.serialize(),
+        gameSessionSchemaVersion: 1n,
         pairingToken: 'sync-cradle',
       });
       // Cached must already contain the cradle before the returned Promise
       // settles — durability flushes immediately after starting onSaveNeeded.
-      expect(loadAppState().serializedCradle).toEqual(cradleBytes);
+      expect(loadAppState().serializedGameSession).toEqual(cradleBytes);
       saveReturned = true;
       return pending;
     };
@@ -497,7 +497,7 @@ describe('durability failures', () => {
     await blob.flushPendingWork();
 
     expect(saveReturned).toBe(true);
-    expect((await peekSession())?.serializedCradle).toEqual(cradleBytes);
+    expect((await peekSession())?.serializedGameSession).toEqual(cradleBytes);
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
   });
 
@@ -508,8 +508,8 @@ describe('durability failures', () => {
     }));
     activeBlob = blob;
     void saveSession({
-      serializedCradle: new Uint8Array([9, 9, 9]),
-      cradleSchemaVersion: 1n,
+      serializedGameSession: new Uint8Array([9, 9, 9]),
+      gameSessionSchemaVersion: 1n,
       pairingToken: 'previous-durable-record',
     });
     await flushSessionState();
@@ -532,7 +532,7 @@ describe('durability failures', () => {
     expect(sentAcks).toEqual([]);
     blob.cleanup();
     activeBlob = null;
-    expect((await peekSession())?.serializedCradle).toEqual(new Uint8Array([9, 9, 9]));
+    expect((await peekSession())?.serializedGameSession).toEqual(new Uint8Array([9, 9, 9]));
   });
 });
 
@@ -569,7 +569,7 @@ describe('restore ordering', () => {
 
     const cradle = makeMockCradle();
     const restoreWasmConnection = {
-      cradle_serialization_schema: () => 1,
+      game_session_serialization_schema: () => 1,
     } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
@@ -588,8 +588,8 @@ describe('restore ordering', () => {
         {
           version: 6n,
           playerId: 'p1',
-          serializedCradle: new Uint8Array([1, 2, 3]),
-          cradleSchemaVersion: 1n,
+          serializedGameSession: new Uint8Array([1, 2, 3]),
+          gameSessionSchemaVersion: 1n,
           messageNumber: 5n,
           remoteNumber: 1n,
           unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
@@ -691,7 +691,7 @@ describe('cradle serialization schema restore guard', () => {
     const deserializeMock = jest.fn(deserializeGame);
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => ({
-        cradle_serialization_schema: () => 1,
+        game_session_serialization_schema: () => 1,
       } as unknown as WasmConnection)),
       deserializeGame: deserializeMock,
     } as unknown as WasmStateInit;
@@ -701,10 +701,10 @@ describe('cradle serialization schema restore guard', () => {
   it.each([
     ['missing', undefined],
     ['mismatched', 2n],
-  ])('rejects and deletes a record with a %s cradle schema', async (_label, cradleSchemaVersion) => {
+  ])('rejects and deletes a record with a %s cradle schema', async (_label, gameSessionSchemaVersion) => {
     void saveSession({
-      serializedCradle: new Uint8Array([1, 2, 3]),
-      cradleSchemaVersion,
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      gameSessionSchemaVersion,
       pairingToken: 'restore-schema-test',
     });
     await flushSessionState();
@@ -722,8 +722,8 @@ describe('cradle serialization schema restore guard', () => {
 
   it('does not delete same-schema records that fail deserialization', async () => {
     void saveSession({
-      serializedCradle: new Uint8Array([1, 2, 3]),
-      cradleSchemaVersion: 1n,
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      gameSessionSchemaVersion: 1n,
       pairingToken: 'restore-corruption-test',
     });
     await flushSessionState();
@@ -737,7 +737,7 @@ describe('cradle serialization schema restore guard', () => {
       .toThrow('corrupt current-schema cradle');
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);
-    expect((await peekSession())?.serializedCradle).toEqual(new Uint8Array([1, 2, 3]));
+    expect((await peekSession())?.serializedGameSession).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
 
@@ -754,7 +754,7 @@ describe('cleanShutdown calls shut_down on cradle', () => {
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameCradle(cradle);
+    blob.setGameSession(cradle);
     blob.kickSystem(2);
     blob.reportCoinStates(1n, []);
 
@@ -789,7 +789,7 @@ describe('transaction submission', () => {
     const cradle = makeMockCradle();
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameCradle(cradle);
+    blob.setGameSession(cradle);
     blob.attachBlockchain(blockchain);
     (cradle.snapshot_watched_coins as jest.Mock).mockClear();
 
@@ -831,7 +831,7 @@ describe('transaction submission', () => {
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameCradle(cradle);
+    blob.setGameSession(cradle);
     expect(queriedNames).toEqual([]);
 
     blob.attachBlockchain(blockchain);
@@ -865,7 +865,7 @@ describe('transaction submission', () => {
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameCradle(cradle);
+    blob.setGameSession(cradle);
     blob.processResult({ events: [] });
 
     expect(cradle.drain_submissions).not.toHaveBeenCalled();
@@ -901,7 +901,7 @@ describe('transaction submission', () => {
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameCradle(cradle);
+    blob.setGameSession(cradle);
     blob.processResult({ events: [] });
 
     await flushPromiseJobs();
@@ -941,7 +941,7 @@ describe('transaction submission', () => {
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameCradle(cradle);
+    blob.setGameSession(cradle);
     blob.processResult({ events: [] });
 
     await transactionSubmitQueue(blob);

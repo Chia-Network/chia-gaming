@@ -1,4 +1,4 @@
-use crate::channel_handler::types::{ChannelCoinSpendInfo, CoinSpentDisposition};
+use crate::channel_state::types::{ChannelCoinSpendInfo, CoinSpentDisposition};
 
 use crate::common::types::{Amount, GameID, Puzzle};
 use crate::referee::types::GameMoveDetails;

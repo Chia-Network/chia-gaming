@@ -171,7 +171,7 @@ export class WasmStateInit {
     for (const [name, hex] of Object.entries(gameHexes)) {
       game_types[name] = { version: 1, hex };
     }
-    const result = wasm.create_game_cradle({
+    const result = wasm.create_game_session({
       rng_id: rngId,
       game_types,
       have_potato: have_potato,

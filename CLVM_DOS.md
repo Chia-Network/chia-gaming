@@ -143,7 +143,7 @@ receiving side:
    Rust type system enforces this at deserialization.
 
 2. **Checks move length** against the locally-stored `max_move_size` for the
-   current game state (`apply_received_move` in `channel_handler/mod.rs`).
+   current game state (`apply_received_move` in `channel_state/mod.rs`).
    The peer cannot influence this check — `max_move_size` comes from our own
    game state, not from the peer's message.
 
@@ -154,7 +154,7 @@ receiving side:
    small bounded input.
 
 4. **Runs the game handler** (`call_their_turn_handler` in
-   `channel_handler/game_handler.rs`). Again, our locally-held handler
+   `channel_state/game_handler.rs`). Again, our locally-held handler
    program, with the peer's move data as a bounded argument.
 
 The peer cannot send a CLVM program for us to evaluate. They send data, and
