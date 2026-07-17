@@ -76,7 +76,7 @@ emitted.
 
 `ChannelHandler::set_state_for_coins` matches each created game coin's puzzle
 hash against known states. It searches both `live_games` and
-`pending_settlements` (see [AcceptSettlement Lifecycle](GAME_LIFECYCLE.md#accepttimeout-lifecycle)). All
+`pending_settlements` (see [AcceptSettlement Lifecycle](GAME_LIFECYCLE.md#acceptsettlement-lifecycle)). All
 state tracking is **forward-only** — there is no rewind logic. Two cases:
 
 1. **Coin PH matches `last_referee_puzzle_hash`** (the outcome/post-move PH):
@@ -467,7 +467,7 @@ auto-accepts: it queues an `AcceptSettlement` action and marks the game as
 
 ### Auto-Accept Detection
 
-`should_auto_accept(game_id, is_my_turn)` returns true when:
+`should_auto_settle(game_id, is_my_turn)` returns true when:
 
 - `is_my_turn` is true, AND
 - `our_share == game_amount` (claim — we get 100%), OR
@@ -505,7 +505,7 @@ The zero-reward early-out fires at five distinct points.
    fires.  Checked via `is_redo_zero_reward()`.
 2. **Pending AcceptSettlement with zero share.**  An `AcceptSettlement` was called
   off-chain but the potato round-trip hadn't completed.  The coin matches via
-   `pending_settlements` with `accepted = true`.  If our share is zero,
+   `pending_settlements` with `timeout_claim_armed = true`.  If our share is zero,
    `GameSettled { outcome: forfeited_we_accepted, our_share: 0 }` fires
    immediately instead of waiting for the on-chain timeout.
 3. **Opponent's turn, mover_share == coin_amount.**  The move was
@@ -543,8 +543,8 @@ The `AcceptSettlement` handler covers three cases:
   **timeout claim** via `build_timeout_claim` and registers it with the wallet
   (via `RegisterCoin`) for submission at maturity.  When the claim confirms,
   `GameSettled` arrives with `we_accepted` or `settled_cleanly`.
-3. **Not our turn:** The handler marks `accepted = true` (the timeout claim
-  was already registered eagerly at coin registration time).
+3. **Not our turn:** The handler marks `timeout_claim_armed = true` (the
+  timeout claim was already registered eagerly at coin registration time).
 
 ### Already handled (no new code)
 
@@ -555,7 +555,7 @@ amount applies, including zero.
 
 **Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
 `finish_on_chain_transition` (unroll scan),
-`src/potato_handler/on_chain.rs` — `should_auto_accept`, `do_on_chain_move`
+`src/potato_handler/on_chain.rs` — `should_auto_settle`, `do_on_chain_move`
 (scenario 4), `do_on_chain_action` (scenario 5),
 `build_timeout_claim`, `register_initial_game_coins`,
 `src/channel_handler/mod.rs` — `is_redo_zero_reward`,
@@ -892,19 +892,20 @@ against a stale, optimistically-advanced referee state).
 Both players maintain independent `game_map`s, and both should have
 complementary `our_turn` values for the same game coin.
 
-### Accepted On-Chain Coins
+### Timeout-Claim-Armed On-Chain Coins
 
-`accepted: true` means this side has accepted the game outcome in its local
-potato-protocol state.  It does not mean the observed on-chain coin is already
+`timeout_claim_armed: true` means this side has already armed the on-chain
+timeout-claim path for the game coin (eager register or explicit
+`AcceptSettlement`).  It does not mean the observed on-chain coin is already
 terminal.  The real chain coin might still represent the version captured by
-the unroll, which can be one step behind the local potato state, so an accepted
+the unroll, which can be one step behind the local potato state, so an armed
 coin may still advance to another game coin before timeout finality.
 
 When that happens, `handle_game_coin_spent` keeps tracking the created coin and
-registers the next timeout claim under `"accepted game coin advanced by redo"`.
-The accepted flag is carried forward as timeout intent: once the actual chain
-state reaches a reward-coin spend, the terminal `GameSettled` notification is
-emitted from the observed conditions.
+registers the next timeout claim under `"timeout-claim-armed game coin advanced by redo"`.
+The `timeout_claim_armed` flag is carried forward: once the actual chain state
+reaches a reward-coin spend, the terminal `GameSettled` notification is emitted
+from the observed conditions.
 
 ### Moves for Finished Games Are Discarded
 

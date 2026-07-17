@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
-    AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoinSpendInfo,
+    TimeoutClaimState, CachedPotatoRegenerateLastHop, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationResult,
     ChannelHandlerMoveResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinSpentInformation, HandshakeResult, HistoricalUnrollSpendInfo, LiveGame, MoveResult,
@@ -128,7 +128,7 @@ pub struct ChannelHandler {
 
     // Games removed by send_accept_settlement_no_finalize / apply_received_accept_settlement that
     // haven't been confirmed by a full potato round-trip yet.  Kept so
-    // set_state_for_coins and accept_or_timeout_game_on_chain can find them
+    // set_state_for_coins and build_game_timeout_claim_spend can find them
     // if the channel goes on-chain before the round-trip completes.
     pending_settlements: Vec<LiveGame>,
     // Games that have been proposed but not yet accepted or cancelled.
@@ -1857,10 +1857,10 @@ impl ChannelHandler {
                         puzzle_hash: coin_ph.clone(),
                         our_turn: live_game.is_my_turn(),
                         state_number: self.state_number,
-                        accept: AcceptTransactionState::Waiting,
+                        timeout_claim: TimeoutClaimState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
-                        accepted: false,
+                        timeout_claim_armed: false,
                         notification_sent: false,
                         game_timeout: live_game.get_game_timeout(),
                         game_finished: live_game.is_game_over(),
@@ -1878,10 +1878,10 @@ impl ChannelHandler {
                         puzzle_hash: coin_ph.clone(),
                         our_turn: true,
                         state_number: self.state_number,
-                        accept: AcceptTransactionState::Waiting,
+                        timeout_claim: TimeoutClaimState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
-                        accepted: false,
+                        timeout_claim_armed: false,
                         notification_sent: false,
                         game_timeout: live_game.get_game_timeout(),
                         game_finished: live_game.is_game_over(),
@@ -1902,10 +1902,10 @@ impl ChannelHandler {
                         puzzle_hash: coin_ph.clone(),
                         our_turn: true,
                         state_number: self.state_number,
-                        accept: AcceptTransactionState::Waiting,
+                        timeout_claim: TimeoutClaimState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
-                        accepted: true,
+                        timeout_claim_armed: true,
                         notification_sent: false,
                         game_timeout: pending.get_game_timeout(),
                         game_finished: false,
@@ -2144,7 +2144,7 @@ impl ChannelHandler {
         })
     }
 
-    pub fn accept_or_timeout_game_on_chain(
+    pub fn build_game_timeout_claim_spend(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,

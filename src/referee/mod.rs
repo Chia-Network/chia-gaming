@@ -420,7 +420,7 @@ impl Referee {
         let outcome_ph = self.outcome_referee_puzzle_hash(allocator)?;
         let coin_ph = coin_string.to_parts().map(|(_, ph, _)| ph);
 
-        let (puzzle, amount_for_timeout) =
+        let (puzzle, timeout_claim_amount) =
             if coin_ph.as_ref() == Some(&outcome_ph) && coin_ph.as_ref() != Some(&on_chain_ph) {
                 (
                     self.outcome_referee_puzzle(allocator)?,
@@ -490,7 +490,7 @@ impl Referee {
                 waiter_payout_ph,
                 aggregate_signature,
             },
-            amount_for_timeout,
+            timeout_claim_amount,
         )
     }
 

@@ -26,7 +26,11 @@ import {
   CalpokerOutcomeView,
 } from '../../../types/californiaPoker/CaliforniapokerProps';
 import GameBottomBar from './components/GameBottomBar';
-import { calpokerSettlementVerb } from '../../../lib/settlement';
+import {
+  calpokerSettlementVerb,
+  calpokerTimeoutBadge,
+  settlementByUs,
+} from '../../../lib/settlement';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -52,13 +56,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
-  timeoutByUs,
-  timeoutForfeited,
   settlementOutcome,
 }) => {
+  const settlementByUsFlag = settlementOutcome == null ? null : settlementByUs(settlementOutcome);
   const settlementVerb = settlementOutcome
     ? calpokerSettlementVerb(settlementOutcome)
-    : (timeoutForfeited ? 'forfeited' : 'timed out');
+    : 'timed out';
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
   const suitMap: Record<number, SuitName> = {
@@ -623,9 +626,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               <span className='truncate max-w-full'>
                 {showFinalHeader && opponentDisplayText
                   ? `${resultLabel(opponentLabel, opponentResultVerb)} (${opponentDisplayText})`
-                  : timeoutByUs === true
+                  : settlementByUsFlag === true
                     ? resultLabel(opponentLabel, 'wins')
-                    : timeoutByUs === false
+                    : settlementByUsFlag === false
                       ? `${opponentLabel} ${settlementVerb}`
                       : `${possessive(opponentLabel)} Hand`}
               </span>
@@ -647,7 +650,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 formatHandDescription={formatHandDescription}
                 selectedCards={[]}
-                timeoutBadge={timeoutByUs === true ? 'winner' : timeoutByUs === false ? (timeoutForfeited ? 'forfeit' : 'timeout') : null}
+                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'theirs') : null}
               />
             </div>
           </div>
@@ -657,9 +660,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               <span className='truncate max-w-full'>
                 {showFinalHeader && playerDisplayText
                   ? `${resultLabel(myLabel, playerResultVerb)} (${playerDisplayText})`
-                  : timeoutByUs === true
+                  : settlementByUsFlag === true
                     ? `${myLabel} ${settlementVerb}`
-                    : timeoutByUs === false
+                    : settlementByUsFlag === false
                       ? resultLabel(myLabel, 'wins')
                       : `${possessive(myLabel)} Hand`}
               </span>
@@ -683,7 +686,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                 formatHandDescription={formatHandDescription}
-                timeoutBadge={timeoutByUs === true ? (timeoutForfeited ? 'forfeit' : 'timeout') : timeoutByUs === false ? 'winner' : null}
+                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'ours') : null}
               />
             </div>
           </div>
@@ -699,7 +702,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 doHandleMakeMove={doHandleMakeMove}
               />
             )}
-            {gameState === GAME_STATES.AWAITING_SWAP && timeoutByUs == null && (
+            {gameState === GAME_STATES.AWAITING_SWAP && settlementByUsFlag == null && (
               <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
                 Waiting for opponent
               </div>

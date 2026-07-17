@@ -1128,7 +1128,7 @@ export class SessionController implements PollingCradle {
   acceptSettlement(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
     try {
-      const result = this.cradle.accept(gameId);
+      const result = this.cradle.acceptSettlement(gameId);
       this.processResult(result);
     } catch (e) {
       const msg = extractErrorMessage(e);

@@ -441,8 +441,6 @@ function CalpokerHand({
     setHandOrder,
     moveNumber,
     outcome,
-    timeoutByUs,
-    timeoutForfeited,
     settlementOutcome,
     handleMakeMove,
     handleCheat,
@@ -499,8 +497,6 @@ function CalpokerHand({
       initialSnapshot={stringifyCalpokerSnapshot(initialDisplaySnapshot)}
       myName={myName}
       opponentName={opponentName}
-      timeoutByUs={timeoutByUs}
-      timeoutForfeited={timeoutForfeited}
       settlementOutcome={settlementOutcome}
     />
   );

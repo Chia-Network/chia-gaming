@@ -7,11 +7,7 @@ import {
 import { SessionController } from './SessionController';
 import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
 import { GameplayEvent } from './useGameSession';
-import {
-  isForfeitOutcome,
-  settlementByUs,
-  type SettlementOutcome,
-} from '../lib/settlement';
+import { type SettlementOutcome } from '../lib/settlement';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
@@ -61,8 +57,6 @@ export interface UseCalpokerHandResult {
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
   settlementOutcome: SettlementOutcome | null;
-  timeoutByUs: boolean | null;
-  timeoutForfeited: boolean;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
@@ -116,8 +110,6 @@ export function useCalpokerHand(
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(null);
-  const timeoutByUs = settlementOutcome == null ? null : settlementByUs(settlementOutcome);
-  const timeoutForfeited = settlementOutcome != null && isForfeitOutcome(settlementOutcome);
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -352,8 +344,6 @@ export function useCalpokerHand(
     moveNumber,
     outcome,
     settlementOutcome,
-    timeoutByUs,
-    timeoutForfeited,
     handleMakeMove,
     handleCheat,
     handleNerf,

@@ -275,7 +275,7 @@ impl OnChainGameHandler {
     /// True when: mover_share == game_amount (claim — we get 100%)
     ///        or: game_over && mover_share > 0 (terminal clean end).
     /// When both are true simultaneously, this still returns true (treated as terminal).
-    fn should_auto_accept(&self, game_id: &GameID, is_my_turn: bool) -> bool {
+    fn should_auto_settle(&self, game_id: &GameID, is_my_turn: bool) -> bool {
         if !is_my_turn {
             return false;
         }
@@ -836,7 +836,7 @@ impl OnChainGameHandler {
 
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
-        if old_definition.accepted {
+        if old_definition.timeout_claim_armed {
             let reward_ph = self.reward_puzzle_hash.clone();
             let their_reward_ph = self.their_reward_puzzle_hash.clone();
 
@@ -908,7 +908,7 @@ impl OnChainGameHandler {
                             OnChainGameState {
                                 puzzle_hash: ph,
                                 our_turn: !old_definition.our_turn,
-                                accepted: true,
+                                timeout_claim_armed: true,
                                 ..old_definition
                             },
                         );
@@ -929,7 +929,7 @@ impl OnChainGameHandler {
                         effects.push(Effect::RegisterCoin {
                             coin: new_coin,
                             timeout: gt,
-                            name: Some("accepted game coin advanced by redo"),
+                            name: Some("timeout-claim-armed game coin advanced by redo"),
                             spend: claim,
                         });
                     }
@@ -1043,8 +1043,8 @@ impl OnChainGameHandler {
                     },
                 );
 
-                let auto_accept = self.should_auto_accept(&game_id, is_my_turn);
-                if auto_accept {
+                let auto_settle = self.should_auto_settle(&game_id, is_my_turn);
+                if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_id) {
                         state.game_finished = true;
                     }
@@ -1053,7 +1053,7 @@ impl OnChainGameHandler {
                 // Terminal game where we get nothing: skip the coin registration
                 // entirely and emit a forfeit notification immediately. There is
                 // no timeout to claim and no further action to take on this game.
-                let zero_reward_terminal = !auto_accept
+                let zero_reward_terminal = !auto_settle
                     && is_my_turn
                     && game_over
                     && self
@@ -1096,7 +1096,7 @@ impl OnChainGameHandler {
                         }),
                         spend: claim,
                     });
-                    if auto_accept {
+                    if auto_settle {
                         self.game_action_queue
                             .push_back(GameAction::AcceptSettlement(game_id));
                     }
@@ -1202,8 +1202,8 @@ impl OnChainGameHandler {
                         ..old_definition
                     },
                 );
-                let auto_accept = self.should_auto_accept(&game_id, true);
-                if auto_accept {
+                let auto_settle = self.should_auto_settle(&game_id, true);
+                if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_string) {
                         state.game_finished = true;
                     }
@@ -1214,7 +1214,7 @@ impl OnChainGameHandler {
                 // share is zero.  There is no timeout to claim and no real turn
                 // to present, so surface the final readable and a forfeit
                 // terminal instead of a phantom "your turn".
-                let zero_reward_terminal = !auto_accept
+                let zero_reward_terminal = !auto_settle
                     && game_over
                     && self
                         .get_game_our_current_share(&game_id)
@@ -1268,7 +1268,7 @@ impl OnChainGameHandler {
                         name: Some("coin gives my turn"),
                         spend: claim,
                     });
-                    if auto_accept {
+                    if auto_settle {
                         self.game_action_queue
                             .push_back(GameAction::AcceptSettlement(game_id));
                     }
@@ -1588,12 +1588,12 @@ impl OnChainGameHandler {
                     effects.push(Effect::RegisterCoin {
                         coin: current_coin.clone(),
                         timeout: gt,
-                        name: Some("accept timeout claim"),
+                        name: Some("timeout claim"),
                         spend: Some(claim),
                     });
                 }
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
-                    def.accepted = true;
+                    def.timeout_claim_armed = true;
                     def.game_finished = true;
                 }
                 Ok(effects)

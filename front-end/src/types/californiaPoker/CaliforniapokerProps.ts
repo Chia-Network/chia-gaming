@@ -37,7 +37,5 @@ export interface CaliforniapokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  timeoutByUs?: boolean | null;
-  timeoutForfeited?: boolean;
   settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
 }

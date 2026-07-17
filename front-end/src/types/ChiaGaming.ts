@@ -358,7 +358,7 @@ export class ChiaGame {
     return this.wasm.get_watching_coins(this.cradle);
   }
 
-  accept(id: string): WasmResult | undefined {
+  acceptSettlement(id: string): WasmResult | undefined {
     return this.wasm.accept_settlement(this.cradle, id);
   }
 

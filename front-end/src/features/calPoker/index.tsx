@@ -24,8 +24,6 @@ export interface CalpokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  timeoutByUs?: boolean | null;
-  timeoutForfeited?: boolean;
   settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
 }
 
@@ -46,8 +44,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
-  timeoutByUs,
-  timeoutForfeited,
   settlementOutcome,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
@@ -74,8 +70,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
           initialSnapshot={initialSnapshot}
           myName={myName}
           opponentName={opponentName}
-          timeoutByUs={timeoutByUs}
-          timeoutForfeited={timeoutForfeited}
           settlementOutcome={settlementOutcome}
         />
       </div>

@@ -1,4 +1,3 @@
-mod accept_transaction_state;
 mod channel_coin;
 mod channel_handler;
 mod coin_spent;
@@ -12,9 +11,9 @@ mod read;
 mod readable_move;
 mod result;
 mod state_update_program;
+mod timeout_claim_state;
 mod unroll_coin;
 mod validation_info;
-pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{ChannelCoinSpendInfo, ChannelCoinSpentResult};
 pub use channel_handler::{
     ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
@@ -32,6 +31,7 @@ pub use potato::{
     CachedPotatoRegenerateLastHop, ChannelHandlerMoveResult, CachedAcceptSettlement,
     PotatoMoveCachedData, PotatoSignatures,
 };
+pub use timeout_claim_state::TimeoutClaimState;
 pub use proposed_game::ProposedGame;
 pub use read::read_unroll_puzzle;
 pub use readable_move::ReadableMove;

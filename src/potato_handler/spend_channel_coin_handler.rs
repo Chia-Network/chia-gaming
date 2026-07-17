@@ -816,7 +816,7 @@ impl SpendChannelCoinHandler {
             let player_ch = self.base.channel_handler_mut()?;
             let mut zero_reward_games = Vec::new();
             for (coin, state) in game_map.iter() {
-                let dominated = if state.accepted {
+                let dominated = if state.timeout_claim_armed {
                     player_ch
                         .get_game_our_current_share(&state.game_id)
                         .map(|s| s == Amount::default())
@@ -835,7 +835,7 @@ impl SpendChannelCoinHandler {
                         state.game_id,
                         state.game_finished,
                         state.our_turn,
-                        state.accepted,
+                        state.timeout_claim_armed,
                     ));
                 }
             }
