@@ -16,6 +16,7 @@ import {
 import SpacePoker from './SpacePoker';
 import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
+import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   selectComposeAmountAfterGameTypeChoice,
@@ -442,6 +443,7 @@ function CalpokerHand({
     outcome,
     timeoutByUs,
     timeoutForfeited,
+    settlementOutcome,
     handleMakeMove,
     handleCheat,
     handleNerf,
@@ -499,6 +501,7 @@ function CalpokerHand({
       opponentName={opponentName}
       timeoutByUs={timeoutByUs}
       timeoutForfeited={timeoutForfeited}
+      settlementOutcome={settlementOutcome}
     />
   );
 }
@@ -849,15 +852,16 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;
     const phase = session.sessionPhase;
+    const settledOutcome = session.gameTerminal.outcome;
     const hasError =
       session.channelStatus.state === 'Failed' ||
       session.channelStatus.state === 'ResolvedStale' ||
-      session.gameTerminal.type === 'forfeit' ||
-      session.gameTerminal.type === 'opponent-successfully-cheated' ||
       session.gameTerminal.type === 'game-error' ||
-      (session.gameTerminal.type === 'we-timed-out' && !session.gameTerminal.cleanEnd);
+      (session.gameTerminal.type === 'settled'
+        && settledOutcome != null
+        && isErrorSettlementOutcome(settledOutcome));
     onSessionPhaseChange(phase, hasError);
-  }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange, suppressPhaseReporting]);
+  }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.outcome, onSessionPhaseChange, suppressPhaseReporting]);
 
   useEffect(() => {
     if (!onGameActivity) return;

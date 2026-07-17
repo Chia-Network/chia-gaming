@@ -26,6 +26,7 @@ export interface CalpokerProps {
   opponentName?: string;
   timeoutByUs?: boolean | null;
   timeoutForfeited?: boolean;
+  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -47,6 +48,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   opponentName,
   timeoutByUs,
   timeoutForfeited,
+  settlementOutcome,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
@@ -74,6 +76,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           opponentName={opponentName}
           timeoutByUs={timeoutByUs}
           timeoutForfeited={timeoutForfeited}
+          settlementOutcome={settlementOutcome}
         />
       </div>
     </div>

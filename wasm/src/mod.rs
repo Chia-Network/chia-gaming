@@ -1147,12 +1147,12 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn accept_timeout(cid: i32, id: &str) -> Result<JsValue, JsValue> {
+    pub fn accept_settlement(cid: i32, id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .accept_timeout(&mut cradle.allocator, &game_id)
+                .accept_settlement(&mut cradle.allocator, &game_id)
         })
     }
 

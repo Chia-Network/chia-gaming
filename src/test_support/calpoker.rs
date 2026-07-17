@@ -960,7 +960,7 @@ mod sim_tests {
             ));
             moves.push(GameAction::AcceptProposal(1, GameID(3)));
             moves.push(GameAction::WaitBlocks(11, 0));
-            moves.push(GameAction::AcceptTimeout(0, GameID(3)));
+            moves.push(GameAction::AcceptSettlement(0, GameID(3)));
             moves.push(GameAction::CleanShutdown(0));
 
             let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
@@ -986,7 +986,7 @@ mod sim_tests {
             ));
             moves.push(GameAction::AcceptProposal(0, GameID(2)));
             moves.push(GameAction::WaitBlocks(11, 0));
-            moves.push(GameAction::AcceptTimeout(0, GameID(2)));
+            moves.push(GameAction::AcceptSettlement(0, GameID(2)));
             moves.push(GameAction::CleanShutdown(0));
 
             let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))

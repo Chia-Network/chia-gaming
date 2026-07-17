@@ -26,6 +26,7 @@ import {
   CalpokerOutcomeView,
 } from '../../../types/californiaPoker/CaliforniapokerProps';
 import GameBottomBar from './components/GameBottomBar';
+import { calpokerSettlementVerb } from '../../../lib/settlement';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -53,7 +54,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   opponentName,
   timeoutByUs,
   timeoutForfeited,
+  settlementOutcome,
 }) => {
+  const settlementVerb = settlementOutcome
+    ? calpokerSettlementVerb(settlementOutcome)
+    : (timeoutForfeited ? 'forfeited' : 'timed out');
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
   const suitMap: Record<number, SuitName> = {
@@ -621,7 +626,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   : timeoutByUs === true
                     ? resultLabel(opponentLabel, 'wins')
                     : timeoutByUs === false
-                      ? `${opponentLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
+                      ? `${opponentLabel} ${settlementVerb}`
                       : `${possessive(opponentLabel)} Hand`}
               </span>
             </div>
@@ -653,7 +658,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 {showFinalHeader && playerDisplayText
                   ? `${resultLabel(myLabel, playerResultVerb)} (${playerDisplayText})`
                   : timeoutByUs === true
-                    ? `${myLabel} ${timeoutForfeited ? 'forfeited' : 'timed out'}`
+                    ? `${myLabel} ${settlementVerb}`
                     : timeoutByUs === false
                       ? resultLabel(myLabel, 'wins')
                       : `${possessive(myLabel)} Hand`}

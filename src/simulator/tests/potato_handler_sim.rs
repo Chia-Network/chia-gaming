@@ -25,7 +25,7 @@ use crate::peer_container::{
 };
 use crate::potato_handler::effects::{
     apply_effects, CancelReason, ChannelState, CradleEvent, Effect, GameNotification,
-    GameStatusKind,
+    GameStatusKind, SettlementOutcome,
 };
 use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::start::GameStart;
@@ -503,13 +503,7 @@ pub enum ExpectedEvent {
 fn is_terminal_game_status(status: &GameStatusKind) -> bool {
     matches!(
         status,
-        GameStatusKind::EndedWeTimedOut
-            | GameStatusKind::EndedOpponentTimedOut
-            | GameStatusKind::EndedWeSlashedOpponent
-            | GameStatusKind::EndedOpponentSlashedUs
-            | GameStatusKind::EndedOpponentSuccessfullyCheated
-            | GameStatusKind::EndedCancelled
-            | GameStatusKind::EndedError
+        GameStatusKind::EndedCancelled | GameStatusKind::EndedError
     )
 }
 
@@ -517,9 +511,43 @@ fn has_status(n: &GameNotification, want: GameStatusKind) -> bool {
     matches!(n, GameNotification::GameStatus { status, .. } if *status == want)
 }
 
+fn has_settled_outcome(n: &GameNotification, want: SettlementOutcome) -> bool {
+    matches!(
+        n,
+        GameNotification::GameSettled { outcome, .. } if *outcome == want
+    )
+}
+
+fn is_our_side_settlement(outcome: SettlementOutcome) -> bool {
+    matches!(
+        outcome,
+        SettlementOutcome::AcceptSettlement
+            | SettlementOutcome::SettledCleanly
+            | SettlementOutcome::WeAccepted
+            | SettlementOutcome::ForfeitedSkippedReveal
+            | SettlementOutcome::ForfeitedOpponentWon
+            | SettlementOutcome::ForfeitedWeAccepted
+            | SettlementOutcome::AttemptToMoveFailed
+            | SettlementOutcome::TimedOutWaitingForOurMove
+            | SettlementOutcome::SlashedOpponent
+    )
+}
+
+fn is_opponent_side_settlement(outcome: SettlementOutcome) -> bool {
+    matches!(
+        outcome,
+        SettlementOutcome::AcceptSettlement
+            | SettlementOutcome::SettledCleanly
+            | SettlementOutcome::OpponentTimedOut
+            | SettlementOutcome::OpponentSlashedUs
+            | SettlementOutcome::OpponentCheated
+    )
+}
+
 fn is_terminal_for_id(n: &GameNotification, id: &GameID) -> bool {
     match n {
         GameNotification::InsufficientBalance { id: nid, .. } => nid == id,
+        GameNotification::GameSettled { id: nid, .. } => nid == id,
         GameNotification::GameStatus {
             id: nid, status, ..
         } => nid == id && is_terminal_game_status(status),
@@ -542,19 +570,13 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
         (TestEvent::Notification(actual_n), ExpectedEvent::Notification(expected_n)) => {
             match (actual_n, expected_n) {
                 (
-                    GameNotification::GameStatus {
-                        status: GameStatusKind::EndedWeTimedOut,
-                        ..
-                    },
+                    GameNotification::GameSettled { outcome, .. },
                     ExpectedNotification::GameStatusEndedWeTimedOut,
-                ) => true,
+                ) => is_our_side_settlement(*outcome),
                 (
-                    GameNotification::GameStatus {
-                        status: GameStatusKind::EndedOpponentTimedOut,
-                        ..
-                    },
+                    GameNotification::GameSettled { outcome, .. },
                     ExpectedNotification::GameStatusEndedOpponentTimedOut,
-                ) => true,
+                ) => is_opponent_side_settlement(*outcome),
                 (
                     GameNotification::GameStatus {
                         status: GameStatusKind::EndedCancelled,
@@ -570,22 +592,22 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     ExpectedNotification::GameStatusIllegalMoveDetected,
                 ) => true,
                 (
-                    GameNotification::GameStatus {
-                        status: GameStatusKind::EndedWeSlashedOpponent,
+                    GameNotification::GameSettled {
+                        outcome: SettlementOutcome::SlashedOpponent,
                         ..
                     },
                     ExpectedNotification::GameStatusEndedWeSlashedOpponent,
                 ) => true,
                 (
-                    GameNotification::GameStatus {
-                        status: GameStatusKind::EndedOpponentSlashedUs,
+                    GameNotification::GameSettled {
+                        outcome: SettlementOutcome::OpponentSlashedUs,
                         ..
                     },
                     ExpectedNotification::GameStatusEndedOpponentSlashedUs,
                 ) => true,
                 (
-                    GameNotification::GameStatus {
-                        status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                    GameNotification::GameSettled {
+                        outcome: SettlementOutcome::OpponentCheated,
                         ..
                     },
                     ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated,
@@ -657,6 +679,9 @@ fn event_shape(actual: &TestEvent) -> String {
                     return "Notif(GameStatusMovedByUs)".to_string();
                 }
                 format!("Notif(GameStatus(id={id:?},status={status:?}))")
+            }
+            GameNotification::GameSettled { id, outcome, our_share, .. } => {
+                format!("Notif(GameSettled(id={id:?},outcome={outcome:?},share={our_share:?}))")
             }
             GameNotification::ProposalMade { id, .. } => format!("Notif(ProposalMade(id={id:?}))"),
             GameNotification::ProposalAccepted { id, .. } => format!("Notif(ProposalAccepted(id={id:?}))"),
@@ -749,16 +774,12 @@ pub fn assert_event_sequence(events: &[TestEvent], expected: &[ExpectedEvent], p
 pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label: &str) {
     for n in notifications {
         match n {
-            GameNotification::GameStatus {
-                status:
-                    GameStatusKind::EndedWeTimedOut
-                    | GameStatusKind::EndedOpponentTimedOut
-                    | GameStatusKind::EndedOpponentSuccessfullyCheated,
-                my_reward,
+            GameNotification::GameSettled {
+                our_share,
                 coin_id,
                 ..
             } => {
-                let our_reward = my_reward.clone().unwrap_or_default();
+                let our_reward = our_share.clone();
                 let reward_coin = coin_id.clone();
                 if let Some(ref rc) = reward_coin {
                     let parts = rc.to_parts();
@@ -830,6 +851,7 @@ impl LocalTestUIReceiver {
                 .iter()
                 .filter(|n| match n {
                     GameNotification::InsufficientBalance { id: nid, .. } => nid == &id,
+                    GameNotification::GameSettled { id: nid, .. } => nid == &id,
                     GameNotification::GameStatus {
                         id: nid, status, ..
                     } => nid == &id && is_terminal_game_status(status),
@@ -919,6 +941,13 @@ impl ToLocalUI for LocalTestUIReceiver {
                 } else {
                     self.assert_channel_created("game_status");
                 }
+            }
+            GameNotification::GameSettled { id, .. } => {
+                self.assert_channel_created("game_terminal");
+                self.game_finished_ids.insert(id.clone());
+                self.notifications.push(notification.clone());
+                self.events
+                    .push(TestEvent::Notification(notification.clone()));
             }
             GameNotification::ProposalMade { id, .. } => {
                 self.assert_channel_created("game_proposed");
@@ -1201,7 +1230,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 GameAction::CleanShutdown(_)
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
-                    | GameAction::AcceptTimeout(_, _)
+                    | GameAction::AcceptSettlement(_, _)
                     | GameAction::Timeout(_)
                     | GameAction::Cheat(_, _, _)
                     | GameAction::ForceDestroyCoin(_, _)
@@ -1783,14 +1812,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
                     }
-                    GameAction::AcceptTimeout(who, gid) => {
+                    GameAction::AcceptSettlement(who, gid) => {
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptTimeout", gid, gid);
+                            gid_diag(&test_name, action_idx, "AcceptSettlement", gid, gid);
                         }
-                        cradles[*who].accept_timeout(allocator, gid)?;
+                        cradles[*who].accept_settlement(allocator, gid)?;
                     }
                     GameAction::Timeout(_who) => {
-                        panic!("Timeout action is not supported in sim tests; use AcceptTimeout(player, game_id)");
+                        panic!("Timeout action is not supported in sim tests; use AcceptSettlement(player, game_id)");
                     }
                     GameAction::CleanShutdown(who) => {
                         assert!(
@@ -2144,8 +2173,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                 | GameStatusKind::Replaying
                 | GameStatusKind::EndedCancelled
                 | GameStatusKind::EndedError
-                | GameStatusKind::EndedWeTimedOut
-                | GameStatusKind::EndedOpponentTimedOut
         )
     }
     for (i, lui) in local_uis.iter().enumerate() {
@@ -2176,6 +2203,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         let terminal_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
             .iter()
             .filter_map(|n| match n {
+                GameNotification::GameSettled { id, .. } => Some(*id),
                 GameNotification::GameStatus { id, status, .. }
                     if is_terminal_game_status(status) =>
                 {
@@ -2192,25 +2220,18 @@ fn run_game_container_with_action_list_with_success_predicate(
             .collect();
 
         for gid in live_at_unroll {
-            let first_post_unroll = lui.notifications[unroll_idx..].iter().find_map(|n| {
-                if let GameNotification::GameStatus { id, status, .. } = n {
-                    if *id == gid {
-                        return Some(status);
-                    }
+            let first_post_unroll_ok = lui.notifications[unroll_idx..].iter().any(|n| match n {
+                GameNotification::GameSettled { id, .. } if *id == gid => true,
+                GameNotification::GameStatus { id, status, .. }
+                    if *id == gid && is_allowed_unroll_finish_status(status) =>
+                {
+                    true
                 }
-                None
+                _ => false,
             });
-            let Some(status) = first_post_unroll else {
-                panic!(
-                    "player {i}: game {gid:?} live at unroll but no post-unroll GameStatus found.\n\
-                     All notifications: {:?}",
-                    lui.notifications,
-                );
-            };
             assert!(
-                is_allowed_unroll_finish_status(status),
-                "player {i}: first post-unroll status for game {gid:?} is {status:?}, expected one of \
-                 OnChainMyTurn/OnChainTheirTurn/Replaying/EndedCancelled/EndedError/EndedWeTimedOut/EndedOpponentTimedOut.\n\
+                first_post_unroll_ok,
+                "player {i}: game {gid:?} live at unroll but no allowed post-unroll GameStatus/GameSettled found.\n\
                  All notifications: {:?}",
                 lui.notifications,
             );
@@ -2585,7 +2606,7 @@ impl DebugGameTestMove {
 pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize, who: usize) {
     test_setup
         .game_actions
-        .push(GameAction::AcceptTimeout(who, GameID(1)));
+        .push(GameAction::AcceptSettlement(who, GameID(1)));
     test_setup
         .game_actions
         .push(GameAction::WaitBlocks(wait, 0));
@@ -3154,7 +3175,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
-    res.push(("failed_final_move_bad_signature_does_not_queue_accept_timeout", &|| {
+    res.push(("failed_final_move_bad_signature_does_not_queue_accept_settlement", &|| {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
@@ -3185,12 +3206,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             !p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::AcceptSettlement | SettlementOutcome::WeAccepted,
                     ..
                 }
             )),
-            "Bob must not process an AcceptTimeout queued by a final move whose batch failed signature validation, got: {p1_notifs:?}"
+            "Bob must not process an AcceptSettlement queued by a final move whose batch failed signature validation, got: {p1_notifs:?}"
         );
     }));
 
@@ -4276,13 +4297,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
             "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
             "player 1 should get OpponentTimedOut, got: {p1_notifs:?}"
         );
 
@@ -4374,13 +4395,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert!(
                 p0_notifs
                     .iter()
-                    .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                    .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
                 "player 0 (alice) should get WeTimedOut (nerfed, couldn't play move 4), got: {p0_notifs:?}"
             );
             assert!(
                 p1_notifs
                     .iter()
-                    .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
+                    .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
                 "player 1 (bob) should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
             );
 
@@ -4440,13 +4461,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
             "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
             "player 0 should get OpponentTimedOut, got: {p0_notifs:?}"
         );
 
@@ -4528,7 +4549,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeSlashedOpponent)),
+                .any(|n| has_settled_outcome(n, SettlementOutcome::SlashedOpponent)),
             "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
         );
 
@@ -4610,7 +4631,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedOpponentSlashedUs)),
+                .any(|n| has_settled_outcome(n, SettlementOutcome::OpponentSlashedUs)),
             "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
         );
 
@@ -4714,7 +4735,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeSlashedOpponent)),
+                .any(|n| has_settled_outcome(n, SettlementOutcome::SlashedOpponent)),
             "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
         );
 
@@ -4722,7 +4743,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedOpponentSlashedUs)),
+                .any(|n| has_settled_outcome(n, SettlementOutcome::OpponentSlashedUs)),
             "player 1 (cheater) should get OpponentSlashedUs, got: {p1_notifs:?}"
         );
 
@@ -4834,8 +4855,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 p0_notifs.iter().any(|n| {
                     matches!(
                         n,
-                        GameNotification::GameStatus {
-                            status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                        GameNotification::GameSettled {
+                            outcome: SettlementOutcome::OpponentCheated,
                             coin_id: Some(_),
                             ..
                         }
@@ -4884,7 +4905,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.pop();
         moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::AcceptTimeout(0, GameID(1)));
+        moves.push(GameAction::AcceptSettlement(0, GameID(1)));
         moves.push(GameAction::WaitBlocks(120, 1));
         moves.push(GameAction::WaitBlocks(5, 0));
 
@@ -4898,7 +4919,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
             "player 0 (who accepted) should get WeTimedOut, got: {p0_notifs:?}"
         );
 
@@ -4954,7 +4975,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
-    res.push(("test_accept_timeout_nerfed_then_on_chain", &|| {
+    res.push(("test_accept_settlement_nerfed_then_on_chain", &|| {
         let mut allocator = AllocEncoder::new();
 
         // Bob accepts off-chain (it's his turn after calpoker) but his
@@ -4962,7 +4983,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // on-chain.  The unroll resolves to the pre-accept state (Alice
         // never countersigned the accept batch).  Bob should still get
         // WeTimedOut through the on-chain timeout path, which finds the
-        // game in pending_accept_timeouts.
+        // game in pending_settlements.
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
             GameAction::AcceptProposal(1, GameID(1)),
@@ -4980,7 +5001,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
             "player 1 should get WeTimedOut after nerfed accept + on-chain, got: {p1_notifs:?}"
         );
     }));
@@ -5001,7 +5022,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(GameAction::NerfTransactions(0));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::AcceptTimeout(1, GameID(1)));
+        sim_setup.game_actions.push(GameAction::AcceptSettlement(1, GameID(1)));
         sim_setup.game_actions.push(GameAction::GoOnChain(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 0));
 
@@ -5026,8 +5047,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p1_notifs.iter().any(|n| {
                 matches!(
                     n,
-                    GameNotification::GameStatus {
-                        status: GameStatusKind::EndedWeTimedOut,
+                    GameNotification::GameSettled {
                         coin_id: Some(_),
                         ..
                     }
@@ -5115,7 +5135,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ], "cancellation_nerfed p0 prefix");
         let p0_tail: Vec<String> = outcome.local_uis[0].events[6..].iter().map(event_shape).collect();
         let p0_terminal: Vec<&str> = p0_tail.iter().filter(|s| {
-            s.contains("EndedWeTimedOut") || s.contains("EndedOpponentTimedOut")
+            s.contains("GameSettled")
         }).map(|s| s.as_str()).collect();
         assert_eq!(p0_terminal.len(), 1,
             "cancellation_nerfed p0 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
@@ -5135,7 +5155,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ], "cancellation_nerfed p1 prefix");
         let p1_tail: Vec<String> = outcome.local_uis[1].events[7..].iter().map(event_shape).collect();
         let p1_terminal: Vec<&str> = p1_tail.iter().filter(|s| {
-            s.contains("EndedWeTimedOut") || s.contains("EndedOpponentTimedOut")
+            s.contains("GameSettled")
         }).map(|s| s.as_str()).collect();
         assert_eq!(p1_terminal.len(), 1,
             "cancellation_nerfed p1 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
@@ -5166,13 +5186,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
             "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
             "player 1 should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
         );
 
@@ -5252,8 +5272,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 p0_notifs.iter().any(|n| {
                     matches!(
                         n,
-                        GameNotification::GameStatus {
-                            status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                        GameNotification::GameSettled {
+                            outcome: SettlementOutcome::OpponentCheated,
                             coin_id: None,
                             ..
                         }
@@ -5826,13 +5846,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
             "alice should get OpponentTimedOut (bob was nerfed), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
+                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
             "bob should get WeTimedOut (nerfed, couldn't play), got: {p1_notifs:?}"
         );
 
@@ -6741,12 +6761,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    our_share,
                     coin_id: None,
                     ..
-                } if *our_reward == Amount::default()
+                } if *our_share == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (redo skipped), got: {p0_notifs:?}"
         );
@@ -6761,9 +6780,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Bob sets mover_share=0 (Alice gets 0 as new mover).  Now it's
         // Alice's turn and her share as mover is 0.  Let both moves be
         // acknowledged normally.  Then nerf Alice's messages and call
-        // AcceptTimeout (game moves to pending_accept_timeouts but potato
+        // AcceptSettlement (game moves to pending_settlements but potato
         // never reaches Bob).  Go on-chain.  The coin matches via
-        // pending_accept_timeouts with accepted=true.  Alice's share is 0
+        // pending_settlements with accepted=true.  Alice's share is 0
         // so she should get immediate WeTimedOut(0).
         let moves = [DebugGameTestMove::new(0, 0), DebugGameTestMove::new(0, 0)];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
@@ -6771,7 +6790,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfMessages(0));
         sim_setup
             .game_actions
-            .push(GameAction::AcceptTimeout(0, GameID(1)));
+            .push(GameAction::AcceptSettlement(0, GameID(1)));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
@@ -6793,12 +6812,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    our_share,
                     coin_id: None,
                     ..
-                } if *our_reward == Amount::default()
+                } if *our_share == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (accepted, unroll), got: {p0_notifs:?}"
         );
@@ -6840,12 +6858,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedOpponentTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    our_share,
                     coin_id: None,
                     ..
-                } if *our_reward == Amount::default()
+                } if *our_share == Amount::default()
             )),
             "Alice should get OpponentTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
         );
@@ -6894,12 +6911,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    our_share,
                     coin_id: None,
                     ..
-                } if *our_reward == Amount::default()
+                } if *our_share == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain move skipped), got: {p0_notifs:?}"
         );
@@ -6933,17 +6949,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::ForfeitedSkippedReveal,
+                    our_share,
                     coin_id: None,
-                    other_params,
                     ..
-                } if *our_reward == Amount::default()
-                    && other_params
-                        .as_ref()
-                        .and_then(|params| params.forfeited)
-                        .unwrap_or(false)
+                } if *our_share == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward as forfeit, got: {p0_notifs:?}"
         );
@@ -7008,29 +7019,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedOpponentTimedOut,
-                    my_reward: Some(our_reward),
-                    other_params,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::SettledCleanly | SettlementOutcome::OpponentTimedOut | SettlementOutcome::WeAccepted,
+                    our_share,
                     ..
-                } if *our_reward == Amount::new(200)
-                    && other_params
-                        .as_ref()
-                        .and_then(|params| params.game_finished)
-                        .unwrap_or(false)
+                } if *our_share == Amount::new(200)
             )),
             "Alice should receive full-pot timeout reward, got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    our_share,
                     ..
-                } if *our_reward == Amount::default()
+                } if *our_share == Amount::default()
             )),
-            "Bob should receive a terminal timeout loss, got: {p1_notifs:?}"
+            "Bob should receive a terminal settlement with zero share, got: {p1_notifs:?}"
         );
         assert_eq!(
             p0_balance,
@@ -7107,22 +7112,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
-                    other_params,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::ForfeitedOpponentWon,
+                    our_share,
                     ..
-                } if *our_reward == Amount::default()
-                    && other_params
-                        .as_ref()
-                        .and_then(|params| params.game_finished)
-                        .unwrap_or(false)
-                    && other_params
-                        .as_ref()
-                        .and_then(|params| params.forfeited)
-                        .unwrap_or(false)
+                } if *our_share == Amount::default()
             )),
-            "Bob should receive a forfeit terminal (EndedWeTimedOut, game_finished, forfeited), got: {p1_notifs:?}"
+            "Bob should receive ForfeitedOpponentWon settlement, got: {p1_notifs:?}"
         );
 
         assert_eq!(
@@ -7132,7 +7128,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
-    res.push(("test_zero_reward_on_chain_accept_timeout", &|| {
+    res.push(("test_zero_reward_on_chain_accept_settlement", &|| {
         let mut allocator = AllocEncoder::new();
         let seed_data: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed_data);
@@ -7140,7 +7136,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Alice makes move 0 (mover_share=0, giving Alice everything as
         // waiter).  Bob makes move 1 (mover_share=0, giving Bob everything
         // as waiter).  Now it's Alice's turn, her share as mover is 0.
-        // Go on-chain, wait for unroll.  Alice calls AcceptTimeout on-chain.
+        // Go on-chain, wait for unroll.  Alice calls AcceptSettlement on-chain.
         // Since her share is 0, the system should skip the timeout wait and
         // immediately fire WeTimedOut(0).
         let moves = [
@@ -7152,7 +7148,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.push(GameAction::AcceptTimeout(0, GameID(1)));
+        sim_setup.game_actions.push(GameAction::AcceptSettlement(0, GameID(1)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
@@ -7172,14 +7168,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(our_reward),
+                GameNotification::GameSettled {
+                    our_share,
                     coin_id: None,
                     ..
-                } if *our_reward == Amount::default()
+                } if *our_share == Amount::default()
             )),
-            "Alice should get WeTimedOut with zero reward (on-chain AcceptTimeout), got: {p0_notifs:?}"
+            "Alice should get WeTimedOut with zero reward (on-chain AcceptSettlement), got: {p0_notifs:?}"
         );
     }));
 

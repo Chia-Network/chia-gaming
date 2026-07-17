@@ -103,6 +103,7 @@ export interface GameSessionParams {
 type WasmNotificationTag =
   | 'ChannelStatus'
   | 'GameStatus'
+  | 'GameSettled'
   | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
   | 'MoveRejected'
@@ -115,11 +116,6 @@ export type GameStatusState =
   | 'on-chain-their-turn'
   | 'replaying'
   | 'illegal-move-detected'
-  | 'ended-we-timed-out'
-  | 'ended-opponent-timed-out'
-  | 'ended-we-slashed-opponent'
-  | 'ended-opponent-slashed-us'
-  | 'ended-opponent-successfully-cheated'
   | 'ended-cancelled'
   | 'ended-error';
 
@@ -129,7 +125,6 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
-  forfeited?: boolean;
 }
 
 export interface GameStatusPayload {
@@ -139,6 +134,13 @@ export interface GameStatusPayload {
   coin_id?: unknown;
   reason?: string | null;
   other_params?: GameStatusOtherParams | null;
+}
+
+export interface GameSettledPayload {
+  id: unknown;
+  outcome: string;
+  our_share: unknown;
+  coin_id?: unknown;
 }
 
 export type ChannelState =
@@ -260,7 +262,7 @@ export interface WasmConnection {
   ) => WasmResult | undefined;
   make_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
   cheat: (cid: number, id: string, mover_share: string) => WasmResult | undefined;
-  accept_timeout: (cid: number, id: string) => WasmResult | undefined;
+  accept_settlement: (cid: number, id: string) => WasmResult | undefined;
   shut_down: (cid: number) => WasmResult | undefined;
   go_on_chain: (cid: number) => WasmResult | undefined;
   report_puzzle_and_solution: (
@@ -357,7 +359,7 @@ export class ChiaGame {
   }
 
   accept(id: string): WasmResult | undefined {
-    return this.wasm.accept_timeout(this.cradle, id);
+    return this.wasm.accept_settlement(this.cradle, id);
   }
 
   shut_down(): WasmResult | undefined {

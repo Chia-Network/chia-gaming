@@ -279,7 +279,7 @@ Rather than implementing transactional rollback (expensive and masks the bug),
 the cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
 The JS-side game action methods (`proposeGame`, `acceptProposal`,
-`cancel_proposal`, `makeMove`, `acceptTimeout`, `cheat`) also catch WASM
+`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
 throws and surface them through the UI error dialog. This makes local bugs
 immediately visible and diagnosable without adding rollback complexity.
 
@@ -317,7 +317,7 @@ they are only advanced after the received batch is valid.
 **Key code:** `src/potato_handler/mod.rs` — `pass_on_channel_handler_message`
 (snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
 `drain_queue_into_batch`; regression:
-`failed_final_move_bad_signature_does_not_queue_accept_timeout`
+`failed_final_move_bad_signature_does_not_queue_accept_settlement`
 
 ---
 
@@ -380,26 +380,26 @@ There are three kinds of cached entries:
 - `**PotatoMoveHappening`** — a move we sent but the opponent hasn't acknowledged.
 Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
 and the post-move puzzle hash (`saved_post_move_last_ph`).
-- `**PotatoAcceptTimeout`** — a game acceptance we sent. Stores the game ID, puzzle
+- `**CachedAcceptSettlement`** — a game acceptance we sent. Stores the game ID, puzzle
 hash, live game state, and reward amounts. When the potato returns
-(acknowledgment), `drain_cached_accept_timeouts` emits `WeTimedOut` for each cached
-accept.
+(acknowledgment), `drain_cached_accept_settlements` emits `GameSettled` with
+`outcome: accept_settlement` for each cached accept.
 - `**ProposalAccepted**` — a proposal acceptance we sent. Stores the game ID.
 Used during stale unroll handling to distinguish in-flight proposal accepts
 (which get `EndedCancelled`) from fully established games (which get
 `GameError`).
 
 **Set** in `send_move_no_finalize` (moves) and
-`send_accept_timeout_no_finalize` (accept-timeouts).
+`send_accept_settlement_no_finalize` (accept settlements).
 
 **Cleared** (selectively) when we receive the potato back:
 
 - `PotatoMoveHappening` entries are cleared in `verify_received_batch_signatures`
 and `received_empty_potato` (the opponent's response acknowledges our moves).
 - `ProposalAccepted` entries are also cleared on potato receive.
-- `PotatoAcceptTimeout` entries are **retained** across those clears and only drained
-later by `drain_cached_accept_timeouts` during `update_channel_coin_after_receive` or
-clean shutdown, when `WeTimedOut` notifications are emitted.
+- `CachedAcceptSettlement` entries are **retained** across those clears and only drained
+later by `drain_cached_accept_settlements` during `update_channel_coin_after_receive` or
+clean shutdown, when `GameSettled` notifications are emitted.
 
 ### How Redo Works
 
@@ -459,7 +459,7 @@ moves and timeout claims on-chain.
 
 There are two sources of on-chain actions after `go_on_chain`:
 
-- **Redo actions** (from `cached_last_actions`): moves or accept-timeouts we
+- **Redo actions** (from `cached_last_actions`): moves or accept settlements we
 already sent with the last potato but that weren't acknowledged before going
 on-chain. These apply to games where **it was our turn and we acted**.
 - **User-queued actions** (from `game_action_queue`): moves the user queued
@@ -510,8 +510,8 @@ When `cheat()` is called on a `GameCradle`:
 
 | Scenario                        | Notification (cheater)                                       | Notification (victim)                                         |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
-| Opponent detects and slashes    | `OpponentSlashedUs`                                          | `WeSlashedOpponent`                                           |
-| Opponent fails to slash in time | `OpponentTimedOut` (cheater receives `amount - mover_share`) | `OpponentSuccessfullyCheated` (victim receives `mover_share`) |
+| Opponent detects and slashes    | `GameSettled { outcome: opponent_slashed_us, … }`             | `GameSettled { outcome: slashed_opponent, … }`                |
+| Opponent fails to slash in time | `GameSettled { outcome: opponent_timed_out, … }`             | `GameSettled { outcome: opponent_cheated, … }`                |
 
 
 **Key code:**

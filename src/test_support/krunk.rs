@@ -201,17 +201,12 @@ mod sim_tests {
             )));
             assert!(!notifications.iter().any(|notification| matches!(
                 notification,
-                GameNotification::GameStatus {
-                    status:
-                        crate::potato_handler::effects::GameStatusKind::EndedWeTimedOut
-                        | crate::potato_handler::effects::GameStatusKind::EndedOpponentTimedOut
-                        | crate::potato_handler::effects::GameStatusKind::EndedWeSlashedOpponent
-                        | crate::potato_handler::effects::GameStatusKind::EndedOpponentSlashedUs
-                        | crate::potato_handler::effects::GameStatusKind::EndedOpponentSuccessfullyCheated
-                        | crate::potato_handler::effects::GameStatusKind::EndedCancelled
-                        | crate::potato_handler::effects::GameStatusKind::EndedError,
-                    ..
-                }
+                GameNotification::GameSettled { .. }
+                    | GameNotification::GameStatus {
+                        status: crate::potato_handler::effects::GameStatusKind::EndedCancelled
+                            | crate::potato_handler::effects::GameStatusKind::EndedError,
+                        ..
+                    }
             )));
         }));
 
@@ -345,17 +340,12 @@ mod sim_tests {
                 assert!(
                     notifications.iter().any(|notification| matches!(
                         notification,
-                        GameNotification::GameStatus {
+                        GameNotification::GameSettled {
                             id,
-                            status:
-                                GameStatusKind::EndedWeTimedOut
-                                | GameStatusKind::EndedOpponentTimedOut,
-                            my_reward: Some(reward),
-                            other_params: Some(params),
+                            our_share,
                             ..
                         } if *id == GameID(1)
-                            && *reward > crate::common::types::Amount::default()
-                            && params.game_finished == Some(true)
+                            && *our_share > crate::common::types::Amount::default()
                     )),
                     "{side} should receive its positive terminal payout: {notifications:?}"
                 );

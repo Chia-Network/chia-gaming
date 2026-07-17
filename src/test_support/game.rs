@@ -209,7 +209,7 @@ mod sim_tests {
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
         /// Accept timeout (player, game_id)
-        AcceptTimeout(usize, GameID),
+        AcceptSettlement(usize, GameID),
         /// Shut down
         CleanShutdown(usize),
         /// Corrupt a player's state_number for testing edge cases.
@@ -287,8 +287,8 @@ mod sim_tests {
                     write!(formatter, "ProposeKrunkGroup({p},{t:?})")
                 }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
-                GameAction::AcceptTimeout(p, g) => {
-                    write!(formatter, "AcceptTimeout({p},{g:?})")
+                GameAction::AcceptSettlement(p, g) => {
+                    write!(formatter, "AcceptSettlement({p},{g:?})")
                 }
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 GameAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),

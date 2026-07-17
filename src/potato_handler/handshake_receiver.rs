@@ -674,13 +674,13 @@ impl PeerHandler for HandshakeReceiverHandler {
             "make_move not available during handshake".to_string(),
         ))
     }
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
         _id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
-            "accept_timeout not available during handshake".to_string(),
+            "accept_settlement not available during handshake".to_string(),
         ))
     }
     fn cheat_game(

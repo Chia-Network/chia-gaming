@@ -3,6 +3,10 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import { SessionController } from './SessionController';
 import { GameplayEvent } from './useGameSession';
+import {
+  krunkSettlementStatus,
+  type SettlementOutcome,
+} from '../lib/settlement';
 
 // Phase of the krunk state machine. Both roles share the enum -- which
 // transitions fire depends on whether the local player is alice (picks
@@ -38,8 +42,7 @@ export interface KrunkGameState {
   outcome: 'win' | 'lose' | null;
   // From OpponentMoved.moverShare when the hand ends on a received reveal.
   moverShare: string | null;
-  timeoutByUs: boolean | null;
-  timeoutForfeited: boolean;
+  settlementOutcome: SettlementOutcome | null;
   error: string | null;
 }
 
@@ -124,11 +127,8 @@ export function krunkTerminalStatus(
   opponentLabel: string,
 ): string | null {
   if (state.handler !== KrunkHandler.Terminal) return null;
-  if (state.timeoutByUs !== null) {
-    if (state.timeoutByUs) {
-      return state.timeoutForfeited ? 'We forfeited.' : 'We timed out.';
-    }
-    return `${opponentLabel} ${state.timeoutForfeited ? 'forfeited' : 'timed out'}.`;
+  if (state.settlementOutcome != null) {
+    return krunkSettlementStatus(state.settlementOutcome, opponentLabel);
   }
   if (state.role === 'bob') {
     // Bob win amount is shown from moverShare in the UI (large font).
@@ -263,8 +263,7 @@ export function useKrunkHand(
     revealedWord: null,
     outcome: null,
     moverShare: null,
-    timeoutByUs: null,
-    timeoutForfeited: false,
+    settlementOutcome: null,
     error: null,
   });
 
@@ -406,16 +405,16 @@ export function useKrunkHand(
           if (next !== gsRef.current) {
             transition(next);
           }
-        } else if ('Timeout' in evt) {
-          if (evt.Timeout.gameId !== gameIdRef.current) return;
+        } else if ('Settled' in evt) {
+          if (evt.Settled.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
             transition({
               ...gsRef.current,
               handler: KrunkHandler.Terminal,
               myTurn: false,
-              timeoutByUs: evt.Timeout.byUs,
-              timeoutForfeited: evt.Timeout.forfeited,
+              settlementOutcome: evt.Settled.outcome,
+              moverShare: evt.Settled.ourShare,
             });
           }
         } else if ('GameError' in evt) {

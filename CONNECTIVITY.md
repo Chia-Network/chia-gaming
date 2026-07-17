@@ -514,28 +514,38 @@ The Game tab shows a red dot when `sessionError` is true, or when
 - `Failed` channel state — the channel encountered an unrecoverable error
 - `ResolvedStale` channel state — the channel resolved but the outcome is
   suspect (e.g., opponent exploited a timeout)
-- `opponent-successfully-cheated` game terminal — the opponent submitted an
-  invalid state and profited from it
-- `game-error` game terminal — a generic game-level error
-- `we-timed-out` with `cleanEnd = false` — a premature timeout where we
-  failed to post a move or the user didn't move in time
+- `ResolvedStale` channel state — the channel resolved but the outcome is
+  suspect (e.g., opponent exploited a timeout)
+- `game-error` game terminal — a generic game-level error (`GameStatus` with
+  `EndedError`, or an unknown `GameSettled` outcome)
+- adverse `GameSettled` outcomes — see `isErrorSettlementOutcome` in
+  `front-end/src/lib/settlement.ts` (forfeits, `timed_out_waiting_for_our_move`,
+  `attempt_to_move_failed`, `opponent_slashed_us`, `opponent_cheated`)
 
-A timeout with `game_finished = true` (the game had naturally ended, i.e.,
-the validation program was `nil`) is **not** an error — it produces a
-"Game ended cleanly" label regardless of who timed out.
+Normal settlements such as `accept_settlement`, `settled_cleanly`,
+`opponent_timed_out`, `we_accepted`, and `slashed_opponent` are **not** session
+errors.
 
-### Timeout labels
+### Settlement labels
 
-The frontend uses `game_finished` from `other_params` and the current
-`turnState` to produce context-aware timeout labels:
+The session banner and dashboard derive display text from
+`SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (sourced from
+the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)). Examples:
 
-| Status | `game_finished` | `turnState` | Label |
-|--------|----------------|-------------|-------|
-| ended-we-timed-out | true | (any) | "Game ended cleanly" |
-| ended-we-timed-out | false | replaying / their-turn | "We timed out while trying to post a move" |
-| ended-we-timed-out | false | my-turn / other | "We timed out while waiting for user to move" |
-| ended-opponent-timed-out | true | (any) | "Game ended cleanly" |
-| ended-opponent-timed-out | false | (any) | "Opponent timed out" |
+| `outcome` (wire) | Display label |
+|------------------|---------------|
+| `accept_settlement` / `we_accepted` | Accepted |
+| `settled_cleanly` | Settled cleanly |
+| `opponent_timed_out` | Opponent timed out |
+| `forfeited_*` | Forfeited |
+| `attempt_to_move_failed` | Attempt to move failed |
+| `timed_out_waiting_for_our_move` | Timed out waiting for our move |
+| `slashed_opponent` | Slashed opponent |
+| `opponent_slashed_us` | Opponent slashed us |
+| `opponent_cheated` | Opponent cheated |
+
+There is no session-level **Folded** label. Space Poker may still show **Fold**
+as a game-local button that calls `accept_settlement`.
 
 ### Button placement
 

@@ -20,7 +20,7 @@ use crate::channel_handler::types::{
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationResult,
     ChannelHandlerMoveResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinSpentInformation, HandshakeResult, HistoricalUnrollSpendInfo, LiveGame, MoveResult,
-    OnChainGameCoin, OnChainGameState, PotatoAcceptTimeoutCachedData, PotatoMoveCachedData,
+    OnChainGameCoin, OnChainGameState, CachedAcceptSettlement, PotatoMoveCachedData,
     PotatoSignatures, ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
 };
 
@@ -126,11 +126,11 @@ pub struct ChannelHandler {
     // Live games
     live_games: Vec<LiveGame>,
 
-    // Games removed by send_accept_timeout_no_finalize / apply_received_accept_timeout that
+    // Games removed by send_accept_settlement_no_finalize / apply_received_accept_settlement that
     // haven't been confirmed by a full potato round-trip yet.  Kept so
     // set_state_for_coins and accept_or_timeout_game_on_chain can find them
     // if the channel goes on-chain before the round-trip completes.
-    pending_accept_timeouts: Vec<LiveGame>,
+    pending_settlements: Vec<LiveGame>,
     // Games that have been proposed but not yet accepted or cancelled.
     // These are metadata only — they do not affect the unroll commitment
     // or player balances until accepted.
@@ -194,7 +194,7 @@ impl ChannelHandler {
     pub fn all_game_ids(&self) -> Vec<GameID> {
         self.live_games
             .iter()
-            .chain(self.pending_accept_timeouts.iter())
+            .chain(self.pending_settlements.iter())
             .map(|g| g.game_id)
             .collect()
     }
@@ -237,8 +237,8 @@ impl ChannelHandler {
         std::mem::take(&mut self.live_games)
     }
 
-    pub fn take_pending_accept_timeouts(&mut self) -> Vec<LiveGame> {
-        std::mem::take(&mut self.pending_accept_timeouts)
+    pub fn take_pending_settlements(&mut self) -> Vec<LiveGame> {
+        std::mem::take(&mut self.pending_settlements)
     }
 
     pub fn take_cached_last_actions(&mut self) -> Vec<CachedPotatoRegenerateLastHop> {
@@ -263,11 +263,11 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
-    /// Drain all cached PotatoAcceptTimeout entries, returning (game_id, our_share_amount, game_finished) for each.
-    pub fn drain_cached_accept_timeouts(&mut self) -> Vec<(GameID, Amount, bool)> {
+    /// Drain all cached CachedAcceptSettlement entries, returning (game_id, our_share_amount, game_finished) for each.
+    pub fn drain_cached_accept_settlements(&mut self) -> Vec<(GameID, Amount, bool)> {
         let mut accepts = Vec::new();
         self.cached_last_actions.retain(|entry| {
-            if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
+            if let CachedPotatoRegenerateLastHop::CachedAcceptSettlement(acc) = entry {
                 accepts.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                 false
             } else {
@@ -538,7 +538,7 @@ impl ChannelHandler {
             unroll_puzzle_hash_map: HashMap::new(),
 
             live_games: Vec::new(),
-            pending_accept_timeouts: Vec::new(),
+            pending_settlements: Vec::new(),
             proposed_games: Vec::new(),
 
             private_keys,
@@ -771,7 +771,7 @@ impl ChannelHandler {
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         // The potato just arrived, so any prior pending accepts are now
         // confirmed by the round-trip.
-        self.pending_accept_timeouts.clear();
+        self.pending_settlements.clear();
 
         // Unroll coin section.
         let mut test_unroll = self.latest_sent_unroll.coin.clone();
@@ -838,7 +838,7 @@ impl ChannelHandler {
         )?;
 
         self.cached_last_actions
-            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_)));
+            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)));
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -865,7 +865,7 @@ impl ChannelHandler {
         )?;
 
         self.cached_last_actions
-            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_)));
+            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)));
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -1201,7 +1201,7 @@ impl ChannelHandler {
             return g.get_our_current_share();
         }
         if let Some(g) = self
-            .pending_accept_timeouts
+            .pending_settlements
             .iter()
             .find(|g| g.game_id == *game_id)
         {
@@ -1213,21 +1213,21 @@ impl ChannelHandler {
         )))
     }
 
-    /// Drain PotatoAcceptTimeout entries from cached_last_actions for games
+    /// Drain CachedAcceptSettlement entries from cached_last_actions for games
     /// that are NOT in surviving_ids (i.e., preemption resolved them and no
     /// game coin was created on-chain). Returns (game_id, our_share, game_finished) tuples
     /// that need WeTimedOut notifications.
     ///
     /// This only fires when the potato never came back — if it had,
-    /// drain_cached_accept_timeouts would have already removed these entries
+    /// drain_cached_accept_settlements would have already removed these entries
     /// and emitted WeTimedOut off-chain.
-    pub fn drain_preempt_resolved_accept_timeouts(
+    pub fn drain_preempt_resolved_accept_settlements(
         &mut self,
         surviving_ids: &HashSet<GameID>,
     ) -> Vec<(GameID, Amount, bool)> {
         let mut resolved = Vec::new();
         self.cached_last_actions.retain(|entry| {
-            if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
+            if let CachedPotatoRegenerateLastHop::CachedAcceptSettlement(acc) = entry {
                 if !surviving_ids.contains(&acc.game_id) {
                     resolved.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                     return false;
@@ -1236,7 +1236,7 @@ impl ChannelHandler {
             true
         });
         for (gid, _, _) in &resolved {
-            self.pending_accept_timeouts.retain(|g| g.game_id != *gid);
+            self.pending_settlements.retain(|g| g.game_id != *gid);
         }
         resolved
     }
@@ -1246,7 +1246,7 @@ impl ChannelHandler {
             return Ok(g.get_amount());
         }
         if let Some(g) = self
-            .pending_accept_timeouts
+            .pending_settlements
             .iter()
             .find(|g| g.game_id == *game_id)
         {
@@ -1380,15 +1380,15 @@ impl ChannelHandler {
 
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo. Returns the amount won.
-    pub fn send_accept_timeout_no_finalize(&mut self, game_id: &GameID) -> Result<Amount, Error> {
+    pub fn send_accept_settlement_no_finalize(&mut self, game_id: &GameID) -> Result<Amount, Error> {
         game_assert!(
             self.have_potato,
-            "send_accept_timeout_no_finalize: must have potato"
+            "send_accept_settlement_no_finalize: must have potato"
         );
         let game_idx = self.get_game_by_id(game_id)?;
         game_assert!(
             self.live_games[game_idx].is_my_turn(),
-            "accept_timeout requires it to be our turn"
+            "accept_settlement requires it to be our turn"
         );
 
         let live_game = self.live_games.remove(game_idx);
@@ -1403,7 +1403,7 @@ impl ChannelHandler {
         let at_stake = live_game.get_amount();
 
         let (ref_clone, ph_clone) = live_game.save_referee_state();
-        self.pending_accept_timeouts.push(LiveGame::new(
+        self.pending_settlements.push(LiveGame::new(
             *game_id,
             ph_clone,
             ref_clone,
@@ -1415,8 +1415,8 @@ impl ChannelHandler {
         self.their_out_of_game_balance += at_stake.checked_sub(&amount)?;
 
         let game_finished = live_game.is_game_over();
-        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(
-            Box::new(PotatoAcceptTimeoutCachedData {
+        self.push_cached_action(CachedPotatoRegenerateLastHop::CachedAcceptSettlement(
+            Box::new(CachedAcceptSettlement {
                 game_id: *game_id,
                 puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
                 live_game,
@@ -1431,7 +1431,7 @@ impl ChannelHandler {
 
     /// Apply a received accept (game finish) without verifying signatures.
     /// Returns (our_reward_amount, game_finished).
-    pub fn apply_received_accept_timeout(
+    pub fn apply_received_accept_settlement(
         &mut self,
         game_id: &GameID,
     ) -> Result<(Amount, bool), Error> {
@@ -1439,7 +1439,7 @@ impl ChannelHandler {
 
         if self.live_games[game_idx].is_my_turn() {
             return Err(Error::StrErr(format!(
-                "received AcceptTimeout for game {game_id:?} but it is our turn"
+                "received AcceptSettlement for game {game_id:?} but it is our turn"
             )));
         }
 
@@ -1459,7 +1459,7 @@ impl ChannelHandler {
         self.their_out_of_game_balance += game_amount_for_them;
 
         let removed = self.live_games.remove(game_idx);
-        self.pending_accept_timeouts.push(removed);
+        self.pending_settlements.push(removed);
         Ok((game_amount_for_me, game_finished))
     }
 
@@ -1891,7 +1891,7 @@ impl ChannelHandler {
             }
 
             let pending_match = self
-                .pending_accept_timeouts
+                .pending_settlements
                 .iter()
                 .find(|p| p.last_referee_puzzle_hash == *coin_ph && p.get_amount() == *coin_amt);
             if let Some(pending) = pending_match {
@@ -2155,13 +2155,13 @@ impl ChannelHandler {
             self.live_games.remove(game_idx);
             Ok(tx)
         } else if let Some(idx) = self
-            .pending_accept_timeouts
+            .pending_settlements
             .iter()
             .position(|g| g.game_id == *game_id)
         {
-            let tx = self.pending_accept_timeouts[idx]
+            let tx = self.pending_settlements[idx]
                 .get_transaction_for_timeout(env.allocator, coin)?;
-            self.pending_accept_timeouts.remove(idx);
+            self.pending_settlements.remove(idx);
             Ok(tx)
         } else {
             Ok(None)

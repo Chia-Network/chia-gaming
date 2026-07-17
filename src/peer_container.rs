@@ -71,7 +71,7 @@ pub trait PeerHandler {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
@@ -410,8 +410,8 @@ pub trait GameCradle {
 
     fn identity(&self) -> ChiaIdentity;
 
-    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_timeout.
-    fn accept_timeout(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error>;
+    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_settlement.
+    fn accept_settlement(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error>;
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     fn shut_down(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error>;
@@ -1554,11 +1554,11 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_timeout.
-    fn accept_timeout(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error> {
+    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_settlement.
+    fn accept_settlement(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error> {
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            self.peer.accept_timeout(&mut env, id)?
+            self.peer.accept_settlement(&mut env, id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())

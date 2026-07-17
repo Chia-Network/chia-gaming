@@ -39,4 +39,5 @@ export interface CaliforniapokerProps {
   opponentName?: string;
   timeoutByUs?: boolean | null;
   timeoutForfeited?: boolean;
+  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
 }

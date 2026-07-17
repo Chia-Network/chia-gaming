@@ -1168,15 +1168,14 @@ In-game and between-hand events pushed to the game-scoped FIFO queue
 
 | Kind | Source |
 |---|---|
-| `game-terminal` | Adverse `GameStatus` terminal during on-chain flow, except bar-only outcomes such as forfeits |
+| `game-terminal` | Adverse `GameSettled` outcomes during on-chain flow (via `isErrorSettlementOutcome`), except bar-only forfeits |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
 | `insufficient-bal` | `InsufficientBalance` notification |
 
-Timeout terminal labels use `game_finished` from `other_params` and the
-current `turnState` (tracked via `turnStateRef`) to produce context-aware
-messages — see `CONNECTIVITY.md` "Timeout labels" for the full matrix.
-Premature timeouts where we failed to move are flagged as errors via
-`cleanEnd: false` on `GameTerminalInfo`.
+Settlement banner labels come from `SETTLEMENT_OUTCOME_LABELS` in
+`front-end/src/lib/settlement.ts` (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
+and `CONNECTIVITY.md` "Settlement labels"). Adverse outcomes are flagged via
+`isErrorSettlementOutcome` on `GameTerminalInfo.outcome`.
 
 ### Game lifecycle (handled internally by session)
 
@@ -1198,9 +1197,13 @@ via the `gameplayEventSubject` RxJS stream:
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 - `MoveRejected` — a recoverable local move rejection with game id, tag, and
   message; game hooks roll back only their matching optimistic move
+- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; dual-delivered
+  to the session banner and the active game hook via `gameplayEvent$`
+- `GameError` — non-settlement terminals (`EndedCancelled`, `EndedError`,
+  `InsufficientBalance`) and unknown settlement outcomes
 
-Terminal notifications are also forwarded as `{ _terminal: true, notification }`
-so the game UI can stop processing.
+Legacy `GameStatus` slash/timeout `Ended*` kinds are no longer forwarded to
+gameplay hooks; settlements use `GameSettled` only.
 
 ## Single-Hand Enforcement
 

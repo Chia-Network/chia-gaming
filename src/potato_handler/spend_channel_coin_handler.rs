@@ -15,7 +15,7 @@ use crate::common::types::{
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
 };
 use crate::potato_handler::handler_base::{
     build_channel_to_unroll_bundle, classify_unroll, ChannelHandlerBase, UnrollOutcome,
@@ -232,12 +232,12 @@ impl SpendChannelCoinHandler {
         Ok(vec![])
     }
 
-    pub fn accept_timeout(
+    pub fn accept_settlement(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        self.base.park_accept_timeout(id);
+        self.base.park_accept_settlement(id);
         Ok(vec![])
     }
 
@@ -521,23 +521,13 @@ impl SpendChannelCoinHandler {
                 effects.push(Effect::Log("[clean-end] clean shutdown landed".to_string()));
                 {
                     let ch = self.base.channel_handler_mut()?;
-                    for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
-                        let finished_params = if game_finished {
-                            Some(GameStatusOtherParams {
-                                game_finished: Some(true),
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        };
-                        effects.push(Effect::Notify(GameNotification::GameStatus {
+                    for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
+                        effects.push(Effect::Notify(GameNotification::game_settled(
                             id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(amount),
-                            coin_id: None,
-                            reason: None,
-                            other_params: finished_params,
-                        }));
+                            SettlementOutcome::AcceptSettlement,
+                            amount,
+                            None,
+                        )));
                     }
                 }
                 // Record the change coin we receive so the resolved coin id
@@ -800,7 +790,7 @@ impl SpendChannelCoinHandler {
                 }
             }
 
-            let preempt_resolved = player_ch.drain_preempt_resolved_accept_timeouts(&surviving_ids);
+            let preempt_resolved = player_ch.drain_preempt_resolved_accept_settlements(&surviving_ids);
 
             (game_map_inner, reward_coin, preempt_resolved)
         };
@@ -808,14 +798,12 @@ impl SpendChannelCoinHandler {
         self.terminal_reward_coin = on_chain_reward_coin.clone();
 
         for (game_id, our_share, _game_finished) in &preempt_resolved {
-            effects.push(Effect::Notify(GameNotification::GameStatus {
-                id: *game_id,
-                status: GameStatusKind::EndedWeTimedOut,
-                my_reward: Some(our_share.clone()),
-                coin_id: on_chain_reward_coin.clone(),
-                reason: Some("preempt resolved: game accepted off-chain before unroll".to_string()),
-                other_params: None,
-            }));
+            effects.push(Effect::Notify(GameNotification::game_settled(
+                *game_id,
+                SettlementOutcome::AcceptSettlement,
+                our_share.clone(),
+                on_chain_reward_coin.clone(),
+            )));
         }
 
         if game_map.is_empty() {
@@ -853,34 +841,19 @@ impl SpendChannelCoinHandler {
             }
             for (coin, game_id, _game_finished, our_turn, accepted) in &zero_reward_games {
                 game_map.remove(coin);
-                let forfeit_params = Some(GameStatusOtherParams {
-                    game_finished: Some(true),
-                    forfeited: Some(true),
-                    ..Default::default()
-                });
-                let (status, reason) = if *our_turn || *accepted {
-                    (
-                        GameStatusKind::EndedWeTimedOut,
-                        if *accepted {
-                            "zero reward: game was accepted but our share is zero"
-                        } else {
-                            "zero reward: our replayed move yields nothing"
-                        },
-                    )
+                let outcome = if *accepted {
+                    SettlementOutcome::ForfeitedWeAccepted
+                } else if *our_turn {
+                    SettlementOutcome::ForfeitedSkippedReveal
                 } else {
-                    (
-                        GameStatusKind::EndedOpponentTimedOut,
-                        "zero reward: opponent's turn and our share is zero",
-                    )
+                    SettlementOutcome::ForfeitedOpponentWon
                 };
-                effects.push(Effect::Notify(GameNotification::GameStatus {
-                    id: *game_id,
-                    status,
-                    my_reward: Some(Amount::default()),
-                    coin_id: None,
-                    reason: Some(reason.to_string()),
-                    other_params: forfeit_params,
-                }));
+                effects.push(Effect::Notify(GameNotification::game_settled(
+                    *game_id,
+                    outcome,
+                    Amount::default(),
+                    None,
+                )));
             }
         }
 
@@ -1010,7 +983,7 @@ impl SpendChannelCoinHandler {
             my_allocated_balance: player_ch.my_allocated_balance(),
             their_allocated_balance: player_ch.their_allocated_balance(),
             live_games: player_ch.take_live_games(),
-            pending_accept_timeouts: player_ch.take_pending_accept_timeouts(),
+            pending_settlements: player_ch.take_pending_settlements(),
             unroll_advance_timeout: player_ch.unroll_advance_timeout().clone(),
             is_initial_potato: player_ch.is_initial_potato(),
             state_number: player_ch.state_number(),
@@ -1102,12 +1075,12 @@ impl PeerHandler for SpendChannelCoinHandler {
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinHandler::make_move(self, env, id, readable, new_entropy)
     }
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::accept_timeout(self, env, id)
+        SpendChannelCoinHandler::accept_settlement(self, env, id)
     }
     fn cheat_game(
         &mut self,

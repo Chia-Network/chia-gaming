@@ -6,6 +6,8 @@ import type {
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionState } from '../../hooks/save';
+import type { SettlementOutcome } from '../settlement';
+import { isSettlementOutcome } from '../settlement';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -35,12 +37,7 @@ export type HandStatus =
 
 export type GameTerminalType =
   | 'none'
-  | 'forfeit'
-  | 'we-timed-out'
-  | 'opponent-timed-out'
-  | 'we-slashed-opponent'
-  | 'opponent-slashed-us'
-  | 'opponent-successfully-cheated'
+  | 'settled'
   | 'insufficient-balance'
   | 'ended-cancelled'
   | 'game-error';
@@ -73,10 +70,10 @@ export interface GameCoinModel {
 
 export interface GameTerminalModel {
   type: GameTerminalType;
+  outcome: SettlementOutcome | null;
   label: string | null;
   myReward: string | null;
   rewardCoinHex: string | null;
-  cleanEnd?: boolean;
 }
 
 export interface GameInstanceModel {
@@ -275,6 +272,7 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
 
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
   type: 'none',
+  outcome: null,
   label: null,
   myReward: null,
   rewardCoinHex: null,
@@ -633,9 +631,6 @@ function collapsedHandDetail(model: SessionModel): string | null {
   if (terminal.type === 'none') {
     return null;
   }
-  if (terminal.cleanEnd && terminal.label !== 'Forfeited') {
-    return null;
-  }
   return terminal.label;
 }
 
@@ -648,7 +643,7 @@ function instanceHandStatus(instance: GameInstanceModel): HandStatus {
 
 function instanceTerminalDetail(instance: GameInstanceModel): string | null {
   const terminal = instance.terminal;
-  if (terminal.type === 'none' || (terminal.cleanEnd && terminal.label !== 'Forfeited')) {
+  if (terminal.type === 'none') {
     return null;
   }
   return terminal.label;
@@ -1016,10 +1011,12 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
         handStatus: instance.handStatus as HandStatus,
         terminal: {
           type: instance.terminal.type as GameTerminalType,
+          outcome: isSettlementOutcome(instance.terminal.outcome)
+            ? instance.terminal.outcome
+            : null,
           label: instance.terminal.label,
           myReward: instance.terminal.myReward,
           rewardCoinHex: instance.terminal.rewardCoinHex,
-          cleanEnd: instance.terminal.cleanEnd,
         },
       },
     ]),
@@ -1064,10 +1061,12 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       terminal: save.gameTerminalType && save.gameTerminalType !== 'none'
         ? {
             type: save.gameTerminalType as GameTerminalType,
+            outcome: isSettlementOutcome(save.gameTerminalOutcome)
+              ? save.gameTerminalOutcome
+              : null,
             label: save.gameTerminalLabel ?? null,
             myReward: save.gameTerminalReward ?? null,
             rewardCoinHex: save.gameTerminalRewardCoin ?? null,
-            cleanEnd: save.gameTerminalCleanEnd,
           }
         : INITIAL_GAME_TERMINAL_MODEL,
       handKey: (activeIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
@@ -1158,10 +1157,10 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
         }))
       : undefined,
     gameTerminalType: model.game.terminal.type !== 'none' ? model.game.terminal.type : undefined,
+    gameTerminalOutcome: model.game.terminal.outcome ?? undefined,
     gameTerminalLabel: model.game.terminal.label,
     gameTerminalReward: model.game.terminal.myReward,
     gameTerminalRewardCoin: model.game.terminal.rewardCoinHex,
-    gameTerminalCleanEnd: model.game.terminal.cleanEnd,
     myRunningBalance: model.myRunningBalance !== 0n ? model.myRunningBalance.toString() : undefined,
     channelNotifQueue: model.channel.queue.length > 0
       ? model.channel.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))

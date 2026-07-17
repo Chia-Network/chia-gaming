@@ -10,6 +10,7 @@ import {
   WasmNotification,
   ChannelState,
   ChannelStatusPayload,
+  GameSettledPayload,
   GameStatusPayload,
   GameStatusState,
   MoveRejectedPayload,
@@ -25,6 +26,12 @@ import type { BlockchainPoller } from './BlockchainPoller';
 import { SessionState, saveSession, getDefaultFee, getBlockchainType } from './save';
 import { coinIdFromBytes, coerceToBytes } from '../util';
 import { log } from '../services/log';
+import {
+  isSettlementOutcome,
+  parseSettlementShare,
+  settlementLabel,
+  type SettlementOutcome,
+} from '../lib/settlement';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
@@ -47,7 +54,7 @@ export type GameplayEvent =
   | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
-  | { Timeout: { gameId: string; byUs: boolean; forfeited: boolean } }
+  | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
   | { GameError: { gameId: string; reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
@@ -66,29 +73,18 @@ export function gameplayEventForMoveRejected(
   };
 }
 
-export function terminalEventForInfo(
+export function settledEventForInfo(
   gameId: string,
   info: GameTerminalInfo,
-  status: GameStatusState,
 ): GameplayEvent | null {
-  if (info.cleanEnd) return null;
-
-  switch (info.type) {
-    case 'forfeit':
-      // A forfeit is a timeout-based terminal where the loser intentionally
-      // skipped its final move (no point paying for an on-chain move that wins
-      // nothing). Carry the distinction so games can label it "Forfeit" rather
-      // than the misleading "Timed Out". Direction follows the status: our own
-      // forfeit arrives as ended-we-timed-out, the opponent's as
-      // ended-opponent-timed-out.
-      return { Timeout: { gameId, byUs: status === 'ended-we-timed-out', forfeited: true } };
-    case 'we-timed-out':
-      return { Timeout: { gameId, byUs: true, forfeited: false } };
-    case 'opponent-timed-out':
-      return { Timeout: { gameId, byUs: false, forfeited: false } };
-    default:
-      return { GameError: { gameId, reason: info.label ?? info.type } };
-  }
+  if (info.type !== 'settled' || info.outcome == null) return null;
+  return {
+    Settled: {
+      gameId,
+      outcome: info.outcome,
+      ourShare: info.myReward ?? '0',
+    },
+  };
 }
 
 export function gameplayEventsForGameStatus(
@@ -115,6 +111,29 @@ export function gameplayEventsForGameStatus(
     events.push(terminalEvent);
   }
   return events;
+}
+
+export function terminalInfoFromGameSettled(
+  payload: GameSettledPayload,
+  rewardCoinHex: string | null,
+): GameTerminalInfo {
+  const outcome = isSettlementOutcome(payload.outcome) ? payload.outcome : null;
+  if (outcome == null) {
+    return {
+      type: 'game-error',
+      outcome: null,
+      label: `Unknown settlement: ${String(payload.outcome)}`,
+      myReward: parseSettlementShare(payload.our_share),
+      rewardCoinHex,
+    };
+  }
+  return {
+    type: 'settled',
+    outcome,
+    label: settlementLabel(outcome),
+    myReward: parseSettlementShare(payload.our_share),
+    rewardCoinHex,
+  };
 }
 
 export function activeIdsAfterProposalAccepted(
@@ -157,22 +176,17 @@ export interface GameCoinInfo {
 
 export type GameTerminalType =
   | 'none'
-  | 'forfeit'
-  | 'we-timed-out'
-  | 'opponent-timed-out'
-  | 'we-slashed-opponent'
-  | 'opponent-slashed-us'
-  | 'opponent-successfully-cheated'
+  | 'settled'
   | 'insufficient-balance'
   | 'ended-cancelled'
   | 'game-error';
 
 export interface GameTerminalInfo {
   type: GameTerminalType;
+  outcome: SettlementOutcome | null;
   label: string | null;
   myReward: string | null;
   rewardCoinHex: string | null;
-  cleanEnd?: boolean;
 }
 
 export interface GameTerminalAttentionInfo {
@@ -241,6 +255,7 @@ function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | nu
 
 const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
   type: 'none',
+  outcome: null,
   label: null,
   myReward: null,
   rewardCoinHex: null,
@@ -363,96 +378,16 @@ function parseTimeoutBlocks(v: unknown): bigint | null {
   }
 }
 
-export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
-  if (gs.status === 'ended-we-timed-out') {
-    const clean = !!gs.other_params?.game_finished;
-    const forfeited = !!gs.other_params?.forfeited;
-    const offChainAccept =
-      !clean
-      && !gs.coin_id
-      && gs.reason !== 'move too late'
-      && gs.other_params?.forfeited === undefined;
-    if (forfeited) {
-      return {
-        type: 'forfeit',
-        label: 'Forfeited',
-        myReward: parseAmount(gs.my_reward),
-        rewardCoinHex,
-      };
-    }
-    let label: string;
-    if (clean) {
-      label = 'Ended cleanly';
-    } else if (offChainAccept) {
-      label = 'Folded';
-    } else if (turnState === 'replaying' || turnState === 'their-turn') {
-      label = 'Move too late';
-    } else {
-      label = 'Timed out';
-    }
-    return {
-      type: 'we-timed-out',
-      label,
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-      cleanEnd: clean,
-    };
-  }
-
-  if (gs.status === 'ended-opponent-timed-out') {
-    const clean = !!gs.other_params?.game_finished;
-    const forfeited = !!gs.other_params?.forfeited;
-    const offChainAccept =
-      !clean
-      && !gs.coin_id
-      && gs.other_params?.forfeited === undefined;
-    if (forfeited) {
-      return {
-        type: 'forfeit',
-        label: 'Forfeited',
-        myReward: parseAmount(gs.my_reward),
-        rewardCoinHex,
-      };
-    }
-    return {
-      type: 'opponent-timed-out',
-      label: clean ? 'Ended cleanly' : offChainAccept ? 'Opponent folded' : 'Opponent timed out',
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-      cleanEnd: clean,
-    };
-  }
-
-  if (gs.status === 'ended-we-slashed-opponent') {
-    return {
-      type: 'we-slashed-opponent',
-      label: 'Slashed opponent',
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-    };
-  }
-
-  if (gs.status === 'ended-opponent-slashed-us') {
-    return {
-      type: 'opponent-slashed-us',
-      label: 'Opponent slashed us',
-      myReward: null,
-      rewardCoinHex: null,
-    };
-  }
-
-  if (gs.status === 'ended-opponent-successfully-cheated') {
-    return {
-      type: 'opponent-successfully-cheated',
-      label: 'Opponent cheated',
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-    };
-  }
-
+/** Non-settlement terminals that still arrive as GameStatus (cancelled / error). */
+export function parseGameStatusTerminalInfo(
+  gs: GameStatusPayload,
+  _rewardCoinHex: string | null,
+  _turnState: GameTurnState,
+): GameTerminalInfo {
   if (gs.status === 'ended-cancelled') {
     return {
       type: 'ended-cancelled',
+      outcome: null,
       label: 'Cancelled',
       myReward: null,
       rewardCoinHex: null,
@@ -462,6 +397,7 @@ export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex
   if (gs.status === 'ended-error') {
     return {
       type: 'game-error',
+      outcome: null,
       label: gs.reason ?? 'Error',
       myReward: null,
       rewardCoinHex: null,
@@ -1436,6 +1372,44 @@ export function useGameSession(
         setBetweenHandMode('decision');
       }
       gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as bigint | number | string } });
+    } else if ('GameSettled' in n) {
+      const settled = n.GameSettled as GameSettledPayload | undefined;
+      if (!settled) return;
+      const terminalId = String(settled.id);
+      const rewardCoinHex = await coinIdHex(settled.coin_id);
+      const terminalInfo = terminalInfoFromGameSettled(settled, rewardCoinHex);
+      setGameTerminal(terminalInfo);
+
+      updateGameInstance(terminalId, instance => ({
+        ...instance,
+        coin: { coinHex: null, turnState: 'ended' },
+        handStatus: 'ended',
+        terminal: terminalInfo,
+      }));
+      const remaining = gameIdsRef.current.filter(id => id !== terminalId);
+      setGameIds(remaining);
+      gameIdsRef.current = remaining;
+
+      if (remaining.length === 0) {
+        turnStateRef.current = 'ended';
+        setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
+        setHandStatus('ended');
+        cancelStalePeerProposals();
+        setBetweenHandMode('decision');
+        setCachedPeerProposal(null);
+        setReviewPeerProposal(null);
+        clearTrackedProposals();
+      }
+
+      const settledEvent = settledEventForInfo(terminalId, terminalInfo);
+      if (settledEvent) {
+        gameplayEventSubject.next(settledEvent);
+      } else if (terminalInfo.type === 'game-error') {
+        gameplayEventSubject.next({
+          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error' },
+        });
+      }
+      return;
     } else if ('GameStatus' in n) {
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;
@@ -1480,9 +1454,10 @@ export function useGameSession(
           clearTrackedProposals();
         }
 
-        const terminalEvent = terminalEventForInfo(terminalId, terminalInfo, status);
-        if (terminalEvent) {
-          gameplayEventSubject.next(terminalEvent);
+        if (terminalInfo.type === 'game-error' || terminalInfo.type === 'ended-cancelled') {
+          gameplayEventSubject.next({
+            GameError: { gameId: terminalId, reason: terminalInfo.label ?? terminalInfo.type },
+          });
         }
         return;
       }

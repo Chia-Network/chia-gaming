@@ -3,7 +3,9 @@
 For the conceptual overview, see `OVERVIEW.md`. For the frontend component
 hierarchy, notification routing, tracker relay protocol, session persistence,
 peer message reliability, and reconnect reconciliation, see
-`FRONTEND_ARCHITECTURE.md`. The frontend supports full page reload — game state
+`FRONTEND_ARCHITECTURE.md`. For the authoritative settlement outcome glossary
+(off-chain accept + on-chain #1–#11), see
+[`NAMING_AUDIT.md` — Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux). The frontend supports full page reload — game state
 is continuously saved to localStorage and restored on reload with a fresh RNG
 seed.
 
@@ -11,27 +13,36 @@ The UI layer receives events via the `ToLocalUI` trait callbacks and
 `GameNotification` variants (delivered through `game_notification`).
 
 **Important naming note:** this document sometimes uses conceptual UX labels
-like "OpponentMoved" or "WeTimedOut" for readability. The canonical wire model
-in Rust is `GameNotification` plus `GameStatusKind`:
+like "OpponentMoved" for readability. The canonical wire model in Rust is
+`GameNotification` plus `GameStatusKind` for in-play status, and
+`GameNotification::GameSettled` for all settled outcomes:
 
 - dedicated variants: `ProposalMade`, `ProposalAccepted`,
   `ProposalCancelled`, `InsufficientBalance`, `MoveRejected`, `ActionFailed`,
   `ChannelStatus`
-- gameplay/terminal lifecycle: `GameNotification::GameStatus { status:
+- gameplay lifecycle (non-terminal): `GameNotification::GameStatus { status:
   GameStatusKind, ... }`
+- **settlements (terminal):** `GameNotification::GameSettled { id, outcome,
+  our_share, coin_id }` — off-chain `accept_settlement` plus on-chain glossary
+  outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
 
-So when you see a conceptual label below, map it to the corresponding
-`GameStatusKind` value.
+Settlements no longer use `EndedWeTimedOut`, `EndedOpponentTimedOut`, or other
+`Ended*` slash/timeout status kinds. Slash and cheat paths are settled outcomes
+via `GameSettled` too.
+
+So when you see a conceptual label below, map it to the corresponding wire
+shape.
 
 There is also a separate protocol view that is useful for reasoning about
 on-chain behavior:
 
 - channel lifecycle: `created -> unrolling -> resolved`
-- per-game lifecycle: `off-chain -> on-chain move loop (my/their turn) -> terminal`
+- per-game lifecycle: `off-chain -> on-chain move loop (my/their turn) -> settled`
 
 Those are conceptual progression models; the concrete emitted values are still
-`ChannelStatus { state: ChannelState, ... }` and
-`GameStatus { status: GameStatusKind, ... }`.
+`ChannelStatus { state: ChannelState, ... }`, non-terminal
+`GameStatus { status: GameStatusKind, ... }`, and terminal
+`GameSettled { outcome, our_share, ... }`.
 
 ## Table of Contents
 
@@ -137,7 +148,7 @@ for how those lenses relate.
 | `GoingOnChain` | Explicit on-chain transition initiated | Local side has initiated transition from off-chain potato flow to on-chain resolution                                                         |
 | `Unrolling`       | Unroll detected on-chain                       | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                |
 | `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
-| `ResolvedUnrolled`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game outcomes (`GameOnChain`, `WeTimedOut`, etc.) follow separately                                   |
+| `ResolvedUnrolled`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately |
 | `ResolvedStale`   | Stale unroll completed                         | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                         |
 | `Failed`          | Unrecoverable error                            | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                            |
 
@@ -193,24 +204,29 @@ games). Each row uses that game's own turn or terminal state:
 | `Your turn` | A game coin is on-chain and the protocol says our side is the mover. |
 | `Their turn` | A game coin is on-chain and the protocol says the opponent is the mover. |
 | `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
-| `Ended` | A terminal `GameStatusKind` has been observed. The collapsed bar may add a short hand detail after `Ended`. |
+| `Ended` | A `GameSettled` or non-settlement terminal (`EndedCancelled`, `EndedError`) has been observed. The collapsed bar adds a short hand detail from the settlement glossary label when useful. |
 
-Terminal hand details are high-level user labels derived from terminal
-`GameStatus` metadata. Full raw details remain available in the expanded
-dashboard rows.
+Terminal hand details are derived from `GameSettled.outcome` via
+`SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (see
+[Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)). Full raw
+details remain available in the expanded dashboard rows.
 
-| Detail | Meaning |
+| Detail (examples) | Meaning |
 | --- | --- |
-| `Forfeited` | The protocol explicitly marked the terminal as `forfeited`. This is a distinct adverse hand outcome, shown in the bar as `Hand: Ended Forfeited`, but it should not also create a pop-up. |
-| `Move too late` | Our move or replay did not land before the opponent claimed the timeout. This is not a forfeit; it means the move missed the on-chain timing window. |
-| `Timed out` | We timed out in a non-forfeit, non-late-move path. |
-| `Opponent timed out` | The opponent timed out in a normal terminal path. This is considered a normal game end and is usually omitted from the collapsed bar detail. |
-| `Ended cleanly` | The game result was accepted through normal protocol completion. This is also usually omitted from the collapsed bar detail. |
-| Slash / cheat / error labels | Adverse terminal outcomes such as `Slashed opponent`, `Opponent slashed us`, `Opponent cheated`, or `Error`. |
+| `Accepted` | Off-chain `accept_settlement` or on-chain `we_accepted` |
+| `Settled cleanly` | On-chain close from an already-terminal state |
+| `Opponent timed out` | Opponent's timeout path; intent unknown |
+| `Forfeited` | Our share is 0 and we stopped watching (#3–#5) |
+| `Attempt to move failed` | Our move did not land before the opponent's timeout claim |
+| `Timed out waiting for our move` | Our turn; we never chose a move before the clock expired |
+| `Slashed opponent` / `Opponent slashed us` / `Opponent cheated` | On-chain dispute settled outcomes |
 
-Forfeits, move-too-late, slash, cheat, and game-error details belong to the hand
-half of the dashboard, not the channel advisory. Channel advisories are reserved
-for channel-level failures or context.
+There is no session-level **Folded** label. Poker UIs may still say **Fold**
+locally when calling `accept_settlement`.
+
+Forfeits and routine clean settlements are usually bar-only (no pop-up).
+Adverse settlements (`isErrorSettlementOutcome`) may also enqueue `game-terminal`
+notifications.
 
 ---
 
@@ -266,51 +282,80 @@ a deliberate human rejection.
 
 ## Game Outcome Notifications (Terminal)
 
-These are the terminal notifications — each signals that a game is finished.
-The frontend should treat any of these as the "game ended" signal.
+Settlements use a **single** notification type. Non-settlement terminals
+(`EndedCancelled`, `EndedError`) still arrive as `GameStatus`.
 
+### `GameSettled` (all settlements)
 
-| Conceptual UX label | Actual wire shape | When | Meaning |
-| --- | --- | --- | --- |
-| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Group accept attempted with insufficient aggregate funds | Emitted for the group request before any member is accepted. The whole group is cancelled; no partial live games are created. |
-| WeTimedOut | `GameStatus { status: EndedWeTimedOut, my_reward, coin_id }` | Game resolved in our favor | Off-chain accept-timeout completion or on-chain timeout/slash resolution path |
-| OpponentTimedOut | `GameStatus { status: EndedOpponentTimedOut, my_reward, coin_id }` | Game resolved in opponent's favor | Includes receiving opponent accept-timeout and on-chain opponent-favor outcomes |
-| EndedCancelled | `GameStatus { status: EndedCancelled, ... }` | In-flight accept lost during stale unroll | The game was accepted but no moves were made; the unroll predates the acceptance |
-| WeSlashedOpponent | `GameStatus { status: EndedWeSlashedOpponent, my_reward, coin_id }` | Slash confirmed in our favor | Opponent's illegal move was proven on-chain |
-| OpponentSlashedUs | `GameStatus { status: EndedOpponentSlashedUs, ... }` | Opponent slashed us | Our move was proven illegal on-chain |
-| OpponentSuccessfullyCheated | `GameStatus { status: EndedOpponentSuccessfullyCheated, my_reward, coin_id }` | Illegal move timed out before slash | Opponent kept timeout path before we slashed |
-| GameError | `GameStatus { status: EndedError, reason }` | Unrecoverable game-level issue | One game reached an error terminal condition |
+Every off-chain `AcceptSettlement` and every on-chain settled outcome (#1–#11
+in the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)) emits:
 
-### Terminal Taxonomy (On-Chain)
+```text
+GameSettled { id, outcome: SettlementOutcome, our_share, coin_id? }
+```
 
-On-chain game endings fall into five distinct cases. Each has a different
-trigger condition in the Rust backend and a different frontend label:
+`outcome` is snake_case on the wire (`accept_settlement`, `settled_cleanly`,
+`opponent_timed_out`, `forfeited_skipped_reveal`, …). `our_share` is always
+present, including `0`.
 
-| Case | Trigger condition | Backend behavior | `GameStatusOtherParams` | Frontend label |
-|---|---|---|---|---|
-| **Forfeit** | Our turn; our computed move would give `mover_share == game_amount` to the opponent (our post-move share is 0%) | Move not submitted; `EndedWeTimedOut` emitted immediately with `my_reward: 0` | `game_finished: true, forfeited: true` | `Forfeited` (no pop-up) |
-| **Claim** | Our turn; `our_share == game_amount` before any move (we already get 100%) | Auto-accept fires; `AcceptTimeout` queued; timeout claim built and submitted | `game_finished: true` | `Ended cleanly` |
-| **Terminal** | Our turn; `is_game_over()` and `our_share > 0` | Auto-accept fires; `AcceptTimeout` queued; timeout claim built and submitted | `game_finished: true` | `Ended cleanly` |
-| **Fold** | Our turn; frontend explicitly calls `accept_timeout`; our share > 0 | `AcceptTimeout` handler builds timeout claim and registers it for submission at maturity | `game_finished: true` | `Ended cleanly` |
-| **Move too late** | We submitted a move on-chain but the opponent's timeout claim landed first | Detected when the pending-move coin's spend pays the opponent's reward puzzle hash | `game_finished: None` | `Move too late` |
+**Dual delivery:** the same payload drives (1) the session banner / dashboard
+label and (2) the active reference-game UI via `GameplayEvent.Settled`.
+Neither sink may invent a parallel event shape or skip "boring" outcomes.
 
-When both **Claim** and **Terminal** conditions are true simultaneously
-(game is over AND `our_share == game_amount`), the case is treated as
-**Terminal** — both auto-accept identically.
+Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
+`front-end/src/lib/settlement.ts`.
 
-**`game_finished: true`** in `GameStatusOtherParams` is the unified "clean
-end" signal. The frontend maps it to `cleanEnd: true`, which renders as
-"Ended cleanly" in the dashboard. Claim, Terminal, and Fold all produce this
-signal.
+| Glossary | `outcome` (wire) | Display label |
+| --- | --- | --- |
+| Off-chain accept | `accept_settlement` | Accepted |
+| #1 Settled cleanly | `settled_cleanly` | Settled cleanly |
+| #2 Opponent timed out | `opponent_timed_out` | Opponent timed out |
+| #3 Forfeited skipped reveal | `forfeited_skipped_reveal` | Forfeited |
+| #4 Forfeited opponent won | `forfeited_opponent_won` | Forfeited |
+| #5 Forfeited we accepted | `forfeited_we_accepted` | Forfeited |
+| #6 We accepted | `we_accepted` | Accepted |
+| #7 Attempt to move failed | `attempt_to_move_failed` | Attempt to move failed |
+| #8 Timed out waiting for our move | `timed_out_waiting_for_our_move` | Timed out waiting for our move |
+| #9 Slashed opponent | `slashed_opponent` | Slashed opponent |
+| #10 Opponent slashed us | `opponent_slashed_us` | Opponent slashed us |
+| #11 Opponent cheated | `opponent_cheated` | Opponent cheated |
 
-**`forfeited: true`** is the "adverse but intentional" signal. The frontend
-maps it to `type: 'forfeit'`, which renders as "Forfeited" in the dashboard
-without a pop-up notification (forfeits are routine, not surprising).
+**Fold** is not a protocol or session label. Space Poker may show a Fold button
+that calls `accept_settlement`; settlement still notifies via `GameSettled`.
 
-**Move too late** is the only case that uses the `reason` string — and only
-when the game was not already in a finished state. If a pending move is
-overtaken on a game that was already `game_finished`, the notification omits
-the reason string and the frontend treats it as a clean end.
+**Timeout** in user-facing copy is reserved for true clock stories: referee
+timelock, the on-chain **timeout claim** mechanism, `opponent_timed_out`, and
+`timed_out_waiting_for_our_move` — not for intentional accepts or forfeits.
+
+### On-chain trigger map (mechanism → outcome)
+
+The Rust backend chooses `outcome` from on-chain context. This replaces the
+old five-case Forfeit / Claim / Terminal / Fold / Move-too-late table:
+
+| Case | Trigger (our turn unless noted) | `GameSettled.outcome` |
+| --- | --- | --- |
+| Voluntary off-chain accept | `AcceptSettlement` batch ack or receive | `accept_settlement` |
+| Terminal clean close | Game already over; timeout claim pays us | `settled_cleanly` |
+| Opponent timeout path | Opponent's turn; their timeout claim confirms | `opponent_timed_out` |
+| Skip losing reveal/move | Our computed move would give opponent 100% | `forfeited_skipped_reveal` |
+| Opponent terminal at 0% | Their terminal move left us at 0% (opponent's turn) | `forfeited_opponent_won` |
+| Accept at 0% | Explicit `AcceptSettlement` while share == 0 | `forfeited_we_accepted` |
+| Intentional accept / auto-accept | Share > 0; timeout claim pays us | `we_accepted` |
+| Move too late | Pending move overtaken by opponent timeout claim | `attempt_to_move_failed` |
+| Clock expired, no move | We never chose a move | `timed_out_waiting_for_our_move` |
+| Slash / cheat | Illegal-move dispute resolved on-chain | `slashed_opponent` / `opponent_slashed_us` / `opponent_cheated` |
+
+Auto-accept (terminal game or `our_share == game_amount`) queues
+`AcceptSettlement` and eventually settles as `we_accepted` or `settled_cleanly`
+when the timeout claim confirms. See `ON_CHAIN.md` for mechanism details.
+
+### Other terminal notifications
+
+| Notification | Wire shape | When |
+| --- | --- | --- |
+| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Group accept attempted with insufficient aggregate funds |
+| EndedCancelled | `GameStatus { status: EndedCancelled, ... }` | In-flight accept lost during stale unroll |
+| GameError | `GameStatus { status: EndedError, reason }` | Unrecoverable game-level issue |
 
 `EndedError` covers situations that "should never happen" under normal
 operation but *can* happen if, for example, a trusted full node sends
@@ -369,12 +414,9 @@ never model a factory group as partly pending, partly live, or partly cancelled.
 
 There is a one-to-one correspondence between `ProposalAccepted` notifications
 and terminal game notifications per player per game ID. Every
-`ProposalAccepted` has exactly one terminal (`InsufficientBalance`,
-`EndedWeTimedOut`, `EndedOpponentTimedOut`, `EndedCancelled`,
-`EndedWeSlashedOpponent`, `EndedOpponentSlashedUs`,
-`EndedOpponentSuccessfullyCheated`, or `EndedError`), and every terminal has a
-preceding `ProposalAccepted`. Enforced by the simulation loop's post-test
-assertion.
+`ProposalAccepted` has exactly one terminal (`GameSettled`, `InsufficientBalance`,
+`EndedCancelled`, or `EndedError`), and every terminal has a preceding
+`ProposalAccepted`. Enforced by the simulation loop's post-test assertion.
 
 ### Additional invariants
 
@@ -384,10 +426,10 @@ assertion.
    `GameOnChain`. Enforced by the simulation loop's post-test assertion.
 4. **First post-unroll status classification.** For each game that is still
    live when `ChannelState::Unrolling` is first observed, the first subsequent
-   `GameStatus` for that game must be one of:
-   `OnChainMyTurn`, `OnChainTheirTurn`, `Replaying`, `EndedCancelled`,
-   `EndedError`, or `EndedWeTimedOut`. This ensures every live game is
-   immediately classified into a valid unroll-resolution bucket.
+   terminal or on-chain-turn notification for that game must classify it into a
+   valid unroll-resolution bucket: `GameSettled`, `GameStatus` with
+   `OnChainMyTurn`, `OnChainTheirTurn`, `Replaying`, `EndedCancelled`, or
+   `EndedError`.
 5. **Channel state monotonicity.** `ChannelState` values are serialized to the
    frontend by name; the numeric ordinals here are an internal test ordering,
    not wire codes. They must never decrease:
@@ -428,7 +470,7 @@ events.
 
 | `kind` | Source | Behavior |
 |---|---|---|
-| `game-terminal` | Adverse `GameStatus` terminal during on-chain flow, except bar-only outcomes such as forfeits | Shows reward amount and coin info. |
+| `game-terminal` | Adverse `GameSettled` outcomes (`isErrorSettlementOutcome`), except bar-only forfeits | Shows reward amount and coin info. |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Peer-side cancellation notice; cleared when a `ProposalAccepted` arrives. |
 | `insufficient-bal` | `InsufficientBalance` notification | Game could not start due to balance. |
 
@@ -468,9 +510,10 @@ so a render crash shows a recovery message instead of white-screening.
 
 These are not lifecycle invariants but important rules enforced in the code:
 
-- **Accept only on our turn.** Calling `accept_timeout()` when it is not our
-turn is an assert failure. Accept-timeout is an alternative to moving.
-- **Accepted + opponent move is an untested path.** Since accept_timeout only
+- **Accept only on our turn.** Calling `accept_settlement()` when it is not our
+turn is an assert failure. `AcceptSettlement` is an alternative to moving when
+we choose to settle at the current `mover_share`.
+- **Accepted + opponent move is an untested path.** Since accept_settlement only
 happens on our turn, and only the mover can advance a game coin, the opponent
 cannot move on a coin where we already accepted. The `accept_proposal_and_move` API exists but has
 not been tested end-to-end; Calpoker's move direction may prevent it from
@@ -498,28 +541,17 @@ Game hooks never see raw notifications; they receive one of:
 | `OpponentMoved` | `{ readable, gameId?, moverShare: string }` | Remapped from `GameStatus` with `other_params.readable` and `other_params.mover_share`. `moverShare` is our share after the opponent's move (including on timeout from that move). |
 | `GameMessage` | `{ readable, gameId? }` | Remapped from `GameStatus` with readable but no `mover_share` (advisory / out-of-band message). |
 | `ProposalAccepted` | `{ id }` | A new game is starting |
-| `Timeout` | `{ byUs: boolean, forfeited: boolean }` | Any timeout-based terminal: forfeit, clean end, fold, move too late, opponent timeout. `forfeited: true` marks the case where the losing side intentionally skipped its final move (no point paying for an on-chain move that wins nothing), so games can label it "Forfeit" instead of the misleading "Timed Out". `byUs` gives the direction. |
+| `Settled` | `{ gameId, outcome, ourShare }` | From `GameSettled`; same payload drives session banner labels via `terminalInfoFromGameSettled` |
 | `MoveRejected` | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook |
-| `GameError` | `{ reason: string }` | Slashes, cheats, cancellations, errors, insufficient balance |
+| `GameError` | `{ gameId, reason }` | `EndedCancelled`, `EndedError`, `InsufficientBalance`, or unknown settlement outcome |
 
-The mapping from `GameTerminalType` (produced by `parseGameStatusTerminalInfo`)
-to `GameplayEvent`:
-
-| Terminal type | GameplayEvent |
-|---------------|---------------|
-| `forfeit` | `Timeout { byUs, forfeited: true }` -- direction from the original `GameStatusKind` |
-| `we-timed-out` | `Timeout { byUs: true, forfeited: false }` |
-| `opponent-timed-out` | `Timeout { byUs: false, forfeited: false }` |
-| `we-slashed-opponent` | `GameError` |
-| `opponent-slashed-us` | `GameError` |
-| `opponent-successfully-cheated` | `GameError` |
-| `ended-cancelled` | `GameError` |
-| `game-error` | `GameError` |
-| `insufficient-balance` | `GameError` |
+Settlement label helpers live in `front-end/src/lib/settlement.ts`
+(`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).
 
 Non-terminal move/status notifications are remapped by
 `gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
 above (including `moverShare` on `OpponentMoved`).
 
-**Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalEventForInfo`,
-`gameplayEventsForGameStatus`)
+**Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalInfoFromGameSettled`,
+`settledEventForInfo`, `gameplayEventsForGameStatus`),
+`front-end/src/lib/settlement.ts`

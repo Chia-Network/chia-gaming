@@ -115,10 +115,10 @@ export interface SessionState {
     handStatus: string;
     terminal: {
       type: string;
+      outcome?: string | null;
       label: string | null;
       myReward: string | null;
       rewardCoinHex: string | null;
-      cleanEnd?: boolean;
     };
   }>;
   iProposedHand?: boolean;
@@ -132,10 +132,10 @@ export interface SessionState {
   gameTurnState?: string;
   gameHandStatus?: string;
   gameTerminalType?: string;
+  gameTerminalOutcome?: string;
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
-  gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;

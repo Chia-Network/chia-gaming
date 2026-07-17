@@ -7,6 +7,11 @@ import {
 import { SessionController } from './SessionController';
 import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
 import { GameplayEvent } from './useGameSession';
+import {
+  isForfeitOutcome,
+  settlementByUs,
+  type SettlementOutcome,
+} from '../lib/settlement';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
@@ -55,6 +60,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
+  settlementOutcome: SettlementOutcome | null;
   timeoutByUs: boolean | null;
   timeoutForfeited: boolean;
   handleMakeMove: () => void;
@@ -109,8 +115,9 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [timeoutByUs, setTimeoutByUs] = useState<boolean | null>(null);
-  const [timeoutForfeited, setTimeoutForfeited] = useState<boolean>(false);
+  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(null);
+  const timeoutByUs = settlementOutcome == null ? null : settlementByUs(settlementOutcome);
+  const timeoutForfeited = settlementOutcome != null && isForfeitOutcome(settlementOutcome);
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -190,12 +197,11 @@ export function useCalpokerHand(
           } catch (e) {
             console.error('parseCards failed:', e, 'readable:', evt.GameMessage.readable);
           }
-        } else if ('Timeout' in evt) {
-          if (evt.Timeout.gameId !== gameIdRef.current) return;
+        } else if ('Settled' in evt) {
+          if (evt.Settled.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
-            setTimeoutByUs(evt.Timeout.byUs);
-            setTimeoutForfeited(evt.Timeout.forfeited);
+            setSettlementOutcome(evt.Settled.outcome);
           }
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
@@ -345,6 +351,7 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber,
     outcome,
+    settlementOutcome,
     timeoutByUs,
     timeoutForfeited,
     handleMakeMove,

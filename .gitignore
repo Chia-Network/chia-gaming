@@ -53,3 +53,6 @@ chia-blockchain/
 *.tmp
 *.log
 *.vsix
+
+# Local working notes
+NAMING_AUDIT.md

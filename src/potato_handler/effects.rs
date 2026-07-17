@@ -63,13 +63,35 @@ pub enum GameStatusKind {
     OnChainTheirTurn,
     Replaying,
     IllegalMoveDetected,
-    EndedWeTimedOut,
-    EndedOpponentTimedOut,
-    EndedWeSlashedOpponent,
-    EndedOpponentSlashedUs,
-    EndedOpponentSuccessfullyCheated,
     EndedCancelled,
     EndedError,
+}
+
+/// How a game settled. See `NAMING_AUDIT.md` settlement glossary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlementOutcome {
+    /// Off-chain voluntary accept of the current mover_share split.
+    AcceptSettlement,
+    /// On-chain close from an already-terminal state.
+    SettledCleanly,
+    /// Non-terminal; opponent's timeout path; intent unknown.
+    OpponentTimedOut,
+    /// Our turn; our move would give them everything; we stop watching.
+    ForfeitedSkippedReveal,
+    /// Their terminal move left us at 0; we stop watching.
+    ForfeitedOpponentWon,
+    /// We intentionally accepted on-chain at share 0; we stop watching.
+    ForfeitedWeAccepted,
+    /// Intentional on-chain accept with share > 0.
+    WeAccepted,
+    /// We had a move; timeout claim landed first.
+    AttemptToMoveFailed,
+    /// Our turn; we never chose a move; clock expired.
+    TimedOutWaitingForOurMove,
+    SlashedOpponent,
+    OpponentSlashedUs,
+    OpponentCheated,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -118,6 +140,14 @@ pub enum GameNotification {
         coin_id: Option<CoinString>,
         reason: Option<String>,
         other_params: Option<GameStatusOtherParams>,
+    },
+
+    /// Unified settlement notification (off-chain accept + on-chain outcomes).
+    GameSettled {
+        id: GameID,
+        outcome: SettlementOutcome,
+        our_share: Amount,
+        coin_id: Option<CoinString>,
     },
 
     ProposalMade {
@@ -199,6 +229,20 @@ impl GameNotification {
             coin_id: None,
             reason: None,
             other_params: None,
+        }
+    }
+
+    pub fn game_settled(
+        id: GameID,
+        outcome: SettlementOutcome,
+        our_share: Amount,
+        coin_id: Option<CoinString>,
+    ) -> Self {
+        GameNotification::GameSettled {
+            id,
+            outcome,
+            our_share,
+            coin_id,
         }
     }
 }

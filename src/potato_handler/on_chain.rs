@@ -15,7 +15,7 @@ use crate::common::types::{
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
     format_coin, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome,
 };
 use crate::potato_handler::types::{GameAction, PotatoState};
 use crate::referee::types::{
@@ -57,7 +57,7 @@ pub struct OnChainGameHandler {
     my_allocated_balance: Amount,
     their_allocated_balance: Amount,
     live_games: Vec<LiveGame>,
-    pending_accept_timeouts: Vec<LiveGame>,
+    pending_settlements: Vec<LiveGame>,
     unroll_advance_timeout: Timeout,
     is_initial_potato: bool,
     state_number: usize,
@@ -87,7 +87,7 @@ pub struct OnChainGameHandlerArgs {
     pub my_allocated_balance: Amount,
     pub their_allocated_balance: Amount,
     pub live_games: Vec<LiveGame>,
-    pub pending_accept_timeouts: Vec<LiveGame>,
+    pub pending_settlements: Vec<LiveGame>,
     pub unroll_advance_timeout: Timeout,
     pub is_initial_potato: bool,
     pub state_number: usize,
@@ -112,7 +112,7 @@ impl OnChainGameHandler {
             my_allocated_balance: args.my_allocated_balance,
             their_allocated_balance: args.their_allocated_balance,
             live_games: args.live_games,
-            pending_accept_timeouts: args.pending_accept_timeouts,
+            pending_settlements: args.pending_settlements,
             unroll_advance_timeout: args.unroll_advance_timeout,
             is_initial_potato: args.is_initial_potato,
             state_number: args.state_number,
@@ -142,7 +142,7 @@ impl OnChainGameHandler {
             my_allocated_balance,
             their_allocated_balance,
             live_games,
-            pending_accept_timeouts,
+            pending_settlements,
             unroll_advance_timeout,
             is_initial_potato,
             state_number,
@@ -156,7 +156,7 @@ impl OnChainGameHandler {
                 ch.my_allocated_balance(),
                 ch.their_allocated_balance(),
                 ch.take_live_games(),
-                ch.take_pending_accept_timeouts(),
+                ch.take_pending_settlements(),
                 ch.unroll_advance_timeout().clone(),
                 ch.is_initial_potato(),
                 ch.state_number(),
@@ -195,7 +195,7 @@ impl OnChainGameHandler {
             my_allocated_balance,
             their_allocated_balance,
             live_games,
-            pending_accept_timeouts,
+            pending_settlements,
             unroll_advance_timeout,
             is_initial_potato,
             state_number,
@@ -293,7 +293,7 @@ impl OnChainGameHandler {
             return Ok(g.get_amount());
         }
         if let Some(g) = self
-            .pending_accept_timeouts
+            .pending_settlements
             .iter()
             .find(|g| g.game_id == *game_id)
         {
@@ -310,7 +310,7 @@ impl OnChainGameHandler {
             return g.get_our_current_share();
         }
         if let Some(g) = self
-            .pending_accept_timeouts
+            .pending_settlements
             .iter()
             .find(|g| g.game_id == *game_id)
         {
@@ -521,18 +521,12 @@ impl OnChainGameHandler {
         // tracking so a later spend of the terminal coin is ignored gracefully
         // rather than presenting a phantom turn.
         self.game_map.retain(|_, def| def.game_id != *game_id);
-        effects.push(Effect::Notify(GameNotification::GameStatus {
-            id: *game_id,
-            status: GameStatusKind::EndedWeTimedOut,
-            my_reward: Some(Amount::default()),
-            coin_id: None,
-            reason: Some("zero reward: opponent's terminal move gives us nothing".to_string()),
-            other_params: Some(GameStatusOtherParams {
-                game_finished: Some(true),
-                forfeited: Some(true),
-                ..Default::default()
-            }),
-        }));
+        effects.push(Effect::Notify(GameNotification::game_settled(
+            *game_id,
+            SettlementOutcome::ForfeitedOpponentWon,
+            Amount::default(),
+            None,
+        )));
     }
 
     /// Build the eager timeout claim for `coin` in game `game_id`, without
@@ -552,11 +546,11 @@ impl OnChainGameHandler {
         let tx = if let Ok(game_idx) = self.get_game_by_id(game_id) {
             self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?
         } else if let Some(idx) = self
-            .pending_accept_timeouts
+            .pending_settlements
             .iter()
             .position(|g| g.game_id == *game_id)
         {
-            self.pending_accept_timeouts[idx].get_transaction_for_timeout(env.allocator, coin)?
+            self.pending_settlements[idx].get_transaction_for_timeout(env.allocator, coin)?
         } else {
             return Ok(None);
         };
@@ -718,26 +712,19 @@ impl OnChainGameHandler {
                     // puzzle hash).  When the game was already terminal this is a
                     // clean end; otherwise it is a genuine "move too late".
                     let game_id = old_def.game_id;
-                    let is_clean = old_def.game_finished;
-                    let finished_params = Some(GameStatusOtherParams {
-                        game_finished: if is_clean { Some(true) } else { None },
-                        ..Default::default()
-                    });
-                    let reason = if is_clean {
-                        None
+                    let outcome = if old_def.game_finished {
+                        SettlementOutcome::SettledCleanly
                     } else {
-                        Some("move too late".to_string())
+                        SettlementOutcome::AttemptToMoveFailed
                     };
                     if let Some(eff) = self.try_emit_terminal(
                         &game_id,
-                        GameNotification::GameStatus {
-                            id: game_id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(Amount::default()),
-                            coin_id: None,
-                            reason,
-                            other_params: finished_params,
-                        },
+                        GameNotification::game_settled(
+                            game_id,
+                            outcome,
+                            Amount::default(),
+                            None,
+                        ),
                     ) {
                         effects.push(eff);
                     }
@@ -813,23 +800,19 @@ impl OnChainGameHandler {
                 } else {
                     None
                 };
-                GameNotification::GameStatus {
-                    id: old_definition.game_id,
-                    status: GameStatusKind::EndedOpponentSuccessfullyCheated,
-                    my_reward: Some(our_reward),
-                    coin_id: our_reward_coin,
-                    reason: None,
-                    other_params: None,
-                }
+                GameNotification::game_settled(
+                    old_definition.game_id,
+                    SettlementOutcome::OpponentCheated,
+                    our_reward,
+                    our_reward_coin,
+                )
             } else if let Some(reward_coin) = reward_coin {
-                GameNotification::GameStatus {
-                    id: old_definition.game_id,
-                    status: GameStatusKind::EndedWeSlashedOpponent,
-                    my_reward: Some(reward_coin.amount().unwrap_or_default()),
-                    coin_id: Some(reward_coin),
-                    reason: None,
-                    other_params: None,
-                }
+                GameNotification::game_settled(
+                    old_definition.game_id,
+                    SettlementOutcome::SlashedOpponent,
+                    reward_coin.amount().unwrap_or_default(),
+                    Some(reward_coin),
+                )
             } else {
                 effects.push(Effect::Log(format!(
                     "[game-error] {} slash coin spent with no recognizable reward",
@@ -871,24 +854,19 @@ impl OnChainGameHandler {
                     } else {
                         None
                     };
-                    let finished_params = if old_definition.game_finished {
-                        Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            ..Default::default()
-                        })
+                    let outcome = if old_definition.game_finished {
+                        SettlementOutcome::SettledCleanly
                     } else {
-                        None
+                        SettlementOutcome::WeAccepted
                     };
                     if let Some(eff) = self.try_emit_terminal(
                         &old_definition.game_id,
-                        GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(amt),
-                            coin_id: reward_coin,
-                            reason: None,
-                            other_params: finished_params,
-                        },
+                        GameNotification::game_settled(
+                            old_definition.game_id,
+                            outcome,
+                            amt,
+                            reward_coin,
+                        ),
                     ) {
                         effects.push(eff);
                     }
@@ -900,24 +878,19 @@ impl OnChainGameHandler {
 
                 if is_timeout {
                     if !old_definition.notification_sent {
-                        let finished_params = if old_definition.game_finished {
-                            Some(GameStatusOtherParams {
-                                game_finished: Some(true),
-                                ..Default::default()
-                            })
+                        let outcome = if old_definition.game_finished {
+                            SettlementOutcome::SettledCleanly
                         } else {
-                            None
+                            SettlementOutcome::WeAccepted
                         };
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
-                            GameNotification::GameStatus {
-                                id: old_definition.game_id,
-                                status: GameStatusKind::EndedWeTimedOut,
-                                my_reward: Some(Amount::default()),
-                                coin_id: None,
-                                reason: None,
-                                other_params: finished_params,
-                            },
+                            GameNotification::game_settled(
+                                old_definition.game_id,
+                                outcome,
+                                Amount::default(),
+                                None,
+                            ),
                         ) {
                             effects.push(eff);
                         }
@@ -1125,7 +1098,7 @@ impl OnChainGameHandler {
                     });
                     if auto_accept {
                         self.game_action_queue
-                            .push_back(GameAction::AcceptTimeout(game_id));
+                            .push_back(GameAction::AcceptSettlement(game_id));
                     }
                 }
 
@@ -1164,45 +1137,27 @@ impl OnChainGameHandler {
                     )));
                 }
                 if !old_definition.notification_sent {
-                    let finished_params = Some(GameStatusOtherParams {
-                        game_finished: if old_definition.game_finished {
-                            Some(true)
-                        } else {
-                            None
-                        },
-                        // Keep a genuine clock timeout distinct from an
-                        // off-chain accept/fold even when this side receives no
-                        // reward coin.
-                        forfeited: Some(false),
-                        ..Default::default()
-                    });
-                    let notif = if old_definition.our_turn {
-                        GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(amount.clone()),
-                            coin_id: my_reward_coin_string.clone(),
-                            reason: None,
-                            other_params: finished_params.clone(),
-                        }
-                    } else if is_slash {
-                        GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: GameStatusKind::EndedOpponentSlashedUs,
-                            my_reward: None,
-                            coin_id: None,
-                            reason: None,
-                            other_params: None,
-                        }
+                    let notif = if is_slash && !old_definition.our_turn {
+                        GameNotification::game_settled(
+                            old_definition.game_id,
+                            SettlementOutcome::OpponentSlashedUs,
+                            Amount::default(),
+                            None,
+                        )
                     } else {
-                        GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: GameStatusKind::EndedOpponentTimedOut,
-                            my_reward: Some(amount.clone()),
-                            coin_id: my_reward_coin_string.clone(),
-                            reason: None,
-                            other_params: finished_params,
-                        }
+                        let outcome = if old_definition.game_finished {
+                            SettlementOutcome::SettledCleanly
+                        } else if old_definition.our_turn {
+                            SettlementOutcome::TimedOutWaitingForOurMove
+                        } else {
+                            SettlementOutcome::OpponentTimedOut
+                        };
+                        GameNotification::game_settled(
+                            old_definition.game_id,
+                            outcome,
+                            amount.clone(),
+                            my_reward_coin_string.clone(),
+                        )
                     };
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
                         effects.push(eff);
@@ -1315,7 +1270,7 @@ impl OnChainGameHandler {
                     });
                     if auto_accept {
                         self.game_action_queue
-                            .push_back(GameAction::AcceptTimeout(game_id));
+                            .push_back(GameAction::AcceptSettlement(game_id));
                     }
                 }
 
@@ -1396,14 +1351,12 @@ impl OnChainGameHandler {
                         }));
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
-                            GameNotification::GameStatus {
-                                id: old_definition.game_id,
-                                status: GameStatusKind::EndedOpponentSlashedUs,
-                                my_reward: None,
-                                coin_id: None,
-                                reason: None,
-                                other_params: None,
-                            },
+                            GameNotification::game_settled(
+                                old_definition.game_id,
+                                SettlementOutcome::OpponentSlashedUs,
+                                Amount::default(),
+                                None,
+                            ),
                         ) {
                             effects.push(eff);
                         }
@@ -1423,33 +1376,19 @@ impl OnChainGameHandler {
                     } else {
                         None
                     };
-                    let finished_params = if old_definition.game_finished {
-                        Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            ..Default::default()
-                        })
+                    let outcome = if old_definition.game_finished {
+                        SettlementOutcome::SettledCleanly
+                    } else if old_definition.our_turn {
+                        SettlementOutcome::TimedOutWaitingForOurMove
                     } else {
-                        None
+                        SettlementOutcome::OpponentTimedOut
                     };
-                    let notif = if old_definition.our_turn {
-                        GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(amt),
-                            coin_id: reward_coin,
-                            reason: None,
-                            other_params: finished_params,
-                        }
-                    } else {
-                        GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: GameStatusKind::EndedOpponentTimedOut,
-                            my_reward: Some(amt),
-                            coin_id: reward_coin,
-                            reason: None,
-                            other_params: finished_params,
-                        }
-                    };
+                    let notif = GameNotification::game_settled(
+                        old_definition.game_id,
+                        outcome,
+                        amt,
+                        reward_coin,
+                    );
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
                         effects.push(eff);
                     }
@@ -1513,18 +1452,12 @@ impl OnChainGameHandler {
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            return Ok(Some(Effect::Notify(GameNotification::GameStatus {
-                id: game_id,
-                status: GameStatusKind::EndedWeTimedOut,
-                my_reward: Some(Amount::default()),
-                coin_id: None,
-                reason: Some("zero reward: our move would give opponent everything".to_string()),
-                other_params: Some(GameStatusOtherParams {
-                    game_finished: Some(true),
-                    forfeited: Some(true),
-                    ..Default::default()
-                }),
-            })));
+            return Ok(Some(Effect::Notify(GameNotification::game_settled(
+                game_id,
+                SettlementOutcome::ForfeitedSkippedReveal,
+                Amount::default(),
+                None,
+            ))));
         }
 
         let (post_referee, post_last_ph) = self.save_game_state(&game_id)?;
@@ -1630,28 +1563,19 @@ impl OnChainGameHandler {
                 }
                 Err(_) => Ok(Vec::new()),
             },
-            GameAction::AcceptTimeout(game_id) => {
+            GameAction::AcceptSettlement(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;
                 let my_turn = self.my_move_in_game(&game_id);
                 if my_turn == Some(true) {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
                         self.game_map.remove(&current_coin);
-                        return Ok(vec![Effect::Notify(GameNotification::GameStatus {
-                            id: game_id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(Amount::default()),
-                            coin_id: None,
-                            reason: Some(
-                                "zero reward: our turn to accept timeout but our share is zero"
-                                    .to_string(),
-                            ),
-                            other_params: Some(GameStatusOtherParams {
-                                game_finished: Some(true),
-                                forfeited: Some(true),
-                                ..Default::default()
-                            }),
-                        })]);
+                        return Ok(vec![Effect::Notify(GameNotification::game_settled(
+                            game_id,
+                            SettlementOutcome::ForfeitedWeAccepted,
+                            Amount::default(),
+                            None,
+                        ))]);
                     }
                 }
                 let gt = self
@@ -1708,12 +1632,12 @@ impl OnChainGameHandler {
         self.do_on_chain_action(env, GameAction::Move(*id, readable.clone(), new_entropy))
     }
 
-    pub fn accept_timeout(
+    pub fn accept_settlement(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        self.do_on_chain_action(env, GameAction::AcceptTimeout(*id))
+        self.do_on_chain_action(env, GameAction::AcceptSettlement(*id))
     }
 
     pub fn cheat_game(
@@ -1851,12 +1775,12 @@ impl PeerHandler for OnChainGameHandler {
         OnChainGameHandler::make_move(self, env, id, readable, new_entropy)
     }
 
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::accept_timeout(self, env, id)
+        OnChainGameHandler::accept_settlement(self, env, id)
     }
 
     fn cheat_game(

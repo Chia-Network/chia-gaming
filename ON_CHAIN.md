@@ -32,11 +32,10 @@ fundamentally different component, `OnChainGameHandler`, takes over. It is
 driven entirely by blockchain coin-watching events (coin created, coin spent,
 timeout reached) rather than peer messages. The `PotatoHandler` creates an
 `SpendChannelCoinHandler` replacement, which in turn creates the
-`OnChainGameHandler`. At that point all game actions
-(moves, accept-timeouts) are routed to the on-chain handler. It maintains its
-own `game_map` tracking each game coin's state. There is no potato, no
-batching, no turn-taking — just monitoring the blockchain and submitting
-transactions in response to what it sees.
+`OnChainGameHandler`. At that point all game actions (moves, `AcceptSettlement`) are routed to the
+on-chain handler. It maintains its own `game_map` tracking each game coin's
+state. There is no potato, no batching, no turn-taking — just monitoring the
+blockchain and submitting transactions in response to what it sees.
 
 ### Unified Path
 
@@ -77,7 +76,7 @@ emitted.
 
 `ChannelHandler::set_state_for_coins` matches each created game coin's puzzle
 hash against known states. It searches both `live_games` and
-`pending_accept_timeouts` (see [AcceptTimeout Lifecycle](GAME_LIFECYCLE.md#accepttimeout-lifecycle)). All
+`pending_settlements` (see [AcceptSettlement Lifecycle](GAME_LIFECYCLE.md#accepttimeout-lifecycle)). All
 state tracking is **forward-only** — there is no rewind logic. Two cases:
 
 1. **Coin PH matches `last_referee_puzzle_hash`** (the outcome/post-move PH):
@@ -133,22 +132,25 @@ Handlers never build or submit timeout transactions at maturity.
 pipeline) when the game coin's *actual* spend is observed, by interpreting what
 the spend created:
 
-- **Our timeout claim confirmed** (spend pays our reward puzzle hash): we won the
-timeout — `WeTimedOut` (or `WeSlashedOpponent` on the slash path).
+- **Our timeout claim confirmed** (spend pays our reward puzzle hash): settlement
+  confirmed in our favor — `GameSettled` with an outcome such as `we_accepted`,
+  `settled_cleanly`, `slashed_opponent`, or a forfeit variant when `our_share`
+  is zero (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)).
 - **Opponent moved/claimed** (spend pays *their* reward puzzle hash): in the
 common case our eager claim simply never confirms because the opponent spent
 the coin first (a normal move advances the game; a timeout claim against our
-pending move yields `OpponentTimedOut`, or `OpponentSuccessfullyCheated` when
-we were attempting to slash).
+pending move yields `GameSettled { outcome: opponent_timed_out }` or
+`attempt_to_move_failed`; a timeout claim while we were attempting to slash
+yields `opponent_cheated`).
 
 Because notification rides the observed spend rather than the timelock, the
 expected "opponent moved instead of timing out" case requires no special
 handling — our unconfirmed claim is just dropped and the game advances.
 
-**Accepted games** (`accepted == true`, set by an `AcceptTimeout` action): the
-off-chain/​on-chain accept only records intent. The eager claim is registered
-like any other, and `WeTimedOut` is emitted when the resulting reward-coin spend
-is observed — not at accept time.
+**Accepted games** (`accepted == true`, set by an `AcceptSettlement` action): the
+off-chain/on-chain accept only records intent. The eager **timeout claim** is
+registered like any other, and `GameSettled` is emitted when the resulting
+reward-coin spend is observed — not at accept time.
 
 **Zero-reward skip**: when the timeout would not pay us, `build_timeout_claim`
 returns `None`, so the manager submits nothing (avoiding a pointless fee). The
@@ -440,13 +442,14 @@ intentional for several reasons:
 When our share of a game is zero, there is no reason to wait for on-chain
 timeouts, submit transactions, or perform redo moves — those operations cost
 time and transaction fees for no reward.  In these cases the system immediately
-emits `WeTimedOut { our_reward: 0, reward_coin: None }` and removes the game
-from tracking.
+emits `GameSettled { our_share: 0, outcome: … }` (a forfeit outcome from the
+[settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)) and removes the
+game from tracking.
 
 Conversely, when our share is the full game amount or the game is terminal with
 a positive share, there is no reason to make another move — the best possible
 outcome is already available via timeout.  In these cases the system
-auto-accepts: it queues an `AcceptTimeout` action and marks the game as
+auto-accepts: it queues an `AcceptSettlement` action and marks the game as
 `game_finished = true`, triggering a clean end.
 
 ### Rationale
@@ -459,7 +462,7 @@ auto-accepts: it queues an `AcceptTimeout` action and marks the game as
    only decrease our share or cost fees for no benefit.
 3. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
   claim that yields zero reward wastes block space and fees.
-4. **Clean terminal signal.**  The UX immediately learns the game is over,
+4. **Clean terminal signal.**  The UX immediately learns the game settled,
   rather than waiting many blocks for a timeout that produces nothing.
 
 ### Auto-Accept Detection
@@ -478,7 +481,7 @@ Auto-accept detection runs at two sites in `handle_game_coin_spent`:
 
 1. **`Expected` path** — opponent moved or a timeout confirmed, creating a
   new game coin.  If the new coin is our turn and auto-accept triggers, the
-   game is marked `game_finished = true` and `AcceptTimeout` is queued.
+   game is marked `game_finished = true` and `AcceptSettlement` is queued.
 2. **`Moved` path** — opponent made a move that advances the game.  Same
   auto-accept check as the Expected path.
 
@@ -498,18 +501,19 @@ The zero-reward early-out fires at five distinct points.
 1. **Pending redo with zero reward.**  A move was sent off-chain but the
   potato hadn't come back.  The unroll lands at the pre-move state and a redo
    is queued.  If the post-redo `our_current_share` would be zero, the redo is
-   skipped and `WeTimedOut(0)` fires.  Checked via `is_redo_zero_reward()`.
-2. **Pending AcceptTimeout with zero share.**  An `AcceptTimeout` was called
+   skipped and `GameSettled { outcome: forfeited_skipped_reveal, our_share: 0 }`
+   fires.  Checked via `is_redo_zero_reward()`.
+2. **Pending AcceptSettlement with zero share.**  An `AcceptSettlement` was called
   off-chain but the potato round-trip hadn't completed.  The coin matches via
-   `pending_accept_timeouts` with `accepted = true`.  If our share is zero,
-   `WeTimedOut(0)` fires immediately instead of waiting for the on-chain
-   timeout.
+   `pending_settlements` with `accepted = true`.  If our share is zero,
+   `GameSettled { outcome: forfeited_we_accepted, our_share: 0 }` fires
+   immediately instead of waiting for the on-chain timeout.
 3. **Opponent's turn, mover_share == coin_amount.**  The move was
   acknowledged (no redo needed).  It's the opponent's turn and
    `mover_share == coin_amount`, meaning the opponent gets everything on
-   timeout and has no incentive to move.  `WeTimedOut(0)` fires.  This
-   only applies when it's the opponent's turn — when it's our turn and
-   `mover_share == coin_amount`, *we* get everything and auto-accept fires
+   timeout and has no incentive to move.  `GameSettled { outcome: forfeited_opponent_won, our_share: 0 }`
+   fires.  This only applies when it's the opponent's turn — when it's our turn
+   and `mover_share == coin_amount`, *we* get everything and auto-accept fires
    instead (see above).
 
 **During on-chain play** (action requested by UX):
@@ -517,35 +521,37 @@ The zero-reward early-out fires at five distinct points.
 4. **On-chain move would produce mover_share == coin_amount.**  In
   `do_on_chain_move`, after computing the move result, if the new
    `mover_share == game_amount` (we as the new waiter get zero), the move is
-   not submitted and `WeTimedOut(0)` fires with `forfeited: true`. This
-   applies to terminal moves too: if playing the terminal move gives the
-   opponent everything, we have no reward to claim and no incentive to spend
+   not submitted and `GameSettled { outcome: forfeited_skipped_reveal, our_share: 0 }`
+   fires. This applies to terminal moves too: if playing the terminal move gives
+   the opponent everything, we have no reward to claim and no incentive to spend
    fees or reveal more state. Games that need to prevent a player from
    withholding a losing terminal move must encode that incentive in the prior
    state's `mover_share`.
-5. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
-  `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
-   is removed and `WeTimedOut(0)` fires with `forfeited: true` instead of
-   building a timeout claim.
+5. **On-chain AcceptSettlement with zero share.**  In `do_on_chain_action`'s
+  `AcceptSettlement` handler, if `get_game_our_current_share() == 0`, the game
+   is removed and `GameSettled { outcome: forfeited_we_accepted, our_share: 0 }`
+   fires instead of building a timeout claim.
 
-### AcceptTimeout Handler
+### AcceptSettlement Handler
 
-The `AcceptTimeout` handler covers three cases:
+The `AcceptSettlement` handler covers three cases:
 
-1. **Zero share (forfeit):** `our_share == 0` — game is removed, `WeTimedOut`
-  emitted with `forfeited: true`.  No timeout claim is built.
-2. **Nonzero share (fold or auto-accept):** The handler builds a timeout
-  claim via `build_timeout_claim` and registers it with the wallet (via
-   `RegisterCoin`) for submission at maturity.  `game_finished` is set to
-   `true` on the game_map entry, signaling a clean end.
+1. **Zero share (forfeit):** `our_share == 0` — game is removed,
+  `GameSettled { outcome: forfeited_we_accepted, our_share: 0 }` is emitted.
+  No timeout claim is built.
+2. **Nonzero share (voluntary accept or auto-accept):** The handler builds a
+  **timeout claim** via `build_timeout_claim` and registers it with the wallet
+  (via `RegisterCoin`) for submission at maturity.  When the claim confirms,
+  `GameSettled` arrives with `we_accepted` or `settled_cleanly`.
 3. **Not our turn:** The handler marks `accepted = true` (the timeout claim
   was already registered eagerly at coin registration time).
 
 ### Already handled (no new code)
 
-Off-chain `AcceptTimeout` with zero reward is already handled by
-`drain_cached_accept_timeouts` in `src/channel_handler/mod.rs`, which emits
-`WeTimedOut` with whatever `our_share_amount` is, including zero.
+Off-chain `AcceptSettlement` with zero reward is already handled by
+`drain_cached_accept_settlements` in `src/channel_handler/mod.rs`, which emits
+`GameSettled { outcome: accept_settlement, our_share }` with whatever share
+amount applies, including zero.
 
 **Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
 `finish_on_chain_transition` (unroll scan),
@@ -869,18 +875,19 @@ the timelock matures. `our_turn` records whose move the on-chain state is
 waiting on, and the handler combines it with what the *observed spend* created
 to decide the terminal status:
 
-- **Spend pays our reward puzzle hash** → our claim confirmed
-(`WeTimedOut`, or `WeSlashedOpponent` on the slash path).
+- **Spend pays our reward puzzle hash** → our claim confirmed:
+`GameSettled` with outcomes such as `we_accepted`, `settled_cleanly`, or
+`slashed_opponent`.
 - **Spend pays the opponent's reward puzzle hash** → the opponent acted first:
 a normal move advances the game, a timeout claim against our pending move
-yields `OpponentTimedOut`, and a timeout claim while we were attempting to
-slash yields `OpponentSuccessfullyCheated`.
+yields `opponent_timed_out` or `attempt_to_move_failed`, and a timeout claim
+while we were attempting to slash yields `opponent_cheated`.
 
 `our_turn` is a key input, but not the only one: the accepted-state and the
 pending-slash / pending-move bookkeeping on `OnChainGameState` also steer the
 branch. In particular, an opponent's timeout claim against our pending `OurMove`
-coin drives `WeTimedOut` directly (rather than being misread as a win against a
-stale, optimistically-advanced referee state).
+coin can yield `attempt_to_move_failed` (rather than being misread as a win
+against a stale, optimistically-advanced referee state).
 
 Both players maintain independent `game_map`s, and both should have
 complementary `our_turn` values for the same game coin.
@@ -896,7 +903,7 @@ coin may still advance to another game coin before timeout finality.
 When that happens, `handle_game_coin_spent` keeps tracking the created coin and
 registers the next timeout claim under `"accepted game coin advanced by redo"`.
 The accepted flag is carried forward as timeout intent: once the actual chain
-state reaches a reward-coin spend, the terminal `WeTimedOut` notification is
+state reaches a reward-coin spend, the terminal `GameSettled` notification is
 emitted from the observed conditions.
 
 ### Moves for Finished Games Are Discarded

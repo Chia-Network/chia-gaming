@@ -170,7 +170,7 @@ against the event state in `LocalTestUIReceiver`:
 - `AcceptProposal` is two-phase: first it waits for the proposal to arrive,
   then it waits for `ProposalAccepted`, `InsufficientBalance`, or
   `ProposalCancelled` after `accept_proposal` has been called.
-- Global actions such as `GoOnChain`, `WaitBlocks`, `AcceptTimeout`, and
+- Global actions such as `GoOnChain`, `WaitBlocks`, `AcceptSettlement`, and
   `CleanShutdown` are unconditional once they become the next scripted action.
 
 The sim loop panics after 200 iterations with a diagnostic message including

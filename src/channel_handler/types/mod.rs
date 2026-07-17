@@ -21,7 +21,7 @@ pub use channel_handler::{
     ChannelHandlerUnrollSpendInfo, HistoricalUnrollSpendInfo,
 };
 pub use coin_spent::{
-    CoinSpentAcceptTimeout, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp,
+    CoinSpentAcceptSettlement, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp,
     CoinSpentResult,
 };
 pub use evidence::Evidence;
@@ -29,7 +29,7 @@ pub use live_game::LiveGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;
 pub use potato::{
-    CachedPotatoRegenerateLastHop, ChannelHandlerMoveResult, PotatoAcceptTimeoutCachedData,
+    CachedPotatoRegenerateLastHop, ChannelHandlerMoveResult, CachedAcceptSettlement,
     PotatoMoveCachedData, PotatoSignatures,
 };
 pub use proposed_game::ProposedGame;

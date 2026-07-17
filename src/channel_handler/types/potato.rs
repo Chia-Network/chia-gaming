@@ -14,7 +14,7 @@ pub struct PotatoSignatures {
 
 #[derive(Clone, Serialize, Deserialize)]
 
-pub struct PotatoAcceptTimeoutCachedData {
+pub struct CachedAcceptSettlement {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub live_game: LiveGame,
@@ -24,9 +24,9 @@ pub struct PotatoAcceptTimeoutCachedData {
     pub game_finished: bool,
 }
 
-impl std::fmt::Debug for PotatoAcceptTimeoutCachedData {
+impl std::fmt::Debug for CachedAcceptSettlement {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(formatter, "PotatoAcceptTimeoutCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?}, game_finished: {} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount, self.game_finished)
+        write!(formatter, "CachedAcceptSettlement {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?}, game_finished: {} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount, self.game_finished)
     }
 }
 
@@ -60,8 +60,8 @@ impl std::fmt::Debug for PotatoMoveCachedData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CachedPotatoRegenerateLastHop {
-    #[serde(rename = "PotatoAccept")]
-    PotatoAcceptTimeout(Box<PotatoAcceptTimeoutCachedData>),
+    #[serde(rename = "CachedAcceptSettlement")]
+    CachedAcceptSettlement(Box<CachedAcceptSettlement>),
     PotatoMoveHappening(Rc<PotatoMoveCachedData>),
     ProposalAccepted(GameID),
 }

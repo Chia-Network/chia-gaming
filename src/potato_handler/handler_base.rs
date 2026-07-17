@@ -209,9 +209,9 @@ impl ChannelHandlerBase {
             .push_back(GameAction::Move(*id, readable.clone(), new_entropy));
     }
 
-    pub fn park_accept_timeout(&mut self, id: &GameID) {
+    pub fn park_accept_settlement(&mut self, id: &GameID) {
         self.game_action_queue
-            .push_back(GameAction::AcceptTimeout(*id));
+            .push_back(GameAction::AcceptSettlement(*id));
     }
 
     pub fn park_cheat(&mut self, game_id: &GameID, mover_share: Amount, entropy: Hash) {

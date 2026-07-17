@@ -16,7 +16,7 @@ pub struct CoinSpentMoveUp {
 }
 
 #[derive(Debug, Clone)]
-pub struct CoinSpentAcceptTimeout {
+pub struct CoinSpentAcceptSettlement {
     pub game_id: GameID,
     pub spend: CoinSpend,
     pub reward_coin: CoinString,
@@ -27,7 +27,7 @@ pub struct CoinSpentAcceptTimeout {
 pub enum CoinSpentDisposition {
     CancelledUX(Vec<GameID>),
     Move(CoinSpentMoveUp),
-    AcceptTimeout(CoinSpentAcceptTimeout),
+    AcceptSettlement(CoinSpentAcceptSettlement),
 }
 
 #[derive(Debug, Clone)]

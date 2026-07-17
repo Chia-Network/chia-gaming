@@ -153,7 +153,7 @@ pub trait FromLocalUI {
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
@@ -168,8 +168,8 @@ pub enum BatchAction {
     AcceptProposal(GameID),
     CancelProposal(GameID),
     Move(GameID, GameMoveDetails),
-    #[serde(rename = "Accept")]
-    AcceptTimeout(GameID, Amount),
+    #[serde(rename = "AcceptSettlement")]
+    AcceptSettlement(GameID, Amount),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -224,8 +224,8 @@ pub enum PotatoState {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    #[serde(rename = "Accept")]
-    AcceptTimeout(GameID),
+    #[serde(rename = "AcceptSettlement")]
+    AcceptSettlement(GameID),
     CleanShutdown,
     SendPotato,
     QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
@@ -241,7 +241,7 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::AcceptTimeout(gi) => write!(formatter, "AcceptTimeout({gi:?})"),
+            GameAction::AcceptSettlement(gi) => write!(formatter, "AcceptSettlement({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
             GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),

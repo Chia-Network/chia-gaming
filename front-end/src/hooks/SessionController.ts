@@ -1125,14 +1125,14 @@ export class SessionController implements PollingCradle {
     }
   }
 
-  acceptTimeout(gameId: string): void {
+  acceptSettlement(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.accept(gameId);
       this.processResult(result);
     } catch (e) {
       const msg = extractErrorMessage(e);
-      console.error('[wasm] acceptTimeout failed:', msg);
+      console.error('[wasm] acceptSettlement failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
     }
   }

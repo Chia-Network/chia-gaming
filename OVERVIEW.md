@@ -229,7 +229,7 @@ the holder permission to update state. Only the player holding the potato can:
 - Propose a new game
 - Accept or cancel a game proposal
 - Make a move
-- Accept a game result (accept_timeout)
+- Accept a game result (accept_settlement)
 - Initiate clean shutdown
 
 When a player wants to act but doesn't have the potato, they **request** it.
@@ -252,7 +252,7 @@ Every potato pass is a single `PeerMessage::Batch` containing:
   - `AcceptProposal` — accept a pending game proposal
   - `CancelProposal` — cancel a pending proposal
   - `Move` — make a game move
-  - `AcceptTimeout` — accept a game result (end game)
+  - `AcceptSettlement` — accept a game result (end game)
 2. `**signatures: PotatoSignatures`** — two half-signatures covering the final
   channel state after all actions in the batch have been applied:
   - A half-signature of the **channel coin** spend committing to the new unroll
@@ -277,7 +277,7 @@ batch processing begins, `PotatoHandler` snapshots both the `ChannelHandler` and
 the local `game_action_queue`. If any action or signature verification fails,
 both snapshots are restored. This makes a peer batch atomic across all state that
 could otherwise affect dispute recovery: intermediate mutations to `live_games`,
-`pending_accept_timeouts`, balances, `state_number`, `cached_last_actions`, and
+`pending_settlements`, balances, `state_number`, `cached_last_actions`, and
 queued local actions are not allowed to leak out of a failed peer batch. The
 error then triggers go-on-chain (the peer sent a bad batch, so we dispute
 on-chain).
@@ -846,12 +846,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `UnrollCoin`                    | `channel_handler/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameCradle`                    | `peer_container.rs`                            | Trait for synchronous game interaction (tests/UI)                                                            |
 | `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
-| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptTimeout` |
-| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
+| `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `CachedAcceptSettlement`, `ProposalAccepted`     |
+| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
+| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
-| `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, and `GameStatus { status: GameStatusKind, ... }` |
+| `SettlementOutcome`             | `potato_handler/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |
+| `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, gameplay `GameStatus { status: GameStatusKind, ... }`, and unified settlement `GameSettled { id, outcome, our_share, coin_id }` |
 | `Effect`                        | `potato_handler/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
 | `PeerHandler`                   | `peer_container.rs`                            | Trait implemented by all handlers — uniform interface for messages, coin events, game actions                |
 | `HandshakeInitiatorHandler`     | `potato_handler/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
@@ -866,7 +867,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | Document | Covers |
 | --- | --- |
-| [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptTimeout lifecycle |
+| [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptSettlement lifecycle |
 | [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
 | [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |
 | [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!` |

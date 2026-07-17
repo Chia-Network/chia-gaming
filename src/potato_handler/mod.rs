@@ -19,7 +19,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::utils::proper_list;
@@ -149,8 +149,8 @@ fn format_batch_action(action: &BatchAction) -> String {
                 details.validation_info_hash,
             )
         }
-        BatchAction::AcceptTimeout(id, amount) => {
-            format!("AcceptTimeout id={id} amt={amount}")
+        BatchAction::AcceptSettlement(id, amount) => {
+            format!("AcceptSettlement id={id} amt={amount}")
         }
     }
 }
@@ -445,23 +445,13 @@ impl PotatoHandler {
 
         {
             let ch = self.channel_handler_mut()?;
-            for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
-                let finished_params = if game_finished {
-                    Some(GameStatusOtherParams {
-                        game_finished: Some(true),
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                };
-                effects.push(Effect::Notify(GameNotification::GameStatus {
+            for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
+                effects.push(Effect::Notify(GameNotification::game_settled(
                     id,
-                    status: GameStatusKind::EndedWeTimedOut,
-                    my_reward: Some(amount),
-                    coin_id: None,
-                    reason: None,
-                    other_params: finished_params,
-                }));
+                    SettlementOutcome::AcceptSettlement,
+                    amount,
+                    None,
+                )));
             }
         }
 
@@ -762,35 +752,25 @@ impl PotatoHandler {
                     }
                     if finished {
                         self.game_action_queue
-                            .push_back(GameAction::AcceptTimeout(*game_id));
+                            .push_back(GameAction::AcceptSettlement(*game_id));
                     }
                 }
-                BatchAction::AcceptTimeout(game_id, _peer_amount) => {
+                BatchAction::AcceptSettlement(game_id, _peer_amount) => {
                     let ch = self.channel_handler_mut()?;
-                    let (our_reward, game_finished) = ch.apply_received_accept_timeout(game_id)?;
-                    let finished_params = if game_finished {
-                        Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            ..Default::default()
-                        })
-                    } else {
-                        None
-                    };
-                    effects.push(Effect::Notify(GameNotification::GameStatus {
-                        id: *game_id,
-                        status: GameStatusKind::EndedOpponentTimedOut,
-                        my_reward: Some(our_reward),
-                        coin_id: None,
-                        reason: None,
-                        other_params: finished_params,
-                    }));
+                    let (our_reward, _game_finished) = ch.apply_received_accept_settlement(game_id)?;
+                    effects.push(Effect::Notify(GameNotification::game_settled(
+                        *game_id,
+                        SettlementOutcome::AcceptSettlement,
+                        our_reward,
+                        None,
+                    )));
                 }
             }
         }
 
-        let received_accept_timeout = actions
+        let received_accept_settlement = actions
             .iter()
-            .any(|a| matches!(a, BatchAction::AcceptTimeout(..)));
+            .any(|a| matches!(a, BatchAction::AcceptSettlement(..)));
 
         let has_new_game = actions.iter().any(|a| {
             matches!(
@@ -871,23 +851,13 @@ impl PotatoHandler {
 
             {
                 let ch = self.channel_handler_mut()?;
-                for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
-                    let finished_params = if game_finished {
-                        Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            ..Default::default()
-                        })
-                    } else {
-                        None
-                    };
-                    effects.push(Effect::Notify(GameNotification::GameStatus {
+                for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
+                    effects.push(Effect::Notify(GameNotification::game_settled(
                         id,
-                        status: GameStatusKind::EndedWeTimedOut,
-                        my_reward: Some(amount),
-                        coin_id: None,
-                        reason: None,
-                        other_params: finished_params,
-                    }));
+                        SettlementOutcome::AcceptSettlement,
+                        amount,
+                        None,
+                    )));
                 }
             }
 
@@ -965,7 +935,7 @@ impl PotatoHandler {
         effects.extend(self.update_channel_coin_after_receive(
             env,
             &spend_info,
-            received_accept_timeout,
+            received_accept_settlement,
         )?);
 
         Ok(effects)
@@ -1042,12 +1012,12 @@ impl PotatoHandler {
                         deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));
                     }
                 }
-                GameAction::AcceptTimeout(game_id) => {
+                GameAction::AcceptSettlement(game_id) => {
                     let amount = {
                         let ch = self.channel_handler_mut()?;
-                        ch.send_accept_timeout_no_finalize(&game_id)?
+                        ch.send_accept_settlement_no_finalize(&game_id)?
                     };
-                    batch_actions.push(BatchAction::AcceptTimeout(game_id, amount));
+                    batch_actions.push(BatchAction::AcceptSettlement(game_id, amount));
                 }
                 GameAction::QueuedProposalGroup(my_games, their_wire) => {
                     let saved_channel = self.channel_handler.clone();
@@ -1650,12 +1620,12 @@ impl FromLocalUI for PotatoHandler {
         Ok(effects)
     }
 
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) = self.do_game_action(GameAction::AcceptTimeout(*id))?;
+        let (_continued, effects) = self.do_game_action(GameAction::AcceptSettlement(*id))?;
 
         Ok(effects)
     }
@@ -1748,12 +1718,12 @@ impl PeerHandler for PotatoHandler {
     ) -> Result<Vec<Effect>, Error> {
         <Self as FromLocalUI>::make_move(self, env, id, readable, new_entropy)
     }
-    fn accept_timeout(
+    fn accept_settlement(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        <Self as FromLocalUI>::accept_timeout(self, env, id)
+        <Self as FromLocalUI>::accept_settlement(self, env, id)
     }
     fn cheat_game(
         &mut self,
