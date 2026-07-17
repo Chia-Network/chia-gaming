@@ -16,12 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    TimeoutClaimState, CachedPotatoRegenerateLastHop, ChannelCoinSpendInfo,
-    ChannelCoinSpentResult, ChannelEnv, ChannelInitiationResult,
-    ChannelMoveResult, ChannelPrivateKeys, ChannelUnrollSpendInfo,
-    CoinSpentInformation, HandshakeResult, HistoricalUnrollSpendInfo, LiveGame, MoveResult,
-    OnChainGameCoin, OnChainGameState, CachedAcceptSettlement, PotatoMoveCachedData,
-    PotatoSignatures, ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
+    CachedAcceptSettlement, CachedPotatoRegenerateLastHop, ChannelCoinSpendInfo,
+    ChannelCoinSpentResult, ChannelEnv, ChannelInitiationResult, ChannelMoveResult,
+    ChannelPrivateKeys, ChannelUnrollSpendInfo, CoinSpentInformation, HandshakeResult,
+    HistoricalUnrollSpendInfo, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
+    PotatoMoveCachedData, PotatoSignatures, ProposedGame, ReadableMove, TimeoutClaimState,
+    UnrollCoin, UnrollCoinConditionInputs,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -277,10 +277,7 @@ impl ChannelState {
         accepts
     }
 
-    pub fn get_reward_puzzle_hash(
-        &self,
-        _env: &mut ChannelEnv<'_>,
-    ) -> Result<PuzzleHash, Error> {
+    pub fn get_reward_puzzle_hash(&self, _env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         Ok(self.reward_puzzle_hash.clone())
     }
 
@@ -837,8 +834,12 @@ impl ChannelState {
             ),
         )?;
 
-        self.cached_last_actions
-            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)));
+        self.cached_last_actions.retain(|entry| {
+            matches!(
+                entry,
+                CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)
+            )
+        });
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -864,8 +865,12 @@ impl ChannelState {
             ),
         )?;
 
-        self.cached_last_actions
-            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)));
+        self.cached_last_actions.retain(|entry| {
+            matches!(
+                entry,
+                CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)
+            )
+        });
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -1380,7 +1385,10 @@ impl ChannelState {
 
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo. Returns the amount won.
-    pub fn send_accept_settlement_no_finalize(&mut self, game_id: &GameID) -> Result<Amount, Error> {
+    pub fn send_accept_settlement_no_finalize(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<Amount, Error> {
         game_assert!(
             self.have_potato,
             "send_accept_settlement_no_finalize: must have potato"
@@ -2159,8 +2167,8 @@ impl ChannelState {
             .iter()
             .position(|g| g.game_id == *game_id)
         {
-            let tx = self.pending_settlements[idx]
-                .get_transaction_for_timeout(env.allocator, coin)?;
+            let tx =
+                self.pending_settlements[idx].get_transaction_for_timeout(env.allocator, coin)?;
             self.pending_settlements.remove(idx);
             Ok(tx)
         } else {

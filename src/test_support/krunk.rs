@@ -195,10 +195,9 @@ mod sim_tests {
                         && tag == "not_in_dictionary"
                         && message == "XXXXX"
             )));
-            assert!(!notifications.iter().any(|notification| matches!(
-                notification,
-                GameNotification::ActionFailed { .. }
-            )));
+            assert!(!notifications
+                .iter()
+                .any(|notification| matches!(notification, GameNotification::ActionFailed { .. })));
             assert!(!notifications.iter().any(|notification| matches!(
                 notification,
                 GameNotification::GameSettled { .. }

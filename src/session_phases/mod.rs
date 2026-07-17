@@ -8,8 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::channel_state::game;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, PotatoSignatures,
-    ReadableMove,
+    ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, PotatoSignatures, ReadableMove,
 };
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
@@ -319,8 +318,7 @@ impl OffChainPhase {
 
     pub fn take_channel_spend_next_phase(
         &mut self,
-    ) -> Option<Box<crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase>>
-    {
+    ) -> Option<Box<crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase>> {
         self.channel_spend_next_phase.take()
     }
 
@@ -424,10 +422,7 @@ impl OffChainPhase {
         Ok(effects)
     }
 
-    pub fn get_reward_puzzle_hash(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<PuzzleHash, Error> {
+    pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         let player_ch = self.channel_state()?;
         player_ch.get_reward_puzzle_hash(env)
     }
@@ -757,7 +752,8 @@ impl OffChainPhase {
                 }
                 BatchAction::AcceptSettlement(game_id, _peer_amount) => {
                     let ch = self.channel_state_mut()?;
-                    let (our_reward, _game_finished) = ch.apply_received_accept_settlement(game_id)?;
+                    let (our_reward, _game_finished) =
+                        ch.apply_received_accept_settlement(game_id)?;
                     effects.push(Effect::Notify(GameNotification::game_settled(
                         *game_id,
                         SettlementOutcome::AcceptSettlement,
@@ -1383,10 +1379,7 @@ impl OffChainPhase {
     /// Build a channel-coin-to-unroll spend bundle regardless of current
     /// handshake state.  Used by test infrastructure to simulate a malicious
     /// peer that submits an unroll after agreeing to clean shutdown.
-    pub fn force_unroll_spend(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<SpendBundle, Error> {
+    pub fn force_unroll_spend(&self, env: &mut ChannelEnv<'_>) -> Result<SpendBundle, Error> {
         let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
             Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
         })?;
@@ -1424,10 +1417,7 @@ impl OffChainPhase {
         Ok((false, effect.into_iter().collect()))
     }
 
-    pub fn get_game_state_id(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Option<Hash>, Error> {
+    pub fn get_game_state_id(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
         let player_ch = self.channel_state().ok();
         if let Some(player_ch) = player_ch {
             return player_ch.get_game_state_id(env).map(Some);
@@ -1669,10 +1659,7 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn has_pending_incoming(&self) -> bool {
         OffChainPhase::has_pending_incoming(self)
     }
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OffChainPhase::process_incoming_message(self, env)
     }
     fn received_message(
@@ -1742,10 +1729,7 @@ impl PeerLifecyclePhase for OffChainPhase {
     ) -> Result<Vec<Effect>, Error> {
         OffChainPhase::self_accept_proposal(self, env, game_id)
     }
-    fn flush_pending_actions(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn flush_pending_actions(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OffChainPhase::flush_pending_actions(self, env)
     }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {

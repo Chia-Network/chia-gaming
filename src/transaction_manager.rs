@@ -32,7 +32,7 @@ use crate::common::types::{
 };
 use crate::game_session::{DrainResult, GameSession, WatchReport};
 use crate::session_phases::effects::{
-    ChannelStatus, GameSessionEvent, GameSessionEventQueue, GameNotification,
+    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -785,15 +785,17 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         self.submitted
             .retain(|tx| tx.spent_coin_ids != spent_coin_ids);
         self.pending_events
-            .push_back(GameSessionEvent::Notification(GameNotification::ChannelStatus {
-                state: ChannelStatus::Failed,
-                advisory: Some("channel coin not confirmed in time".to_string()),
-                coin: None,
-                our_balance: None,
-                their_balance: None,
-                game_allocated: None,
-                have_potato: None,
-            }));
+            .push_back(GameSessionEvent::Notification(
+                GameNotification::ChannelStatus {
+                    state: ChannelStatus::Failed,
+                    advisory: Some("channel coin not confirmed in time".to_string()),
+                    coin: None,
+                    our_balance: None,
+                    their_balance: None,
+                    game_allocated: None,
+                    have_potato: None,
+                },
+            ));
     }
 
     /// Coins that vanished (reorged out) without a confirmed spend, whose
@@ -891,7 +893,11 @@ mod tests {
             });
         }
 
-        fn queue_drain_with_resync(&mut self, events: Vec<GameSessionEvent>, resync: (usize, bool)) {
+        fn queue_drain_with_resync(
+            &mut self,
+            events: Vec<GameSessionEvent>,
+            resync: (usize, bool),
+        ) {
             self.scripted_drains.push_back(DrainResult {
                 events: events.into_iter().collect(),
                 resync: Some(resync),
@@ -949,7 +955,11 @@ mod tests {
     }
 
     /// A `WatchCoin` event that also registers an eager timeout spend.
-    fn watch_event_with_spend(coin: &CoinString, timeout: u64, spend: SpendBundle) -> GameSessionEvent {
+    fn watch_event_with_spend(
+        coin: &CoinString,
+        timeout: u64,
+        spend: SpendBundle,
+    ) -> GameSessionEvent {
         GameSessionEvent::WatchCoin {
             coin_name: coin.to_coin_id(),
             coin_string: coin.clone(),

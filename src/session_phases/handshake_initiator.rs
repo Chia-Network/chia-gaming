@@ -6,8 +6,8 @@ use clvm_traits::ToClvm;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
-    ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult,
-    ChannelPrivateKeys, PotatoSignatures, ReadableMove,
+    ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys,
+    PotatoSignatures, ReadableMove,
 };
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::{
@@ -28,7 +28,7 @@ use crate::session_phases::handshake::{
     HandshakeStepWithSpend, RawCoinCondition,
 };
 use crate::session_phases::types::{
-    GameFactory, PeerMessage, OffChainPhaseInit, PotatoState, SpendWalletReceiver,
+    GameFactory, OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
 };
 use crate::session_phases::OffChainPhase;
 
@@ -281,10 +281,7 @@ impl HandshakeInitiatorPhase {
         Some(self.last_height + self.channel_timeout.to_u64())
     }
 
-    fn build_launcher_coin_spend(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<CoinSpend, Error> {
+    fn build_launcher_coin_spend(&self, env: &mut ChannelEnv<'_>) -> Result<CoinSpend, Error> {
         let ch = self.channel_state()?;
         let channel_coin = ch.state_channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
@@ -404,10 +401,7 @@ impl HandshakeInitiatorPhase {
         }
     }
 
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let msg_envelope = if let Some(msg) = self.incoming_messages.pop_front() {
             msg
@@ -644,10 +638,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     fn has_pending_incoming(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         HandshakeInitiatorPhase::process_incoming_message(self, env)
     }
     fn received_message(
@@ -716,7 +707,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         ))
     }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
-        self.replacement.take().map(|ph| ph as Box<dyn PeerLifecyclePhase>)
+        self.replacement
+            .take()
+            .map(|ph| ph as Box<dyn PeerLifecyclePhase>)
     }
     fn go_on_chain(
         &mut self,
@@ -872,7 +865,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             });
         }
         let state = match &self.state {
-            InitiatorState::WaitingForStart | InitiatorState::SentA(_) => ChannelStatus::Handshaking,
+            InitiatorState::WaitingForStart | InitiatorState::SentA(_) => {
+                ChannelStatus::Handshaking
+            }
             InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {
                 ChannelStatus::Handshaking
             }

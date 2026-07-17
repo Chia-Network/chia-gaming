@@ -4,17 +4,15 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::{
-    ChannelEnv, ChannelPrivateKeys, PotatoSignatures, ReadableMove,
-};
+use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, PotatoSignatures, ReadableMove};
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
     PuzzleHash, SpendBundle, Timeout,
 };
+use crate::referee::types::GameMoveDetails;
 use crate::session_phases::effects::{Effect, ResyncInfo};
 use crate::session_phases::handshake::{HandshakeB, HandshakeC, HandshakeD};
 use crate::session_phases::start::GameStart;
-use crate::referee::types::GameMoveDetails;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WireGameSpec {

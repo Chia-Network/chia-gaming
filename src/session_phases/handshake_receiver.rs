@@ -5,8 +5,7 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
-    ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult,
-    ChannelPrivateKeys, ReadableMove,
+    ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys, ReadableMove,
 };
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::{
@@ -25,7 +24,7 @@ use crate::session_phases::handshake::{
     RawCoinCondition,
 };
 use crate::session_phases::types::{
-    GameFactory, PeerMessage, OffChainPhaseInit, PotatoState, SpendWalletReceiver,
+    GameFactory, OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
 };
 use crate::session_phases::OffChainPhase;
 
@@ -294,10 +293,7 @@ impl HandshakeReceiverPhase {
         }
     }
 
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let msg_envelope = if let Some(msg) = self.incoming_messages.pop_front() {
             msg
@@ -623,10 +619,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     fn has_pending_incoming(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         HandshakeReceiverPhase::process_incoming_message(self, env)
     }
     fn received_message(
@@ -695,7 +688,9 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         ))
     }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
-        self.replacement.take().map(|ph| ph as Box<dyn PeerLifecyclePhase>)
+        self.replacement
+            .take()
+            .map(|ph| ph as Box<dyn PeerLifecyclePhase>)
     }
     fn go_on_chain(
         &mut self,

@@ -3,9 +3,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::game_handler::{
-    GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
-};
+use crate::channel_state::game_handler::{GameHandler, MessageHandler, MyTurnInputs, MyTurnResult};
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{Evidence, ReadableMove, ValidationInfo};
 

@@ -15,9 +15,9 @@ use crate::common::types::{
 #[cfg(test)]
 use crate::common::types::{GameID, PrivateKey, Program, Timeout};
 #[cfg(test)]
-use crate::games::poker_collection;
-#[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
+#[cfg(test)]
+use crate::games::poker_collection;
 use crate::session_phases::effects::{apply_effects, Effect, GameNotification};
 #[cfg(test)]
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
@@ -374,10 +374,7 @@ fn get_channel_coin_for_handler(p: &dyn PeerLifecyclePhase) -> Result<CoinString
 
 #[cfg(test)]
 fn extract_off_chain_phase(peer: &mut Box<dyn PeerLifecyclePhase>) -> Option<OffChainPhase> {
-    if let Some(ih) = peer
-        .as_any_mut()
-        .downcast_mut::<HandshakeInitiatorPhase>()
-    {
+    if let Some(ih) = peer.as_any_mut().downcast_mut::<HandshakeInitiatorPhase>() {
         return ih.take_off_chain_phase();
     }
     if let Some(rh) = peer.as_any_mut().downcast_mut::<HandshakeReceiverPhase>() {

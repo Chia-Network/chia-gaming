@@ -20,14 +20,14 @@ use crate::common::types::{
     Timeout, ToQuotedProgram,
 };
 use crate::session_phases::effects::{
-    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, GameSessionEvent,
-    GameSessionEventQueue, Effect, GameNotification, ResyncInfo,
+    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
+    GameSessionEvent, GameSessionEventQueue, ResyncInfo,
 };
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 use crate::session_phases::start::GameStart;
 use crate::session_phases::types::{
-    BootstrapTowardWallet, GameFactory, PacketSender, PeerMessage, OffChainPhaseInit,
+    BootstrapTowardWallet, GameFactory, OffChainPhaseInit, PacketSender, PeerMessage,
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 
@@ -39,10 +39,7 @@ use crate::session_phases::OffChainPhase;
 #[typetag::serde]
 pub trait PeerLifecyclePhase {
     fn has_pending_incoming(&self) -> bool;
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error>;
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn received_message(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -182,10 +179,7 @@ pub trait PeerLifecyclePhase {
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
-    fn flush_pending_actions(
-        &mut self,
-        _env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn flush_pending_actions(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
@@ -388,8 +382,10 @@ impl WalletSpendInterface for GameSessionState {
         bundle: &SpendBundle,
         expiry: Option<u64>,
     ) -> Result<(), Error> {
-        self.events
-            .push_back(GameSessionEvent::OutboundTransaction(bundle.clone(), expiry));
+        self.events.push_back(GameSessionEvent::OutboundTransaction(
+            bundle.clone(),
+            expiry,
+        ));
         Ok(())
     }
     fn register_coin(
@@ -508,10 +504,7 @@ fn claim_settlement_coins(allocator: &mut AllocEncoder, bundle: SpendBundle) -> 
 }
 
 impl GameSession {
-    pub fn new_with_keys(
-        config: GameSessionConfig,
-        private_keys: ChannelPrivateKeys,
-    ) -> Self {
+    pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
         GameSession {
             state: GameSessionState {
                 is_initiator: config.have_potato,
@@ -579,7 +572,8 @@ impl ToLocalUI for GameSessionState {
     }
 
     fn log(&mut self, line: &str) -> Result<(), Error> {
-        self.events.push_back(GameSessionEvent::Log(line.to_string()));
+        self.events
+            .push_back(GameSessionEvent::Log(line.to_string()));
         Ok(())
     }
 }
@@ -873,11 +867,7 @@ impl GameSession {
         // Update phase metadata from current handler
         use crate::session_phases::on_chain::OnChainPhase;
 
-        self.state.is_on_chain = self
-            .peer
-            .as_any()
-            .downcast_ref::<OnChainPhase>()
-            .is_some();
+        self.state.is_on_chain = self.peer.as_any().downcast_ref::<OnChainPhase>().is_some();
         self.state.is_failed = self
             .peer
             .channel_status_snapshot()
@@ -958,9 +948,13 @@ impl GameSession {
         let mut passthrough = Vec::new();
         for effect in effects {
             if matches!(effect, Effect::NeedLauncherCoinId) {
-                self.state.events.push_back(GameSessionEvent::NeedLauncherCoin);
+                self.state
+                    .events
+                    .push_back(GameSessionEvent::NeedLauncherCoin);
             } else if let Effect::NeedCoinSpend(req) = effect {
-                self.state.events.push_back(GameSessionEvent::NeedCoinSpend(req));
+                self.state
+                    .events
+                    .push_back(GameSessionEvent::NeedCoinSpend(req));
             } else {
                 passthrough.push(effect);
             }
@@ -1261,12 +1255,13 @@ impl GameSession {
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
         let mut env = ChannelEnv::new(allocator)?;
-        self.peer
-            .channel_state()?
-            .get_reward_puzzle_hash(&mut env)
+        self.peer.channel_state()?.get_reward_puzzle_hash(&mut env)
     }
 
-    pub fn get_game_state_id(&mut self, allocator: &mut AllocEncoder) -> Result<Option<Hash>, Error> {
+    pub fn get_game_state_id(
+        &mut self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<Option<Hash>, Error> {
         let mut env = ChannelEnv::new(allocator)?;
         match self.peer.channel_state() {
             Ok(ch) => ch.get_game_state_id(&mut env).map(Some),
@@ -1417,7 +1412,11 @@ impl GameSession {
     }
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_settlement.
-    pub fn accept_settlement(&mut self, allocator: &mut AllocEncoder, id: &GameID) -> Result<(), Error> {
+    pub fn accept_settlement(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        id: &GameID,
+    ) -> Result<(), Error> {
         let reported_effects = {
             let mut env = ChannelEnv::new(allocator)?;
             self.peer.accept_settlement(&mut env, id)?
@@ -1527,7 +1526,6 @@ impl GameSession {
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
-
 }
 
 #[cfg(test)]

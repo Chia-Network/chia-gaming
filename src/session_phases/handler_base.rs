@@ -128,17 +128,11 @@ impl ChannelStateBase {
             .map(|ch| ch.their_out_of_game_balance())
     }
 
-    pub fn get_reward_puzzle_hash(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<PuzzleHash, Error> {
+    pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         self.channel_state()?.get_reward_puzzle_hash(env)
     }
 
-    pub fn get_game_state_id(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Option<Hash>, Error> {
+    pub fn get_game_state_id(&self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
         if let Some(ch) = self.channel_state.as_ref() {
             return ch.get_game_state_id(env).map(Some);
         }

@@ -180,17 +180,11 @@ impl SpendChannelCoinPhase {
         self.base.has_potato()
     }
 
-    pub fn get_reward_puzzle_hash(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<PuzzleHash, Error> {
+    pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         self.base.get_reward_puzzle_hash(env)
     }
 
-    pub fn get_game_state_id(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Option<Hash>, Error> {
+    pub fn get_game_state_id(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
         self.base.get_game_state_id(env)
     }
 
@@ -273,10 +267,7 @@ impl SpendChannelCoinPhase {
     }
 
     #[cfg(test)]
-    pub fn force_unroll_spend(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<SpendBundle, Error> {
+    pub fn force_unroll_spend(&self, env: &mut ChannelEnv<'_>) -> Result<SpendBundle, Error> {
         let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
             Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
         })?;
@@ -790,7 +781,8 @@ impl SpendChannelCoinPhase {
                 }
             }
 
-            let preempt_resolved = player_ch.drain_preempt_resolved_accept_settlements(&surviving_ids);
+            let preempt_resolved =
+                player_ch.drain_preempt_resolved_accept_settlements(&surviving_ids);
 
             (game_map_inner, reward_coin, preempt_resolved)
         };
@@ -1031,10 +1023,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     fn has_pending_incoming(&self) -> bool {
         SpendChannelCoinPhase::has_pending_incoming(self)
     }
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::process_incoming_message(self, env)
     }
     fn received_message(

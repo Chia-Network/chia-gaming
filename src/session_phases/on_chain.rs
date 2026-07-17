@@ -13,15 +13,15 @@ use crate::common::types::{
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::PeerLifecyclePhase;
+use crate::referee::types::{
+    GameMoveDetails, ParsedRefereeSolution, SlashOutcome, TheirTurnCoinSpentResult,
+};
+use crate::referee::Referee;
 use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
     GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome,
 };
 use crate::session_phases::types::{GameAction, PotatoState};
-use crate::referee::types::{
-    GameMoveDetails, ParsedRefereeSolution, SlashOutcome, TheirTurnCoinSpentResult,
-};
-use crate::referee::Referee;
 
 use std::borrow::Borrow;
 
@@ -719,12 +719,7 @@ impl OnChainPhase {
                     };
                     if let Some(eff) = self.try_emit_terminal(
                         &game_id,
-                        GameNotification::game_settled(
-                            game_id,
-                            outcome,
-                            Amount::default(),
-                            None,
-                        ),
+                        GameNotification::game_settled(game_id, outcome, Amount::default(), None),
                     ) {
                         effects.push(eff);
                     }
@@ -1725,10 +1720,7 @@ impl PeerLifecyclePhase for OnChainPhase {
         OnChainPhase::has_pending_incoming(self)
     }
 
-    fn process_incoming_message(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OnChainPhase::process_incoming_message(self, env)
     }
 

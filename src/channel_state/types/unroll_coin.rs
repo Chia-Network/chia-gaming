@@ -130,10 +130,7 @@ impl UnrollCoin {
 
     /// Build the solution for the preemption path: just the base conditions
     /// (without the timelock).  The puzzle prepends AGG_SIG_UNSAFE inline.
-    pub fn make_unroll_puzzle_solution(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<NodePtr, Error> {
+    pub fn make_unroll_puzzle_solution(&self, env: &mut ChannelEnv<'_>) -> Result<NodePtr, Error> {
         let conditions = self.get_internal_conditions_for_unroll_coin_spend()?;
         conditions.to_nodeptr(env.allocator)
     }
@@ -141,10 +138,7 @@ impl UnrollCoin {
     /// Build the solution for the timeout path: just the timeout conditions
     /// (which include ASSERT_HEIGHT_RELATIVE).  The puzzle checks
     /// shatree(conditions) == DEFAULT_CONDITIONS_HASH.
-    pub fn make_timeout_unroll_solution(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<NodePtr, Error> {
+    pub fn make_timeout_unroll_solution(&self, env: &mut ChannelEnv<'_>) -> Result<NodePtr, Error> {
         let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
         timeout_conditions.to_nodeptr(env.allocator)
     }

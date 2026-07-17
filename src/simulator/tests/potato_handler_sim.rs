@@ -17,14 +17,13 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, PrivateKey,
     Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::poker_collection;
 use crate::game_session::{
-    report_coin_changes_to_peer, CoinReportPhase, FullCoinSetAdapter, MessagePeerQueue,
-    MessagePipe, PeerLifecyclePhase, GameSession, GameSessionConfig, WatchEntry,
-    WatchReport,
+    report_coin_changes_to_peer, CoinReportPhase, FullCoinSetAdapter, GameSession,
+    GameSessionConfig, MessagePeerQueue, MessagePipe, PeerLifecyclePhase, WatchEntry, WatchReport,
 };
+use crate::games::poker_collection;
 use crate::session_phases::effects::{
-    apply_effects, CancelReason, ChannelStatus, GameSessionEvent, Effect, GameNotification,
+    apply_effects, CancelReason, ChannelStatus, Effect, GameNotification, GameSessionEvent,
     GameStatusKind, SettlementOutcome,
 };
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -701,9 +700,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
         }
         ExpectedEvent::GameMessage => "GameMessage".to_string(),
         ExpectedEvent::Notification(n) => match n {
-            ExpectedNotification::GameSettledOurSide => {
-                "Notif(GameSettledOurSide)".to_string()
-            }
+            ExpectedNotification::GameSettledOurSide => "Notif(GameSettledOurSide)".to_string(),
             ExpectedNotification::GameSettledOpponentSide => {
                 "Notif(GameSettledOpponentSide)".to_string()
             }
@@ -775,9 +772,7 @@ pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label:
     for n in notifications {
         match n {
             GameNotification::GameSettled {
-                our_share,
-                coin_id,
-                ..
+                our_share, coin_id, ..
             } => {
                 let our_reward = our_share.clone();
                 let reward_coin = coin_id.clone();
@@ -3166,9 +3161,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     // step e so Bob never sees her final move.  Alice times out.
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
-                    ExpectedEvent::Notification(
-                        ExpectedNotification::GameSettledOpponentSide,
-                    ),
+                    ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "piss_off_complete p1",
             );
@@ -3267,9 +3260,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(
-                        ExpectedNotification::GameSettledOpponentSide,
-                    ),
+                    ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "after_start p1",
             );
@@ -3315,9 +3306,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(
-                        ExpectedNotification::GameSettledOpponentSide,
-                    ),
+                    ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::GoingOnChain,
                     )),
@@ -3401,9 +3390,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(
-                        ExpectedNotification::GameSettledOpponentSide,
-                    ),
+                    ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "timeout p0",
             );

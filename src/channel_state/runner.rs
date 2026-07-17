@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
-use crate::channel_state::{
-    ChannelState, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys,
-};
+use crate::channel_state::{ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys, ChannelState};
 
 use crate::common::types::{Aggsig, Amount, CoinID, Error, PublicKey, Puzzle, PuzzleHash, Timeout};
 
