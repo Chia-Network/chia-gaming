@@ -17,7 +17,7 @@ import {
   storeInitArgs,
   loadGameHexes,
 } from '../../hooks/WasmStateInit';
-import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../util';
+import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
   PeerConnectionResult,

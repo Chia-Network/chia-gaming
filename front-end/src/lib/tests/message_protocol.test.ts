@@ -470,7 +470,7 @@ describe('durability failures', () => {
   });
 
   it('requires onSaveNeeded to update cached synchronously before returning', async () => {
-    const { loadAppState } = await import('../../hooks/save');
+    const { loadState } = await import('../../hooks/save');
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
@@ -488,7 +488,7 @@ describe('durability failures', () => {
       });
       // Cached must already contain the cradle before the returned Promise
       // settles — durability flushes immediately after starting onSaveNeeded.
-      expect(loadAppState().serializedGameSession).toEqual(cradleBytes);
+      expect(loadState().serializedGameSession).toEqual(cradleBytes);
       saveReturned = true;
       return pending;
     };
@@ -586,7 +586,7 @@ describe('restore ordering', () => {
       restoreSession(
         blob,
         {
-          version: 7n,
+          version: 8n,
           playerId: 'p1',
           serializedGameSession: new Uint8Array([1, 2, 3]),
           gameSessionSchemaVersion: 1n,

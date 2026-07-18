@@ -9,7 +9,6 @@ import {
   clearGameSessionPreservingHistory,
   flushSessionSave,
   markSavedSession,
-  startNewSession,
   SessionSave,
 } from './save';
 import { coerceToBytes } from '../util';
@@ -259,7 +258,6 @@ export function getOrCreateSessionController(
         if (sessionController !== owningController) return;
         await clearGameSessionPreservingHistory();
         if (sessionController !== owningController) return;
-        startNewSession();
         await configSessionController(
           owningController,
           iStarted,

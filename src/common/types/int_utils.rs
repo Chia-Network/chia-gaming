@@ -6,11 +6,6 @@ pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
     bi.to_usize()
 }
 
-pub fn _i32_from_atom(a: &[u8]) -> Option<i32> {
-    let bi = BigInt::from_signed_bytes_be(a);
-    bi.to_i32()
-}
-
 pub fn i64_from_atom(a: &[u8]) -> Option<i64> {
     let bi = BigInt::from_signed_bytes_be(a);
     bi.to_i64()

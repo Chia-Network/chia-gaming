@@ -1,6 +1,7 @@
 pub mod game;
 pub mod game_handler;
 pub mod game_start_info;
+#[cfg(test)]
 pub mod runner;
 pub mod types;
 

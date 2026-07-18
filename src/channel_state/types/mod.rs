@@ -19,10 +19,7 @@ pub use channel_state::{
     ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys, ChannelUnrollSpendInfo,
     HistoricalUnrollSpendInfo,
 };
-pub use coin_spent::{
-    CoinSpentAcceptSettlement, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp,
-    CoinSpentResult,
-};
+pub use coin_spent::CoinSpentInformation;
 pub use evidence::Evidence;
 pub use live_game::LiveGame;
 pub use on_chain_game_coin::OnChainGameCoin;
@@ -32,12 +29,11 @@ pub use potato::{
     StateUpdateSignatures,
 };
 pub use proposed_game::ProposedGame;
+#[cfg(test)]
 pub use read::read_unroll_puzzle;
 pub use readable_move::ReadableMove;
-pub use result::{DispositionResult, HandshakeResult, MoveResult};
+pub use result::{HandshakeResult, MoveResult};
 pub use state_update_program::{HasStateUpdateProgram, StateUpdateProgram};
 pub use timeout_claim_state::TimeoutClaimState;
-pub use unroll_coin::{
-    prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
-};
+pub use unroll_coin::{UnrollCoin, UnrollCoinConditionInputs};
 pub use validation_info::ValidationInfo;

@@ -75,30 +75,6 @@ export function normalizeCoinStringHex(coinString: string) {
   return normalized;
 }
 
-function getParamsFromString(paramString: string): Record<string, string> {
-  const fragmentParts = paramString.split('&');
-  const params = Object.fromEntries(
-    fragmentParts.map((part) => {
-      const partEqIdx = part.indexOf('=');
-
-      if (partEqIdx > 0) {
-        return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
-      }
-
-      return [part, 'true'];
-    }),
-  );
-  return params;
-}
-
-export function getSearchParams(): Record<string, string> {
-  if (window.location.search === '') {
-    return {};
-  }
-  const search = window.location.search.substring(1);
-  return getParamsFromString(search);
-}
-
 
 function clvm_enlist(clvms: string[]): string {
   const result = [];
@@ -147,21 +123,6 @@ export function spend_bundle_to_clvm(sbundle: SpendBundle): string {
   return bundle_clvm;
 }
 
-export async function empty() {
-  return {};
-}
-
-export function getRandomInt(max: number) {
-  return Math.floor(Math.random() * max);
-}
-
-export function getEvenHexString(n: number) {
-  let hexString = n.toString(16);
-  if (hexString.length & 1) {
-    hexString = '0' + hexString;
-  }
-  return hexString;
-}
 
 export function formatAmount(mojos: bigint): string {
   if (mojos < 1_000_000n) {

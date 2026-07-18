@@ -348,7 +348,6 @@ function onLobbyJoin(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'j
       id: playerId,
       alias: resolvedAlias,
       status: 'waiting',
-      parameters: {},
     });
   } else {
     hub.players[playerId].alias = resolvedAlias;

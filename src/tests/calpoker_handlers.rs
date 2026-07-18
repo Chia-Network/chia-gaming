@@ -135,7 +135,6 @@ fn run_validator(
     parse_validator_output(allocator, result)
 }
 
-#[allow(dead_code)]
 struct MyTurnResult {
     move_bytes_node: NodePtr,
     validator_for_my_move: NodePtr,
@@ -145,7 +144,6 @@ struct MyTurnResult {
     max_move_size: i64,
     new_mover_share: i64,
     their_turn_handler: NodePtr,
-    message_parser: NodePtr,
 }
 
 fn call_my_turn_handler(
@@ -193,20 +191,12 @@ fn call_my_turn_handler(
         } else {
             NodePtr::NIL
         },
-        message_parser: if items.len() > 9 {
-            items[9]
-        } else {
-            NodePtr::NIL
-        },
     }
 }
 
-#[allow(dead_code)]
 struct TheirTurnResult {
-    readable_move: NodePtr,
     evidence_list: NodePtr,
     my_turn_handler: NodePtr,
-    message: NodePtr,
 }
 
 fn parse_their_turn_result(allocator: &mut AllocEncoder, result: NodePtr) -> TheirTurnResult {
@@ -248,15 +238,9 @@ fn parse_their_turn_result(allocator: &mut AllocEncoder, result: NodePtr) -> The
     let offset = if first_is_movecode { 1 } else { 0 };
 
     TheirTurnResult {
-        readable_move: items[offset],
         evidence_list: items[offset + 1],
         my_turn_handler: if items.len() > offset + 2 {
             items[offset + 2]
-        } else {
-            NodePtr::NIL
-        },
-        message: if items.len() > offset + 3 {
-            items[offset + 3]
         } else {
             NodePtr::NIL
         },
@@ -312,7 +296,6 @@ fn call_their_turn_handler(
     .expect("their_turn handler failed")
 }
 
-#[allow(dead_code)]
 struct GameSetup {
     alice_handler: NodePtr,
     alice_validator: NodePtr,

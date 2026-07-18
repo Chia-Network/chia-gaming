@@ -4,17 +4,13 @@ import {
   peekSession,
   clearSession,
   clearGameSessionPreservingHistory,
-  startNewSession,
-  saveGame,
-  loadSave,
-  getSaveList,
   getPlayerId,
   getSessionId,
   ensureHubIdentity,
   getMyHubPlayerId,
   clearSessionId,
   getBlockchainType,
-  loadAppState,
+  loadState,
   getAlias,
   setAlias,
   peekAlias,
@@ -223,11 +219,6 @@ describe('session persistence', () => {
     expect(peekAutoResumeOnce()).toBe(false);
   });
 
-  it('does not set the saved-session marker from startNewSession alone', () => {
-    expect(hasSavedSessionMarker()).toBe(false);
-    startNewSession();
-    expect(hasSavedSessionMarker()).toBe(false);
-  });
 
   it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
     saveSession(sampleSession);
@@ -237,7 +228,7 @@ describe('session persistence', () => {
     // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
     _resetForTests();
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(loadAppState().serializedGameSession).toBeUndefined();
+    expect(loadState().serializedGameSession).toBeUndefined();
 
     saveSession({ diagnosticLog: ['boot log'] });
     await flushSessionSave();
@@ -277,7 +268,7 @@ describe('session persistence', () => {
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 7n,
+      version: 8n,
       playerId: 'player',
       blockchainType: 'simulator',
     });
@@ -315,7 +306,7 @@ describe('session persistence', () => {
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 7n,
+      version: 8n,
       playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
@@ -524,9 +515,9 @@ describe('flat state', () => {
 
     clearSessionId();
 
-    expect(loadAppState().sessionId).toBeUndefined();
-    expect(loadAppState().myHubPlayerId).toBeUndefined();
-    expect(loadAppState().alias).toBe('MyName');
+    expect(loadState().sessionId).toBeUndefined();
+    expect(loadState().myHubPlayerId).toBeUndefined();
+    expect(loadState().alias).toBe('MyName');
     expect(getSessionId()).toBeTruthy();
     expect(getSessionId()).not.toBe(id);
   });
@@ -548,14 +539,14 @@ describe('flat state', () => {
 
     await clearSession();
 
-    expect(loadAppState().sessionId).toBe(sid);
+    expect(loadState().sessionId).toBe(sid);
     expect(getBlockchainType()).toBe('simulator');
     expect(hasSavedSessionMarker()).toBe(true);
     const remaining = await peekSession();
     expect(remaining).not.toBeNull();
     expect(remaining?.blockchainType).toBe('simulator');
     expect(remaining?.pairingToken).toBeUndefined();
-    expect(loadAppState().alias).toBe('MyName');
+    expect(loadState().alias).toBe('MyName');
   });
 
   it('clearSession drops the boot marker when no blockchainType or hubUrl remains', async () => {
@@ -657,21 +648,21 @@ describe('flat state', () => {
 
   it('saveSession merges fields into the flat state', () => {
     saveSession(sampleSession);
-    const state = loadAppState();
+    const state = loadState();
     expect(state.serializedGameSession).toBe(sampleSession.serializedGameSession);
     expect(state.pairingToken).toBe(sampleSession.pairingToken);
   });
 
   it('version field is set on fresh state', () => {
-    const state = loadAppState();
-    expect(state.version).toBe(7n);
+    const state = loadState();
+    expect(state.version).toBe(8n);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {
     _writeRawState({ version: 2, playerId: 'old-player' });
     await peekSession();
     expect(localStorage.getItem('appState')).toBeNull();
-    expect(loadAppState().playerId).not.toBe('old-player');
+    expect(loadState().playerId).not.toBe('old-player');
   });
 
   it('rejects and deletes a stale IndexedDB record but keeps the boot marker', async () => {
@@ -894,7 +885,7 @@ describe('alias and theme', () => {
     const alias = getAlias();
     expect(alias).toMatch(/^Player_/);
     expect(getAlias()).toBe(alias);
-    expect(loadAppState().alias).toBe(alias);
+    expect(loadState().alias).toBe(alias);
   });
 
   it('peekAlias returns undefined until set, without inventing', () => {
@@ -934,29 +925,6 @@ describe('hub alert', () => {
 });
 
 describe('game saves', () => {
-  it('startNewSession clears all game saves', () => {
-    saveGame({ id: 'g1', searchParams: {}, url: '' });
-    saveGame({ id: 'g2', searchParams: {}, url: '' });
-    expect(getSaveList()).toEqual(['g2', 'g1']);
 
-    startNewSession();
-    expect(getSaveList()).toEqual([]);
-    expect(loadSave('g1')).toBeUndefined();
-    expect(loadSave('g2')).toBeUndefined();
-  });
 
-  it('saveGame caps at 3 entries, evicting oldest', () => {
-    saveGame({ id: 'a', searchParams: {}, url: '' });
-    saveGame({ id: 'b', searchParams: {}, url: '' });
-    saveGame({ id: 'c', searchParams: {}, url: '' });
-    expect(getSaveList()).toEqual(['c', 'b', 'a']);
-
-    saveGame({ id: 'd', searchParams: {}, url: '' });
-    expect(getSaveList()).toEqual(['d', 'c', 'b']);
-    expect(loadSave('a')).toBeUndefined();
-  });
-
-  it('loadSave returns undefined for unknown id', () => {
-    expect(loadSave('nonexistent')).toBeUndefined();
-  });
 });

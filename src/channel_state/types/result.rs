@@ -1,6 +1,6 @@
-use crate::channel_state::types::{ChannelCoinSpendInfo, CoinSpentDisposition};
+use crate::channel_state::types::ChannelCoinSpendInfo;
 
-use crate::common::types::{Amount, GameID, Puzzle};
+use crate::common::types::{Amount, Puzzle};
 use crate::referee::types::GameMoveDetails;
 use serde::{Deserialize, Serialize};
 
@@ -10,13 +10,6 @@ pub struct MoveResult {
     pub state_number: usize,
     #[serde(default)]
     pub is_finished: bool,
-}
-
-pub struct DispositionResult {
-    pub skip_game: Vec<GameID>,
-    pub skip_coin_id: Option<GameID>,
-    pub our_contribution_adjustment: Amount,
-    pub disposition: CoinSpentDisposition,
 }
 
 #[derive(Clone)]

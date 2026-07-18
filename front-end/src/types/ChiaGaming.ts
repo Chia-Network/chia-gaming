@@ -85,7 +85,7 @@ export interface GameConnectionState {
   stateDetail: string[];
 }
 
-type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
+type StateIdentifier = 'starting' | 'running';
 
 export interface GameSessionParams {
   iStarted: boolean;

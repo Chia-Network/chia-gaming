@@ -3,10 +3,8 @@ export type PlayerStatus = 'waiting' | 'playing' | 'busy';
 export interface Player {
   id: string;
   alias: string;
-  walletAddress?: string;
   status: PlayerStatus;
   opponent_alias?: string;
-  parameters: any;
 }
 
 export interface Challenge {

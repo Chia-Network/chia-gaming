@@ -24,7 +24,7 @@ use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
 };
 use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakePayloadA, HandshakePayloadB, HandshakePayloadC, HandshakePayloadE,
+    CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadE,
     HandshakePayloadF, HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
 };
 use crate::session_phases::types::{
@@ -35,7 +35,7 @@ use crate::session_phases::OffChainPhase;
 #[derive(Debug, Serialize, Deserialize)]
 enum InitiatorState {
     WaitingForStart,
-    SentA(Box<HandshakePayloadA>),
+    SentA(Box<HandshakePayloadB>),
     WaitingForLauncher(Box<HandshakeStepInfo>),
     SentC(Box<HandshakeStepInfo>),
     WaitingForOffer(Box<HandshakeStepInfo>, StateUpdateSignatures),

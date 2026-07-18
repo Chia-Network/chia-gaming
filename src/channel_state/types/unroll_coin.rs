@@ -57,7 +57,7 @@ fn prepend_state_number_rem_to_conditions(
         .into_gen()
 }
 
-pub fn prepend_rem_conditions(
+fn prepend_rem_conditions(
     env: &mut ChannelEnv<'_>,
     state_number: usize,
     conditions: NodePtr,
@@ -283,11 +283,4 @@ pub struct UnrollCoinOutcome {
     pub state_number: usize,
     pub hash: PuzzleHash,
     pub signature: Aggsig,
-}
-
-pub struct UnrollTarget {
-    pub state_number: usize,
-    pub unroll_puzzle_hash: PuzzleHash,
-    pub my_amount: Amount,
-    pub their_amount: Amount,
 }

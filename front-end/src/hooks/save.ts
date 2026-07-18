@@ -19,12 +19,6 @@ function randomHex(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-interface SavedGame {
-  id: string;
-  searchParams: Record<string, string>;
-  url: string;
-  [key: string]: unknown;
-}
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
@@ -71,7 +65,6 @@ export interface SessionSave {
   defaultFee?: bigint;
   feeUnit?: 'mojo' | 'xch';
   hubUrl?: string;
-  savedGames?: SavedGame[];
 
   // UI state
   activeTab?: string;
@@ -169,7 +162,7 @@ const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
  */
 let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 7n;
+export const CURRENT_VERSION = 8n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
@@ -487,7 +480,6 @@ interface StoredPreferences {
   defaultFee?: string;
   feeUnit?: 'mojo' | 'xch';
   hubUrl?: string;
-  savedGames?: SavedGame[];
   activeTab?: string;
   unreadGame?: boolean;
   walletAlert?: boolean;
@@ -505,7 +497,6 @@ function savePreferences(state: SessionSave): void {
     defaultFee: state.defaultFee?.toString(),
     feeUnit: state.feeUnit,
     hubUrl: state.hubUrl,
-    savedGames: state.savedGames,
     activeTab: state.activeTab,
     unreadGame: state.unreadGame,
     walletAlert: state.walletAlert,
@@ -750,9 +741,6 @@ export function loadState(): SessionSave {
   return cached;
 }
 
-/** @deprecated — alias for loadState() */
-export function loadAppState(): SessionSave { return loadState(); }
-
 /**
  * Ensure in-memory `cached` includes any resumable IndexedDB record before
  * mutating/persisting. Boot can show the resume dialog from the sync marker
@@ -810,7 +798,6 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
       defaultFee: mem.defaultFee ?? record.defaultFee,
       feeUnit: mem.feeUnit ?? record.feeUnit,
       hubUrl: mem.hubUrl ?? record.hubUrl,
-      savedGames: mem.savedGames ?? record.savedGames,
       activeTab: mem.activeTab ?? record.activeTab,
       unreadGame: mem.unreadGame ?? record.unreadGame,
       walletAlert: mem.walletAlert ?? record.walletAlert,
@@ -1011,7 +998,6 @@ export function clearSession(): Promise<void> {
     defaultFee: prev.defaultFee,
     feeUnit: prev.feeUnit,
     hubUrl: prev.hubUrl,
-    savedGames: prev.savedGames,
     activeTab: prev.activeTab,
     unreadGame: prev.unreadGame,
     walletAlert: prev.walletAlert,
@@ -1196,33 +1182,3 @@ export function setHubUrl(url: string | undefined): void {
   if (url) markSavedSession();
 }
 
-// --- Saved games ---
-
-export function getSaveList(): string[] {
-  return (loadState().savedGames ?? []).map(g => g.id);
-}
-
-export function startNewSession() {
-  // Do not set SESSION_MARKER_KEY here. The marker must mean a durable
-  // resumable IndexedDB record exists; setting it early makes boot show
-  // Resume/Start Over before anything can be resumed.
-  mutate(s => { s.savedGames = []; });
-}
-
-export function saveGame(g: SavedGame): [string, unknown] | undefined {
-  try {
-    mutate(s => {
-      const games = s.savedGames ?? [];
-      if (games.length > 2) games.pop();
-      games.unshift(g);
-      s.savedGames = games;
-    });
-    return undefined;
-  } catch (e) {
-    return ["Error saving game turn", e];
-  }
-}
-
-export function loadSave(saveId: string): SavedGame | undefined {
-  return (loadState().savedGames ?? []).find(g => g.id === saveId);
-}
