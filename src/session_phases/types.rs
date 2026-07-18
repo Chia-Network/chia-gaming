@@ -42,7 +42,7 @@ pub struct WireProposalGroup {
 
 /// Async interface implemented by Peer to receive notifications about wallet
 /// state.
-pub trait BootstrapTowardWallet {
+pub trait ChannelFundingWallet {
     /// Deliver the channel_puzzle_hash to the wallet.
     ///
     /// Only alice calls this.  Bob does not need this information because the

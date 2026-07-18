@@ -16,7 +16,7 @@ mod gaming_wasm {
 
     use wasm_bindgen::prelude::*;
 
-    use chia_gaming::common::load_clvm::wasm_deposit_file;
+    use chia_gaming::common::load_clvm::wasm_cache_file;
     use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
     use chia_gaming::channel_state::types::ReadableMove;
@@ -189,8 +189,8 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn deposit_file(name: &str, data: &[u8]) {
-        wasm_deposit_file(name, data);
+    pub fn cache_file(name: &str, data: &[u8]) {
+        wasm_cache_file(name, data);
     }
 
     fn get_next_id() -> i32 {
@@ -431,7 +431,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn create_serialized_game(data: &[u8], new_seed: &str) -> Result<i32, JsValue> {
+    pub fn restore_session(data: &[u8], new_seed: &str) -> Result<i32, JsValue> {
         let cradle: JsGameSession = bencodex::from_slice::<JsGameSession>(data)
             .map_err(|e| types::Error::StrErr(e.to_string()))
             .into_js()?;
@@ -585,12 +585,12 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
+    pub fn set_funding_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
         let coin = hex_to_coinstring(hex_coinstring).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             cradle
                 .cradle
-                .opening_coin(&mut cradle.allocator, coin)
+                .set_funding_coin(&mut cradle.allocator, coin)
         })
     }
 

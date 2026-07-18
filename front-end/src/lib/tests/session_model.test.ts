@@ -21,7 +21,7 @@ import {
   snapshotFromSessionModel,
   updateSessionModel,
 } from '../session/model';
-import type { SessionState } from '../../hooks/save';
+import type { SessionSave } from '../../hooks/save';
 import {
   gameplayEventsForGameStatus,
   nextGameInstanceAfterLocalTurn,
@@ -44,7 +44,7 @@ describe('session model selectors', () => {
     });
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'MakingOffer' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OurWalletMakingOffer' } },
     }))).toMatchObject({
       actionLabel: 'Cancel',
       actionEnabled: true,
@@ -762,7 +762,7 @@ describe('session model selectors', () => {
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {
-    const save: SessionState = {
+    const save: SessionSave = {
       version: 6n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
@@ -849,7 +849,7 @@ describe('session model selectors', () => {
       gameNotifQueue: [
         { id: '8', kind: 'game-terminal', title: 'Game', message: 'Done' },
       ],
-    } as unknown as SessionState;
+    } as unknown as SessionSave;
 
     const restored = sessionModelFromSave(save);
 

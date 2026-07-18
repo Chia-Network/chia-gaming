@@ -26,7 +26,7 @@ use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 #[cfg(test)]
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
-    BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
+    ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 #[cfg(test)]
 use crate::session_phases::types::{FromLocalUI, OffChainPhaseInit};
@@ -133,7 +133,7 @@ impl WalletSpendInterface for Pipe {
 }
 
 #[cfg(test)]
-impl BootstrapTowardWallet for Pipe {
+impl ChannelFundingWallet for Pipe {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
         Ok(())
@@ -255,7 +255,7 @@ pub fn run_move<P>(
     who: usize,
 ) -> Result<bool, Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
+    P: ToLocalUI + ChannelFundingWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
         msg
@@ -305,7 +305,7 @@ fn apply_effects_with_handshake_callbacks<P>(
     effects: Vec<Effect>,
 ) -> Result<(), Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
+    P: ToLocalUI + ChannelFundingWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     let mut passthrough = Vec::new();
     let mut pending = VecDeque::from(effects);
@@ -341,7 +341,7 @@ pub fn quiesce<P>(
     pipes: &mut [P; 2],
 ) -> Result<(), Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
+    P: ToLocalUI + ChannelFundingWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     loop {
         let mut activity = 0;
@@ -391,7 +391,7 @@ pub fn do_handshake<P>(
     pipes: &mut [P; 2],
 ) -> Result<[OffChainPhase; 2], Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
+    P: ToLocalUI + ChannelFundingWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     for handler in handlers.iter_mut() {
         let effects = handler.new_block(1)?;

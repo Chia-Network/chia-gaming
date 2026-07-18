@@ -48,7 +48,7 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('none', null)).toBe(true);
     expect(shouldCancelOnPeerUnreachable('none', 'Handshaking')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Handshaking')).toBe(true);
-    expect(shouldCancelOnPeerUnreachable('off-chain', 'MakingOffer')).toBe(true);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'OurWalletMakingOffer')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
   });

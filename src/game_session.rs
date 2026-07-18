@@ -27,7 +27,7 @@ use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
-    BootstrapTowardWallet, GameFactory, OffChainPhaseInit, PacketSender, PeerMessage,
+    ChannelFundingWallet, GameFactory, OffChainPhaseInit, PacketSender, PeerMessage,
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 
@@ -558,7 +558,7 @@ impl GameSession {
     }
 }
 
-impl BootstrapTowardWallet for GameSessionState {
+impl ChannelFundingWallet for GameSessionState {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
         Ok(())
@@ -1297,7 +1297,7 @@ impl GameSession {
         }
     }
 
-    pub fn opening_coin(
+    pub fn set_funding_coin(
         &mut self,
         allocator: &mut AllocEncoder,
         coin: CoinString,

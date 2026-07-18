@@ -145,7 +145,7 @@ export interface GameSettledPayload {
 
 export type ChannelStatus =
   | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
-  | 'MakingOffer' | 'MakingOfferAcceptance' | 'OfferSent' | 'TransactionPending'
+  | 'OurWalletMakingOffer' | 'OurWalletMakingOfferAcceptance' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
@@ -209,12 +209,12 @@ export interface WasmConnection {
   init: (print: (msg: string) => void) => void;
   create_rng: (seed: string) => number;
   create_game_session: (config: GameSessionCreateConfig) => { id: number; puzzle_hash: string };
-  create_serialized_game: (serialized: Uint8Array, new_seed: string) => number;
+  restore_session: (serialized: Uint8Array, new_seed: string) => number;
   game_session_serialization_schema: () => number;
-  deposit_file: (name: string, data: Uint8Array) => void;
+  cache_file: (name: string, data: Uint8Array) => void;
 
   // Blockchain
-  opening_coin: (cid: number, coinstring: string) => WasmResult | undefined;
+  set_funding_coin: (cid: number, coinstring: string) => WasmResult | undefined;
   start_handshake: (cid: number) => WasmResult | undefined;
   provide_launcher_coin: (cid: number, hex_launcher_coin: string) => WasmResult | undefined;
   provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult | undefined;
@@ -394,8 +394,8 @@ export class ChiaGame {
     return this.wasm.deliver_message(this.session, msg);
   }
 
-  opening_coin(coin_string: string): WasmResult | undefined {
-    return this.wasm.opening_coin(this.session, coin_string);
+  set_funding_coin(coin_string: string): WasmResult | undefined {
+    return this.wasm.set_funding_coin(this.session, coin_string);
   }
 
   start_handshake(): WasmResult | undefined {

@@ -823,7 +823,9 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         let state = match &self.state {
             ReceiverState::WaitingForA | ReceiverState::SentB(_) => ChannelStatus::Handshaking,
             ReceiverState::SentD(_) => ChannelStatus::Handshaking,
-            ReceiverState::WaitingForCompletion(_, _) => ChannelStatus::MakingOfferAcceptance,
+            ReceiverState::WaitingForCompletion(_, _) => {
+                ChannelStatus::OurWalletMakingOfferAcceptance
+            }
             ReceiverState::Finished(_) => ChannelStatus::TransactionPending,
             ReceiverState::Done => return None,
         };

@@ -114,7 +114,7 @@ export class WasmStateInit {
         if (!this.wasmConnection) {
           throw new Error('this.wasmConnection undefined in loadPresets');
         }
-        this.wasmConnection?.deposit_file(
+        this.wasmConnection?.cache_file(
           nameAndContent.name,
           nameAndContent.content,
         );
@@ -195,7 +195,7 @@ export class WasmStateInit {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);
     const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
-    let chiaGameId = wasm.create_serialized_game(serializedGame, seedHex);
+    let chiaGameId = wasm.restore_session(serializedGame, seedHex);
     return new ChiaGame(wasm, chiaGameId);
   }
 }

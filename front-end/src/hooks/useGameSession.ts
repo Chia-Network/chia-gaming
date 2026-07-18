@@ -23,7 +23,7 @@ import {
 } from './blobSingleton';
 import { SessionController, RestoreStatus } from './SessionController';
 import type { BlockchainPoller } from './BlockchainPoller';
-import { SessionState, saveSession, getDefaultFee, getBlockchainType } from './save';
+import { SessionSave, saveSession, getDefaultFee, getBlockchainType } from './save';
 import { coinIdFromBytes, coerceToBytes } from '../util';
 import { log } from '../services/log';
 import {
@@ -617,7 +617,7 @@ export function useGameSession(
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
-  sessionSave?: SessionState,
+  sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
   onTerminal?: () => void,
 ): UseGameSessionResult {
@@ -973,7 +973,7 @@ export function useGameSession(
     delete modelSnapshot.humanHistory;
     delete modelSnapshot.diagnosticLog;
 
-    const save: Partial<SessionState> = {
+    const save: Partial<SessionSave> = {
       blockchainType: getBlockchainType(),
       serializedGameSession: wasm.serializedGameSession,
       gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,

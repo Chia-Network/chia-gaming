@@ -21,7 +21,7 @@ import {
 } from '../util';
 import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
-import { flushSessionState } from './save';
+import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
@@ -667,7 +667,7 @@ export class SessionController implements PollingGameSession {
         const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
         if (cs) {
           // The `coin` field is a serialized CoinString (a byte blob). Normalize
-          // it to a Uint8Array so the persisted SessionState carries a typed
+          // it to a Uint8Array so the persisted SessionSave carries a typed
           // array (exempt from the save-time number check, stored losslessly as
           // $bytes) rather than a degraded plain array/object of numbers.
           this.lastChannelStatus = { ...cs, coin: coerceToBytes(cs.coin) } as unknown as ChannelStatusPayload;
@@ -906,7 +906,7 @@ export class SessionController implements PollingGameSession {
     // queued a full-session save without SessionController's timer being set.
     // onSaveNeeded is required to update `cached` synchronously before returning
     // its Promise so this flush snapshots the new cradle, not a pre-save state.
-    const persistence = flushSessionState();
+    const persistence = flushSessionSave();
     const durability = this.flushDurabilityAndSend();
     return Promise.all([saveRequest, persistence, durability]).then(() => {});
   }
@@ -962,7 +962,7 @@ export class SessionController implements PollingGameSession {
         // returning its Promise (see flushPendingSave). Flushing first then
         // persists that snapshot; awaiting the Promise only waits for the
         // outer debounce settlement.
-        await flushSessionState();
+        await flushSessionSave();
         await saveRequest;
       } catch (error) {
         const detail = extractErrorMessage(error);

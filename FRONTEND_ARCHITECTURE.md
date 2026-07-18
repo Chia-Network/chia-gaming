@@ -346,7 +346,7 @@ The actual security boundaries are:
 The game cradle's `ChaCha8Rng` (used for move entropy and identity
 generation) is **not** serialized.  The `ChaCha8SerializationWrapper`
 emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
-zeroed placeholder via `Default`.  On restore, `create_serialized_game`
+zeroed placeholder via `Default`.  On restore, `restore_session`
 always takes a fresh `new_seed` parameter from JavaScript, hashes it, and
 creates a brand new `ChaCha8Rng` — the deserialized placeholder is
 immediately overwritten.  This avoids persisting seed material and
@@ -354,9 +354,9 @@ guarantees fresh entropy after every save/restore cycle.  The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).
 
-#### What is saved (`SessionState`)
+#### What is saved (`SessionSave`)
 
-IndexedDB holds one complete `SessionState` record using structured clone.
+IndexedDB holds one complete `SessionSave` record using structured clone.
 The serialized WASM cradle and unacknowledged protocol messages remain raw
 `Uint8Array` values; they are not base64-expanded or wrapped in JSON.
 localStorage holds only small preferences, the resumable-session marker, and
@@ -440,7 +440,7 @@ full mid-game session state:
 | `cleanShutdownGraceStartedAt` | `bigint?` | Epoch ms when the clean-shutdown grace timer started. |
 
 The old `SessionSave` name is now only a deprecated TypeScript alias for
-`SessionState`.
+`SessionSave`.
 
 #### Save architecture
 
@@ -455,7 +455,7 @@ Session persistence is owned by the outer JavaScript layer, not by
    notifications, etc.
 
 `useGameSession` defines a `persistFullSession` callback that merges both
-sources into a single `SessionState` and calls `saveSession()`. This callback
+sources into a single `SessionSave` and calls `saveSession()`. This callback
 fires in two situations:
 
 - **JS state changes** — a React effect triggers `persistFullSession` whenever
@@ -484,8 +484,8 @@ At that point `SessionController` performs one immediate durability flush:
 
 1. Cancel any pending debounced save.
 2. Call `onSaveNeeded`, which serializes the cradle and merges the current
-   WASM/JS fields into `SessionState`.
-3. Await `flushSessionState()` to commit the record through an IndexedDB
+   WASM/JS fields into `SessionSave`.
+3. Await `flushSessionSave()` to commit the record through an IndexedDB
    read/write transaction.
 4. Send all queued outbound messages and acks.
 
@@ -504,7 +504,7 @@ history counts. The record-size walk is skipped in production.
 
 #### Prop-safe session values
 
-`SessionState` contains raw `Uint8Array` cradles and message payloads plus
+`SessionSave` contains raw `Uint8Array` cradles and message payloads plus
 `bigint` fields. React props cannot safely deep-enumerate those values:
 
 - Expanding a typed array into `{0:n,1:n,...}` destroys the cradle and makes
@@ -662,7 +662,7 @@ The browser storage involved is split across three APIs:
 - `localStorage` holds small preferences, the resumable-session marker, tab
   lease, and reset coordination keys.
 - `sessionStorage` holds per-tab identity such as the tab id.
-- IndexedDB holds the raw binary `SessionState`; WalletConnect may also maintain
+- IndexedDB holds the raw binary `SessionSave`; WalletConnect may also maintain
   its own IndexedDB state after localStorage has been cleared.
 
 Because tabs and windows for the same origin can share `localStorage`, a hard
@@ -794,7 +794,7 @@ ordered from most stable to least:
    expensive operation.
 2. **Chialisp (.hex files)** — Compiled chialisp programs (referee, unroll,
    game-specific validation). These are fetched over HTTP at runtime and injected
-   into the WASM via `deposit_file()` — they are not compiled into the WASM
+   into the WASM via `cache_file()` — they are not compiled into the WASM
    binary. Changing a chialisp program means recompiling the `.clsp` to `.hex`
    and replacing the file on the static server. No Rust rebuild required.
 3. **Frontend (JS/TS/CSS)** — The UI layer: React components, hooks, styling.
@@ -1031,7 +1031,7 @@ utilities in `front-end/src/util/jsonSafe.ts`:
   literals (via `toString()` directly into the JSON string), avoiding both the
   `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
 - `jsonParseLossless` / `jsonStringifyLossless` — persistence helpers for
-  `SessionState`. These encode BigInts as tagged objects so reload can restore
+  `SessionSave`. These encode BigInts as tagged objects so reload can restore
   large values exactly, including values too large to round-trip through JSON
   numbers.
 
@@ -1050,7 +1050,7 @@ CSS pixel values, `setTimeout` delays, and similar DOM/browser APIs. These
 conversions happen at the call site with an explicit `Number()` cast — the
 `bigint` remains the source of truth.
 
-**Persistence.** `SessionState` fields including `version`, `messageNumber`,
+**Persistence.** `SessionSave` fields including `version`, `messageNumber`,
 `remoteNumber`, `timestamp`, and all game-specific state use `bigint`. The
 `jsonParseLossless` / `jsonStringifyLossless` helpers encode `bigint` as tagged
 values directly through IndexedDB structured clone, so no JSON conversion or
@@ -1287,7 +1287,7 @@ not to limit concurrency.
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts` | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods |
-| `front-end/src/hooks/save.ts` | `SessionState` interface, marker/`saveSession`/`peekSession`/`hardReset`/`peekAlias`, tab lease management |
+| `front-end/src/hooks/save.ts` | `SessionSave` interface, marker/`saveSession`/`peekSession`/`hardReset`/`peekAlias`, tab lease management |
 | `front-end/src/lib/session/indexedDb.ts` | IndexedDB session record read/write/delete |
 | `front-end/src/lib/session/model.ts` | Session model + `selectGameDashboardView` / `selectStatusBarBalances` |
 | `front-end/src/lib/reactPropSafe.ts` | Prop-safe cloning that preserves typed arrays / dense byte objects |

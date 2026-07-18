@@ -19,7 +19,7 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
-  flushSessionState,
+  flushSessionSave,
   clearSession,
   hardReset,
   shouldOfferResumeOrStartOver,
@@ -29,7 +29,7 @@ import {
   clearAutoResumeOnce,
   clearSavedSessionMarker,
   loadState,
-  SessionState,
+  SessionSave,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
   getFeeUnit,
@@ -116,19 +116,19 @@ function normalizeTrackerOrigin(origin: string): string {
   return origin;
 }
 
-function humanHistoryFromSave(save: SessionState): string[] | undefined {
+function humanHistoryFromSave(save: SessionSave): string[] | undefined {
   return save.humanHistory;
 }
 
-function diagnosticLogFromSave(save: SessionState): string[] | undefined {
+function diagnosticLogFromSave(save: SessionSave): string[] | undefined {
   return save.diagnosticLog;
 }
 
 /**
- * Build a React-safe SessionState without deep-walking binary fields.
+ * Build a React-safe SessionSave without deep-walking binary fields.
  * Spreading/cloning a degraded cradle (`{0:n,1:n,...}`) OOMs the tab.
  */
-function sessionSaveForReactProps(save: SessionState | null): SessionState | undefined {
+function sessionSaveForReactProps(save: SessionSave | null): SessionSave | undefined {
   if (!save) return undefined;
   const {
     serializedGameSession,
@@ -136,7 +136,7 @@ function sessionSaveForReactProps(save: SessionState | null): SessionState | und
     handState,
     ...rest
   } = save;
-  const propSafeSave = reactPropSafeValue(rest) as SessionState;
+  const propSafeSave = reactPropSafeValue(rest) as SessionSave;
   // Attach binaries by reference and keep them non-enumerable so React/dev
   // tools never walk millions of numeric keys.
   if (serializedGameSession !== undefined) {
@@ -238,7 +238,7 @@ const GRACE_DELAY_MS = 10_000n;
 
 const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
 
 const MIN_TIMEOUT_BLOCKS = 3;
@@ -252,14 +252,14 @@ function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolea
   return abandonEnabled && isAbandonWaitingState(model?.channel.status.state);
 }
 
-function savedChannelStatus(save: SessionState): SessionModel['channel']['status']['state'] | null {
+function savedChannelStatus(save: SessionSave): SessionModel['channel']['status']['state'] | null {
   if (save.channelStatus) return save.channelStatus.state;
   if (save.channelReady) return 'Active';
   return null;
 }
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
-function tabForResumedSave(save: SessionState): TabId | null {
+function tabForResumedSave(save: SessionSave): TabId | null {
   if (save.serializedGameSession || save.pairingToken) return 'game';
   if (isTerminalChannelStatus(savedChannelStatus(save))) return 'game';
   return null;
@@ -631,7 +631,7 @@ const Shell = () => {
     | { kind: 'ready' }
     | { kind: 'autoResuming' }
     | { kind: 'resumeDialog'; loadError: string | null }
-    | { kind: 'tabConflict'; save: SessionState | null; midSession: boolean }
+    | { kind: 'tabConflict'; save: SessionSave | null; midSession: boolean }
     | { kind: 'tabDead' };
 
   const [bootState, setBootState] = useState<BootState>(() => {
@@ -884,9 +884,9 @@ const Shell = () => {
   const trackerConnRef = useRef<TrackerConnection | null>(null);
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
-  const sessionSaveRef = useRef<SessionState | null>(null);
+  const sessionSaveRef = useRef<SessionSave | null>(null);
   /** Stable prop-safe save — recomputing every render deep-clones and can OOM. */
-  const sessionSavePropRef = useRef<SessionState | undefined>(undefined);
+  const sessionSavePropRef = useRef<SessionSave | undefined>(undefined);
   const historyRef = useRef<string[]>(history);
   historyRef.current = history;
   const sessionStartedRef = useRef(false);
@@ -1054,7 +1054,7 @@ const Shell = () => {
       ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
       ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
     });
-    await flushSessionState();
+    await flushSessionSave();
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
@@ -1827,7 +1827,7 @@ const Shell = () => {
   const [startingOver, setStartingOver] = useState(false);
 
   /** Restore a finished/terminal session freeze without remounting live WASM. */
-  const restoreFinishedSessionFromSave = useCallback((save: SessionState) => {
+  const restoreFinishedSessionFromSave = useCallback((save: SessionSave) => {
     setActiveTab('game');
     const channelState = savedChannelStatus(save);
     const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
@@ -1850,10 +1850,10 @@ const Shell = () => {
     setResuming(false);
   }, [setActiveTab]);
 
-  // Hydrate local UI state from a SessionState and kick off a backend connect.
+  // Hydrate local UI state from a SessionSave and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
   // Tab is switched first so the first paint after ready is already on Game.
-  const performResume = useCallback((save: SessionState) => {
+  const performResume = useCallback((save: SessionSave) => {
     setActiveTab('game');
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
@@ -1979,7 +1979,7 @@ const Shell = () => {
     if (bootState.kind !== 'resumeDialog' && bootState.kind !== 'autoResuming') return;
     const fromAutoResume = bootState.kind === 'autoResuming';
     setResuming(true);
-    let save: SessionState | null;
+    let save: SessionSave | null;
     try {
       save = await peekSession();
     } catch (error) {

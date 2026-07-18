@@ -5,7 +5,7 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { PersistedGameState, SessionState } from '../../hooks/save';
+import type { PersistedGameState, SessionSave } from '../../hooks/save';
 import type { SettlementOutcome } from '../settlement';
 import { isSettlementOutcome } from '../settlement';
 import {
@@ -318,8 +318,8 @@ const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
   WaitingForHeightToAccept: 'Waiting For Height To Accept',
-  MakingOffer: 'Making Offer',
-  MakingOfferAcceptance: 'Making Offer Acceptance',
+  OurWalletMakingOffer: 'Our Wallet Making Offer',
+  OurWalletMakingOfferAcceptance: 'Our Wallet Making Offer Acceptance',
   OfferSent: 'Offer Sent',
   TransactionPending: 'Making Channel',
   Active: 'Active',
@@ -681,8 +681,8 @@ function dashboardActionFor(
     case 'Handshaking':
     case 'WaitingForHeightToOffer':
     case 'WaitingForHeightToAccept':
-    case 'MakingOffer':
-    case 'MakingOfferAcceptance':
+    case 'OurWalletMakingOffer':
+    case 'OurWalletMakingOfferAcceptance':
       return { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' };
     case 'OfferSent':
     case 'TransactionPending':
@@ -903,7 +903,7 @@ function requireBigintString(value: string | undefined, label: string): bigint {
 }
 
 export function sessionAmountsFromSave(
-  save: Pick<SessionState, 'myContribution' | 'theirContribution' | 'perGameAmount'>,
+  save: Pick<SessionSave, 'myContribution' | 'theirContribution' | 'perGameAmount'>,
 ): { myContribution: bigint; theirContribution: bigint; perGameAmount: bigint } {
   const myContribution = requireBigintString(save.myContribution, 'myContribution');
   const theirContribution = requireBigintString(save.theirContribution, 'theirContribution');
@@ -986,7 +986,7 @@ function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
   });
 }
 
-export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): SessionModel {
+export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): SessionModel {
   const fallbackTerms: HandTermsModel = {
     gameType: 'calpoker',
     myContribution: perGameAmount,
@@ -1117,7 +1117,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
   });
 }
 
-export function snapshotFromSessionModel(model: SessionModel): Partial<SessionState> {
+export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSave> {
   const termsSnapshot = (terms: HandTermsModel) => ({
     my_contribution: terms.myContribution.toString(),
     their_contribution: terms.theirContribution.toString(),

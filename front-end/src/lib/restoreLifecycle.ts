@@ -44,7 +44,7 @@ export function isTerminalChannelStatus(state: string | null | undefined): boole
 
 const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
 
 /**

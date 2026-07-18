@@ -58,7 +58,7 @@ type BlockchainType = 'simulator' | 'walletconnect';
  * One complete resumable record stored by IndexedDB structured clone.
  * Stale versions are deleted rather than migrated.
  */
-export interface SessionState {
+export interface SessionSave {
   version: bigint;
 
   // Identity (regenerated on wipe)
@@ -158,8 +158,6 @@ export interface SessionState {
 }
 
 /** @deprecated — alias kept for callers that haven't been updated yet */
-export type SessionSave = SessionState;
-
 const STATE_KEY = 'appState';
 const PREFERENCES_KEY = 'appPreferences';
 const SESSION_MARKER_KEY = 'appState_savedSession';
@@ -301,7 +299,7 @@ async function clearAllIndexedDbForHardReset(): Promise<void> {
 
 // --- In-memory cache + debounced persistence ---
 
-let cached: SessionState | null = null;
+let cached: SessionSave | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistPromise: Promise<void> | null = null;
 let resolvePersist: (() => void) | null = null;
@@ -380,7 +378,7 @@ export function hasSavedSessionMarker(): boolean {
  * Independent of whether a game session / cradle exists.
  */
 export function hasConnectionPreferences(
-  state: SessionState = loadPreferences(),
+  state: SessionSave = loadPreferences(),
 ): boolean {
   return !!(
     state.blockchainType
@@ -395,7 +393,7 @@ export function hasConnectionPreferences(
  * covers durable cradles / prior explicit save intent.
  */
 export function shouldOfferResumeOrStartOver(
-  state: SessionState = loadPreferences(),
+  state: SessionSave = loadPreferences(),
 ): boolean {
   return hasConnectionPreferences(state) || hasSavedSessionMarker();
 }
@@ -497,7 +495,7 @@ interface StoredPreferences {
   blockchainType?: BlockchainType;
 }
 
-function savePreferences(state: SessionState): void {
+function savePreferences(state: SessionSave): void {
   const preferences: StoredPreferences = {
     playerId: state.playerId,
     sessionId: state.sessionId,
@@ -521,7 +519,7 @@ function savePreferences(state: SessionState): void {
   }
 }
 
-function loadPreferences(): SessionState {
+function loadPreferences(): SessionSave {
   try {
     // The old payload may contain arbitrary stale encoding. Never inspect it.
     localStorage.removeItem(STATE_KEY);
@@ -556,7 +554,7 @@ function isTerminalFinishedChannel(state: string | null | undefined): boolean {
  * Includes finished/terminal channel snapshots (no live cradle) so a clean
  * shutdown does not silently boot into leftover tracker prefs with no dialog.
  */
-function isResumable(state: SessionState): boolean {
+function isResumable(state: SessionSave): boolean {
   return !!(
     state.serializedGameSession
     || state.pairingToken
@@ -564,7 +562,7 @@ function isResumable(state: SessionState): boolean {
   );
 }
 
-function capPersistedHistories(state: SessionState): void {
+function capPersistedHistories(state: SessionSave): void {
   if (state.humanHistory) {
     state.humanHistory = recentEntries(state.humanHistory, HUMAN_HISTORY_LIMIT);
   }
@@ -602,7 +600,7 @@ function estimateRecordBytes(value: unknown, seen = new Set<object>()): number {
   );
 }
 
-function logPersistenceMetrics(state: SessionState): void {
+function logPersistenceMetrics(state: SessionSave): void {
   const developmentRuntime = typeof window === 'undefined'
     ? process.env.NODE_ENV !== 'production'
     : window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -617,10 +615,10 @@ function logPersistenceMetrics(state: SessionState): void {
   });
 }
 
-function queueWrite(state: SessionState): Promise<void> {
+function queueWrite(state: SessionSave): Promise<void> {
   const snapshot = structuredClone(state);
   capPersistedHistories(snapshot);
-  assertNoNumbers(snapshot, 'SessionState');
+  assertNoNumbers(snapshot, 'SessionSave');
   logPersistenceMetrics(snapshot);
   writeChain = writeChain.catch(() => {}).then(async () => {
     if (fenced) return;
@@ -647,7 +645,7 @@ function settleScheduledPersist(error?: unknown): void {
   else reject?.(error);
 }
 
-export function flushSessionState(): Promise<void> {
+export function flushSessionSave(): Promise<void> {
   return hydrateSessionCacheFromDisk().then(() => {
     if (!cached || fenced) return Promise.resolve();
     if (persistTimer) {
@@ -690,7 +688,7 @@ function schedulePersist(): Promise<void> {
   void persistPromise.catch(() => {});
   const timer = setTimeout(() => {
     persistTimer = null;
-    void flushSessionState();
+    void flushSessionSave();
   }, PERSIST_DEBOUNCE_MS);
   if (typeof timer === 'object' && 'unref' in timer) timer.unref();
   persistTimer = timer;
@@ -747,13 +745,13 @@ export function _resetForTests(): void {
   try { sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY); } catch { /* ignore */ }
 }
 
-export function loadState(): SessionState {
+export function loadState(): SessionSave {
   if (!cached) cached = loadPreferences();
   return cached;
 }
 
 /** @deprecated — alias for loadState() */
-export function loadAppState(): SessionState { return loadState(); }
+export function loadAppState(): SessionSave { return loadState(); }
 
 /**
  * Ensure in-memory `cached` includes any resumable IndexedDB record before
@@ -842,7 +840,7 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
   }
 }
 
-function mutate(fn: (state: SessionState) => void): Promise<void> {
+function mutate(fn: (state: SessionSave) => void): Promise<void> {
   // Fast path: memory already has the resumable session, or there is no
   // marked disk session to protect. Keep this synchronous so preference
   // helpers can read their own writes immediately.
@@ -926,7 +924,7 @@ export function getBlockchainType(): BlockchainType | undefined {
   return loadState().blockchainType;
 }
 
-export function saveSession(fields: Partial<SessionState>): Promise<void> {
+export function saveSession(fields: Partial<SessionSave>): Promise<void> {
   return mutate(s => {
     Object.assign(s, fields);
     capPersistedHistories(s);
@@ -948,11 +946,11 @@ function hasWalletConnectStorage(): boolean {
  * serialized cradle, pairing token, finished/terminal channel snapshot,
  * remembered wallet and/or tracker choice, or leftover WalletConnect storage.
  */
-export async function peekSession(): Promise<SessionState | null> {
+export async function peekSession(): Promise<SessionSave | null> {
   // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
   // a durable resumable record that the boot marker is advertising.
   await hydrateSessionCacheFromDisk();
-  if (persistPromise) await flushSessionState();
+  if (persistPromise) await flushSessionSave();
   await writeChain;
   let record = await readSessionRecord();
   if (record && record.version !== CURRENT_VERSION) {
@@ -1057,7 +1055,7 @@ export async function clearGameSessionPreservingHistory(): Promise<void> {
     opponentAlias: prev.opponentAlias,
   };
   await clearSession();
-  const toSave: Partial<SessionState> = {};
+  const toSave: Partial<SessionSave> = {};
   if (preserved.humanHistory && preserved.humanHistory.length > 0) {
     toSave.humanHistory = preserved.humanHistory;
   }
@@ -1081,7 +1079,7 @@ export async function clearGameSessionPreservingHistory(): Promise<void> {
   if (preserved.opponentAlias) toSave.opponentAlias = preserved.opponentAlias;
   if (Object.keys(toSave).length === 0) return;
   saveSession(toSave);
-  await flushSessionState();
+  await flushSessionSave();
 }
 
 export async function hardReset(): Promise<void> {

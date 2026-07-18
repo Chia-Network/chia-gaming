@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState, type RefObject, ty
 import { Observable } from 'rxjs';
 import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
+import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
@@ -27,7 +27,7 @@ import type { ChannelStatus } from '../types/ChiaGaming';
 
 const PRE_ACTIVE_STATES: ReadonlySet<ChannelStatus> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
@@ -806,7 +806,7 @@ export interface GameSessionProps {
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../hooks/save').SessionState;
+  sessionSave?: import('../hooks/save').SessionSave;
   onGameActivity?: () => void;
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;

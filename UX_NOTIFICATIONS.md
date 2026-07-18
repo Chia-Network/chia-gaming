@@ -140,6 +140,8 @@ for how those lenses relate.
 | `Handshaking`         | Handshake in progress                          | Channel negotiation messages are being exchanged (steps A–D)                                                                                  |
 | `WaitingForHeightToOffer` | Handshake waiting on block height gate | Wallet spend inputs are ready, but the protocol is waiting for the configured height to submit the offer                                      |
 | `WaitingForHeightToAccept` | Receiver waiting on block height gate | Receiver is waiting for the configured height gate before accepting/submitting the channel transaction                                        |
+| `OurWalletMakingOffer` | Initiator waiting on local wallet | Our wallet is building the channel-creation offer spend                                                                                        |
+| `OurWalletMakingOfferAcceptance` | Receiver waiting on local wallet | Our wallet is finishing/funding the channel-creation acceptance spend                                                                          |
 | `OfferSent`           | Our half of the spend sent to peer             | We have sent our offer/spend to the other side; they could create the channel coin                                                            |
 | `TransactionPending`  | Full spend bundle assembled                    | We have the complete channel-creation transaction in hand, waiting for on-chain confirmation                                                  |
 | `Active`              | Channel operational                            | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields. |
@@ -434,7 +436,8 @@ and terminal game notifications per player per game ID. Every
    frontend by name; the numeric ordinals here are an internal test ordering,
    not wire codes. They must never decrease:
    `Handshaking/WaitingForHeightToOffer/WaitingForHeightToAccept(0) <
-   WaitingForOffer(1) < OfferSent(2) < TransactionPending(3) < Active(4) <
+   OurWalletMakingOffer/OurWalletMakingOfferAcceptance(1) < OfferSent(2) <
+   TransactionPending(3) < Active(4) <
    ShuttingDown/GoingOnChain(5) < ShutdownTransactionPending/Unrolling(6) <
    ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(7)`. `Active` may repeat
    at the same ordinal for balance updates, and winding-down states at ordinals
@@ -478,7 +481,7 @@ events.
 
 Each notification carries an `id` (unique integer), `kind`, `title`, `message`,
 and an optional `payload` (typed for `channel-state` and `game-terminal`
-entries). Queues are persisted to `SessionState` (without non-serializable
+entries). Queues are persisted to `SessionSave` (without non-serializable
 payloads) and restored on reload.
 
 ### Overlay Behavior

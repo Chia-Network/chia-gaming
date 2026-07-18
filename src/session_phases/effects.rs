@@ -31,8 +31,8 @@ pub enum ChannelStatus {
     Handshaking,
     WaitingForHeightToOffer,
     WaitingForHeightToAccept,
-    MakingOffer,
-    MakingOfferAcceptance,
+    OurWalletMakingOffer,
+    OurWalletMakingOfferAcceptance,
     OfferSent,
     TransactionPending,
     Active,
@@ -316,7 +316,7 @@ pub enum Effect {
     },
     RequestPuzzleAndSolution(CoinString),
 
-    // BootstrapTowardWallet
+    // ChannelFundingWallet
     ChannelPuzzleHash(PuzzleHash),
     ReceivedChannelOffer(SpendBundle),
 
@@ -331,7 +331,7 @@ pub fn apply_effects(
     system: &mut (impl crate::session_phases::types::ToLocalUI
               + crate::session_phases::types::PacketSender
               + crate::session_phases::types::WalletSpendInterface
-              + crate::session_phases::types::BootstrapTowardWallet),
+              + crate::session_phases::types::ChannelFundingWallet),
 ) -> Result<(), crate::common::types::Error> {
     for effect in effects.into_iter() {
         match effect {

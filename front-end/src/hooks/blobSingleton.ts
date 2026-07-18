@@ -7,10 +7,10 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   clearSession,
   clearGameSessionPreservingHistory,
-  flushSessionState,
+  flushSessionSave,
   markSavedSession,
   startNewSession,
-  SessionState,
+  SessionSave,
 } from './save';
 import { coerceToBytes } from '../util';
 import { log } from '../services/log';
@@ -107,7 +107,7 @@ export async function configSessionController(
 
 export async function restoreSession(
   sc: SessionController,
-  save: SessionState,
+  save: SessionSave,
   wasmStateInit: WasmStateInit,
 ): Promise<void> {
   if (!save.serializedGameSession) {
@@ -172,7 +172,7 @@ export function getOrCreateSessionController(
   myContribution: bigint,
   theirContribution: bigint,
   iStarted: boolean,
-  sessionSave?: SessionState,
+  sessionSave?: SessionSave,
   pairingToken?: string,
   perGameAmount?: bigint,
   getFee?: () => bigint,
@@ -253,7 +253,7 @@ export function getOrCreateSessionController(
         }
         // Pending handshake fields must already be on disk (Shell). Flush before
         // asset fetch so a stale-deploy reload can Resume into newSession again.
-        await flushSessionState();
+        await flushSessionSave();
         if (sessionController !== owningController) return;
         const gameHexes = await loadGameHexes(fetchHexString);
         if (sessionController !== owningController) return;

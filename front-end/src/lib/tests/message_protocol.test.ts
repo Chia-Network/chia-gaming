@@ -13,11 +13,11 @@ import { restoreSession } from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import {
   _resetForTests as resetSaveState,
-  flushSessionState,
+  flushSessionSave,
   hasSavedSessionMarker,
   peekSession,
   saveSession,
-  type SessionState,
+  type SessionSave,
 } from '../../hooks/save';
 import {
   DIAGNOSTIC_LOG_LIMIT,
@@ -512,7 +512,7 @@ describe('durability failures', () => {
       gameSessionSchemaVersion: 1n,
       pairingToken: 'previous-durable-record',
     });
-    await flushSessionState();
+    await flushSessionSave();
     (cradle.serialize as jest.Mock).mockImplementation(() => {
       throw new Error('malformed cradle serialization');
     });
@@ -595,7 +595,7 @@ describe('restore ordering', () => {
           unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
           wasmNotificationHistory: ['notification'],
           diagnosticLog: ['diagnostic'],
-        } as unknown as SessionState,
+        } as unknown as SessionSave,
         wasmStateInit,
       ),
     );
@@ -707,7 +707,7 @@ describe('cradle serialization schema restore guard', () => {
       gameSessionSchemaVersion,
       pairingToken: 'restore-schema-test',
     });
-    await flushSessionState();
+    await flushSessionSave();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
     const save = (await peekSession())!;
 
@@ -726,7 +726,7 @@ describe('cradle serialization schema restore guard', () => {
       gameSessionSchemaVersion: 1n,
       pairingToken: 'restore-corruption-test',
     });
-    await flushSessionState();
+    await flushSessionSave();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
       throw new Error('corrupt current-schema cradle');
     });

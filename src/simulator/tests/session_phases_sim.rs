@@ -29,7 +29,7 @@ use crate::session_phases::effects::{
 use crate::session_phases::handshake::CoinSpendRequest;
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
-    BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
+    BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::session_phases::OffChainPhase;
 use crate::transaction_manager::TransactionManager;
@@ -316,7 +316,7 @@ impl WalletSpendInterface for SimulatedPeer {
     }
 }
 
-impl BootstrapTowardWallet for SimulatedPeer {
+impl ChannelFundingWallet for SimulatedPeer {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
         Ok(())
@@ -1219,8 +1219,8 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut tamper_next_batch_signature = [false, false];
 
     // Give coins to the cradles.
-    cradles[0].opening_coin(allocator, parent_coin_0)?;
-    cradles[1].opening_coin(allocator, parent_coin_1)?;
+    cradles[0].set_funding_coin(allocator, parent_coin_0)?;
+    cradles[1].set_funding_coin(allocator, parent_coin_1)?;
 
     let global_move = |moves: &[SimScriptAction], move_number: usize| {
         move_number < moves.len()
@@ -2247,7 +2247,9 @@ fn run_game_container_with_action_list_with_success_predicate(
             ChannelStatus::Handshaking
             | ChannelStatus::WaitingForHeightToOffer
             | ChannelStatus::WaitingForHeightToAccept => 0,
-            ChannelStatus::MakingOffer | ChannelStatus::MakingOfferAcceptance => 1,
+            ChannelStatus::OurWalletMakingOffer | ChannelStatus::OurWalletMakingOfferAcceptance => {
+                1
+            }
             ChannelStatus::OfferSent => 2,
             ChannelStatus::TransactionPending => 3,
             ChannelStatus::Active => 4,

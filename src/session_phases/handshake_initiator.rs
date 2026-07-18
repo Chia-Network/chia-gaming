@@ -872,7 +872,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {
                 ChannelStatus::Handshaking
             }
-            InitiatorState::WaitingForOffer(_, _) => ChannelStatus::MakingOffer,
+            InitiatorState::WaitingForOffer(_, _) => ChannelStatus::OurWalletMakingOffer,
             InitiatorState::Finished(_) => {
                 if self.transaction_pushed {
                     ChannelStatus::TransactionPending

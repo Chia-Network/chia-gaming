@@ -3,8 +3,7 @@ import {
   config_scaffold,
   create_game_session,
   deliver_message,
-  deposit_file,
-  opening_coin,
+  cache_file,
   chia_identity,
   Spend,
   CoinSpend,
@@ -30,7 +29,7 @@ import {
 } from '../../hooks/FakeBlockchainInterface';
 import {
   _resetForTests as resetSaveState,
-  flushSessionState,
+  flushSessionSave,
   hasSavedSessionMarker,
   peekSession,
   saveSession,
@@ -62,7 +61,7 @@ async function fetchHex(key: string): Promise<string> {
 }
 
 function preset_file(name: string) {
-  deposit_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
+  cache_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
 }
 
 interface SimpleMessage { msgno: number; msg: Uint8Array };
@@ -339,7 +338,7 @@ function assertCradleRoundTrip(
   const state = controller.getProtocolStatePretty() ?? 'unknown';
   const protocolType = state.split('\n', 1)[0];
   try {
-    const restoredId = WholeWasmObject.create_serialized_game(
+    const restoredId = WholeWasmObject.restore_session(
       serialized,
       `reload-regression-${stage}`,
     );
@@ -638,13 +637,13 @@ it(
         gameSessionSchemaVersion: BigInt(WholeWasmObject.game_session_serialization_schema()),
         pairingToken: 'reload-regression',
       });
-      await flushSessionState();
+      await flushSessionSave();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
       resetSaveState();
       assert.ok(hasSavedSessionMarker());
       void saveSession({ diagnosticLog: ['boot-before-resume'] });
-      await flushSessionState();
+      await flushSessionSave();
 
       resetSaveState();
       const reloaded = await peekSession();
@@ -658,7 +657,7 @@ it(
         reloaded.diagnosticLog?.includes('boot-before-resume'),
         'preference patch during marker-only boot must be retained',
       );
-      const restoredId = WholeWasmObject.create_serialized_game(
+      const restoredId = WholeWasmObject.restore_session(
         reloaded.serializedGameSession,
         'reload-regression-seed',
       );
