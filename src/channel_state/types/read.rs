@@ -1,5 +1,3 @@
-
-
 #[cfg(test)]
 pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
     read_hex_puzzle(
