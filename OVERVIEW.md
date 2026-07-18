@@ -782,13 +782,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | **Types & Utilities**     | `src/common/`                                | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.           |
 | **Referee**               | `src/referee/`                               | Per-game state machine: moves, timeouts, slashes                             |
-| **Channel Handler**       | `src/channel_state/`                       | Channel/unroll/game coin management, balance tracking                        |
+| **Channel State**         | `src/channel_state/`                       | Channel/unroll/game coin management, balance tracking                        |
 | **Handshake Handlers**    | `src/session_phases/handshake_initiator.rs`, `handshake_receiver.rs` | Handshake state machines (A-F), one per side              |
-| **Potato Handler**        | `src/session_phases/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
-| **Spend Channel Coin Handler** | `src/session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainPhase |
-| **On-Chain Game Handler** | `src/session_phases/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
+| **Off-Chain Phase**       | `src/session_phases/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
+| **Spend Channel Coin Phase** | `src/session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainPhase |
+| **On-Chain Phase**        | `src/session_phases/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
 | **Handler Base**          | `src/session_phases/handler_base.rs`         | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`   |
-| **Peer Container**        | `src/game_session.rs`                      | `PeerLifecyclePhase` trait, `GameSession` trait, `GameSession`             |
+| **Game Session**          | `src/game_session.rs`                      | `PeerLifecyclePhase` trait, `GameSession` struct                          |
 | **Simulator**             | `src/simulator/`                             | Block-level simulation for integration tests                                 |
 
 

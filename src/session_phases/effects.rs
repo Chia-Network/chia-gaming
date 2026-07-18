@@ -70,7 +70,7 @@ pub enum GameStatusKind {
     EndedError,
 }
 
-/// How a game settled. See `NAMING_AUDIT.md` settlement glossary.
+/// How a game settled. See `NAMING_AUDIT.md` § Settlement glossary (UX).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SettlementOutcome {

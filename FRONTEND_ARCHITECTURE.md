@@ -379,14 +379,13 @@ full mid-game session state:
 | `defaultFee` | `bigint?` | Default transaction fee preference. |
 | `feeUnit` | `'mojo' \| 'xch'?` | Display/editing unit for the transaction fee preference. |
 | `hubUrl` | `string?` | Last selected hub origin for reconnect on reload. |
-| `savedGames` | `SavedGame[]?` | Older saved-game list used by legacy helpers. |
 | `activeTab` | `string?` | Last selected top-level tab. |
 | `unreadGame` | `boolean?` | Whether the Game tab has unread activity. |
 | `walletAlert` | `boolean?` | Whether the Wallet tab should show an alert dot. |
 | `hubAlert` | `boolean?` | Whether the Hub tab should show an alert dot. |
 | `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active or should be reconnected. |
-| `serializedCradle` | `Uint8Array?` | Raw binary WASM cradle state via `cradle.serialize()`. |
-| `cradleSchemaVersion` | `bigint?` | Rust-owned schema ID for `serializedCradle`; missing or mismatched IDs are unsupported and cleared before deserialization. |
+| `serializedGameSession` | `Uint8Array?` | Raw binary WASM game-session state via `serialize()`. |
+| `gameSessionSchemaVersion` | `bigint?` | Rust-owned schema ID for `serializedGameSession`; missing or mismatched IDs are unsupported and cleared before deserialization. |
 | `pairingToken` | `string?` | Hub pairing token, for reconciliation on reconnect. |
 | `sessionPeerId` | `string?` | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore. |
 | `gameSessionId` | `string?` | Per-pairing game session id exchanged in `session_proposal`. |
@@ -547,12 +546,12 @@ projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
 
 **Pre-game saves and the boot marker:** A durable game session is anything with
-`serializedCradle` or `pairingToken` (`isResumable`). Those writes set the
+`serializedGameSession` or `pairingToken` (`isResumable`). Those writes set the
 `localStorage` boot marker (`appState_savedSession`) automatically.
 
 Pre-game wallet connection is different: `Shell` calls `markSavedSession()` when
 the wallet finishes connecting, then `saveSession({ blockchainType })`. The
-marker is what forces Resume / Start Over on reload even before a cradle exists.
+marker is what forces Resume / Start Over on reload even before a game session exists.
 Preference-only / non-resumable IndexedDB writes must **not** clear that marker —
 otherwise a wallet reconnect would restore `blockchainType` with no dialog.
 `peekSession()` treats marker + `blockchainType` (or leftover WalletConnect
@@ -617,7 +616,7 @@ IndexedDB deletes are not blocked), awaits `hardReset()`, and reloads the page.
    abandon the wipe.
 
 **Full vs pre-game saves:** The resume/takeover handlers check
-`save.serializedCradle` to distinguish full game saves from pre-game saves.
+`save.serializedGameSession` to distinguish full game saves from pre-game saves.
 A full save triggers `performResume` (WASM restore + hub reconnect). A
 pre-game save triggers `handleConnect(save.blockchainType)` to re-establish
 the wallet connection without attempting WASM deserialization.
@@ -911,14 +910,14 @@ following the shared connection discipline described in
 Shell's `onConnectionChange` callback handles UI state
 transitions (connected ↔ disconnected) generically. On page load, if the
 user chooses to resume a pre-game save (one with `blockchainType` but no
-`serializedCradle`), Shell calls `handleConnect(bcType, true)` (silent mode)
+`serializedGameSession`), Shell calls `handleConnect(bcType, true)` (silent mode)
 to re-establish the connection automatically — no modals or QR codes are shown,
 consistent with the principle that a reload should be invisible to the user.
 
 **Session persistence:** `blockchainType` is written via
 `saveSession({ blockchainType })` as soon as the wallet connection completes,
 together with an explicit `markSavedSession()` so reload shows Resume / Start
-Over even before a WASM cradle exists. Preference-only writes must not clear
+Over even before a WASM game session exists. Preference-only writes must not clear
 that marker. Once the full game session is running, `useGameSession` takes over
 persistence and includes `blockchainType` in every subsequent save alongside the
 WASM and JS state. `clearSession()` preserves `blockchainType` as part of normal
@@ -960,7 +959,7 @@ poll-retention cleanup, not game/channel interpretation.
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
 `TransactionManager` already contains the semantic watch set, so
-`BlockchainPoller.attachCradle()` seeds itself once from `snapshot_watched_coins()`
+`BlockchainPoller.attachGameSession()` seeds itself once from `snapshot_watched_coins()`
 without replaying old events. Future explicit unwatch/abandon events should flow
 as deltas too.
 

@@ -307,7 +307,6 @@ fn run_step_and_check(
     }
 }
 
-
 fn make_step(
     move_bytes: &[u8],
     mover_share: i64,
@@ -325,7 +324,6 @@ fn make_step(
         validator_name,
     }
 }
-
 
 fn make_initial(allocator: &mut AllocEncoder, lib: &ValidatorLibrary) -> MoveResult {
     let bet_unit_node = BET_UNIT.to_clvm(allocator).unwrap();

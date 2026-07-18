@@ -288,7 +288,7 @@ immediately visible and diagnosable without adding rollback complexity.
 ## Batch Rollback Scope
 
 When a `PeerMessage::Batch` is received, `pass_on_channel_state_message`
-snapshots both `channel_handler` and `game_action_queue` before calling
+snapshots both `channel_state` and `game_action_queue` before calling
 `process_received_batch` and restores them on error. This makes the peer's batch
 actions atomic across the state that matters for later dispute recovery: if any
 action in the batch fails validation or signature verification fails, channel

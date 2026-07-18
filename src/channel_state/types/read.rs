@@ -1,6 +1,4 @@
-use crate::common::load_clvm::read_hex_puzzle;
 
-use crate::common::types::{AllocEncoder, Error, Puzzle};
 
 #[cfg(test)]
 pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {

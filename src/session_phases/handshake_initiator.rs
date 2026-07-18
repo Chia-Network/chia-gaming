@@ -24,8 +24,8 @@ use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
 };
 use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadE,
-    HandshakePayloadF, HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
+    CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadE, HandshakePayloadF,
+    HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
 };
 use crate::session_phases::types::{
     GameFactory, OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,

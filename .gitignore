@@ -55,5 +55,4 @@ chia-blockchain/
 *.vsix
 
 # Local working notes
-NAMING_AUDIT.md
 DEAD_CODE_LAYER_AUDIT.md
