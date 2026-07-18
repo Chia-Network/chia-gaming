@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::channel_state::game;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, PotatoSignatures, ReadableMove,
+    ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
 };
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
@@ -595,7 +595,7 @@ impl OffChainPhase {
         env: &mut ChannelEnv<'_>,
         _timeout: &Timeout,
         actions: &[BatchAction],
-        signatures: &PotatoSignatures,
+        signatures: &StateUpdateSignatures,
         clean_shutdown: &Option<Box<(Aggsig, ProgramRef)>>,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
@@ -803,7 +803,7 @@ impl OffChainPhase {
 
             let (coin, full_spend, channel_puzzle_public_key) = {
                 let ch = self.channel_state_mut()?;
-                let coin = ch.state_channel_coin().clone();
+                let coin = ch.channel_coin().clone();
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
                 let expected_conditions = get_conditions_with_channel_state(env, ch)?;
 
@@ -1114,10 +1114,10 @@ impl OffChainPhase {
                         let ch = self.channel_state_mut()?;
                         get_conditions_with_channel_state(env, ch)?
                     };
-                    let (state_channel_coin, spend) = {
+                    let (channel_coin, spend) = {
                         let ch = self.channel_state_mut()?;
                         let spend = ch.send_potato_clean_shutdown(env, real_conditions)?;
-                        (ch.state_channel_coin().clone(), spend)
+                        (ch.channel_coin().clone(), spend)
                     };
 
                     let shutdown_condition_program =
@@ -1127,7 +1127,7 @@ impl OffChainPhase {
                         shutdown_condition_program.into(),
                     )));
 
-                    pending_shutdown = Some((state_channel_coin.clone(), spend.solution.clone()));
+                    pending_shutdown = Some((channel_coin.clone(), spend.solution.clone()));
                 }
                 GameAction::SendPotato => {
                     // Legacy/restored state may still contain this marker action.
@@ -1241,7 +1241,7 @@ impl OffChainPhase {
         }
 
         match msg_envelope.borrow() {
-            PeerMessage::HandshakeF { .. } => {}
+            PeerMessage::HandshakeF(_) => {}
 
             PeerMessage::RequestPotato(_) => {
                 self.peer_wants_potato = true;
@@ -1283,7 +1283,7 @@ impl OffChainPhase {
         let channel_coin = self
             .channel_state
             .as_ref()
-            .map(|ch| ch.state_channel_coin().clone());
+            .map(|ch| ch.channel_coin().clone());
 
         if let Some(channel_coin) = channel_coin {
             if *coin_id == channel_coin {
@@ -1343,7 +1343,7 @@ impl OffChainPhase {
                 Error::StrErr("go_on_chain: no channel coin spend info cached".to_string())
             })?;
             let ch = self.channel_state()?;
-            let coin = ch.state_channel_coin().clone();
+            let coin = ch.channel_coin().clone();
             let bundle = crate::session_phases::handler_base::build_channel_to_unroll_bundle(
                 env,
                 ch,
@@ -1356,7 +1356,7 @@ impl OffChainPhase {
 
         let channel_coin = {
             let ch = self.channel_state()?;
-            ch.state_channel_coin().clone()
+            ch.channel_coin().clone()
         };
 
         let mut handler =
@@ -1384,7 +1384,7 @@ impl OffChainPhase {
             Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
         })?;
         let ch = self.channel_state()?;
-        let coin = ch.state_channel_coin().clone();
+        let coin = ch.channel_coin().clone();
         crate::session_phases::handler_base::build_channel_to_unroll_bundle(
             env,
             ch,
@@ -1401,7 +1401,7 @@ impl OffChainPhase {
         saved: &ChannelCoinSpendInfo,
     ) -> Result<SpendBundle, Error> {
         let ch = self.channel_state()?;
-        let coin = ch.state_channel_coin().clone();
+        let coin = ch.channel_coin().clone();
         crate::session_phases::handler_base::build_channel_to_unroll_bundle(
             env,
             ch,
@@ -1791,7 +1791,7 @@ impl PeerLifecyclePhase for OffChainPhase {
                 ChannelStatus::Active
             },
             advisory: None,
-            coin: Some(ch.state_channel_coin().clone()),
+            coin: Some(ch.channel_coin().clone()),
             our_balance: Some(ch.my_out_of_game_balance()),
             their_balance: Some(ch.their_out_of_game_balance()),
             game_allocated: Some(ch.total_game_allocated()),
@@ -1800,7 +1800,7 @@ impl PeerLifecyclePhase for OffChainPhase {
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
         match self.channel_state.as_ref() {
-            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.channel_coin().clone())],
             None => vec![],
         }
     }

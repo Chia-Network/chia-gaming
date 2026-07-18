@@ -16,12 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    CachedAcceptSettlement, CachedPotatoRegenerateLastHop, ChannelCoinSpendInfo,
-    ChannelCoinSpentResult, ChannelEnv, ChannelInitiationResult, ChannelMoveResult,
-    ChannelPrivateKeys, ChannelUnrollSpendInfo, CoinSpentInformation, HandshakeResult,
-    HistoricalUnrollSpendInfo, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
-    PotatoMoveCachedData, PotatoSignatures, ProposedGame, ReadableMove, TimeoutClaimState,
-    UnrollCoin, UnrollCoinConditionInputs,
+    CachedAcceptSettlement, CachedRedoActions, ChannelCoinSpendInfo, ChannelCoinSpentResult,
+    ChannelEnv, ChannelInitiationResult, ChannelMoveResult, ChannelPrivateKeys,
+    ChannelUnrollSpendInfo, CoinSpentInformation, HandshakeResult, HistoricalUnrollSpendInfo,
+    LiveGame, MoveResult, OnChainGameCoin, OnChainGameState, PotatoMoveCachedData, ProposedGame,
+    ReadableMove, StateUpdateSignatures, TimeoutClaimState, UnrollCoin, UnrollCoinConditionInputs,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -100,7 +99,7 @@ pub struct ChannelState {
     // Specifies the time lock that should be used in the unroll coin's conditions.
     unroll_advance_timeout: Timeout,
 
-    cached_last_actions: Vec<CachedPotatoRegenerateLastHop>,
+    cached_redo_actions: Vec<CachedRedoActions>,
 
     // Latest potato number. Incremented on every send and receive.
     state_number: usize,
@@ -110,7 +109,7 @@ pub struct ChannelState {
     my_next_nonce: u64,
     their_next_nonce: u64,
 
-    state_channel: CoinSpend,
+    channel_coin_spend: CoinSpend,
 
     // If current unroll is not populated, the previous unroll contains the
     // info needed to unroll to the previous state on which we can replay our
@@ -201,10 +200,10 @@ impl ChannelState {
 
     /// Game IDs of proposal accepts whose potato round-trip hasn't completed.
     pub fn pending_proposal_accept_game_ids(&self) -> Vec<GameID> {
-        self.cached_last_actions
+        self.cached_redo_actions
             .iter()
             .filter_map(|entry| {
-                if let CachedPotatoRegenerateLastHop::ProposalAccepted(gid) = entry {
+                if let CachedRedoActions::ProposalAccepted(gid) = entry {
                     Some(*gid)
                 } else {
                     None
@@ -241,8 +240,8 @@ impl ChannelState {
         std::mem::take(&mut self.pending_settlements)
     }
 
-    pub fn take_cached_last_actions(&mut self) -> Vec<CachedPotatoRegenerateLastHop> {
-        std::mem::take(&mut self.cached_last_actions)
+    pub fn take_cached_redo_actions(&mut self) -> Vec<CachedRedoActions> {
+        std::mem::take(&mut self.cached_redo_actions)
     }
 
     pub fn amount(&self, on_chain: bool) -> Amount {
@@ -266,8 +265,8 @@ impl ChannelState {
     /// Drain all cached CachedAcceptSettlement entries, returning (game_id, our_share_amount, game_finished) for each.
     pub fn drain_cached_accept_settlements(&mut self) -> Vec<(GameID, Amount, bool)> {
         let mut accepts = Vec::new();
-        self.cached_last_actions.retain(|entry| {
-            if let CachedPotatoRegenerateLastHop::CachedAcceptSettlement(acc) = entry {
+        self.cached_redo_actions.retain(|entry| {
+            if let CachedRedoActions::CachedAcceptSettlement(acc) = entry {
                 accepts.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                 false
             } else {
@@ -327,39 +326,36 @@ impl ChannelState {
         }
     }
 
-    pub fn state_channel_coin(&self) -> &CoinString {
-        &self.state_channel.coin
+    pub fn channel_coin(&self) -> &CoinString {
+        &self.channel_coin_spend.coin
     }
 
     pub fn set_launcher_coin_id(&mut self, launcher_coin_id: &CoinID) -> Result<(), Error> {
         let (_, ph, amt) = self
-            .state_channel
+            .channel_coin_spend
             .coin
             .to_parts()
             .ok_or_else(|| Error::StrErr("channel coin not initialized".into()))?;
-        self.state_channel.coin = CoinString::from_parts(launcher_coin_id, &ph, &amt);
+        self.channel_coin_spend.coin = CoinString::from_parts(launcher_coin_id, &ph, &amt);
         Ok(())
     }
 
-    pub fn get_initial_signatures(&self) -> Result<PotatoSignatures, Error> {
-        Ok(PotatoSignatures {
-            my_channel_half_signature_peer: self.state_channel.bundle.signature.clone(),
-            my_unroll_half_signature_peer: self
-                .latest_sent_unroll
-                .coin
-                .get_unroll_coin_signature()?,
+    pub fn get_initial_signatures(&self) -> Result<StateUpdateSignatures, Error> {
+        Ok(StateUpdateSignatures {
+            channel_half_sig: self.channel_coin_spend.bundle.signature.clone(),
+            unroll_preempt_half_sig: self.latest_sent_unroll.coin.get_unroll_coin_signature()?,
         })
     }
 
     pub fn verify_and_store_initial_peer_signatures(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        signatures: &PotatoSignatures,
+        signatures: &StateUpdateSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         if !self.latest_sent_unroll.coin.verify(
             env,
             &self.get_aggregate_unroll_public_key(),
-            &signatures.my_unroll_half_signature_peer,
+            &signatures.unroll_preempt_half_sig,
         )? {
             return Err(Error::StrErr("bad initial unroll signature".to_string()));
         }
@@ -368,12 +364,12 @@ impl ChannelState {
             .create_conditions_and_signature_of_channel_coin(env, &self.latest_sent_unroll.coin)?;
         let verified_spend = self.verify_channel_coin_from_peer_signatures(
             env,
-            &signatures.my_channel_half_signature_peer,
+            &signatures.channel_half_sig,
             channel_coin_spend.conditions.p(),
         )?;
 
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        self.state_channel.bundle = Spend {
+        self.channel_coin_spend.bundle = Spend {
             puzzle: puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
@@ -435,14 +431,14 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        let unroll_coin_parent = self.state_channel_coin();
+        let unroll_coin_parent = self.channel_coin();
         self.get_solution_and_signature(
             &unroll_coin_parent.to_coin_id(),
             env,
             &self.private_keys.my_channel_coin_private_key,
             &self.get_aggregate_channel_public_key(),
             &self.get_aggregate_unroll_public_key(),
-            &self.state_channel.coin.amount().ok_or_else(|| {
+            &self.channel_coin_spend.coin.amount().ok_or_else(|| {
                 debug_assert!(false, "state channel coin has no amount");
                 Error::StrErr("state channel coin has no amount".to_string())
             })?,
@@ -497,11 +493,11 @@ impl ChannelState {
 
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
 
-        let state_channel_coin_puzzle_hash =
+        let channel_coin_puzzle_hash =
             puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
         let amount = my_contribution.clone() + their_contribution.clone();
         let channel_coin_parent =
-            CoinString::from_parts(&launcher_coin_id, &state_channel_coin_puzzle_hash, &amount);
+            CoinString::from_parts(&launcher_coin_id, &channel_coin_puzzle_hash, &amount);
 
         let mut myself = ChannelState {
             their_channel_coin_public_key: their_channel_pubkey.clone(),
@@ -519,13 +515,13 @@ impl ChannelState {
 
             have_potato: we_start_with_potato,
 
-            cached_last_actions: Vec::new(),
+            cached_redo_actions: Vec::new(),
 
             state_number: 0,
             my_next_nonce: if we_start_with_potato { 0 } else { 1 },
             their_next_nonce: if we_start_with_potato { 1 } else { 0 },
 
-            state_channel: CoinSpend {
+            channel_coin_spend: CoinSpend {
                 coin: channel_coin_parent,
                 bundle: Spend::default(),
             },
@@ -581,7 +577,7 @@ impl ChannelState {
             &myself.latest_sent_unroll.coin,
         )?;
 
-        myself.state_channel.bundle = Spend {
+        myself.channel_coin_spend.bundle = Spend {
             puzzle: puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
@@ -594,7 +590,7 @@ impl ChannelState {
         Ok((
             myself,
             ChannelInitiationResult {
-                channel_puzzle_hash_up: state_channel_coin_puzzle_hash,
+                channel_puzzle_hash_up: channel_coin_puzzle_hash,
                 my_initial_channel_half_signature_peer: channel_coin_spend.signature,
             },
         ))
@@ -613,16 +609,16 @@ impl ChannelState {
         let combined_signature =
             channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
 
-        let state_channel_puzzle = puzzle_for_synthetic_public_key(
+        let channel_coin_puzzle = puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
             &aggregate_public_key,
         )?;
 
         Ok(HandshakeResult {
-            channel_puzzle_reveal: state_channel_puzzle,
+            channel_puzzle_reveal: channel_coin_puzzle,
             amount: self
-                .state_channel
+                .channel_coin_spend
                 .coin
                 .amount()
                 .ok_or_else(|| {
@@ -690,7 +686,7 @@ impl ChannelState {
     pub fn update_cached_unroll_state(
         &mut self,
         env: &mut ChannelEnv<'_>,
-    ) -> Result<PotatoSignatures, Error> {
+    ) -> Result<StateUpdateSignatures, Error> {
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -719,16 +715,16 @@ impl ChannelState {
 
         let our_half = self.latest_sent_unroll.coin.get_unroll_coin_signature()?;
 
-        Ok(PotatoSignatures {
-            my_channel_half_signature_peer: channel_coin_spend.signature,
-            my_unroll_half_signature_peer: our_half,
+        Ok(StateUpdateSignatures {
+            channel_half_sig: channel_coin_spend.signature,
+            unroll_preempt_half_sig: our_half,
         })
     }
 
     pub fn send_empty_potato(
         &mut self,
         env: &mut ChannelEnv<'_>,
-    ) -> Result<PotatoSignatures, Error> {
+    ) -> Result<StateUpdateSignatures, Error> {
         self.update_cached_unroll_state(env)
     }
 
@@ -739,7 +735,7 @@ impl ChannelState {
         conditions: Rc<Program>,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        let spend = self.state_channel.coin.clone();
+        let spend = self.channel_coin_spend.coin.clone();
         let channel_coin_spend = self.get_solution_and_signature_from_conditions(
             &spend.to_coin_id(),
             env,
@@ -763,7 +759,7 @@ impl ChannelState {
     pub fn received_potato_verify_signatures(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        signatures: &PotatoSignatures,
+        signatures: &StateUpdateSignatures,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         // The potato just arrived, so any prior pending accepts are now
@@ -784,7 +780,7 @@ impl ChannelState {
         if !test_unroll.verify(
             env,
             &self.get_aggregate_unroll_public_key(),
-            &signatures.my_unroll_half_signature_peer,
+            &signatures.unroll_preempt_half_sig,
         )? {
             return Err(Error::StrErr("bad unroll signature verify".to_string()));
         }
@@ -794,7 +790,7 @@ impl ChannelState {
             self.create_conditions_and_signature_of_channel_coin(env, &test_unroll)?;
         self.verify_channel_coin_from_peer_signatures(
             env,
-            &signatures.my_channel_half_signature_peer,
+            &signatures.channel_half_sig,
             channel_coin_spend.conditions.p(),
         )?;
 
@@ -809,8 +805,7 @@ impl ChannelState {
         self.have_potato = true;
 
         Ok(BrokenOutCoinSpendInfo {
-            signature: channel_coin_spend.signature.clone()
-                + signatures.my_channel_half_signature_peer.clone(),
+            signature: channel_coin_spend.signature.clone() + signatures.channel_half_sig.clone(),
             ..channel_coin_spend
         })
     }
@@ -820,7 +815,7 @@ impl ChannelState {
     pub fn verify_received_batch_signatures(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        signatures: &PotatoSignatures,
+        signatures: &StateUpdateSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -834,12 +829,8 @@ impl ChannelState {
             ),
         )?;
 
-        self.cached_last_actions.retain(|entry| {
-            matches!(
-                entry,
-                CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)
-            )
-        });
+        self.cached_redo_actions
+            .retain(|entry| matches!(entry, CachedRedoActions::CachedAcceptSettlement(_)));
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -851,7 +842,7 @@ impl ChannelState {
     pub fn received_empty_potato(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        signatures: &PotatoSignatures,
+        signatures: &StateUpdateSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -865,12 +856,8 @@ impl ChannelState {
             ),
         )?;
 
-        self.cached_last_actions.retain(|entry| {
-            matches!(
-                entry,
-                CachedPotatoRegenerateLastHop::CachedAcceptSettlement(_)
-            )
-        });
+        self.cached_redo_actions
+            .retain(|entry| matches!(entry, CachedRedoActions::CachedAcceptSettlement(_)));
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -928,7 +915,7 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         start_info: &Rc<GameStartInfo>,
-    ) -> Result<PotatoSignatures, Error> {
+    ) -> Result<StateUpdateSignatures, Error> {
         self.send_propose_game(env, start_info, None)?;
         self.update_cached_unroll_state(env)
     }
@@ -1077,7 +1064,7 @@ impl ChannelState {
 
     pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
         self.accept_proposal_inner(game_id)?;
-        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(*game_id));
+        self.push_cached_action(CachedRedoActions::ProposalAccepted(*game_id));
         Ok(())
     }
 
@@ -1218,7 +1205,7 @@ impl ChannelState {
         )))
     }
 
-    /// Drain CachedAcceptSettlement entries from cached_last_actions for games
+    /// Drain CachedAcceptSettlement entries from cached_redo_actions for games
     /// that are NOT in surviving_ids (i.e., preemption resolved them and no
     /// game coin was created on-chain). Returns (game_id, our_share, game_finished) tuples
     /// that need WeTimedOut notifications.
@@ -1231,8 +1218,8 @@ impl ChannelState {
         surviving_ids: &HashSet<GameID>,
     ) -> Vec<(GameID, Amount, bool)> {
         let mut resolved = Vec::new();
-        self.cached_last_actions.retain(|entry| {
-            if let CachedPotatoRegenerateLastHop::CachedAcceptSettlement(acc) = entry {
+        self.cached_redo_actions.retain(|entry| {
+            if let CachedRedoActions::CachedAcceptSettlement(acc) = entry {
                 if !surviving_ids.contains(&acc.game_id) {
                     resolved.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                     return false;
@@ -1304,7 +1291,7 @@ impl ChannelState {
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
-        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(
+        self.push_cached_action(CachedRedoActions::PotatoMoveHappening(Rc::new(
             PotatoMoveCachedData {
                 state_number: self.state_number,
                 game_id: *game_id,
@@ -1423,16 +1410,16 @@ impl ChannelState {
         self.their_out_of_game_balance += at_stake.checked_sub(&amount)?;
 
         let game_finished = live_game.is_game_over();
-        self.push_cached_action(CachedPotatoRegenerateLastHop::CachedAcceptSettlement(
-            Box::new(CachedAcceptSettlement {
+        self.push_cached_action(CachedRedoActions::CachedAcceptSettlement(Box::new(
+            CachedAcceptSettlement {
                 game_id: *game_id,
                 puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
                 live_game,
                 at_stake_amount: at_stake,
                 our_share_amount: amount.clone(),
                 game_finished,
-            }),
-        ));
+            },
+        )));
 
         Ok(amount)
     }
@@ -1479,7 +1466,7 @@ impl ChannelState {
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        let spend = self.state_channel_coin();
+        let spend = self.channel_coin();
 
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_coin_spend = self.get_solution_and_signature_from_conditions(
@@ -1704,7 +1691,7 @@ impl ChannelState {
     ///   logand(1, logxor(our_state_number, OLD_SEQUENCE_NUMBER)) == 1
     fn preemption_source(&self, old_state_number: usize) -> Option<&ChannelUnrollSpendInfo> {
         let has_peer_sig = |info: &ChannelUnrollSpendInfo| {
-            info.signatures.my_unroll_half_signature_peer != Aggsig::default()
+            info.signatures.unroll_preempt_half_sig != Aggsig::default()
         };
         let eligible = |info: &ChannelUnrollSpendInfo| {
             (info.coin.state_number ^ old_state_number) & 1 == 1 && has_peer_sig(info)
@@ -1768,10 +1755,7 @@ impl ChannelState {
 
         // SIGNATURE: aggregate of both halves from the preemption source.
         let our_half = preempt_source.coin.get_unroll_coin_signature()?;
-        let peer_half = preempt_source
-            .signatures
-            .my_unroll_half_signature_peer
-            .clone();
+        let peer_half = preempt_source.signatures.unroll_preempt_half_sig.clone();
         let signature = our_half.clone() + peer_half.clone();
 
         Ok(ChannelCoinSpentResult {
@@ -1797,8 +1781,8 @@ impl ChannelState {
     // 5 move happening - outer thing needs to know that this thing is associated
     //    with a specific game.  will spend that game coin.  referee maker up to
     //    date after that.  aware of move relationship to game id.
-    pub fn push_cached_action(&mut self, entry: CachedPotatoRegenerateLastHop) {
-        self.cached_last_actions.push(entry);
+    pub fn push_cached_action(&mut self, entry: CachedRedoActions) {
+        self.cached_redo_actions.push(entry);
     }
 
     /// After an unroll completes, map on-chain game coin puzzle hashes to the
@@ -1821,10 +1805,10 @@ impl ChannelState {
         let unroll_coin_id = unroll_coin.to_coin_id();
 
         let cached_moves: Vec<(GameID, PuzzleHash)> = self
-            .cached_last_actions
+            .cached_redo_actions
             .iter()
             .filter_map(|entry| {
-                if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) = entry {
+                if let CachedRedoActions::PotatoMoveHappening(d) = entry {
                     Some((d.game_id, d.match_puzzle_hash.clone()))
                 } else {
                     None
@@ -1988,17 +1972,17 @@ impl ChannelState {
     }
 
     /// Extract cached move data (including saved S' referee) from
-    /// `cached_last_actions` for a specific game, removing that entry.
+    /// `cached_redo_actions` for a specific game, removing that entry.
     pub fn take_cached_move_for_game(
         &mut self,
         game_id: &GameID,
     ) -> Option<Rc<PotatoMoveCachedData>> {
-        let pos = self.cached_last_actions.iter().position(|entry| {
-            matches!(entry, CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) if d.game_id == *game_id)
+        let pos = self.cached_redo_actions.iter().position(|entry| {
+            matches!(entry, CachedRedoActions::PotatoMoveHappening(d) if d.game_id == *game_id)
         });
         if let Some(idx) = pos {
-            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(data) =
-                self.cached_last_actions.remove(idx)
+            if let CachedRedoActions::PotatoMoveHappening(data) =
+                self.cached_redo_actions.remove(idx)
             {
                 return Some(data);
             }
@@ -2106,8 +2090,8 @@ impl ChannelState {
     /// reward for us (post-redo our_current_share == 0).  Used by the
     /// zero-reward early-out scan at unroll time.
     pub fn is_redo_zero_reward(&self, coin: &CoinString, game_id: &GameID) -> bool {
-        let has_redo = self.cached_last_actions.iter().any(|entry| {
-            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+        let has_redo = self.cached_redo_actions.iter().any(|entry| {
+            if let CachedRedoActions::PotatoMoveHappening(move_data) = entry {
                 move_data.game_id == *game_id
                     && coin
                         .to_parts()
@@ -2123,8 +2107,8 @@ impl ChannelState {
         // After the redo, our share is determined by the saved post-move
         // referee.  If the referee is not cached (serialization round-trip),
         // we can't check — be conservative and return false.
-        for entry in &self.cached_last_actions {
-            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+        for entry in &self.cached_redo_actions {
+            if let CachedRedoActions::PotatoMoveHappening(move_data) = entry {
                 if move_data.game_id == *game_id {
                     if let Some(ref saved_ref) = move_data.saved_post_move_referee {
                         return saved_ref
@@ -2139,8 +2123,8 @@ impl ChannelState {
     }
 
     pub fn has_redo_for_game_coin(&self, coin: &CoinString, game_id: &GameID) -> bool {
-        self.cached_last_actions.iter().any(|entry| {
-            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+        self.cached_redo_actions.iter().any(|entry| {
+            if let CachedRedoActions::PotatoMoveHappening(move_data) = entry {
                 move_data.game_id == *game_id
                     && coin
                         .to_parts()

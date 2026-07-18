@@ -22,8 +22,8 @@ use crate::referee::types::{
     RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult, ValidationInfoHash,
+    GameMoveDetails, GameMoveStateInfo, RefereeFixedContext, SlashOutcome,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
 };
 use crate::referee::Referee;
 
@@ -55,7 +55,7 @@ impl TheirTurnRefereeGameState {
 // roles each turn.  See the detailed flow comment on MyTurnReferee.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TheirTurnReferee {
-    pub fixed: Rc<RMFixed>,
+    pub fixed: Rc<RefereeFixedContext>,
 
     pub finished: bool,
     pub message_handler: Option<MessageHandler>,

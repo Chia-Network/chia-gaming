@@ -1036,7 +1036,7 @@ impl GameSession {
 
         let channel_coin_amt = {
             let ch = self.peer.channel_state()?;
-            let channel_coin = ch.state_channel_coin();
+            let channel_coin = ch.channel_coin();
             if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
                 game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
                 // Launcher-based handshake sets the channel parent to launcher coin id,

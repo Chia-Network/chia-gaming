@@ -253,7 +253,7 @@ Every potato pass is a single `PeerMessage::Batch` containing:
   - `CancelProposal` — cancel a pending proposal
   - `Move` — make a game move
   - `AcceptSettlement` — accept a game result (end game)
-2. `**signatures: PotatoSignatures`** — two half-signatures covering the final
+2. `**signatures: StateUpdateSignatures`** — two half-signatures covering the final
   channel state after all actions in the batch have been applied:
   - A half-signature of the **channel coin** spend committing to the new unroll
   coin (so both players can unroll to the latest agreed state).
@@ -277,7 +277,7 @@ batch processing begins, `OffChainPhase` snapshots both the `ChannelState` and
 the local `game_action_queue`. If any action or signature verification fails,
 both snapshots are restored. This makes a peer batch atomic across all state that
 could otherwise affect dispute recovery: intermediate mutations to `live_games`,
-`pending_settlements`, balances, `state_number`, `cached_last_actions`, and
+`pending_settlements`, balances, `state_number`, `cached_redo_actions`, and
 queued local actions are not allowed to leak out of a failed peer batch. The
 error then triggers go-on-chain (the peer sent a bad batch, so we dispute
 on-chain).
@@ -351,14 +351,14 @@ wire/message protocol labels. Internally, the split handlers use semantic
 state names (`SentA`, `WaitingForLauncher`, `SentC`, etc.) while still speaking
 the same A-F wire messages. Handshake messages are not sent via `Batch`:
 
-| Step | Sender | Message | Payload |
-|------|--------|---------|---------|
-| A | Initiator | `HandshakeA` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
-| B | Receiver | `HandshakeB` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
-| C | Initiator | `HandshakeC` | `CoinString` of the launcher coin (parent + SINGLETON_LAUNCHER_HASH + 0) |
-| D | Receiver | `HandshakeD` | State-0 `PotatoSignatures` (half-sigs for channel and unroll coins) |
-| E | Initiator | `HandshakeE` | Partial `SpendBundle` (wallet spend + launcher spend) + state-0 `PotatoSignatures` |
-| F | Receiver | `HandshakeF` | Final combined `SpendBundle` (initiator's spends + receiver's wallet spend) |
+| Step | Sender | Message | Payload type |
+|------|--------|---------|--------------|
+| A | Initiator | `HandshakeA` | `HandshakePayloadA` (= `HandshakePayloadB`): keys, reward ph, PoPs, contributions |
+| B | Receiver | `HandshakeB` | `HandshakePayloadB`: same shape as A |
+| C | Initiator | `HandshakeC` | `HandshakePayloadC`: launcher `CoinString` |
+| D | Receiver | `HandshakeD` | `HandshakePayloadD`: state-0 `StateUpdateSignatures` |
+| E | Initiator | `HandshakeE` | `HandshakePayloadE`: partial `SpendBundle` + state-0 sigs |
+| F | Receiver | `HandshakeF` | `HandshakePayloadF`: final combined `SpendBundle` |
 
 #### Between-message wallet interactions
 
@@ -846,7 +846,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedPotatoRegenerateLastHop` | `channel_state/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `CachedAcceptSettlement`, `ProposalAccepted`     |
+| `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `PotatoMoveHappening`, `CachedAcceptSettlement`, `ProposalAccepted`     |
 | `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
 | `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |

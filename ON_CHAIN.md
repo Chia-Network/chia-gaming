@@ -82,9 +82,9 @@ state tracking is **forward-only** — there is no rewind logic. Two cases:
 1. **Coin PH matches `last_referee_puzzle_hash`** (the outcome/post-move PH):
   The game coin is at the latest known state. `our_turn` is set based on
    `is_my_turn()`. No redo needed.
-2. **Coin PH matches a `cached_last_actions` entry's `match_puzzle_hash`**: The
+2. **Coin PH matches a `cached_redo_actions` entry's `match_puzzle_hash`**: The
   game coin is at the state *before* our cached move. A redo is needed to
-   replay that move on-chain (see [Redo Mechanism](INTERNALS.md#cached_last_actions-and-the-redo-mechanism)).
+   replay that move on-chain (see [Redo Mechanism](INTERNALS.md#cached_redo_actions-and-the-redo-mechanism)).
 
 Games that existed off-chain but don't match any created coin are reported as
 `GameError` (these were accepted games that should have appeared on-chain).
@@ -382,7 +382,7 @@ output conditions for our reward puzzle hash).
 by puzzle hash **and** amount:
   - If `coin_ph == live_game.last_referee_puzzle_hash` and amounts match →
   game is alive at its current state.
-  - If `coin_ph` matches a `cached_last_actions` entry's
+  - If `coin_ph` matches a `cached_redo_actions` entry's
   `match_puzzle_hash` for the same game and amounts match → game needs a
   redo move.
   - Otherwise → `GameError` (the coin is present but we can't identify what
@@ -391,7 +391,7 @@ by puzzle hash **and** amount:
 depending on whether the game was fully established or still in-flight:
   - `**EndedCancelled`** — the game was a recently accepted proposal whose
   potato round-trip hadn't completed (tracked as a `ProposalAccepted`
-  entry in `cached_last_actions`). The opponent hadn't acknowledged the
+  entry in `cached_redo_actions`). The opponent hadn't acknowledged the
   accept when they published the stale unroll, so the game coin never
   existed in that state. The accept was simply rolled back.
   - `**GameError`** — the game was an established live game (its accept
@@ -728,7 +728,7 @@ private key can produce a valid signature for a given puzzle hash.
 1. During the **handshake**, each player signs `"x" || reward_puzzle_hash`
   (a 33-byte message: the ASCII byte `'x'` followed by their 32-byte reward
    puzzle hash) and sends the signature to the other player.
-2. The `RMFixed` struct stores both `reward_puzzle_hash` (ours) and
+2. The `RefereeFixedContext` struct stores both `reward_puzzle_hash` (ours) and
   `their_reward_puzzle_hash` along with `their_reward_payout_signature`.
 3. When a **timeout** is submitted, the solution provides both payout puzzle
   hashes. The referee puzzle emits `AGG_SIG_UNSAFE` conditions requiring the
@@ -746,7 +746,7 @@ private key can produce a valid signature for a given puzzle hash.
 This design means reward puzzle hashes don't need to be curried into every
 game coin — they're only revealed once, in the final timeout or slash spend.
 
-Both players' reward payout signatures are **cached** in `RMFixed` at game
+Both players' reward payout signatures are **cached** in `RefereeFixedContext` at game
 creation time: `my_reward_payout_signature` (signed by us) and
 `their_reward_payout_signature` (received during handshake). This avoids
 redundant BLS signing during timeout and slash construction — the cached
@@ -758,7 +758,7 @@ payouts.
 
 **Key code:** `src/common/standard_coin.rs` — `sign_reward_payout`,
 `reward_payout_message`, `verify_reward_payout_signature`;
-`src/referee/types.rs` — `RMFixed` (caches both signatures)
+`src/referee/types.rs` — `RefereeFixedContext` (caches both signatures)
 
 ### Off-Chain Validation and Initial State
 

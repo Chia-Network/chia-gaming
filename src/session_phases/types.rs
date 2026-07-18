@@ -4,14 +4,18 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, PotatoSignatures, ReadableMove};
+use crate::channel_state::types::{
+    ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
+};
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
     PuzzleHash, SpendBundle, Timeout,
 };
 use crate::referee::types::GameMoveDetails;
 use crate::session_phases::effects::{Effect, ResyncInfo};
-use crate::session_phases::handshake::{HandshakeB, HandshakeC, HandshakeD};
+use crate::session_phases::handshake::{
+    HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
+};
 use crate::session_phases::start::GameStart;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -172,21 +176,16 @@ pub enum BatchAction {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
-    HandshakeA(HandshakeB),
-    HandshakeB(HandshakeB),
-    HandshakeC(HandshakeC),
-    HandshakeD(HandshakeD),
-    HandshakeE {
-        bundle: SpendBundle,
-        signatures: PotatoSignatures,
-    },
-    HandshakeF {
-        bundle: SpendBundle,
-    },
+    HandshakeA(HandshakePayloadB),
+    HandshakeB(HandshakePayloadB),
+    HandshakeC(HandshakePayloadC),
+    HandshakeD(HandshakePayloadD),
+    HandshakeE(HandshakePayloadE),
+    HandshakeF(HandshakePayloadF),
 
     Batch {
         actions: Vec<BatchAction>,
-        signatures: PotatoSignatures,
+        signatures: StateUpdateSignatures,
         clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
     },
     CleanShutdownComplete(CoinSpend),
@@ -202,8 +201,8 @@ impl PeerMessage {
                 | PeerMessage::HandshakeB(_)
                 | PeerMessage::HandshakeC(_)
                 | PeerMessage::HandshakeD(_)
-                | PeerMessage::HandshakeE { .. }
-                | PeerMessage::HandshakeF { .. }
+                | PeerMessage::HandshakeE(_)
+                | PeerMessage::HandshakeF(_)
         )
     }
 }

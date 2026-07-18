@@ -196,7 +196,7 @@ pub fn test_handle_received_channel_puzzle_hash(
 ) -> Result<Vec<Effect>, Error> {
     let standard_puzzle = env.standard_puzzle.clone();
     let ch = peer.channel_state()?;
-    let channel_coin = ch.state_channel_coin();
+    let channel_coin = ch.channel_coin();
     let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
         amt
     } else {
@@ -369,7 +369,7 @@ where
 #[cfg(test)]
 fn get_channel_coin_for_handler(p: &dyn PeerLifecyclePhase) -> Result<CoinString, Error> {
     let channel_state = p.channel_state()?;
-    Ok(channel_state.state_channel_coin().clone())
+    Ok(channel_state.channel_coin().clone())
 }
 
 #[cfg(test)]

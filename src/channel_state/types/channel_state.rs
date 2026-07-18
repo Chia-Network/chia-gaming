@@ -3,7 +3,7 @@ use rand::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::types::{PotatoSignatures, UnrollCoin};
+use crate::channel_state::types::{StateUpdateSignatures, UnrollCoin};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
@@ -43,7 +43,7 @@ pub struct ChannelUnrollSpendInfo {
     /// Contains the half signature, puzzle and conditions needed to spend.
     pub coin: UnrollCoin,
     /// Contains the other half of the signature.
-    pub signatures: PotatoSignatures,
+    pub signatures: StateUpdateSignatures,
 }
 
 /// Minimal data retained for identifying and timing out a historical unroll.

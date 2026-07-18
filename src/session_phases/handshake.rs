@@ -1,11 +1,11 @@
-use crate::channel_state::types::PotatoSignatures;
+use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, PublicKey, PuzzleHash, SpendBundle,
 };
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeB {
+pub struct HandshakePayloadB {
     pub channel_public_key: PublicKey,
     pub unroll_public_key: PublicKey,
     pub reward_puzzle_hash: PuzzleHash,
@@ -17,22 +17,33 @@ pub struct HandshakeB {
     pub their_contribution: Amount,
 }
 
-pub type HandshakeA = HandshakeB;
+pub type HandshakePayloadA = HandshakePayloadB;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeC {
+pub struct HandshakePayloadC {
     pub launcher_coin: CoinString,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeD {
-    pub signatures: PotatoSignatures,
+pub struct HandshakePayloadD {
+    pub signatures: StateUpdateSignatures,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadE {
+    pub bundle: SpendBundle,
+    pub signatures: StateUpdateSignatures,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadF {
+    pub bundle: SpendBundle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepInfo {
-    pub first_player_hs_info: HandshakeB,
-    pub second_player_hs_info: HandshakeB,
+    pub first_player_hs_info: HandshakePayloadB,
+    pub second_player_hs_info: HandshakePayloadB,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

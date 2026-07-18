@@ -38,8 +38,8 @@ use crate::utils::proper_list;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker_sim::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{make_debug_games, DebugGameCurry};
-use crate::test_support::sim_script::{SimScriptAction, ProposeTrigger};
 use crate::test_support::peer::peer_harness::run_move;
+use crate::test_support::sim_script::{ProposeTrigger, SimScriptAction};
 use crate::utils::pair_of_array_mut;
 
 // potato handler tests with simulator.
@@ -121,7 +121,7 @@ fn handle_received_channel_puzzle_hash(
     channel_handler_puzzle_hash: &PuzzleHash,
 ) -> Result<Vec<Effect>, Error> {
     let ch = peer.channel_state()?;
-    let channel_coin = ch.state_channel_coin();
+    let channel_coin = ch.channel_coin();
     let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
         amt
     } else {
@@ -1093,7 +1093,11 @@ fn accept_proposal_ready(
     }
 }
 
-fn propose_ready(moves: &[SimScriptAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
+fn propose_ready(
+    moves: &[SimScriptAction],
+    mn: usize,
+    local_uis: &[LocalTestUIReceiver; 2],
+) -> bool {
     if mn >= moves.len() {
         return false;
     }
@@ -1252,7 +1256,9 @@ fn run_game_container_with_action_list_with_success_predicate(
     let has_explicit_go_on_chain = moves_input.iter().any(|m| {
         matches!(
             m,
-            SimScriptAction::GoOnChain(_) | SimScriptAction::ForceUnroll(_) | SimScriptAction::ForceStaleUnroll(_)
+            SimScriptAction::GoOnChain(_)
+                | SimScriptAction::ForceUnroll(_)
+                | SimScriptAction::ForceStaleUnroll(_)
         )
     });
 
@@ -1353,7 +1359,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], SimScriptAction::Move(_, _, _, _)))
+                            || !matches!(
+                                moves_input[move_number],
+                                SimScriptAction::Move(_, _, _, _)
+                            ))
                     {
                         move_number -= 1;
                     }
@@ -1399,8 +1408,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                         clean_shutdown,
                                     } = peer_message
                                     {
-                                        signatures.my_channel_half_signature_peer =
-                                            Default::default();
+                                        signatures.channel_half_sig = Default::default();
                                         tamper_next_batch_signature[i] = false;
                                         bencodex::to_vec(&PeerMessage::Batch {
                                             actions,
@@ -2608,7 +2616,9 @@ pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: 
     test_setup
         .game_actions
         .push(SimScriptAction::WaitBlocks(wait, 1));
-    test_setup.game_actions.push(SimScriptAction::CleanShutdown(1));
+    test_setup
+        .game_actions
+        .push(SimScriptAction::CleanShutdown(1));
 }
 
 pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
@@ -6458,7 +6468,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, GameID(3)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Third move with player 1's reply nerfed: player 0 sends the move,
-        // player 1 receives but reply is dropped → cached_last_actions set.
+        // player 1 receives but reply is dropped → cached_redo_actions set.
         sim_setup.game_actions.push(SimScriptAction::NerfMessages(1));
         sim_setup.game_actions.push(third_move);
         sim_setup.game_actions.push(SimScriptAction::UnNerfMessages);
@@ -6543,12 +6553,22 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup
             .game_actions
             .push(SimScriptAction::AcceptProposal(1, GameID(3)));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
         // Nerf both to prevent preemption during channel coin spend detection.
-        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
-        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(1));
-        sim_setup.game_actions.push(SimScriptAction::ForceStaleUnroll(1));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(2, 2));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::NerfTransactions(0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::NerfTransactions(1));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::ForceStaleUnroll(1));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(2, 2));
         // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
         // the stale resolution; keep player 0 nerfed so the per-block
         // rebroadcast can't resurrect player 0's "preempt unroll" of the new
@@ -6558,8 +6578,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup
             .game_actions
             .push(SimScriptAction::UnNerfTransactionsFor(1));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 2));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(120, 2));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6633,7 +6657,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
         // Nerf player 1's messages so the accept response never reaches
-        // player 0 — the third game stays in cached_last_actions as ProposalAccepted.
+        // player 0 — the third game stays in cached_redo_actions as ProposalAccepted.
         sim_setup.game_actions.push(SimScriptAction::NerfMessages(1));
         sim_setup.game_actions.push(SimScriptAction::AcceptProposal(0, GameID(0)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
@@ -6728,8 +6752,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .game_actions
             .insert(3, SimScriptAction::NerfMessages(0));
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6773,14 +6801,22 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // so she should get immediate WeTimedOut(0).
         let moves = [DebugGameTestMove::new(0, 0), DebugGameTestMove::new(0, 0)];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.push(SimScriptAction::NerfMessages(0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::NerfMessages(0));
         sim_setup
             .game_actions
             .push(SimScriptAction::AcceptSettlement(0, GameID(1)));
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,

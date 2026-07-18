@@ -6,8 +6,8 @@ use clvm_traits::ToClvm;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
-    ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys,
-    PotatoSignatures, ReadableMove,
+    ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys, ReadableMove,
+    StateUpdateSignatures,
 };
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::{
@@ -24,8 +24,8 @@ use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
 };
 use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakeA, HandshakeB, HandshakeC, HandshakeStepInfo,
-    HandshakeStepWithSpend, RawCoinCondition,
+    CoinSpendRequest, HandshakePayloadA, HandshakePayloadB, HandshakePayloadC, HandshakePayloadE,
+    HandshakePayloadF, HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
 };
 use crate::session_phases::types::{
     GameFactory, OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
@@ -35,10 +35,10 @@ use crate::session_phases::OffChainPhase;
 #[derive(Debug, Serialize, Deserialize)]
 enum InitiatorState {
     WaitingForStart,
-    SentA(Box<HandshakeA>),
+    SentA(Box<HandshakePayloadA>),
     WaitingForLauncher(Box<HandshakeStepInfo>),
     SentC(Box<HandshakeStepInfo>),
-    WaitingForOffer(Box<HandshakeStepInfo>, PotatoSignatures),
+    WaitingForOffer(Box<HandshakeStepInfo>, StateUpdateSignatures),
     Finished(Box<HandshakeStepWithSpend>),
     Done,
 }
@@ -162,7 +162,7 @@ impl HandshakeInitiatorPhase {
         &self,
         parent: CoinID,
         start_potato: bool,
-        msg: &HandshakeB,
+        msg: &HandshakePayloadB,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(ChannelState, ChannelInitiationResult), Error> {
         if !verify_reward_payout_signature(
@@ -207,7 +207,7 @@ impl HandshakeInitiatorPhase {
         )
     }
 
-    fn my_handshake_b(&self) -> HandshakeB {
+    fn my_handshake_b(&self) -> HandshakePayloadB {
         let channel_public_key =
             private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let unroll_public_key =
@@ -225,7 +225,7 @@ impl HandshakeInitiatorPhase {
             .private_keys
             .my_unroll_coin_private_key
             .sign(unroll_public_key.bytes());
-        HandshakeB {
+        HandshakePayloadB {
             channel_public_key,
             unroll_public_key,
             reward_puzzle_hash: self.reward_puzzle_hash.clone(),
@@ -241,13 +241,13 @@ impl HandshakeInitiatorPhase {
     fn try_send_step_e(
         &mut self,
         info: HandshakeStepInfo,
-        our_sigs: PotatoSignatures,
+        our_sigs: StateUpdateSignatures,
     ) -> Result<Option<Effect>, Error> {
         if let Some(spend) = self.channel_initiation_transaction.clone() {
-            let send_effect = Effect::PeerHandshakeE {
+            let send_effect = Effect::PeerHandshakeE(HandshakePayloadE {
                 bundle: spend.clone(),
                 signatures: our_sigs,
-            };
+            });
             self.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
             return Ok(Some(send_effect));
         }
@@ -283,7 +283,7 @@ impl HandshakeInitiatorPhase {
 
     fn build_launcher_coin_spend(&self, env: &mut ChannelEnv<'_>) -> Result<CoinSpend, Error> {
         let ch = self.channel_state()?;
-        let channel_coin = ch.state_channel_coin();
+        let channel_coin = ch.channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
         let launcher_coin = self.get_launcher_coin()?.clone();
 
@@ -331,7 +331,7 @@ impl HandshakeInitiatorPhase {
 
     fn build_alice_coin_spend_request(&self) -> Result<CoinSpendRequest, Error> {
         let ch = self.channel_state()?;
-        let channel_coin = ch.state_channel_coin();
+        let channel_coin = ch.channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
         let launcher_coin = self.get_launcher_coin()?;
         let launcher_coin_id = launcher_coin.to_coin_id();
@@ -526,7 +526,8 @@ impl HandshakeInitiatorPhase {
             }
 
             InitiatorState::Finished(_) => {
-                if let PeerMessage::HandshakeF { bundle } = msg_envelope.borrow() {
+                if let PeerMessage::HandshakeF(HandshakePayloadF { bundle }) = msg_envelope.borrow()
+                {
                     effects.push(Effect::SpendTransaction(
                         bundle.clone(),
                         self.channel_deadline,
@@ -576,7 +577,7 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
         let has_channel_coin = self
             .channel_state()
             .ok()
-            .map(|ch| ch.state_channel_coin())
+            .map(|ch| ch.channel_coin())
             .is_some();
 
         if !has_channel_coin {
@@ -588,7 +589,7 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
         let channel_coin = self
             .channel_state()
             .ok()
-            .map(|ch| ch.state_channel_coin().clone())
+            .map(|ch| ch.channel_coin().clone())
             .expect("has_channel_coin was true");
 
         let mut effects = Vec::new();
@@ -781,7 +782,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             &info.second_player_hs_info,
             env,
         )?;
-        let channel_coin = channel_state.state_channel_coin().clone();
+        let channel_coin = channel_state.channel_coin().clone();
         self.channel_state = Some(channel_state);
         self.launcher_coin = Some(launcher_coin.clone());
         self.state = InitiatorState::SentC(Box::new(info.clone()));
@@ -793,7 +794,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                 name: Some("channel"),
                 spend: None,
             },
-            Effect::PeerHandshakeC(HandshakeC { launcher_coin }),
+            Effect::PeerHandshakeC(HandshakePayloadC { launcher_coin }),
         ])
     }
     fn provide_coin_spend_bundle(
@@ -821,7 +822,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                 coin: self
                     .channel_state
                     .as_ref()
-                    .map(|ch| ch.state_channel_coin().clone()),
+                    .map(|ch| ch.channel_coin().clone()),
                 our_balance: self
                     .channel_state
                     .as_ref()
@@ -848,7 +849,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                 coin: self
                     .channel_state
                     .as_ref()
-                    .map(|ch| ch.state_channel_coin().clone()),
+                    .map(|ch| ch.channel_coin().clone()),
                 our_balance: self
                     .channel_state
                     .as_ref()
@@ -884,7 +885,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         let coin = self
             .channel_state
             .as_ref()
-            .map(|ch| ch.state_channel_coin().clone());
+            .map(|ch| ch.channel_coin().clone());
         let (our_balance, their_balance, game_allocated) =
             if let Some(ch) = self.channel_state.as_ref() {
                 (
@@ -911,7 +912,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         // pending (the default returns none, the right answer only before any
         // coin exists).
         match self.channel_state.as_ref() {
-            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.channel_coin().clone())],
             None => vec![],
         }
     }

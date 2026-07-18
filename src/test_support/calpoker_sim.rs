@@ -120,7 +120,7 @@ mod sim_tests {
         run_calpoker_container_with_action_list_with_success_predicate, run_calpoker_proposal_only,
         ExpectedEvent, ExpectedNotification, GameRunOutcome, TestEvent,
     };
-    use crate::test_support::sim_script::{SimScriptActionResult, ProposeTrigger};
+    use crate::test_support::sim_script::{ProposeTrigger, SimScriptActionResult};
 
     fn extract_info_from_messages(
         game_results: &[SimScriptActionResult],

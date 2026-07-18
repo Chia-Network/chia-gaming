@@ -20,8 +20,8 @@ use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
 };
 use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakeB, HandshakeD, HandshakeStepInfo, HandshakeStepWithSpend,
-    RawCoinCondition,
+    CoinSpendRequest, HandshakePayloadB, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
+    HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
 };
 use crate::session_phases::types::{
     GameFactory, OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
@@ -143,7 +143,7 @@ impl HandshakeReceiverPhase {
         &self,
         parent: CoinID,
         start_potato: bool,
-        msg: &HandshakeB,
+        msg: &HandshakePayloadB,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(ChannelState, ChannelInitiationResult), Error> {
         if !verify_reward_payout_signature(
@@ -190,9 +190,9 @@ impl HandshakeReceiverPhase {
 
     fn try_send_step_f(&mut self, info: HandshakeStepInfo) -> Result<Option<Effect>, Error> {
         if let Some(spend) = self.channel_finished_transaction.clone() {
-            let send_effect = Effect::PeerHandshakeF {
+            let send_effect = Effect::PeerHandshakeF(HandshakePayloadF {
                 bundle: spend.clone(),
-            };
+            });
             self.state = ReceiverState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
             return Ok(Some(send_effect));
         }
@@ -234,7 +234,7 @@ impl HandshakeReceiverPhase {
 
     fn build_bob_coin_spend_request(&self) -> Result<CoinSpendRequest, Error> {
         let ch = self.channel_state()?;
-        let channel_coin = ch.state_channel_coin();
+        let channel_coin = ch.channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
         let launcher_coin = self.get_launcher_coin()?;
         let launcher_coin_id = launcher_coin.to_coin_id();
@@ -370,7 +370,7 @@ impl HandshakeReceiverPhase {
                         .my_unroll_coin_private_key
                         .sign(unroll_public_key.bytes());
 
-                    HandshakeB {
+                    HandshakePayloadB {
                         channel_public_key,
                         unroll_public_key,
                         reward_puzzle_hash: self.reward_puzzle_hash.clone(),
@@ -445,14 +445,16 @@ impl HandshakeReceiverPhase {
                     effects.push(Effect::Log(parts.join("\n")));
                 }
 
-                let channel_coin = self.channel_state()?.state_channel_coin().clone();
+                let channel_coin = self.channel_state()?.channel_coin().clone();
                 effects.push(Effect::RegisterCoin {
                     coin: channel_coin,
                     timeout: Timeout::new(1_000_000),
                     name: Some("channel"),
                     spend: None,
                 });
-                effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
+                effects.push(Effect::PeerHandshakeD(HandshakePayloadD {
+                    signatures: sigs,
+                }));
 
                 self.state = ReceiverState::SentD(Box::new(info));
             }
@@ -460,7 +462,9 @@ impl HandshakeReceiverPhase {
             ReceiverState::SentD(info) => {
                 let info_clone = info.as_ref().clone();
                 let (bundle, signatures) =
-                    if let PeerMessage::HandshakeE { bundle, signatures } = msg_envelope.borrow() {
+                    if let PeerMessage::HandshakeE(HandshakePayloadE { bundle, signatures }) =
+                        msg_envelope.borrow()
+                    {
                         (bundle, signatures)
                     } else {
                         self.incoming_messages.push_front(msg_envelope.clone());
@@ -551,7 +555,7 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
         let has_channel_coin = self
             .channel_state()
             .ok()
-            .map(|ch| ch.state_channel_coin())
+            .map(|ch| ch.channel_coin())
             .is_some();
 
         if !has_channel_coin {
@@ -563,7 +567,7 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
         let channel_coin = self
             .channel_state()
             .ok()
-            .map(|ch| ch.state_channel_coin().clone())
+            .map(|ch| ch.channel_coin().clone())
             .expect("has_channel_coin was true");
 
         let mut effects = Vec::new();
@@ -773,7 +777,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                 coin: self
                     .channel_state
                     .as_ref()
-                    .map(|ch| ch.state_channel_coin().clone()),
+                    .map(|ch| ch.channel_coin().clone()),
                 our_balance: self
                     .channel_state
                     .as_ref()
@@ -800,7 +804,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                 coin: self
                     .channel_state
                     .as_ref()
-                    .map(|ch| ch.state_channel_coin().clone()),
+                    .map(|ch| ch.channel_coin().clone()),
                 our_balance: self
                     .channel_state
                     .as_ref()
@@ -826,7 +830,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         let coin = self
             .channel_state
             .as_ref()
-            .map(|ch| ch.state_channel_coin().clone());
+            .map(|ch| ch.channel_coin().clone());
         let (our_balance, their_balance, game_allocated) =
             if let Some(ch) = self.channel_state.as_ref() {
                 (
@@ -853,7 +857,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         // pending (the default returns none, the right answer only before any
         // coin exists).
         match self.channel_state.as_ref() {
-            Some(ch) => vec![(CoinOfInterest::Channel, ch.state_channel_coin().clone())],
+            Some(ch) => vec![(CoinOfInterest::Channel, ch.channel_coin().clone())],
             None => vec![],
         }
     }

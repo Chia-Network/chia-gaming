@@ -243,11 +243,11 @@ game. The full lifecycle is:
 
 1. `send_accept_settlement_no_finalize` moves the game from `live_games` to
   `pending_settlements` in the `ChannelState` and updates balances.
-2. A `CachedAcceptSettlement` entry is added to `cached_last_actions` storing the game ID
+2. A `CachedAcceptSettlement` entry is added to `cached_redo_actions` storing the game ID
   and reward amounts.
 3. The accept-settlement data is bundled into the next potato pass (batch).
 4. When the potato comes back (acknowledgment), `drain_cached_accept_settlements` processes
-  the `CachedAcceptSettlement` entries in `cached_last_actions`, emitting
+  the `CachedAcceptSettlement` entries in `cached_redo_actions`, emitting
   `GameSettled { outcome: accept_settlement, our_share }` for each accepted game.
   The opponent who receives `BatchAction::AcceptSettlement` gets
   `GameSettled { outcome: accept_settlement, our_share }` immediately upon
@@ -265,14 +265,14 @@ coins, so accepted-but-unconfirmed games are correctly tracked on-chain.
 When preemption resolves to the post-AcceptSettlement state (the newer state
 already incorporated the accept), no game coin is created — its value is folded
 into the reward coin. In this case `drain_preempt_resolved_accept_settlements`
-checks `cached_last_actions` for `CachedAcceptSettlement` entries whose game is
+checks `cached_redo_actions` for `CachedAcceptSettlement` entries whose game is
 absent from the on-chain game set. If an entry is found, the potato never came
 back (otherwise `drain_cached_accept_settlements` would have removed it), so
 `GameSettled { outcome: accept_settlement, our_share }` is emitted now. This
 avoids both missed notifications and duplicates: if the potato had returned,
 the entry would already be gone.
 
-On clean shutdown, any remaining `CachedAcceptSettlement` entries in `cached_last_actions`
+On clean shutdown, any remaining `CachedAcceptSettlement` entries in `cached_redo_actions`
 are drained, emitting `GameSettled` before the terminal `ChannelStatus`
 (`ResolvedClean`) notification.
 

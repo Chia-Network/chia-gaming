@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PotatoSignatures {
+pub struct StateUpdateSignatures {
     // Half signed thing signing to the new state.
-    pub my_channel_half_signature_peer: Aggsig,
+    pub channel_half_sig: Aggsig,
     // Half signed thing allowing you to supercede an earlier state to this one.
-    pub my_unroll_half_signature_peer: Aggsig,
+    pub unroll_preempt_half_sig: Aggsig,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -59,7 +59,7 @@ impl std::fmt::Debug for PotatoMoveCachedData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CachedPotatoRegenerateLastHop {
+pub enum CachedRedoActions {
     #[serde(rename = "CachedAcceptSettlement")]
     CachedAcceptSettlement(Box<CachedAcceptSettlement>),
     PotatoMoveHappening(Rc<PotatoMoveCachedData>),

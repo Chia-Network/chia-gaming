@@ -132,7 +132,7 @@ pub enum TheirTurnCoinSpentResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RMFixed {
+pub struct RefereeFixedContext {
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
@@ -271,7 +271,7 @@ pub struct RefereePuzzleArgs {
 
 impl RefereePuzzleArgs {
     pub fn new(
-        fixed_info: &RMFixed,
+        fixed_info: &RefereeFixedContext,
         initial_move: &GameMoveDetails,
         previous_validation_info_hash: ValidationInfoHash,
         validation_program: StateUpdateProgram,
@@ -444,7 +444,7 @@ impl OnChainRefereeMoveData {
     pub fn to_move(
         &self,
         allocator: &mut AllocEncoder,
-        fixed: &RMFixed,
+        fixed: &RefereeFixedContext,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
         let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
@@ -561,7 +561,7 @@ impl OnChainRefereeSolution {
     pub fn to_nodeptr(
         &self,
         encoder: &mut AllocEncoder,
-        _fixed: &RMFixed,
+        _fixed: &RefereeFixedContext,
     ) -> Result<NodePtr, Error> {
         match self {
             OnChainRefereeSolution::Timeout {

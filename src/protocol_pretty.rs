@@ -151,7 +151,7 @@ fn scalar_repr(value: &BencodexValue) -> Option<String> {
 fn should_skip_key(key: &str) -> bool {
     matches!(
         key,
-        "private_keys" | "game_types" | "unroll_puzzle_hash_map" | "cached_last_actions"
+        "private_keys" | "game_types" | "unroll_puzzle_hash_map" | "cached_redo_actions"
     )
 }
 
@@ -284,7 +284,7 @@ mod tests {
                 BencodexValue::Map(vec![(text("k"), text("v"))]),
             ),
             (
-                text("cached_last_actions"),
+                text("cached_redo_actions"),
                 BencodexValue::List(vec![text("a"), text("b")]),
             ),
             (

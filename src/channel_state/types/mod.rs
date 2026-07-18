@@ -28,8 +28,8 @@ pub use live_game::LiveGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;
 pub use potato::{
-    CachedAcceptSettlement, CachedPotatoRegenerateLastHop, ChannelMoveResult, PotatoMoveCachedData,
-    PotatoSignatures,
+    CachedAcceptSettlement, CachedRedoActions, ChannelMoveResult, PotatoMoveCachedData,
+    StateUpdateSignatures,
 };
 pub use proposed_game::ProposedGame;
 pub use read::read_unroll_puzzle;

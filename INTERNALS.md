@@ -11,7 +11,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
 - [Atomic Proposal Factory Invariants](#atomic-proposal-factory-invariants)
-- [cached_last_actions and the Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)
+- [cached_redo_actions and the Redo Mechanism](#cached_redo_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
 - [Simulator Strictness](#simulator-strictness)
 - [Test Infrastructure](#test-infrastructure)
@@ -357,7 +357,7 @@ mutations survive.
 
 ---
 
-## cached_last_actions and the Redo Mechanism
+## cached_redo_actions and the Redo Mechanism
 
 ### Design Principle
 
@@ -368,8 +368,8 @@ This is the "redo" mechanism.
 
 ### Lifecycle
 
-`cached_last_actions` on the `ChannelState` is a
-`Vec<CachedPotatoRegenerateLastHop>` (defined in
+`cached_redo_actions` on the `ChannelState` is a
+`Vec<CachedRedoActions>` (defined in
 `src/channel_state/types/potato.rs`) that stores data for unacknowledged
 outgoing actions. Because a single batch can contain multiple moves and game
 acceptances across different games, multiple entries may need to be redone
@@ -404,7 +404,7 @@ clean shutdown, when `GameSettled` notifications are emitted.
 ### How Redo Works
 
 When game coins are created after an unroll, `set_state_for_coins` checks each
-coin's puzzle hash against all entries in `cached_last_actions`:
+coin's puzzle hash against all entries in `cached_redo_actions`:
 
 1. **Coin PH matches a `PotatoMoveHappening.match_puzzle_hash`**: The game coin is at
    the state our cached move operates on. A redo is needed to replay that move
@@ -417,7 +417,7 @@ coin's puzzle hash against all entries in `cached_last_actions`:
 `send_potato_move`, the `puzzle_hash_for_unroll` in the move result is the
 curried referee puzzle hash of the **pre-move** state (computed from
 `self.spend_this_coin()` before updating the referee). This value is stored as
-`match_puzzle_hash` in `cached_last_actions`. It corresponds to the puzzle
+`match_puzzle_hash` in `cached_redo_actions`. It corresponds to the puzzle
 hash the unroll coin would create for this game coin if the unroll resolved
 at the state *before* our move — which is exactly the puzzle hash that
 appears on-chain in both the non-stale redo case and in a stale unroll at
@@ -429,7 +429,7 @@ different games. Redo transactions are emitted in parallel during
 the handler's `pending_moves` map for each one.
 
 **In-flight proposal acceptances** (`ProposalAccepted` entries in
-`cached_last_actions`) don't trigger a redo — if the game coin never
+`cached_redo_actions`) don't trigger a redo — if the game coin never
 materialized on-chain, the game is cancelled (`EndedCancelled`).
 
 ### When Redo Happens (and When It Doesn't)
@@ -449,7 +449,7 @@ included in the unroll data)
 
 When `go_on_chain` is called, all incoming peer messages are black-holed (see
 [Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent actions
-(adding to `cached_last_actions`) but the peer's response — which would normally
+(adding to `cached_redo_actions`) but the peer's response — which would normally
 clear the entries — arrives *after* the disconnect, the entries remain.
 This is expected and correct: the stale cache causes `set_state_for_coins` to
 detect that redos or cancellations are needed, replaying our unacknowledged
@@ -459,7 +459,7 @@ moves and timeout claims on-chain.
 
 There are two sources of on-chain actions after `go_on_chain`:
 
-- **Redo actions** (from `cached_last_actions`): moves or accept settlements we
+- **Redo actions** (from `cached_redo_actions`): moves or accept settlements we
 already sent with the last potato but that weren't acknowledged before going
 on-chain. These apply to games where **it was our turn and we acted**.
 - **User-queued actions** (from `game_action_queue`): moves the user queued

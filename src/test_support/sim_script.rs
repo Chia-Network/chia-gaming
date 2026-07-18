@@ -267,12 +267,16 @@ mod sim_tests {
                     write!(formatter, "ForceDestroyCoin({p},{g:?})")
                 }
                 SimScriptAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
-                SimScriptAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
+                SimScriptAction::UnNerfTransactions(r) => {
+                    write!(formatter, "UnNerfTransactions({r})")
+                }
                 SimScriptAction::UnNerfTransactionsFor(p) => {
                     write!(formatter, "UnNerfTransactionsFor({p})")
                 }
                 SimScriptAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
-                SimScriptAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
+                SimScriptAction::UnblockCoinReports(r) => {
+                    write!(formatter, "UnblockCoinReports({r})")
+                }
                 SimScriptAction::ProposeNewGame(p, t) => {
                     write!(formatter, "ProposeNewGame({p},{t:?})")
                 }
@@ -303,7 +307,9 @@ mod sim_tests {
                 SimScriptAction::CancelProposal(p, g) => {
                     write!(formatter, "CancelProposal({p},{g:?})")
                 }
-                SimScriptAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
+                SimScriptAction::SaveUnrollSnapshot(p) => {
+                    write!(formatter, "SaveUnrollSnapshot({p})")
+                }
                 SimScriptAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
                 SimScriptAction::InjectRawMessage(p, data) => {
                     write!(formatter, "InjectRawMessage({p}, {} bytes)", data.len())
@@ -409,7 +415,7 @@ mod sim_tests {
 
         let _cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
 
-        let state_channel_coin = simulator.combine_coins(
+        let channel_coin = simulator.combine_coins(
             env.allocator,
             &identities[0],
             &party.players[0].init_data.channel_puzzle_hash_up,
@@ -457,11 +463,12 @@ mod sim_tests {
             .verify_received_batch_signatures(env, &accept_sigs)?;
         party.update_channel_coin_after_receive(0, &recv_accept)?;
 
-        Ok((party, state_channel_coin))
+        Ok((party, channel_coin))
     }
 }
 
 #[cfg(feature = "sim-tests")]
 pub use sim_tests::{
-    new_channel_handler_game, ChannelHandlerGame, SimScriptAction, SimScriptActionResult, ProposeTrigger,
+    new_channel_handler_game, ChannelHandlerGame, ProposeTrigger, SimScriptAction,
+    SimScriptActionResult,
 };

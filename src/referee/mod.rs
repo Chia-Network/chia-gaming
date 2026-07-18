@@ -18,12 +18,12 @@ use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     canonical_atom_from_usize, curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails,
     GameMoveStateInfo, GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution,
-    ParsedRefereeSolution, RMFixed, RefereePuzzleArgs, TheirTurnCoinSpentResult,
+    ParsedRefereeSolution, RefereeFixedContext, RefereePuzzleArgs, TheirTurnCoinSpentResult,
     TheirTurnMoveResult, ValidationInfoHash,
 };
 
 pub(crate) struct RefereeInitialSetup {
-    pub fixed: Rc<RMFixed>,
+    pub fixed: Rc<RefereeFixedContext>,
     pub ref_puzzle_args: Rc<RefereePuzzleArgs>,
     pub puzzle_hash: PuzzleHash,
 }
@@ -50,7 +50,7 @@ pub(crate) fn referee_initial_setup(
     };
     let my_turn = game_start_info.game_handler.is_my_turn();
 
-    let fixed = Rc::new(RMFixed {
+    let fixed = Rc::new(RefereeFixedContext {
         referee_coin_puzzle,
         referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
         their_referee_pubkey: their_pubkey.clone(),
@@ -162,7 +162,7 @@ impl Referee {
         }
     }
 
-    fn fixed(&self) -> Rc<RMFixed> {
+    fn fixed(&self) -> Rc<RefereeFixedContext> {
         match self {
             Referee::MyTurn(t) => t.fixed.clone(),
             Referee::TheirTurn(t) => t.fixed.clone(),
