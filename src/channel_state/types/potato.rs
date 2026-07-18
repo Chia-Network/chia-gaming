@@ -31,7 +31,7 @@ impl std::fmt::Debug for CachedAcceptSettlement {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PotatoMoveCachedData {
+pub struct CachedSendMove {
     pub state_number: usize,
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
@@ -41,9 +41,9 @@ pub struct PotatoMoveCachedData {
     pub saved_post_move_last_ph: Option<PuzzleHash>,
 }
 
-impl std::fmt::Debug for PotatoMoveCachedData {
+impl std::fmt::Debug for CachedSendMove {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PotatoMoveCachedData")
+        f.debug_struct("CachedSendMove")
             .field("state_number", &self.state_number)
             .field("game_id", &self.game_id)
             .field("puzzle_hash", &self.puzzle_hash)
@@ -62,7 +62,7 @@ impl std::fmt::Debug for PotatoMoveCachedData {
 pub enum CachedRedoActions {
     #[serde(rename = "CachedAcceptSettlement")]
     CachedAcceptSettlement(Box<CachedAcceptSettlement>),
-    PotatoMoveHappening(Rc<PotatoMoveCachedData>),
+    CachedSendMove(Rc<CachedSendMove>),
     ProposalAccepted(GameID),
 }
 

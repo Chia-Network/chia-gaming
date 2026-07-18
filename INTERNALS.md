@@ -377,7 +377,7 @@ on-chain.
 
 There are three kinds of cached entries:
 
-- `**PotatoMoveHappening`** — a move we sent but the opponent hasn't acknowledged.
+- `**CachedSendMove`** — a move we sent but the opponent hasn't acknowledged.
 Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
 and the post-move puzzle hash (`saved_post_move_last_ph`).
 - `**CachedAcceptSettlement`** — a game acceptance we sent. Stores the game ID, puzzle
@@ -394,7 +394,7 @@ Used during stale unroll handling to distinguish in-flight proposal accepts
 
 **Cleared** (selectively) when we receive the potato back:
 
-- `PotatoMoveHappening` entries are cleared in `verify_received_batch_signatures`
+- `CachedSendMove` entries are cleared in `verify_received_batch_signatures`
 and `received_empty_potato` (the opponent's response acknowledges our moves).
 - `ProposalAccepted` entries are also cleared on potato receive.
 - `CachedAcceptSettlement` entries are **retained** across those clears and only drained
@@ -406,7 +406,7 @@ clean shutdown, when `GameSettled` notifications are emitted.
 When game coins are created after an unroll, `set_state_for_coins` checks each
 coin's puzzle hash against all entries in `cached_redo_actions`:
 
-1. **Coin PH matches a `PotatoMoveHappening.match_puzzle_hash`**: The game coin is at
+1. **Coin PH matches a `CachedSendMove.match_puzzle_hash`**: The game coin is at
    the state our cached move operates on. A redo is needed to replay that move
    on-chain. Set `our_turn = true`.
 2. **Coin PH == `last_referee_puzzle_hash`**: The game coin is at the latest

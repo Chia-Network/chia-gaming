@@ -8,7 +8,7 @@ use clvmr::run_program;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
-    Evidence, PotatoMoveCachedData, ReadableMove, StateUpdateProgram, ValidationInfo,
+    CachedSendMove, Evidence, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
@@ -120,7 +120,7 @@ pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
     },
-    Expected(usize, PuzzleHash, Amount, Option<Rc<PotatoMoveCachedData>>),
+    Expected(usize, PuzzleHash, Amount, Option<Rc<CachedSendMove>>),
     Moved {
         // New iteration of the game coin.
         new_coin_string: CoinString,

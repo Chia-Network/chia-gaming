@@ -28,7 +28,7 @@ pub use live_game::LiveGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;
 pub use potato::{
-    CachedAcceptSettlement, CachedRedoActions, ChannelMoveResult, PotatoMoveCachedData,
+    CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelMoveResult,
     StateUpdateSignatures,
 };
 pub use proposed_game::ProposedGame;

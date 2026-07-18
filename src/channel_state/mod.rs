@@ -16,11 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    CachedAcceptSettlement, CachedRedoActions, ChannelCoinSpendInfo, ChannelCoinSpentResult,
-    ChannelEnv, ChannelInitiationResult, ChannelMoveResult, ChannelPrivateKeys,
-    ChannelUnrollSpendInfo, CoinSpentInformation, HandshakeResult, HistoricalUnrollSpendInfo,
-    LiveGame, MoveResult, OnChainGameCoin, OnChainGameState, PotatoMoveCachedData, ProposedGame,
-    ReadableMove, StateUpdateSignatures, TimeoutClaimState, UnrollCoin, UnrollCoinConditionInputs,
+    CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelCoinSpendInfo,
+    ChannelCoinSpentResult, ChannelEnv, ChannelInitiationResult, ChannelMoveResult,
+    ChannelPrivateKeys, ChannelUnrollSpendInfo, CoinSpentInformation, HandshakeResult,
+    HistoricalUnrollSpendInfo, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
+    ProposedGame, ReadableMove, StateUpdateSignatures, TimeoutClaimState, UnrollCoin,
+    UnrollCoinConditionInputs,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -1291,17 +1292,15 @@ impl ChannelState {
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
-        self.push_cached_action(CachedRedoActions::PotatoMoveHappening(Rc::new(
-            PotatoMoveCachedData {
-                state_number: self.state_number,
-                game_id: *game_id,
-                match_puzzle_hash,
-                puzzle_hash,
-                amount,
-                saved_post_move_referee: Some(saved_referee),
-                saved_post_move_last_ph: Some(saved_ph),
-            },
-        )));
+        self.push_cached_action(CachedRedoActions::CachedSendMove(Rc::new(CachedSendMove {
+            state_number: self.state_number,
+            game_id: *game_id,
+            match_puzzle_hash,
+            puzzle_hash,
+            amount,
+            saved_post_move_referee: Some(saved_referee),
+            saved_post_move_last_ph: Some(saved_ph),
+        })));
 
         Ok(MoveResult {
             state_number: self.state_number,
@@ -1808,7 +1807,7 @@ impl ChannelState {
             .cached_redo_actions
             .iter()
             .filter_map(|entry| {
-                if let CachedRedoActions::PotatoMoveHappening(d) = entry {
+                if let CachedRedoActions::CachedSendMove(d) = entry {
                     Some((d.game_id, d.match_puzzle_hash.clone()))
                 } else {
                     None
@@ -1973,17 +1972,12 @@ impl ChannelState {
 
     /// Extract cached move data (including saved S' referee) from
     /// `cached_redo_actions` for a specific game, removing that entry.
-    pub fn take_cached_move_for_game(
-        &mut self,
-        game_id: &GameID,
-    ) -> Option<Rc<PotatoMoveCachedData>> {
-        let pos = self.cached_redo_actions.iter().position(|entry| {
-            matches!(entry, CachedRedoActions::PotatoMoveHappening(d) if d.game_id == *game_id)
-        });
+    pub fn take_cached_move_for_game(&mut self, game_id: &GameID) -> Option<Rc<CachedSendMove>> {
+        let pos = self.cached_redo_actions.iter().position(
+            |entry| matches!(entry, CachedRedoActions::CachedSendMove(d) if d.game_id == *game_id),
+        );
         if let Some(idx) = pos {
-            if let CachedRedoActions::PotatoMoveHappening(data) =
-                self.cached_redo_actions.remove(idx)
-            {
+            if let CachedRedoActions::CachedSendMove(data) = self.cached_redo_actions.remove(idx) {
                 return Some(data);
             }
         }
@@ -2091,7 +2085,7 @@ impl ChannelState {
     /// zero-reward early-out scan at unroll time.
     pub fn is_redo_zero_reward(&self, coin: &CoinString, game_id: &GameID) -> bool {
         let has_redo = self.cached_redo_actions.iter().any(|entry| {
-            if let CachedRedoActions::PotatoMoveHappening(move_data) = entry {
+            if let CachedRedoActions::CachedSendMove(move_data) = entry {
                 move_data.game_id == *game_id
                     && coin
                         .to_parts()
@@ -2108,7 +2102,7 @@ impl ChannelState {
         // referee.  If the referee is not cached (serialization round-trip),
         // we can't check — be conservative and return false.
         for entry in &self.cached_redo_actions {
-            if let CachedRedoActions::PotatoMoveHappening(move_data) = entry {
+            if let CachedRedoActions::CachedSendMove(move_data) = entry {
                 if move_data.game_id == *game_id {
                     if let Some(ref saved_ref) = move_data.saved_post_move_referee {
                         return saved_ref
@@ -2124,7 +2118,7 @@ impl ChannelState {
 
     pub fn has_redo_for_game_coin(&self, coin: &CoinString, game_id: &GameID) -> bool {
         self.cached_redo_actions.iter().any(|entry| {
-            if let CachedRedoActions::PotatoMoveHappening(move_data) = entry {
+            if let CachedRedoActions::CachedSendMove(move_data) = entry {
                 move_data.game_id == *game_id
                     && coin
                         .to_parts()

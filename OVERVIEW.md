@@ -846,7 +846,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `PotatoMoveHappening`, `CachedAcceptSettlement`, `ProposalAccepted`     |
+| `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `CachedSendMove`, `CachedAcceptSettlement`, `ProposalAccepted`     |
 | `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
 | `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
