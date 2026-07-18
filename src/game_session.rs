@@ -38,8 +38,14 @@ use crate::session_phases::OffChainPhase;
 
 #[typetag::serde]
 pub trait PeerLifecyclePhase {
-    fn has_pending_incoming(&self) -> bool;
-    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
+    fn has_queued_message(&self) -> bool;
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
+    fn has_queued_action(&self) -> bool {
+        false
+    }
+    fn process_queued_action(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
     fn received_message(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -987,10 +993,10 @@ impl GameSession {
         }
 
         if self.peer.handshake_finished() {
-            while self.peer.has_pending_incoming() {
+            while self.peer.has_queued_message() {
                 let recv_result = {
                     let mut env = ChannelEnv::new(allocator)?;
-                    self.peer.process_incoming_message(&mut env)
+                    self.peer.process_queued_message(&mut env)
                 };
                 match recv_result {
                     Ok(inner_effects) => {
@@ -1010,6 +1016,28 @@ impl GameSession {
                             self.peer.go_on_chain(&mut env, true)?
                         };
                         self.process_effects(go_effects, allocator)?;
+                        break;
+                    }
+                }
+            }
+            while self.peer.has_queued_action() {
+                let action_result = {
+                    let mut env = ChannelEnv::new(allocator)?;
+                    self.peer.process_queued_action(&mut env)
+                };
+                match action_result {
+                    Ok(inner_effects) => {
+                        if inner_effects.is_empty() {
+                            break;
+                        }
+                        self.process_effects(inner_effects, allocator)?;
+                        self.detect_phase_transition();
+                    }
+                    Err(e) => {
+                        self.state
+                            .events
+                            .push_back(GameSessionEvent::ReceiveError(format!("{e:?}")));
+                        self.state.peer_disconnected = true;
                         break;
                     }
                 }

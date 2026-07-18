@@ -294,7 +294,7 @@ cannot redirect the victim's share to a different address.
 
 - `src/session_phases/mod.rs` — `pending_clean_shutdown` field,
   `drain_queue_into_batch` (stores shutdown metadata),
-  `process_incoming_message` (receives `CleanShutdownComplete` and creates
+  `process_queued_message` (receives `CleanShutdownComplete` and creates
   `SpendChannelCoinPhase`)
 - `src/session_phases/spend_channel_coin_phase.rs` —
   `handle_channel_coin_spent`, `handle_unroll_from_channel_conditions`
@@ -912,7 +912,7 @@ from the observed conditions.
 When a game coin's resolving spend is observed, the game is removed from
 `game_map` and `live_games`. If a user-queued `Move` for that game is still on
 the `game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
-`get_current_coin` and falls through to `next_action` if the game is gone, and
+`get_current_coin` and falls through to `process_queued_action` if the game is gone, and
 `do_on_chain_move` checks `my_move_in_game` — returning `None` (game absent)
 causes a discard, while `Some(false)` (game alive, not our turn) causes a
 requeue. This prevents stale moves from crashing or looping after a legitimate

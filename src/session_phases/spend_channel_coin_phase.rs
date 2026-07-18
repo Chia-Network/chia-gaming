@@ -202,11 +202,11 @@ impl SpendChannelCoinPhase {
         self.base.received_message_passive(msg)
     }
 
-    pub fn has_pending_incoming(&self) -> bool {
+    pub fn has_queued_message(&self) -> bool {
         false
     }
 
-    pub fn process_incoming_message(
+    pub fn process_queued_message(
         &mut self,
         _env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
@@ -986,7 +986,7 @@ impl SpendChannelCoinPhase {
         self.replacement = Some(Box::new(on_chain));
         if let Some(on_chain) = self.replacement.as_mut() {
             effects.extend(on_chain.register_initial_game_coins(env)?);
-            effects.extend(on_chain.next_action(env)?);
+            effects.extend(on_chain.process_queued_action(env)?);
         }
 
         Ok(effects)
@@ -1020,11 +1020,11 @@ impl SpendWalletReceiver for SpendChannelCoinPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for SpendChannelCoinPhase {
-    fn has_pending_incoming(&self) -> bool {
-        SpendChannelCoinPhase::has_pending_incoming(self)
+    fn has_queued_message(&self) -> bool {
+        SpendChannelCoinPhase::has_queued_message(self)
     }
-    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinPhase::process_incoming_message(self, env)
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        SpendChannelCoinPhase::process_queued_message(self, env)
     }
     fn received_message(
         &mut self,

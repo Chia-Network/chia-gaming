@@ -293,7 +293,7 @@ impl HandshakeReceiverPhase {
         }
     }
 
-    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let msg_envelope = if let Some(msg) = self.incoming_messages.pop_front() {
             msg
@@ -538,7 +538,7 @@ impl HandshakeReceiverPhase {
         }
         let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
         self.incoming_messages.push_back(Rc::new(msg_envelope));
-        self.process_incoming_message(env)
+        self.process_queued_message(env)
     }
 }
 
@@ -620,11 +620,11 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for HandshakeReceiverPhase {
-    fn has_pending_incoming(&self) -> bool {
+    fn has_queued_message(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
-    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        HandshakeReceiverPhase::process_incoming_message(self, env)
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        HandshakeReceiverPhase::process_queued_message(self, env)
     }
     fn received_message(
         &mut self,

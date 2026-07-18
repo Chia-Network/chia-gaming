@@ -702,7 +702,7 @@ impl OnChainPhase {
                         name: Some("our on-chain move confirmed"),
                         spend: claim,
                     });
-                    effects.extend(self.next_action(env)?);
+                    effects.extend(self.process_queued_action(env)?);
                     return Ok((effects, None));
                 }
 
@@ -723,7 +723,7 @@ impl OnChainPhase {
                     ) {
                         effects.push(eff);
                     }
-                    effects.extend(self.next_action(env)?);
+                    effects.extend(self.process_queued_action(env)?);
                     return Ok((effects, None));
                 }
 
@@ -825,7 +825,7 @@ impl OnChainPhase {
             if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notification) {
                 effects.push(eff);
             }
-            effects.extend(self.next_action(env)?);
+            effects.extend(self.process_queued_action(env)?);
             return Ok((effects, None));
         }
 
@@ -931,12 +931,12 @@ impl OnChainPhase {
                 }
             }
 
-            effects.extend(self.next_action(env)?);
+            effects.extend(self.process_queued_action(env)?);
             return Ok((effects, None));
         }
 
         if !self.has_live_game(&old_definition.game_id) {
-            effects.extend(self.next_action(env)?);
+            effects.extend(self.process_queued_action(env)?);
             return Ok((effects, None));
         }
 
@@ -970,7 +970,7 @@ impl OnChainPhase {
             ) {
                 effects.push(eff);
             }
-            effects.extend(self.next_action(env)?);
+            effects.extend(self.process_queued_action(env)?);
             return Ok((effects, None));
         };
 
@@ -1000,7 +1000,7 @@ impl OnChainPhase {
                 ) {
                     effects.push(eff);
                 }
-                effects.extend(self.next_action(env)?);
+                effects.extend(self.process_queued_action(env)?);
                 return Ok((effects, None));
             }
         }
@@ -1393,13 +1393,16 @@ impl OnChainPhase {
         }
 
         if unblock_queue {
-            effects.extend(self.next_action(env)?);
+            effects.extend(self.process_queued_action(env)?);
         }
 
         Ok((effects, resync_info))
     }
 
-    pub fn next_action(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+    pub fn process_queued_action(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<Vec<Effect>, Error> {
         while let Some(action) = self.game_action_queue.pop_front() {
             let result = self.do_on_chain_action(env, action)?;
             if !result.is_empty() {
@@ -1606,15 +1609,19 @@ impl OnChainPhase {
 
     // --- Peer-container-facing API ---
 
-    pub fn has_pending_incoming(&self) -> bool {
-        !self.game_action_queue.is_empty()
+    pub fn has_queued_message(&self) -> bool {
+        false
     }
 
-    pub fn process_incoming_message(
+    pub fn process_queued_message(
         &mut self,
-        env: &mut ChannelEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        self.next_action(env)
+        Ok(vec![])
+    }
+
+    pub fn has_queued_action(&self) -> bool {
+        !self.game_action_queue.is_empty()
     }
 
     pub fn make_move(
@@ -1707,7 +1714,7 @@ impl OnChainPhase {
                 other_params: None,
             };
             effects.push(Effect::Notify(notification));
-            effects.extend(self.next_action(env)?);
+            effects.extend(self.process_queued_action(env)?);
             return Ok((effects, None));
         }
         Ok((effects, None))
@@ -1716,12 +1723,20 @@ impl OnChainPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for OnChainPhase {
-    fn has_pending_incoming(&self) -> bool {
-        OnChainPhase::has_pending_incoming(self)
+    fn has_queued_message(&self) -> bool {
+        OnChainPhase::has_queued_message(self)
     }
 
-    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        OnChainPhase::process_incoming_message(self, env)
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        OnChainPhase::process_queued_message(self, env)
+    }
+
+    fn has_queued_action(&self) -> bool {
+        OnChainPhase::has_queued_action(self)
+    }
+
+    fn process_queued_action(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        OnChainPhase::process_queued_action(self, env)
     }
 
     fn received_message(

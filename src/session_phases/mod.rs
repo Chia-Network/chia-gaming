@@ -365,7 +365,7 @@ impl OffChainPhase {
         Ok(effects)
     }
 
-    pub fn has_pending_incoming(&self) -> bool {
+    pub fn has_queued_message(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
 
@@ -1194,7 +1194,7 @@ impl OffChainPhase {
         } else {
             let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
             self.incoming_messages.push_back(Rc::new(msg_envelope));
-            self.process_incoming_message(env)
+            self.process_queued_message(env)
         };
         let mut effects = Vec::new();
         match incoming_result {
@@ -1212,7 +1212,7 @@ impl OffChainPhase {
         Ok(effects)
     }
 
-    pub fn process_incoming_message(
+    pub fn process_queued_message(
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
@@ -1656,11 +1656,11 @@ impl SpendWalletReceiver for OffChainPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for OffChainPhase {
-    fn has_pending_incoming(&self) -> bool {
-        OffChainPhase::has_pending_incoming(self)
+    fn has_queued_message(&self) -> bool {
+        OffChainPhase::has_queued_message(self)
     }
-    fn process_incoming_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        OffChainPhase::process_incoming_message(self, env)
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        OffChainPhase::process_queued_message(self, env)
     }
     fn received_message(
         &mut self,
