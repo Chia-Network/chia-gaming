@@ -25,7 +25,7 @@ use crate::session_phases::effects::{
 };
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
-use crate::session_phases::start::GameStart;
+use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     BootstrapTowardWallet, GameFactory, OffChainPhaseInit, PacketSender, PeerMessage,
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
@@ -134,7 +134,7 @@ pub trait PeerLifecyclePhase {
     fn propose_game(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game: &GameStart,
+        _game: &GameProposal,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         Err(Error::StrErr(
             "propose_game: not in off-chain phase".to_string(),
@@ -143,7 +143,7 @@ pub trait PeerLifecyclePhase {
     fn propose_games(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameStart],
+        _games: &[GameProposal],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         Err(Error::StrErr(
             "propose_games: not in off-chain phase".to_string(),
@@ -1330,7 +1330,7 @@ impl GameSession {
     pub fn propose_game(
         &mut self,
         allocator: &mut AllocEncoder,
-        game: &GameStart,
+        game: &GameProposal,
     ) -> Result<Vec<GameID>, Error> {
         self.propose_games(allocator, std::slice::from_ref(game))
     }
@@ -1338,7 +1338,7 @@ impl GameSession {
     pub fn propose_games(
         &mut self,
         allocator: &mut AllocEncoder,
-        games: &[GameStart],
+        games: &[GameProposal],
     ) -> Result<Vec<GameID>, Error> {
         let (result, reported_effects) = {
             let mut env = ChannelEnv::new(allocator)?;

@@ -29,7 +29,7 @@ use crate::session_phases::types::{
     SpendWalletReceiver, WireGameSpec, WireProposalGroup,
 };
 
-use crate::session_phases::start::GameStart;
+use crate::session_phases::proposal::GameProposal;
 
 pub mod effects;
 pub mod handler_base;
@@ -37,8 +37,8 @@ pub mod handshake;
 pub mod handshake_initiator;
 pub mod handshake_receiver;
 pub mod on_chain;
+pub mod proposal;
 pub mod spend_channel_coin_phase;
-pub mod start;
 pub mod types;
 
 fn serialize_game_type_map<S: Serializer>(
@@ -226,7 +226,7 @@ impl OffChainPhase {
     fn factory_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        start: &GameStart,
+        start: &GameProposal,
     ) -> Result<Vec<game::FactoryGame>, Error> {
         let factory = self
             .game_types
@@ -1430,7 +1430,7 @@ impl FromLocalUI for OffChainPhase {
     fn propose_game(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game: &GameStart,
+        game: &GameProposal,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         FromLocalUI::propose_games(self, env, std::slice::from_ref(game))
     }
@@ -1438,7 +1438,7 @@ impl FromLocalUI for OffChainPhase {
     fn propose_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameStart],
+        games: &[GameProposal],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         if games.len() != 1 {
             return Err(Error::StrErr(format!(
@@ -1742,14 +1742,14 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn propose_game(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game: &GameStart,
+        game: &GameProposal,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         <Self as FromLocalUI>::propose_game(self, env, game)
     }
     fn propose_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameStart],
+        games: &[GameProposal],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         <Self as FromLocalUI>::propose_games(self, env, games)
     }
@@ -1836,7 +1836,7 @@ mod atomic_group_tests {
 
     fn group(members: Vec<WireGameSpec>, group_id: Option<GameID>) -> WireProposalGroup {
         WireProposalGroup {
-            start: GameStart {
+            start: GameProposal {
                 game_type: GameType(b"test".to_vec()),
                 timeout: Timeout::new(15),
                 parameters: Program::from_bytes(&[0x80]),

@@ -38,7 +38,7 @@ mod gaming_wasm {
     use chia_gaming::transaction_manager::{CoinStateRecord, ManagerDrain, TransactionManager};
     use chia_gaming::session_phases::effects::{GameSessionEvent, GameNotification};
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
-    use chia_gaming::session_phases::start::GameStart;
+    use chia_gaming::session_phases::proposal::GameProposal;
     use chia_gaming::session_phases::types::{GameFactory, ToLocalUI};
 
     struct NullLocalUI;
@@ -909,7 +909,7 @@ mod gaming_wasm {
     }
 
     #[derive(Deserialize)]
-    struct JsGameStart {
+    struct JsGameProposal {
         // Game name
         game_type: String,
         timeout: u64,
@@ -936,7 +936,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
-        let js_games: Vec<JsGameStart> =
+        let js_games: Vec<JsGameProposal> =
             serde_wasm_bindgen::from_value(games).into_js()?;
         let params_arr: Vec<Vec<u8>> =
             serde_wasm_bindgen::from_value(parameters_list).into_js()?;
@@ -944,10 +944,10 @@ mod gaming_wasm {
             return Err(JsValue::from_str("games and parameters_list must have the same length"));
         }
         with_game(cid, move |cradle: &mut JsGameSession| {
-            let game_starts: Vec<GameStart> = js_games
+            let game_starts: Vec<GameProposal> = js_games
                 .iter()
                 .zip(params_arr.iter())
-                .map(|(g, p)| GameStart {
+                .map(|(g, p)| GameProposal {
                     game_type: GameType(g.game_type.as_bytes().to_vec()),
                     timeout: Timeout::new(g.timeout),
                     parameters: Program::from_bytes(p),

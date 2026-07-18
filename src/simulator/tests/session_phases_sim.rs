@@ -27,7 +27,7 @@ use crate::session_phases::effects::{
     GameStatusKind, SettlementOutcome,
 };
 use crate::session_phases::handshake::CoinSpendRequest;
-use crate::session_phases::start::GameStart;
+use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
@@ -1638,7 +1638,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         };
                         let new_ids = cradles[*who].propose_game(
                             allocator,
-                            &GameStart {
+                            &GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(timeout),
                                 parameters,
@@ -1651,7 +1651,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     SimScriptAction::ProposeKrunkGroup(who, _trigger) => {
                         let new_ids = cradles[*who].propose_game(
                             allocator,
-                            &GameStart {
+                            &GameProposal {
                                 game_type: GameType(b"krunk".to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters: Program::from_hex("64")?,
@@ -1872,7 +1872,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         };
                         cradles[*who].propose_game(
                             allocator,
-                            &GameStart {
+                            &GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters,
@@ -1915,7 +1915,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         };
                         cradles[*who].propose_game(
                             allocator,
-                            &GameStart {
+                            &GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters,
@@ -1958,7 +1958,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         };
                         cradles[*who].propose_game(
                             allocator,
-                            &GameStart {
+                            &GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters,
@@ -3915,7 +3915,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
         let result1 = outcome.cradles[0].propose_game(
             &mut allocator,
-            &GameStart {
+            &GameProposal {
                 game_type: GameType(game_type.to_vec()),
                 timeout: Timeout::new(15),
                 parameters: params1,
@@ -3935,7 +3935,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             Program::from_nodeptr(&mut allocator, params2_node).expect("debug parameters");
         let result2 = outcome.cradles[1].propose_game(
             &mut allocator,
-            &GameStart {
+            &GameProposal {
                 game_type: GameType(game_type.to_vec()),
                 timeout: Timeout::new(15),
                 parameters: params2,

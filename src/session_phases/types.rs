@@ -16,7 +16,7 @@ use crate::session_phases::effects::{Effect, ResyncInfo};
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
 };
-use crate::session_phases::start::GameStart;
+use crate::session_phases::proposal::GameProposal;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WireGameSpec {
@@ -34,7 +34,7 @@ pub struct WireGameSpec {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WireProposalGroup {
-    pub start: GameStart,
+    pub start: GameProposal,
     pub members: Vec<WireGameSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<GameID>,
@@ -126,13 +126,13 @@ pub trait FromLocalUI {
     fn propose_game(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game: &GameStart,
+        game: &GameProposal,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
     fn propose_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameStart],
+        games: &[GameProposal],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
     fn accept_proposal(

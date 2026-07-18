@@ -32,7 +32,7 @@ impl std::fmt::Debug for SimScriptAction {
 mod sim_tests {
     use super::*;
 
-    use crate::channel_state::game::Game;
+    use crate::channel_state::game::FactoryGame;
     use crate::channel_state::game_start_info::GameStartInfo;
     use crate::channel_state::runner::ChannelHandlerParty;
     use crate::channel_state::types::{
@@ -354,8 +354,7 @@ mod sim_tests {
         rng: &mut R,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        alice_game: &Game,
-        bob_game: &Game,
+        factory_game: &FactoryGame,
         identities: &[ChiaIdentity; 2],
         contributions: [Amount; 2],
     ) -> Result<(ChannelHandlerGame, CoinString), Error> {
@@ -432,10 +431,8 @@ mod sim_tests {
 
         let timeout = Timeout::new(15);
 
-        let our_game_start =
-            alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);
-        let their_game_start =
-            bob_game.game_start(game_id, &contributions[1], &contributions[0], &timeout);
+        let our_game_start = factory_game.game_start(game_id, &timeout, true);
+        let their_game_start = factory_game.game_start(game_id, &timeout, false);
 
         let our_start: Rc<GameStartInfo> = Rc::new(our_game_start);
         let their_start: Rc<GameStartInfo> = Rc::new(their_game_start);

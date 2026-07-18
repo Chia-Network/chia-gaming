@@ -24,7 +24,7 @@ use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 #[cfg(test)]
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 #[cfg(test)]
-use crate::session_phases::start::GameStart;
+use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
@@ -572,7 +572,7 @@ pub fn test_peer_smoke() {
             let (game_ids, effects1) = FromLocalUI::propose_game(
                 &mut peers[1],
                 &mut env,
-                &GameStart {
+                &GameProposal {
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(15),
                     parameters,
