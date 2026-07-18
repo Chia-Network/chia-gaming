@@ -18,7 +18,7 @@ pub(crate) mod sim_tests {
 
     use crate::channel_state::types::HistoricalUnrollSpendInfo;
     use crate::common::types::{CoinID, GameID};
-    use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
+    use crate::test_support::sim_script::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
     fn setup_handshake(rng: &mut impl rand::Rng, env: &mut ChannelEnv<'_>) -> ChannelHandlerGame {

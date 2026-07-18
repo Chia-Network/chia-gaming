@@ -1,10 +1,10 @@
 #[cfg(test)]
-pub mod calpoker;
+pub mod calpoker_sim;
 #[cfg(test)]
 pub mod debug_game;
-pub mod game;
+pub mod sim_script;
 #[cfg(test)]
-pub mod krunk;
+pub mod krunk_sim;
 pub mod peer;
 #[cfg(test)]
-pub mod spacepoker;
+pub mod spacepoker_sim;

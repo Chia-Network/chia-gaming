@@ -44,9 +44,9 @@ use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::CoinSpend;
 
 #[cfg(test)]
-use crate::test_support::calpoker::prefix_test_moves;
+use crate::test_support::calpoker_sim::prefix_test_moves;
 #[cfg(test)]
-use crate::test_support::game::GameAction;
+use crate::test_support::sim_script::SimScriptAction;
 
 #[derive(Default)]
 #[cfg(test)]
@@ -627,7 +627,7 @@ pub fn test_peer_smoke() {
     let moves = prefix_test_moves(&mut allocator, GameID(0));
 
     for this_move in moves.iter() {
-        let (who, what) = if let GameAction::Move(who, _, what, _) = this_move {
+        let (who, what) = if let SimScriptAction::Move(who, _, what, _) = this_move {
             (*who, what.clone())
         } else {
             panic!();

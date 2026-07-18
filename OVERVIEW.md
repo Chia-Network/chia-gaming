@@ -613,10 +613,10 @@ dedicated handler and validation tests.
 dispatches incoming messages via `received_message`
 - `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
 - `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
-- `src/test_support/calpoker.rs` — Rust-side calpoker registration/helpers
+- `src/test_support/calpoker_sim.rs` — Rust-side calpoker registration/helpers
 - `clsp/games/spacepoker/onchain/*.clsp`
 - `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
-- `src/test_support/spacepoker.rs` — Rust-side Space Poker helpers
+- `src/test_support/spacepoker_sim.rs` — Rust-side Space Poker helpers
 
 ### Krunk
 
@@ -711,7 +711,7 @@ general mechanism.
 - `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
 - `src/tests/krunk_handlers.rs` — handler tests
 - `src/tests/krunk_validation.rs` — on-chain validation tests
-- `src/test_support/krunk.rs` — Krunk test registration and helpers
+- `src/test_support/krunk_sim.rs` — Krunk test registration and helpers
 
 ---
 
@@ -815,13 +815,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | File                                        | Purpose                                                  |
 | ------------------------------------------- | -------------------------------------------------------- |
-| `src/test_support/calpoker.rs`              | Calpoker test registration and helpers                   |
-| `src/test_support/spacepoker.rs`            | Space Poker test registration and helpers                |
-| `src/test_support/krunk.rs`                 | Krunk test registration and helpers                      |
+| `src/test_support/calpoker_sim.rs`              | Calpoker test registration and helpers                   |
+| `src/test_support/spacepoker_sim.rs`            | Space Poker test registration and helpers                |
+| `src/test_support/krunk_sim.rs`                 | Krunk test registration and helpers                      |
 | `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
-| `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
-| `src/test_support/peer/session_phases.rs`   | Test peer helper                                         |
-| `src/test_support/game.rs`                  | `GameAction` enum and simulation loop driver             |
+| `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite           |
+| `src/test_support/peer/peer_harness.rs`   | Test peer helper                                         |
+| `src/test_support/sim_script.rs`                  | `SimScriptAction` enum and simulation loop driver        |
 | `tools/local-wasm-tests.sh`                 | Local JS/WASM integration test runner                    |
 
 
@@ -871,7 +871,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
 | [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |
 | [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!` |
-| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `GameAction` reference, trigger semantics, test-writing conventions |
+| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `SimScriptAction` reference, trigger semantics, test-writing conventions |
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |

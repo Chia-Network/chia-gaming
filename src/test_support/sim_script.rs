@@ -11,7 +11,7 @@ use crate::channel_state::types::ReadableMove;
 // In unit tests (without the `sim-tests` feature), we only need `Timeout` and `Move`.
 #[cfg(all(test, not(feature = "sim-tests")))]
 #[derive(Clone)]
-pub enum GameAction {
+pub enum SimScriptAction {
     /// Do a timeout
     Timeout(usize),
     /// Move (player, game_id, clvm readable move, was received)
@@ -19,11 +19,11 @@ pub enum GameAction {
 }
 
 #[cfg(all(test, not(feature = "sim-tests")))]
-impl std::fmt::Debug for GameAction {
+impl std::fmt::Debug for SimScriptAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-            GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
+            SimScriptAction::Timeout(t) => write!(formatter, "Timeout({t})"),
+            SimScriptAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
         }
     }
 }
@@ -172,7 +172,7 @@ mod sim_tests {
     }
 
     #[derive(Clone)]
-    pub enum GameAction {
+    pub enum SimScriptAction {
         /// Do a timeout
         Timeout(usize),
         /// Move (player, game_id, clvm readable move, was received)
@@ -251,83 +251,83 @@ mod sim_tests {
         InvalidProposalTimeout(usize),
     }
 
-    impl std::fmt::Debug for GameAction {
+    impl std::fmt::Debug for SimScriptAction {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
             match self {
-                GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-                GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
-                GameAction::FakeMove(p, g, n, v) => {
+                SimScriptAction::Timeout(t) => write!(formatter, "Timeout({t})"),
+                SimScriptAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
+                SimScriptAction::FakeMove(p, g, n, v) => {
                     write!(formatter, "FakeMove({p},{g:?},{n:?},{v:?})")
                 }
-                GameAction::BadSignatureMove(p, g, n) => {
+                SimScriptAction::BadSignatureMove(p, g, n) => {
                     write!(formatter, "BadSignatureMove({p},{g:?},{n:?})")
                 }
-                GameAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
-                GameAction::ForceDestroyCoin(p, g) => {
+                SimScriptAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
+                SimScriptAction::ForceDestroyCoin(p, g) => {
                     write!(formatter, "ForceDestroyCoin({p},{g:?})")
                 }
-                GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
-                GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
-                GameAction::UnNerfTransactionsFor(p) => {
+                SimScriptAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
+                SimScriptAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
+                SimScriptAction::UnNerfTransactionsFor(p) => {
                     write!(formatter, "UnNerfTransactionsFor({p})")
                 }
-                GameAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
-                GameAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
-                GameAction::ProposeNewGame(p, t) => {
+                SimScriptAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
+                SimScriptAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
+                SimScriptAction::ProposeNewGame(p, t) => {
                     write!(formatter, "ProposeNewGame({p},{t:?})")
                 }
-                GameAction::ProposeNewGameWithTimeout(p, t, timeout) => {
+                SimScriptAction::ProposeNewGameWithTimeout(p, t, timeout) => {
                     write!(formatter, "ProposeNewGameWithTimeout({p},{t:?},{timeout})")
                 }
-                GameAction::ProposeNewGameTheirTurn(p, t) => {
+                SimScriptAction::ProposeNewGameTheirTurn(p, t) => {
                     write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
                 }
-                GameAction::ProposeKrunkGroup(p, t) => {
+                SimScriptAction::ProposeKrunkGroup(p, t) => {
                     write!(formatter, "ProposeKrunkGroup({p},{t:?})")
                 }
-                GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
-                GameAction::AcceptSettlement(p, g) => {
+                SimScriptAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
+                SimScriptAction::AcceptSettlement(p, g) => {
                     write!(formatter, "AcceptSettlement({p},{g:?})")
                 }
-                GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
-                GameAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
-                GameAction::CorruptStateNumber(p, sn) => {
+                SimScriptAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
+                SimScriptAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
+                SimScriptAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
-                GameAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
-                GameAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
-                GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
-                GameAction::AcceptProposal(p, g) => {
+                SimScriptAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
+                SimScriptAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
+                SimScriptAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
+                SimScriptAction::AcceptProposal(p, g) => {
                     write!(formatter, "AcceptProposal({p},{g:?})")
                 }
-                GameAction::CancelProposal(p, g) => {
+                SimScriptAction::CancelProposal(p, g) => {
                     write!(formatter, "CancelProposal({p},{g:?})")
                 }
-                GameAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
-                GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
-                GameAction::InjectRawMessage(p, data) => {
+                SimScriptAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
+                SimScriptAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
+                SimScriptAction::InjectRawMessage(p, data) => {
                     write!(formatter, "InjectRawMessage({p}, {} bytes)", data.len())
                 }
-                GameAction::SelfAcceptProposal(p, g) => {
+                SimScriptAction::SelfAcceptProposal(p, g) => {
                     write!(formatter, "SelfAcceptProposal({p},{g:?})")
                 }
-                GameAction::WrongParityProposal(p) => {
+                SimScriptAction::WrongParityProposal(p) => {
                     write!(formatter, "WrongParityProposal({p})")
                 }
-                GameAction::InvalidProposalParameters(p) => {
+                SimScriptAction::InvalidProposalParameters(p) => {
                     write!(formatter, "InvalidProposalParameters({p})")
                 }
-                GameAction::InvalidProposalTimeout(p) => {
+                SimScriptAction::InvalidProposalTimeout(p) => {
                     write!(formatter, "InvalidProposalTimeout({p})")
                 }
             }
         }
     }
 
-    impl GameAction {
-        pub fn lose(&self) -> GameAction {
-            if let GameAction::Move(p, g, m, _r) = self {
-                return GameAction::Move(*p, *g, m.clone(), false);
+    impl SimScriptAction {
+        pub fn lose(&self) -> SimScriptAction {
+            if let SimScriptAction::Move(p, g, m, _r) = self {
+                return SimScriptAction::Move(*p, *g, m.clone(), false);
             }
 
             self.clone()
@@ -335,7 +335,7 @@ mod sim_tests {
     }
 
     #[derive(Debug, Clone)]
-    pub enum GameActionResult {
+    pub enum SimScriptActionResult {
         MoveResult(ReadableMove, Vec<u8>, Option<ReadableMove>, Hash),
         BrokenMove,
         MoveToOnChain,
@@ -463,5 +463,5 @@ mod sim_tests {
 
 #[cfg(feature = "sim-tests")]
 pub use sim_tests::{
-    new_channel_handler_game, ChannelHandlerGame, GameAction, GameActionResult, ProposeTrigger,
+    new_channel_handler_game, ChannelHandlerGame, SimScriptAction, SimScriptActionResult, ProposeTrigger,
 };

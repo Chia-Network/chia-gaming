@@ -6,7 +6,7 @@ use crate::channel_state::types::ReadableMove;
 use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program};
 use crate::game_session::GameSession;
-use crate::test_support::game::GameAction;
+use crate::test_support::sim_script::SimScriptAction;
 use crate::transaction_manager::TransactionManager;
 
 /// Build a Program holding a single 5-byte atom (a krunk word).
@@ -19,7 +19,7 @@ fn word_program(allocator: &mut AllocEncoder, word: &[u8; 5]) -> Program {
 
 /// Happy-path krunk moves: Alice commits "crane", Bob guesses "crane",
 /// Alice's clue handler auto-detects the match and reveals.
-pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
+pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<SimScriptAction> {
     test_moves_for_picker(allocator, game_id, 0)
 }
 
@@ -27,7 +27,7 @@ fn test_moves_for_picker(
     allocator: &mut AllocEncoder,
     game_id: GameID,
     picker: usize,
-) -> Vec<GameAction> {
+) -> Vec<SimScriptAction> {
     // Dictionary entries are uppercase (see krunkwords.txt).
     let alice_word = word_program(allocator, b"CRANE");
     let bob_guess = word_program(allocator, b"CRANE");
@@ -36,14 +36,14 @@ fn test_moves_for_picker(
 
     vec![
         // Move 0: Alice commits her secret word.
-        GameAction::Move(
+        SimScriptAction::Move(
             picker,
             game_id,
             ReadableMove::from_program(Rc::new(alice_word)),
             true,
         ),
         // Move 1: Bob guesses (he picks "crane" and wins on first try).
-        GameAction::Move(
+        SimScriptAction::Move(
             guesser,
             game_id,
             ReadableMove::from_program(Rc::new(bob_guess)),
@@ -51,7 +51,7 @@ fn test_moves_for_picker(
         ),
         // Move 2: Alice's handler sees the matching guess and reveals
         // automatically; local_move is unused for the terminal reveal path.
-        GameAction::Move(
+        SimScriptAction::Move(
             picker,
             game_id,
             ReadableMove::from_program(Rc::new(nil_move)),
@@ -76,10 +76,10 @@ mod sim_tests {
     use super::*;
 
     use crate::session_phases::effects::{ChannelStatus, GameNotification, GameStatusKind};
-    use crate::simulator::tests::potato_handler_sim::{
+    use crate::simulator::tests::session_phases_sim::{
         run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
-    use crate::test_support::game::ProposeTrigger;
+    use crate::test_support::sim_script::ProposeTrigger;
 
     fn assert_stayed_off_chain(outcome: &GameRunOutcome, test_name: &str) {
         for (who, ui) in outcome.local_uis.iter().enumerate() {
@@ -98,10 +98,10 @@ mod sim_tests {
         }
     }
 
-    fn full_group_moves(allocator: &mut AllocEncoder) -> Vec<GameAction> {
+    fn full_group_moves(allocator: &mut AllocEncoder) -> Vec<SimScriptAction> {
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(test_moves_for_picker(allocator, GameID(1), 0));
         moves.extend(test_moves_for_picker(allocator, GameID(3), 1));
@@ -111,22 +111,22 @@ mod sim_tests {
     fn third_guess_terminal_moves(
         allocator: &mut AllocEncoder,
         game_id: GameID,
-    ) -> Vec<GameAction> {
+    ) -> Vec<SimScriptAction> {
         let nil_move = Program::from_hex("80").expect("nil move");
-        let mut moves = vec![GameAction::Move(
+        let mut moves = vec![SimScriptAction::Move(
             0,
             game_id,
             ReadableMove::from_program(Rc::new(word_program(allocator, b"CRANE"))),
             true,
         )];
         for guess in [b"WORLD", b"BLADE", b"CRANE"] {
-            moves.push(GameAction::Move(
+            moves.push(SimScriptAction::Move(
                 1,
                 game_id,
                 ReadableMove::from_program(Rc::new(word_program(allocator, guess))),
                 true,
             ));
-            moves.push(GameAction::Move(
+            moves.push(SimScriptAction::Move(
                 0,
                 game_id,
                 ReadableMove::from_program(Rc::new(nil_move.clone())),
@@ -142,8 +142,8 @@ mod sim_tests {
         res.push(("test_play_krunk_happy_path", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let num_moves = moves.len();
@@ -167,15 +167,15 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let invalid_word = word_program(&mut allocator, b"XXXXX");
             let moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
-                GameAction::Move(
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::Move(
                     0,
                     GameID(1),
                     ReadableMove::from_program(Rc::new(invalid_word)),
                     true,
                 ),
-                GameAction::WaitBlocks(1, 0),
+                SimScriptAction::WaitBlocks(1, 0),
             ];
             let move_count = moves.len();
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
@@ -212,7 +212,7 @@ mod sim_tests {
         res.push(("test_play_krunk_clean_shutdown", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = full_group_moves(&mut allocator);
-            moves.push(GameAction::CleanShutdown(1));
+            moves.push(SimScriptAction::CleanShutdown(1));
 
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -233,7 +233,7 @@ mod sim_tests {
         res.push(("test_play_krunk_go_on_chain", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = full_group_moves(&mut allocator);
-            moves.push(GameAction::GoOnChain(0));
+            moves.push(SimScriptAction::GoOnChain(0));
 
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -271,16 +271,16 @@ mod sim_tests {
         res.push(("test_krunk_split_terminal_move_finishes_for_both", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             let mut game_moves = third_guess_terminal_moves(&mut allocator, GameID(1));
             let terminal_reveal = game_moves.pop().expect("terminal reveal");
             moves.extend(game_moves);
-            moves.push(GameAction::GoOnChain(0));
+            moves.push(SimScriptAction::GoOnChain(0));
             moves.push(terminal_reveal);
-            moves.push(GameAction::WaitBlocks(120, 1));
-            moves.push(GameAction::WaitBlocks(5, 0));
+            moves.push(SimScriptAction::WaitBlocks(120, 1));
+            moves.push(SimScriptAction::WaitBlocks(5, 0));
 
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,

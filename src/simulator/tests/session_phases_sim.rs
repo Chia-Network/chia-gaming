@@ -36,10 +36,10 @@ use crate::transaction_manager::TransactionManager;
 use crate::utils::proper_list;
 
 use crate::simulator::Simulator;
-use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
+use crate::test_support::calpoker_sim::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{make_debug_games, DebugGameCurry};
-use crate::test_support::game::{GameAction, ProposeTrigger};
-use crate::test_support::peer::session_phases::run_move;
+use crate::test_support::sim_script::{SimScriptAction, ProposeTrigger};
+use crate::test_support::peer::peer_harness::run_move;
 use crate::utils::pair_of_array_mut;
 
 // potato handler tests with simulator.
@@ -1048,14 +1048,14 @@ fn gid_diag(test_name: &str, action_idx: usize, label: &str, requested: &GameID,
     );
 }
 
-fn move_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
+fn move_ready(moves: &[SimScriptAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
     if mn >= moves.len() {
         return false;
     }
     match &moves[mn] {
-        GameAction::Move(who, gid, _, _)
-        | GameAction::FakeMove(who, gid, _, _)
-        | GameAction::BadSignatureMove(who, gid, _) => {
+        SimScriptAction::Move(who, gid, _, _)
+        | SimScriptAction::FakeMove(who, gid, _, _)
+        | SimScriptAction::BadSignatureMove(who, gid, _) => {
             local_uis[*who].game_accepted_ids.contains(gid)
                 || local_uis[*who].opponent_moved_in_game.contains(gid)
         }
@@ -1075,14 +1075,14 @@ fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameI
 }
 
 fn accept_proposal_ready(
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
     mn: usize,
     local_uis: &[LocalTestUIReceiver; 2],
 ) -> bool {
     if mn >= moves.len() {
         return false;
     }
-    if let GameAction::AcceptProposal(who, gid) = &moves[mn] {
+    if let SimScriptAction::AcceptProposal(who, gid) = &moves[mn] {
         if local_uis[*who].accepted_proposal_ids.contains(gid) {
             accept_resolved(local_uis, *who, gid)
         } else {
@@ -1093,15 +1093,15 @@ fn accept_proposal_ready(
     }
 }
 
-fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
+fn propose_ready(moves: &[SimScriptAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
     if mn >= moves.len() {
         return false;
     }
     match &moves[mn] {
-        GameAction::ProposeNewGame(who, trigger)
-        | GameAction::ProposeNewGameWithTimeout(who, trigger, _)
-        | GameAction::ProposeNewGameTheirTurn(who, trigger)
-        | GameAction::ProposeKrunkGroup(who, trigger) => match trigger {
+        SimScriptAction::ProposeNewGame(who, trigger)
+        | SimScriptAction::ProposeNewGameWithTimeout(who, trigger, _)
+        | SimScriptAction::ProposeNewGameTheirTurn(who, trigger)
+        | SimScriptAction::ProposeKrunkGroup(who, trigger) => match trigger {
             ProposeTrigger::Channel => local_uis[*who].channel_created,
             ProposeTrigger::AfterGame(gid) => {
                 local_uis[0].game_finished_ids.contains(gid)
@@ -1119,7 +1119,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     identities: &[ChiaIdentity],
     game_type: &[u8],
     extras: &Program,
-    moves_input: &[GameAction],
+    moves_input: &[SimScriptAction],
     pred: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
@@ -1218,41 +1218,41 @@ fn run_game_container_with_action_list_with_success_predicate(
     cradles[0].opening_coin(allocator, parent_coin_0)?;
     cradles[1].opening_coin(allocator, parent_coin_1)?;
 
-    let global_move = |moves: &[GameAction], move_number: usize| {
+    let global_move = |moves: &[SimScriptAction], move_number: usize| {
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::CleanShutdown(_)
-                    | GameAction::WaitBlocks(_, _)
-                    | GameAction::GoOnChain(_)
-                    | GameAction::AcceptSettlement(_, _)
-                    | GameAction::Timeout(_)
-                    | GameAction::Cheat(_, _, _)
-                    | GameAction::ForceDestroyCoin(_, _)
-                    | GameAction::NerfTransactions(_)
-                    | GameAction::UnNerfTransactions(_)
-                    | GameAction::UnNerfTransactionsFor(_)
-                    | GameAction::BlockCoinReports(_)
-                    | GameAction::UnblockCoinReports(_)
-                    | GameAction::CancelProposal(_, _)
-                    | GameAction::CorruptStateNumber(_, _)
-                    | GameAction::ForceUnroll(_)
-                    | GameAction::NerfMessages(_)
-                    | GameAction::UnNerfMessages
-                    | GameAction::SaveUnrollSnapshot(_)
-                    | GameAction::ForceStaleUnroll(_)
-                    | GameAction::InjectRawMessage(_, _)
-                    | GameAction::SelfAcceptProposal(_, _)
-                    | GameAction::WrongParityProposal(_)
-                    | GameAction::InvalidProposalParameters(_)
-                    | GameAction::InvalidProposalTimeout(_)
-                    | GameAction::BadSignatureMove(_, _, _)
+                SimScriptAction::CleanShutdown(_)
+                    | SimScriptAction::WaitBlocks(_, _)
+                    | SimScriptAction::GoOnChain(_)
+                    | SimScriptAction::AcceptSettlement(_, _)
+                    | SimScriptAction::Timeout(_)
+                    | SimScriptAction::Cheat(_, _, _)
+                    | SimScriptAction::ForceDestroyCoin(_, _)
+                    | SimScriptAction::NerfTransactions(_)
+                    | SimScriptAction::UnNerfTransactions(_)
+                    | SimScriptAction::UnNerfTransactionsFor(_)
+                    | SimScriptAction::BlockCoinReports(_)
+                    | SimScriptAction::UnblockCoinReports(_)
+                    | SimScriptAction::CancelProposal(_, _)
+                    | SimScriptAction::CorruptStateNumber(_, _)
+                    | SimScriptAction::ForceUnroll(_)
+                    | SimScriptAction::NerfMessages(_)
+                    | SimScriptAction::UnNerfMessages
+                    | SimScriptAction::SaveUnrollSnapshot(_)
+                    | SimScriptAction::ForceStaleUnroll(_)
+                    | SimScriptAction::InjectRawMessage(_, _)
+                    | SimScriptAction::SelfAcceptProposal(_, _)
+                    | SimScriptAction::WrongParityProposal(_)
+                    | SimScriptAction::InvalidProposalParameters(_)
+                    | SimScriptAction::InvalidProposalTimeout(_)
+                    | SimScriptAction::BadSignatureMove(_, _, _)
             )
     };
     let has_explicit_go_on_chain = moves_input.iter().any(|m| {
         matches!(
             m,
-            GameAction::GoOnChain(_) | GameAction::ForceUnroll(_) | GameAction::ForceStaleUnroll(_)
+            SimScriptAction::GoOnChain(_) | SimScriptAction::ForceUnroll(_) | SimScriptAction::ForceStaleUnroll(_)
         )
     });
 
@@ -1353,12 +1353,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _, _)))
+                            || !matches!(moves_input[move_number], SimScriptAction::Move(_, _, _, _)))
                     {
                         move_number -= 1;
                     }
                     let dominated_by_other = match moves_input.get(move_number) {
-                        Some(GameAction::Move(who, _, _, _)) => *who != i,
+                        Some(SimScriptAction::Move(who, _, _, _)) => *who != i,
                         _ => true,
                     };
                     if dominated_by_other {
@@ -1581,7 +1581,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 let action_idx = move_number - 1;
 
                 match ga {
-                    GameAction::Move(who, gid, readable, _share) => {
+                    SimScriptAction::Move(who, gid, readable, _share) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Move", gid, gid);
                         }
@@ -1595,16 +1595,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].game_accepted_ids.remove(gid);
                         local_uis[*who].opponent_moved_in_game.remove(gid);
                     }
-                    GameAction::ProposeNewGame(who, _trigger)
-                    | GameAction::ProposeNewGameTheirTurn(who, _trigger)
-                    | GameAction::ProposeNewGameWithTimeout(who, _trigger, _) => {
+                    SimScriptAction::ProposeNewGame(who, _trigger)
+                    | SimScriptAction::ProposeNewGameTheirTurn(who, _trigger)
+                    | SimScriptAction::ProposeNewGameWithTimeout(who, _trigger, _) => {
                         let my_turn = matches!(
                             ga,
-                            GameAction::ProposeNewGame(_, _)
-                                | GameAction::ProposeNewGameWithTimeout(_, _, _)
+                            SimScriptAction::ProposeNewGame(_, _)
+                                | SimScriptAction::ProposeNewGameWithTimeout(_, _, _)
                         );
                         let timeout = match ga {
-                            GameAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
+                            SimScriptAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
                         };
                         let parameters = if game_type == b"calpoker" {
@@ -1640,7 +1640,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             .proposed_game_ids
                             .extend(new_ids.iter().cloned());
                     }
-                    GameAction::ProposeKrunkGroup(who, _trigger) => {
+                    SimScriptAction::ProposeKrunkGroup(who, _trigger) => {
                         let new_ids = cradles[*who].propose_game(
                             allocator,
                             &GameStart {
@@ -1653,7 +1653,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             .proposed_game_ids
                             .extend(new_ids.iter().cloned());
                     }
-                    GameAction::AcceptProposal(who, gid) => {
+                    SimScriptAction::AcceptProposal(who, gid) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "AcceptProposal", gid, gid);
                         }
@@ -1663,21 +1663,21 @@ fn run_game_container_with_action_list_with_success_predicate(
                             move_number -= 1;
                         }
                     }
-                    GameAction::CancelProposal(who, gid) => {
+                    SimScriptAction::CancelProposal(who, gid) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "CancelProposal", gid, gid);
                         }
                         cradles[*who].cancel_proposal(allocator, gid)?;
                     }
-                    GameAction::GoOnChain(who) => {
+                    SimScriptAction::GoOnChain(who) => {
                         assert!(
                             !cradles[*who].channel_status_terminal(),
-                            "GameAction::GoOnChain({who}) but channel is already terminal: move_number={move_number} notifications={:?}",
+                            "SimScriptAction::GoOnChain({who}) but channel is already terminal: move_number={move_number} notifications={:?}",
                             local_uis[*who].notifications
                         );
                         if cradles[*who].is_on_chain() {
                             panic!(
-                                "GameAction::GoOnChain({who}) but player is already on chain: move_number={move_number}",
+                                "SimScriptAction::GoOnChain({who}) but player is already on chain: move_number={move_number}",
                             );
                         }
                         if !cradles[*who].handshake_finished() {
@@ -1686,7 +1686,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                         local_uis[*who].go_on_chain = true;
                     }
-                    GameAction::FakeMove(who, gid, readable, move_data) => {
+                    SimScriptAction::FakeMove(who, gid, readable, move_data) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "FakeMove", gid, gid);
                         }
@@ -1727,7 +1727,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         })?;
                     }
-                    GameAction::BadSignatureMove(who, gid, readable) => {
+                    SimScriptAction::BadSignatureMove(who, gid, readable) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "BadSignatureMove", gid, gid);
                         }
@@ -1737,13 +1737,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].game_accepted_ids.remove(gid);
                         local_uis[*who].opponent_moved_in_game.remove(gid);
                     }
-                    GameAction::Cheat(who, gid, cheat_share) => {
+                    SimScriptAction::Cheat(who, gid, cheat_share) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Cheat", gid, gid);
                         }
                         cradles[*who].cheat(allocator, gid, cheat_share.clone())?;
                     }
-                    GameAction::ForceDestroyCoin(who, gid) => {
+                    SimScriptAction::ForceDestroyCoin(who, gid) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, gid);
                         }
@@ -1754,13 +1754,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
                     }
-                    GameAction::NerfTransactions(who) => {
+                    SimScriptAction::NerfTransactions(who) => {
                         nerf_transactions_for |= 1 << *who;
                     }
-                    GameAction::UnNerfTransactionsFor(who) => {
+                    SimScriptAction::UnNerfTransactionsFor(who) => {
                         nerf_transactions_for &= !(1 << *who);
                     }
-                    GameAction::UnNerfTransactions(replay) => {
+                    SimScriptAction::UnNerfTransactions(replay) => {
                         nerf_transactions_for = 0;
                         if *replay {
                             for tx in nerfed_tx_backlog.drain(..) {
@@ -1777,10 +1777,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                             nerfed_tx_backlog.clear();
                         }
                     }
-                    GameAction::BlockCoinReports(who) => {
+                    SimScriptAction::BlockCoinReports(who) => {
                         blocked_coin_reports_for |= 1 << *who;
                     }
-                    GameAction::UnblockCoinReports(replay) => {
+                    SimScriptAction::UnblockCoinReports(replay) => {
                         blocked_coin_reports_for = 0;
                         if *replay {
                             #[allow(clippy::needless_range_loop)]
@@ -1798,25 +1798,25 @@ fn run_game_container_with_action_list_with_success_predicate(
                             report_backlogs = [Vec::default(), Vec::default()];
                         }
                     }
-                    GameAction::NerfMessages(who) => {
+                    SimScriptAction::NerfMessages(who) => {
                         nerf_messages_for |= 1 << *who;
                     }
-                    GameAction::UnNerfMessages => {
+                    SimScriptAction::UnNerfMessages => {
                         nerf_messages_for = 0;
                     }
-                    GameAction::WaitBlocks(n, players) => {
+                    SimScriptAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
                     }
-                    GameAction::AcceptSettlement(who, gid) => {
+                    SimScriptAction::AcceptSettlement(who, gid) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "AcceptSettlement", gid, gid);
                         }
                         cradles[*who].accept_settlement(allocator, gid)?;
                     }
-                    GameAction::Timeout(_who) => {
+                    SimScriptAction::Timeout(_who) => {
                         panic!("Timeout action is not supported in sim tests; use AcceptSettlement(player, game_id)");
                     }
-                    GameAction::CleanShutdown(who) => {
+                    SimScriptAction::CleanShutdown(who) => {
                         assert!(
                             !cradles[*who].is_on_chain(),
                             "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
@@ -1827,28 +1827,28 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                         cradles[*who].shut_down(allocator)?;
                     }
-                    GameAction::CorruptStateNumber(who, new_sn) => {
+                    SimScriptAction::CorruptStateNumber(who, new_sn) => {
                         cradles[*who].corrupt_state_for_testing(*new_sn)?;
                     }
-                    GameAction::ForceUnroll(who) => {
+                    SimScriptAction::ForceUnroll(who) => {
                         let spend = cradles[*who].force_unroll_spend(allocator)?;
                         simulator.push_transactions(allocator, &spend.spends)?;
                     }
-                    GameAction::SaveUnrollSnapshot(who) => {
+                    SimScriptAction::SaveUnrollSnapshot(who) => {
                         cradles[*who].save_unroll_snapshot();
                     }
-                    GameAction::ForceStaleUnroll(who) => {
+                    SimScriptAction::ForceStaleUnroll(who) => {
                         let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
                         let _included_result =
                             simulator.push_transactions(allocator, &spend.spends)?;
                     }
-                    GameAction::InjectRawMessage(who, data) => {
+                    SimScriptAction::InjectRawMessage(who, data) => {
                         cradles[*who].deliver_message(data)?;
                     }
-                    GameAction::SelfAcceptProposal(who, gid) => {
+                    SimScriptAction::SelfAcceptProposal(who, gid) => {
                         cradles[*who].self_accept_proposal(allocator, gid)?;
                     }
-                    GameAction::WrongParityProposal(who) => {
+                    SimScriptAction::WrongParityProposal(who) => {
                         let parameters = if game_type == b"calpoker" {
                             let node = (Amount::new(100), (true, ()))
                                 .to_clvm(allocator)
@@ -1891,7 +1891,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         })?;
                     }
-                    GameAction::InvalidProposalParameters(who) => {
+                    SimScriptAction::InvalidProposalParameters(who) => {
                         let parameters = if game_type == b"calpoker" {
                             let node = (Amount::new(100), (true, ()))
                                 .to_clvm(allocator)
@@ -1934,7 +1934,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         })?;
                     }
-                    GameAction::InvalidProposalTimeout(who) => {
+                    SimScriptAction::InvalidProposalTimeout(who) => {
                         let parameters = if game_type == b"calpoker" {
                             let node = (Amount::new(100), (true, ()))
                                 .to_clvm(allocator)
@@ -2291,7 +2291,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
 pub fn run_calpoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
@@ -2319,14 +2319,14 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
 
 pub fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
 ) -> Result<GameRunOutcome, Error> {
     run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None, None)
 }
 
 pub fn run_spacepoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
@@ -2356,14 +2356,14 @@ pub fn run_spacepoker_container_with_action_list_with_success_predicate(
 
 pub fn run_spacepoker_container_with_action_list(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
 ) -> Result<GameRunOutcome, Error> {
     run_spacepoker_container_with_action_list_with_success_predicate(allocator, moves, None, None)
 }
 
 pub fn run_krunk_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
@@ -2391,7 +2391,7 @@ pub fn run_krunk_container_with_action_list_with_success_predicate(
 
 pub fn run_calpoker_proposal_only(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves: &[SimScriptAction],
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
@@ -2425,7 +2425,7 @@ fn calpoker_test_moves_with_selected_cards(
     game_id: GameID,
     alice_selected: &[usize],
     bob_selected: &[usize],
-) -> Vec<GameAction> {
+) -> Vec<SimScriptAction> {
     let alice_word = b"0alice6789abcdef";
     let bob_seed = b"0bob456789abcdef";
     let alice_word_hash = crate::common::types::Sha256Input::Bytes(alice_word)
@@ -2446,7 +2446,7 @@ fn calpoker_test_moves_with_selected_cards(
         .expect("should work");
 
     vec![
-        GameAction::Move(
+        SimScriptAction::Move(
             0,
             game_id.clone(),
             ReadableMove::from_program(Rc::new(
@@ -2454,7 +2454,7 @@ fn calpoker_test_moves_with_selected_cards(
             )),
             true,
         ),
-        GameAction::Move(
+        SimScriptAction::Move(
             1,
             game_id.clone(),
             ReadableMove::from_program(Rc::new(
@@ -2462,7 +2462,7 @@ fn calpoker_test_moves_with_selected_cards(
             )),
             true,
         ),
-        GameAction::Move(
+        SimScriptAction::Move(
             0,
             game_id.clone(),
             ReadableMove::from_program(Rc::new(
@@ -2470,7 +2470,7 @@ fn calpoker_test_moves_with_selected_cards(
             )),
             true,
         ),
-        GameAction::Move(
+        SimScriptAction::Move(
             1,
             game_id.clone(),
             ReadableMove::from_program(Rc::new(
@@ -2478,7 +2478,7 @@ fn calpoker_test_moves_with_selected_cards(
             )),
             true,
         ),
-        GameAction::Move(
+        SimScriptAction::Move(
             0,
             game_id,
             ReadableMove::from_program(Rc::new(nil_move)),
@@ -2583,7 +2583,7 @@ fn check_calpoker_economic_result(
 pub struct DebugGameSimSetup {
     pub private_keys: [ChannelPrivateKeys; 2],
     pub identities: [ChiaIdentity; 2],
-    pub game_actions: Vec<GameAction>,
+    pub game_actions: Vec<SimScriptAction>,
     pub args_program: Rc<Program>,
 }
 
@@ -2601,23 +2601,23 @@ impl DebugGameTestMove {
 pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize, who: usize) {
     test_setup
         .game_actions
-        .push(GameAction::AcceptSettlement(who, GameID(1)));
+        .push(SimScriptAction::AcceptSettlement(who, GameID(1)));
     test_setup
         .game_actions
-        .push(GameAction::WaitBlocks(wait, 0));
+        .push(SimScriptAction::WaitBlocks(wait, 0));
     test_setup
         .game_actions
-        .push(GameAction::WaitBlocks(wait, 1));
-    test_setup.game_actions.push(GameAction::CleanShutdown(1));
+        .push(SimScriptAction::WaitBlocks(wait, 1));
+    test_setup.game_actions.push(SimScriptAction::CleanShutdown(1));
 }
 
 pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
     test_setup
         .game_actions
-        .push(GameAction::WaitBlocks(wait, 0));
+        .push(SimScriptAction::WaitBlocks(wait, 0));
     test_setup
         .game_actions
-        .push(GameAction::WaitBlocks(wait, 1));
+        .push(SimScriptAction::WaitBlocks(wait, 1));
 }
 
 pub fn setup_debug_test(
@@ -2643,8 +2643,8 @@ pub fn setup_debug_test(
     let mut debug_games = make_debug_games(allocator, rng, &private_identities, first_game_nonce)?;
 
     let mut game_actions = Vec::new();
-    game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-    game_actions.push(GameAction::AcceptProposal(
+    game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
+    game_actions.push(SimScriptAction::AcceptProposal(
         1,
         GameID(first_game_nonce as u64),
     ));
@@ -2670,7 +2670,7 @@ pub fn setup_debug_test(
             );
         }
 
-        game_actions.push(GameAction::Move(
+        game_actions.push(SimScriptAction::Move(
             i % 2,
             GameID(first_game_nonce as u64),
             the_move.ui_move.clone(),
@@ -2699,8 +2699,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("krunk_group_accepts_with_exact_stake_balance", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = [
-            GameAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -2770,8 +2770,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Play moves
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -2826,14 +2826,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
+            if let SimScriptAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
                     5,
-                    GameAction::FakeMove(player, game_id, readable, vec![0; 500]),
+                    SimScriptAction::FakeMove(player, game_id, readable, vec![0; 500]),
                 );
             } else {
                 panic!("no move 5 to replace");
@@ -2917,11 +2917,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        moves.push(GameAction::CleanShutdown(1));
+        moves.push(SimScriptAction::CleanShutdown(1));
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
@@ -3000,8 +3000,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_clean_shutdown_no_games_nerf_p0", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = vec![
-            GameAction::NerfTransactions(0),
-            GameAction::CleanShutdown(1),
+            SimScriptAction::NerfTransactions(0),
+            SimScriptAction::CleanShutdown(1),
         ];
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -3036,8 +3036,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_clean_shutdown_no_games_nerf_p1", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = vec![
-            GameAction::NerfTransactions(1),
-            GameAction::CleanShutdown(1),
+            SimScriptAction::NerfTransactions(1),
+            SimScriptAction::CleanShutdown(1),
         ];
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -3075,14 +3075,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
+            if let SimScriptAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
                     5,
-                    GameAction::FakeMove(player, game_id, readable, vec![0; 500]),
+                    SimScriptAction::FakeMove(player, game_id, readable, vec![0; 500]),
                 );
                 moves.remove(6);
             } else {
@@ -3090,7 +3090,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             }
             // After the remaining moves execute on-chain, let both players
             // process blocks so the game resolves via timeout.
-            moves.push(GameAction::WaitBlocks(120, 0));
+            moves.push(SimScriptAction::WaitBlocks(120, 0));
             // No explicit GoOnChain needed: the fake move error forces player 0
             // on chain, and player 1 detects the channel coin spend and follows.
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -3172,20 +3172,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let mut hand_moves = prefix_test_moves(&mut allocator, GameID(1));
         let final_move = hand_moves
             .pop()
             .expect("calpoker fixture should include a final move");
         moves.extend(hand_moves);
-        if let GameAction::Move(player, game_id, readable, _) = final_move {
-            moves.push(GameAction::BadSignatureMove(player, game_id, readable));
+        if let SimScriptAction::Move(player, game_id, readable, _) = final_move {
+            moves.push(SimScriptAction::BadSignatureMove(player, game_id, readable));
         } else {
             panic!("calpoker final fixture move should be a Move");
         }
-        moves.push(GameAction::WaitBlocks(120, 0));
+        moves.push(SimScriptAction::WaitBlocks(120, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .unwrap_or_else(|e| panic!("should finish bad-signature final move test, got: {e:?}"));
@@ -3214,10 +3214,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
-                GameAction::GoOnChain(1),
-                GameAction::WaitBlocks(20, 1),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::GoOnChain(1),
+                SimScriptAction::WaitBlocks(20, 1),
             ];
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -3273,12 +3273,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            moves.push(GameAction::GoOnChain(1));
-            moves.push(GameAction::WaitBlocks(20, 1));
+            moves.push(SimScriptAction::GoOnChain(1));
+            moves.push(SimScriptAction::WaitBlocks(20, 1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
 
@@ -3356,15 +3356,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let moves_len = moves.len();
             moves.remove(moves_len - 2);
             moves.remove(moves_len - 2);
-            moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::WaitBlocks(120, 1));
+            moves.push(SimScriptAction::GoOnChain(0));
+            moves.push(SimScriptAction::WaitBlocks(120, 1));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -3432,15 +3432,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Cheat(1) defers until Bob is on-chain and it's his turn,
         // then submits a move with invalid data that Alice detects.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.truncate(5);
-        moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::Cheat(1, GameID(1), Amount::default()));
+        moves.push(SimScriptAction::GoOnChain(0));
+        moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::default()));
         // Let both players process blocks so Alice detects & slashes.
-        moves.push(GameAction::WaitBlocks(30, 0));
+        moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -3506,11 +3506,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::GoOnChain(0),
-            GameAction::Cheat(0, GameID(1), Amount::default()),
-            GameAction::WaitBlocks(30, 0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::GoOnChain(0),
+            SimScriptAction::Cheat(0, GameID(1), Amount::default()),
+            SimScriptAction::WaitBlocks(30, 0),
         ];
 
         let outcome =
@@ -3958,12 +3958,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        moves.push(GameAction::NerfTransactions(0));
-        moves.push(GameAction::CleanShutdown(1));
+        moves.push(SimScriptAction::NerfTransactions(0));
+        moves.push(SimScriptAction::CleanShutdown(1));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4033,12 +4033,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        moves.push(GameAction::NerfTransactions(1));
-        moves.push(GameAction::CleanShutdown(1));
+        moves.push(SimScriptAction::NerfTransactions(1));
+        moves.push(SimScriptAction::CleanShutdown(1));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4108,8 +4108,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         // Nerf both so the clean shutdown tx is dropped for both sides.  Once
@@ -4121,24 +4121,24 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // a mempool conflict.  So keep both managers nerfed across the whole
         // channel-coin unroll race: the only spend of the channel coin that
         // reaches the chain is player 0's forced (stale) unroll below.
-        moves.push(GameAction::NerfTransactions(0));
-        moves.push(GameAction::NerfTransactions(1));
-        moves.push(GameAction::CleanShutdown(1));
+        moves.push(SimScriptAction::NerfTransactions(0));
+        moves.push(SimScriptAction::NerfTransactions(1));
+        moves.push(SimScriptAction::CleanShutdown(1));
         // Let messages and nerfed txs fully drain.
-        moves.push(GameAction::WaitBlocks(4, 0));
+        moves.push(SimScriptAction::WaitBlocks(4, 0));
         // Alice force-submits the unroll (simulating a malicious peer).  This
         // direct push bypasses the nerf, so it is the sole channel-coin spend.
-        moves.push(GameAction::ForceUnroll(0));
+        moves.push(SimScriptAction::ForceUnroll(0));
         // Let the forced unroll mine so the channel coin is spent.
-        moves.push(GameAction::WaitBlocks(3, 0));
+        moves.push(SimScriptAction::WaitBlocks(3, 0));
         // Un-nerf only player 0 to drive the resolution: the channel coin is now
         // spent, so player 0's channel-unroll rebroadcast is gated off (its input
         // is gone), but player 0 can still submit the unroll-timeout claim that
         // creates both players' reward coins.  Player 1 stays nerfed and only
         // observes the on-chain unroll, exercising opponent-unroll detection.
-        moves.push(GameAction::UnNerfTransactionsFor(0));
+        moves.push(SimScriptAction::UnNerfTransactionsFor(0));
         // Wait for the unroll timeout to elapse and reward coins to be created.
-        moves.push(GameAction::WaitBlocks(17, 0));
+        moves.push(SimScriptAction::WaitBlocks(17, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4174,41 +4174,41 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         // Nerf all transactions so no clean shutdown tx lands.
-        moves.push(GameAction::NerfTransactions(0));
-        moves.push(GameAction::NerfTransactions(1));
+        moves.push(SimScriptAction::NerfTransactions(0));
+        moves.push(SimScriptAction::NerfTransactions(1));
         // Nerf player 0's messages so CleanShutdownComplete never reaches
         // the initiator (player 1).  Player 1 is in the "started the
         // attempt but hasn't gotten the response" state.
-        moves.push(GameAction::NerfMessages(0));
-        moves.push(GameAction::CleanShutdown(1));
+        moves.push(SimScriptAction::NerfMessages(0));
+        moves.push(SimScriptAction::CleanShutdown(1));
         // Drain nerfed txs/msgs.  Bumped 3->4 to preserve the force-unroll
         // phase timing now that we no longer un-nerf transactions before the
         // force (removing that pre-force action shifts block counts by one).
-        moves.push(GameAction::WaitBlocks(4, 0));
+        moves.push(SimScriptAction::WaitBlocks(4, 0));
         // Un-nerf only messages so the clean-shutdown response can flow; keep
         // BOTH managers' transactions nerfed across the channel-coin unroll
         // race.  Otherwise the per-block rebroadcast resurrects player 0's own
         // "Create unroll" (it has no relative timelock and creates an output),
         // which lands first, spends the channel coin, and advances player 0 out
         // of the force-unrollable phase before ForceUnroll runs.
-        moves.push(GameAction::UnNerfMessages);
+        moves.push(SimScriptAction::UnNerfMessages);
         // Alice force-submits the unroll.  Both still nerfed, so this is the
         // sole channel-coin spend.
-        moves.push(GameAction::ForceUnroll(0));
+        moves.push(SimScriptAction::ForceUnroll(0));
         // Let the forced unroll mine so the channel coin is spent.
-        moves.push(GameAction::WaitBlocks(3, 0));
+        moves.push(SimScriptAction::WaitBlocks(3, 0));
         // Un-nerf only player 0 to drive resolution: the channel coin is now
         // spent, so player 0's channel-unroll rebroadcast is gated off (input
         // gone), but it can still submit the unroll-timeout claim that creates
         // both players' reward coins.  Player 1 stays nerfed and observes.
-        moves.push(GameAction::UnNerfTransactionsFor(0));
+        moves.push(SimScriptAction::UnNerfTransactionsFor(0));
         // Wait for the unroll timeout to elapse.
-        moves.push(GameAction::WaitBlocks(17, 0));
+        moves.push(SimScriptAction::WaitBlocks(17, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4248,31 +4248,31 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // hs.spend stays at pre-reveal (post-seed) state.  Alice's reveal
         // is cached for redo.  The unroll is NOT stale from Bob's view.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         moves.push(game_moves[0].clone()); // alice commit
         moves.push(game_moves[1].clone()); // bob seed
-        moves.push(GameAction::NerfMessages(0));
+        moves.push(SimScriptAction::NerfMessages(0));
         moves.push(game_moves[2].clone()); // alice reveal — potato dropped
 
         // Go on chain; hs.spend is pre-reveal.
-        moves.push(GameAction::GoOnChain(0));
+        moves.push(SimScriptAction::GoOnChain(0));
         // Wait for channel spend inclusion + unroll coin registration + the
         // unroll timeout to fire. At the end of this wait alice's manager
         // submits the unroll-timeout spend, creating the game coin (alice's
         // turn). Bob is never nerfed, so once that game coin reaches its
         // timeout age bob's manager submits the eager timeout claim that spends
         // it — which is what drives the confirmation-based notifications.
-        moves.push(GameAction::WaitBlocks(14, 0));
+        moves.push(SimScriptAction::WaitBlocks(14, 0));
         // Nerf alice from here on (applied before the block where the game coin
         // first appears) so her on-chain redo of the reveal is dropped and the
         // game coin stays at "alice's turn" until bob's timeout claim spends it.
-        moves.push(GameAction::NerfTransactions(0));
+        moves.push(SimScriptAction::NerfTransactions(0));
         // Wait long enough for the game coin timeout to fire and for bob's eager
         // claim to land and confirm.
-        moves.push(GameAction::WaitBlocks(110, 0));
+        moves.push(SimScriptAction::WaitBlocks(110, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4351,26 +4351,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // on-chain.  After the redo it's alice's turn (move 4).  Alice
             // is nerfed so she can't play and times out.
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             let game_moves = prefix_test_moves(&mut allocator, GameID(1));
             moves.push(game_moves[0].clone()); // alice commit
             moves.push(game_moves[1].clone()); // bob seed
             moves.push(game_moves[2].clone()); // alice reveal
-            moves.push(GameAction::NerfMessages(1));
+            moves.push(SimScriptAction::NerfMessages(1));
             moves.push(game_moves[3].clone()); // bob discard — potato dropped
-            moves.push(GameAction::GoOnChain(1));
+            moves.push(SimScriptAction::GoOnChain(1));
             // Nerf alice so she can't respond on-chain after bob's redo.
-            moves.push(GameAction::NerfTransactions(0));
+            moves.push(SimScriptAction::NerfTransactions(0));
             // Wait for unroll timeout + bob's redo.
-            moves.push(GameAction::WaitBlocks(4, 0));
+            moves.push(SimScriptAction::WaitBlocks(4, 0));
             // Wait for game coin timeout (alice can't move).
-            moves.push(GameAction::WaitBlocks(110, 0));
+            moves.push(SimScriptAction::WaitBlocks(110, 0));
             // Replay alice's nerfed backlog so her timeout tx lands (bob's reward
             // is zero so he skips the transaction).
-            moves.push(GameAction::UnNerfTransactions(true));
-            moves.push(GameAction::WaitBlocks(5, 0));
+            moves.push(SimScriptAction::UnNerfTransactions(true));
+            moves.push(SimScriptAction::WaitBlocks(5, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -4428,15 +4428,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // coin lands at bob's turn (to discard) and he never moves,
         // so his clock runs out.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.truncate(5);
-        moves.push(GameAction::GoOnChain(1));
+        moves.push(SimScriptAction::GoOnChain(1));
         // 120 blocks covers the unroll timeout (5) and
         // game coin timeout (10).
-        moves.push(GameAction::WaitBlocks(120, 0));
+        moves.push(SimScriptAction::WaitBlocks(120, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4512,15 +4512,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // 3 moves so that after the redo (alice's reveal) it's Bob's
         // turn, allowing Cheat(1) to fire.
-        let mut on_chain_moves: Vec<GameAction> = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+        let mut on_chain_moves: Vec<SimScriptAction> = vec![
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         on_chain_moves.extend(game_moves.into_iter().take(3));
-        on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::default()));
-        on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+        on_chain_moves.push(SimScriptAction::GoOnChain(0));
+        on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::default()));
+        on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
             .expect("should finish");
@@ -4598,16 +4598,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // 4 moves so that after the redo (bob's discard) it's Alice's
         // turn, allowing Cheat(0) to fire.  Wait for the unroll and redo
         // to complete before issuing the cheat.
-        let mut on_chain_moves: Vec<GameAction> = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+        let mut on_chain_moves: Vec<SimScriptAction> = vec![
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         on_chain_moves.extend(game_moves.into_iter().take(4));
-        on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::WaitBlocks(8, 0));
-        on_chain_moves.push(GameAction::Cheat(0, GameID(1), Amount::default()));
-        on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+        on_chain_moves.push(SimScriptAction::GoOnChain(0));
+        on_chain_moves.push(SimScriptAction::WaitBlocks(8, 0));
+        on_chain_moves.push(SimScriptAction::Cheat(0, GameID(1), Amount::default()));
+        on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
             .expect("should finish");
@@ -4690,14 +4690,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // lets us confirm the cheat mechanism actually uses our value
         // rather than a hardcoded default.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
-        on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::new(137)));
-        on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+        let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
+        on_chain_moves.push(SimScriptAction::GoOnChain(0));
+        on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::new(137)));
+        on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
             .expect("should finish");
@@ -4802,17 +4802,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // This proves the funny mover_share flows all the way through to
             // the on-chain resolution.
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
-            on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::new(137)));
-            on_chain_moves.push(GameAction::WaitBlocks(120, 0));
-            on_chain_moves.push(GameAction::UnNerfTransactions(false));
-            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
+            on_chain_moves.push(SimScriptAction::GoOnChain(0));
+            on_chain_moves.push(SimScriptAction::NerfTransactions(0));
+            on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::new(137)));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(120, 0));
+            on_chain_moves.push(SimScriptAction::UnNerfTransactions(false));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -4886,15 +4886,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // fires.  Go on-chain first so Accept goes through the on-chain
         // handler (off-chain Accept immediately finishes the game).
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.pop();
-        moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::AcceptSettlement(0, GameID(1)));
-        moves.push(GameAction::WaitBlocks(120, 1));
-        moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(SimScriptAction::GoOnChain(0));
+        moves.push(SimScriptAction::AcceptSettlement(0, GameID(1)));
+        moves.push(SimScriptAction::WaitBlocks(120, 1));
+        moves.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -4972,14 +4972,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // WeTimedOut through the on-chain timeout path, which finds the
         // game in pending_settlements.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        moves.push(GameAction::NerfMessages(1));
-        moves.push(GameAction::GoOnChain(1));
-        moves.push(GameAction::WaitBlocks(120, 0));
-        moves.push(GameAction::WaitBlocks(5, 1));
+        moves.push(SimScriptAction::NerfMessages(1));
+        moves.push(SimScriptAction::GoOnChain(1));
+        moves.push(SimScriptAction::WaitBlocks(120, 0));
+        moves.push(SimScriptAction::WaitBlocks(5, 1));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -5007,11 +5007,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let moves = [DebugGameTestMove::new(100, 0)];
         let mut sim_setup =
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
-        sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::AcceptSettlement(1, GameID(1)));
-        sim_setup.game_actions.push(GameAction::GoOnChain(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 0));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
+        sim_setup.game_actions.push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -5090,12 +5090,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         //  3. Alice detects the channel coin spend.  Game B is in
         //     pre_game_ids but not surviving_ids → EndedCancelled.
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::GoOnChain(1),
-            GameAction::WaitBlocks(120, 0),
-            GameAction::WaitBlocks(5, 0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::GoOnChain(1),
+            SimScriptAction::WaitBlocks(120, 0),
+            SimScriptAction::WaitBlocks(5, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -5157,10 +5157,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // EndedCancelled only happens when a game was accepted but never
         // committed (unroll reverts to before the game existed).
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::GoOnChain(1),
-            GameAction::WaitBlocks(20, 1),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::GoOnChain(1),
+            SimScriptAction::WaitBlocks(20, 1),
         ];
 
         let outcome =
@@ -5230,17 +5230,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // 3 moves so that after the redo (alice's reveal) it's Bob's
             // turn, allowing Cheat(1) to fire.
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
-            on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::default()));
-            on_chain_moves.push(GameAction::WaitBlocks(120, 0));
-            on_chain_moves.push(GameAction::UnNerfTransactions(false));
-            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
+            on_chain_moves.push(SimScriptAction::GoOnChain(0));
+            on_chain_moves.push(SimScriptAction::NerfTransactions(0));
+            on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::default()));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(120, 0));
+            on_chain_moves.push(SimScriptAction::UnNerfTransactions(false));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -5303,14 +5303,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // 3 moves so after redo it's Bob's turn; destroying the coin
             // from Alice's view gives a GameError or ChannelError.
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
-            on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(1)));
-            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
+            on_chain_moves.push(SimScriptAction::GoOnChain(0));
+            on_chain_moves.push(SimScriptAction::ForceDestroyCoin(0, GameID(1)));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -5366,11 +5366,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // dropped.  Un-nerf before WaitBlocks so she can sweep her
             // reward coin once the unroll completes.
             let moves = vec![
-                GameAction::WaitBlocks(5, 0),
-                GameAction::NerfTransactions(0),
-                GameAction::GoOnChain(1),
-                GameAction::UnNerfTransactions(false),
-                GameAction::WaitBlocks(120, 0),
+                SimScriptAction::WaitBlocks(5, 0),
+                SimScriptAction::NerfTransactions(0),
+                SimScriptAction::GoOnChain(1),
+                SimScriptAction::UnNerfTransactions(false),
+                SimScriptAction::WaitBlocks(120, 0),
             ];
 
             let outcome = run_game_container_with_action_list_with_success_predicate(
@@ -5420,11 +5420,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let identities: [ChiaIdentity; 2] = [id1, id2];
 
             let moves = vec![
-                GameAction::WaitBlocks(5, 0),
-                GameAction::NerfTransactions(1),
-                GameAction::GoOnChain(0),
-                GameAction::UnNerfTransactions(false),
-                GameAction::WaitBlocks(120, 0),
+                SimScriptAction::WaitBlocks(5, 0),
+                SimScriptAction::NerfTransactions(1),
+                SimScriptAction::GoOnChain(0),
+                SimScriptAction::UnNerfTransactions(false),
+                SimScriptAction::WaitBlocks(120, 0),
             ];
 
             let outcome = run_game_container_with_action_list_with_success_predicate(
@@ -5464,15 +5464,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
-        on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::WaitBlocks(5, 0));
-        on_chain_moves.push(GameAction::ForceDestroyCoin(1, GameID(1)));
-        on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+        let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(4).collect();
+        on_chain_moves.push(SimScriptAction::GoOnChain(0));
+        on_chain_moves.push(SimScriptAction::WaitBlocks(5, 0));
+        on_chain_moves.push(SimScriptAction::ForceDestroyCoin(1, GameID(1)));
+        on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
             .expect("should finish");
@@ -5543,15 +5543,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
-            on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
-            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(1)));
-            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(4).collect();
+            on_chain_moves.push(SimScriptAction::GoOnChain(0));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(5, 0));
+            on_chain_moves.push(SimScriptAction::ForceDestroyCoin(0, GameID(1)));
+            on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -5594,17 +5594,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
             // Let the handshake + empty potato exchanges settle.
-            GameAction::WaitBlocks(5, 0),
+            SimScriptAction::WaitBlocks(5, 0),
             // Corrupt player 1: pretend we're at state 0.
             // This wipes stored unroll/timeout so the real on-chain
             // state number will be "from the future" AND unmatchable.
-            GameAction::CorruptStateNumber(1, 0),
+            SimScriptAction::CorruptStateNumber(1, 0),
             // Player 0 goes on chain normally (real state number).
-            GameAction::GoOnChain(0),
-            GameAction::WaitBlocks(20, 0),
+            SimScriptAction::GoOnChain(0),
+            SimScriptAction::WaitBlocks(20, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -5686,19 +5686,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
             // Let the handshake + empty potato exchanges settle.
-            GameAction::WaitBlocks(5, 0),
+            SimScriptAction::WaitBlocks(5, 0),
             // Corrupt player 1: pretend we're at state 100.
             // The real on-chain state (~3) will look "old" from player 1's
             // perspective.  With stored unroll/timeout wiped, neither
             // preemption (no matching parity+sig) nor timeout (no stored
             // state) can succeed.
-            GameAction::CorruptStateNumber(1, 100),
+            SimScriptAction::CorruptStateNumber(1, 100),
             // Player 0 goes on chain normally.
-            GameAction::GoOnChain(0),
-            GameAction::WaitBlocks(20, 0),
+            SimScriptAction::GoOnChain(0),
+            SimScriptAction::WaitBlocks(20, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -5787,21 +5787,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // then it's Bob's turn for the seed.  Bob is nerfed so he
         // times out.  Alice's reveal never fires (game ends first).
         let mut all_moves_vec = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         all_moves_vec.extend(prefix_test_moves(&mut allocator, GameID(1)));
         let all_moves = all_moves_vec;
         let mut moves = Vec::new();
-        moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(SimScriptAction::WaitBlocks(5, 0));
         moves.push(all_moves[0].clone()); // propose game
         moves.push(all_moves[1].clone()); // accept proposal
-        moves.push(GameAction::NerfMessages(0));
+        moves.push(SimScriptAction::NerfMessages(0));
         moves.push(all_moves[2].clone()); // alice commit — potato dropped
-        moves.push(GameAction::GoOnChain(0));
+        moves.push(SimScriptAction::GoOnChain(0));
         moves.push(all_moves[4].clone()); // alice reveal — dispatched when it's her turn (never fires, bob times out)
-        moves.push(GameAction::NerfTransactions(1));
-        moves.push(GameAction::WaitBlocks(120, 0));
+        moves.push(SimScriptAction::NerfTransactions(1));
+        moves.push(SimScriptAction::WaitBlocks(120, 0));
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -5901,10 +5901,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Replaying Bob's coin reports must transition him to OffChainPhase and
         // process the queued proposal.
         let moves = vec![
-            GameAction::BlockCoinReports(1),
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::UnblockCoinReports(true),
-            GameAction::CleanShutdown(0),
+            SimScriptAction::BlockCoinReports(1),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::UnblockCoinReports(true),
+            SimScriptAction::CleanShutdown(0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -5940,9 +5940,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::ProposeNewGameWithTimeout(0, ProposeTrigger::Channel, 27),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::WaitBlocks(3, 0),
+            SimScriptAction::ProposeNewGameWithTimeout(0, ProposeTrigger::Channel, 27),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::WaitBlocks(3, 0),
         ];
         let move_count = moves.len();
 
@@ -5982,9 +5982,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Bob has the potato and cancels. After cancel, Alice has the
         // potato and initiates clean shutdown (no live games to block it).
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CancelProposal(1, GameID(1)),
-            GameAction::CleanShutdown(0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::CancelProposal(1, GameID(1)),
+            SimScriptAction::CleanShutdown(0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6025,10 +6025,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // proposal is still pending. Bob's local attempt should be rejected
         // (self-cancelled) and must not cancel Alice's proposal remotely.
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::ProposeNewGame(1, ProposeTrigger::Channel),
-            GameAction::CancelProposal(0, GameID(1)),
-            GameAction::CleanShutdown(0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
+            SimScriptAction::CancelProposal(0, GameID(1)),
+            SimScriptAction::CleanShutdown(0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6069,10 +6069,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // request. Bob's queued proposal reaches Alice first and supersedes
             // Alice's stale queued proposal.
             let moves = vec![
-                GameAction::ProposeNewGame(1, ProposeTrigger::Channel),
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::CancelProposal(0, GameID(0)),
-                GameAction::CleanShutdown(1),
+                SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::CancelProposal(0, GameID(0)),
+                SimScriptAction::CleanShutdown(1),
             ];
 
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6112,12 +6112,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // WaitBlocks gap lets Alice process Bob's accept before going
         // on-chain. Both sides should see ProposalMade + ProposalAccepted.
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::WaitBlocks(1, 2),
-            GameAction::GoOnChain(0),
-            GameAction::WaitBlocks(120, 0),
-            GameAction::WaitBlocks(5, 0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::WaitBlocks(1, 2),
+            SimScriptAction::GoOnChain(0),
+            SimScriptAction::WaitBlocks(120, 0),
+            SimScriptAction::WaitBlocks(5, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6160,8 +6160,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // Alice initiates clean shutdown. Pending proposals should be cancelled
             // and shutdown should complete cleanly.
             let moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::CleanShutdown(0),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::CleanShutdown(0),
             ];
 
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6205,8 +6205,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // initiates clean shutdown. The proposal should be cancelled
             // on both sides.
             let moves = vec![
-                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::CleanShutdown(1),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::CleanShutdown(1),
             ];
 
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6248,9 +6248,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // After proposal the potato is with Bob; CancelProposal(0)
         // queues the cancel and requests the potato back.
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CancelProposal(0, GameID(1)),
-            GameAction::CleanShutdown(0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::CancelProposal(0, GameID(1)),
+            SimScriptAction::CleanShutdown(0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6292,13 +6292,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // insufficient balance. Bob sees ProposalAccepted then
         // InsufficientBalance. Go on-chain to resolve game A.
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(3)),
-            GameAction::GoOnChain(0),
-            GameAction::WaitBlocks(120, 0),
-            GameAction::WaitBlocks(5, 0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(3)),
+            SimScriptAction::GoOnChain(0),
+            SimScriptAction::WaitBlocks(120, 0),
+            SimScriptAction::WaitBlocks(5, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6334,12 +6334,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // been processed by the time Alice gets the potato. The cancel
         // should be silently discarded. The game resolves on-chain.
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
-            GameAction::CancelProposal(0, GameID(1)),
-            GameAction::GoOnChain(0),
-            GameAction::WaitBlocks(120, 0),
-            GameAction::WaitBlocks(5, 0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::CancelProposal(0, GameID(1)),
+            SimScriptAction::GoOnChain(0),
+            SimScriptAction::WaitBlocks(120, 0),
+            SimScriptAction::WaitBlocks(5, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -6368,18 +6368,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut sim_setup =
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
-        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
+        sim_setup.game_actions.push(SimScriptAction::SaveUnrollSnapshot(1));
         // Proposal round-trip advances player 0's state_number past
         // the snapshot without changing the first game's referee PH.
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, GameID(3)));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Nerf both players to prevent preemption during channel coin
         // spend detection.  After un-nerfing, only the timeout path fires.
-        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
-        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
-        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(1));
+        sim_setup.game_actions.push(SimScriptAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(2, 2));
         // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
         // the stale resolution.  Keep player 0 nerfed: the channel coin is now
         // spent, but the per-block rebroadcast would otherwise resurrect player
@@ -6388,9 +6388,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // the stale state with player 0's current state -- making the live
         // second game present again and suppressing its GameError.  Player 0
         // stays nerfed and merely observes the stale resolution.
-        sim_setup.game_actions.push(GameAction::UnNerfTransactionsFor(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::UnNerfTransactionsFor(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6450,32 +6450,32 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Proposal sends potato from player 0 to player 1, updating player 1's
         // last_channel_coin_spend_info to reflect the state after both moves.
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
+        sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
         // NOW snapshot: player 1 just received the proposal potato, so their
         // cached spend info includes the correct game PH (after 2 moves).
-        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::SaveUnrollSnapshot(1));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, GameID(3)));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Third move with player 1's reply nerfed: player 0 sends the move,
         // player 1 receives but reply is dropped → cached_last_actions set.
-        sim_setup.game_actions.push(GameAction::NerfMessages(1));
+        sim_setup.game_actions.push(SimScriptAction::NerfMessages(1));
         sim_setup.game_actions.push(third_move);
-        sim_setup.game_actions.push(GameAction::UnNerfMessages);
+        sim_setup.game_actions.push(SimScriptAction::UnNerfMessages);
         // Nerf both to prevent preemption during channel coin spend detection.
-        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
-        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
-        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(1));
+        sim_setup.game_actions.push(SimScriptAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(2, 2));
         // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
         // the stale resolution; keep player 0 nerfed so the per-block
         // rebroadcast can't resurrect player 0's "preempt unroll" of the new
         // unroll coin (which has no relative timelock, would land before the
         // timeout matures, and would override the stale state -- suppressing the
         // expected GameError).  Player 0 only observes the stale resolution.
-        sim_setup.game_actions.push(GameAction::UnNerfTransactionsFor(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::UnNerfTransactionsFor(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6532,23 +6532,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let second_move = sim_setup.game_actions.pop().unwrap();
         sim_setup
             .game_actions
-            .push(GameAction::SaveUnrollSnapshot(1));
+            .push(SimScriptAction::SaveUnrollSnapshot(1));
         // Move 2 changes the game PH.
         sim_setup.game_actions.push(second_move);
         // Proposal round-trip advances state_number past the snapshot
         // so the stale detection triggers.
         sim_setup
             .game_actions
-            .push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
+            .push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup
             .game_actions
-            .push(GameAction::AcceptProposal(1, GameID(3)));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+            .push(SimScriptAction::AcceptProposal(1, GameID(3)));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Nerf both to prevent preemption during channel coin spend detection.
-        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
-        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
-        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(1));
+        sim_setup.game_actions.push(SimScriptAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(2, 2));
         // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
         // the stale resolution; keep player 0 nerfed so the per-block
         // rebroadcast can't resurrect player 0's "preempt unroll" of the new
@@ -6557,9 +6557,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // expected GameError).  Player 0 only observes the stale resolution.
         sim_setup
             .game_actions
-            .push(GameAction::UnNerfTransactionsFor(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+            .push(SimScriptAction::UnNerfTransactionsFor(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6621,36 +6621,36 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut sim_setup =
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
-        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
+        sim_setup.game_actions.push(SimScriptAction::SaveUnrollSnapshot(1));
         // Proposal round-trip advances player 0's state_number past
         // the snapshot so that the stale detection triggers.
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, GameID(3)));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Player 1 proposes a third game; player 0 will accept it.
         // No ID collision possible: role-namespaced nonces ensure each
         // player's game IDs use distinct parity (odd vs even).
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(1, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
+        sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
         // Nerf player 1's messages so the accept response never reaches
         // player 0 — the third game stays in cached_last_actions as ProposalAccepted.
-        sim_setup.game_actions.push(GameAction::NerfMessages(1));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(0, GameID(0)));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
-        sim_setup.game_actions.push(GameAction::UnNerfMessages);
-        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
-        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
-        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(SimScriptAction::NerfMessages(1));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(0, GameID(0)));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
+        sim_setup.game_actions.push(SimScriptAction::UnNerfMessages);
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
+        sim_setup.game_actions.push(SimScriptAction::NerfTransactions(1));
+        sim_setup.game_actions.push(SimScriptAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(2, 2));
         // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
         // the stale resolution; keep player 0 nerfed so the per-block
         // rebroadcast can't resurrect player 0's "preempt unroll" of the new
         // unroll coin (which has no relative timelock, would land before the
         // timeout matures, and would override the stale state -- suppressing the
         // expected GameError/EndedCancelled).  Player 0 only observes.
-        sim_setup.game_actions.push(GameAction::UnNerfTransactionsFor(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::UnNerfTransactionsFor(1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6723,13 +6723,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // the move.
         sim_setup
             .game_actions
-            .insert(0, GameAction::WaitBlocks(5, 0));
+            .insert(0, SimScriptAction::WaitBlocks(5, 0));
         sim_setup
             .game_actions
-            .insert(3, GameAction::NerfMessages(0));
-        sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+            .insert(3, SimScriptAction::NerfMessages(0));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6773,14 +6773,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // so she should get immediate WeTimedOut(0).
         let moves = [DebugGameTestMove::new(0, 0), DebugGameTestMove::new(0, 0)];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.push(GameAction::NerfMessages(0));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::NerfMessages(0));
         sim_setup
             .game_actions
-            .push(GameAction::AcceptSettlement(0, GameID(1)));
-        sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+            .push(SimScriptAction::AcceptSettlement(0, GameID(1)));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6824,9 +6824,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
         // Let the move be acknowledged (no nerf), then go on-chain.
-        sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6876,10 +6876,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Extract the third move and issue it after GoOnChain as a normal move.
         let on_chain_move = sim_setup.game_actions.pop().unwrap();
 
-        sim_setup.game_actions.push(GameAction::GoOnChain(0));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
         sim_setup.game_actions.push(on_chain_move);
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6917,17 +6917,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // The on-chain handler should detect mover_share == game_amount
         // at step e and skip the move instead of submitting it.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
 
         // Pop step e and issue it after GoOnChain, as a normal move.
         let step_e = moves.pop().unwrap();
-        moves.push(GameAction::GoOnChain(0));
+        moves.push(SimScriptAction::GoOnChain(0));
         moves.push(step_e);
-        moves.push(GameAction::WaitBlocks(120, 1));
-        moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(SimScriptAction::WaitBlocks(120, 1));
+        moves.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -6954,8 +6954,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // selects the low cards.  The parsed off-chain result has
         // bob_win_dir == -1, meaning Alice wins.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         moves.extend(calpoker_test_moves_with_selected_cards(
             &mut allocator,
@@ -6966,10 +6966,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Pop step e and issue it after GoOnChain, as a normal move.
         let step_e = moves.pop().unwrap();
-        moves.push(GameAction::GoOnChain(0));
+        moves.push(SimScriptAction::GoOnChain(0));
         moves.push(step_e);
-        moves.push(GameAction::WaitBlocks(120, 1));
-        moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(SimScriptAction::WaitBlocks(120, 1));
+        moves.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -7043,8 +7043,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // on chain and must receive both the final readable and a forfeit
         // terminal instead of being left waiting on a phantom turn.
         let mut moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let mut game_moves = calpoker_test_moves_with_selected_cards(
             &mut allocator,
@@ -7065,14 +7065,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Go on-chain before c.  The move triggers are event-driven, so c, d
         // and e are each submitted on-chain once the previous on-chain move
         // has been observed by the next mover.
-        moves.push(GameAction::GoOnChain(0));
+        moves.push(SimScriptAction::GoOnChain(0));
         moves.push(move_c);
         moves.push(move_d);
         moves.push(move_e);
         // Let Alice's terminal e confirm, Bob observe it, and Alice's
         // timeout claim land for the full pot.
-        moves.push(GameAction::WaitBlocks(120, 1));
-        moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(SimScriptAction::WaitBlocks(120, 1));
+        moves.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -7132,11 +7132,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
-        sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.push(GameAction::AcceptSettlement(0, GameID(1)));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(SimScriptAction::AcceptSettlement(0, GameID(1)));
+        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -7169,9 +7169,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::NerfTransactions(0),
-            GameAction::NerfTransactions(1),
-            GameAction::WaitBlocks(10, 0),
+            SimScriptAction::NerfTransactions(0),
+            SimScriptAction::NerfTransactions(1),
+            SimScriptAction::WaitBlocks(10, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -7205,7 +7205,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let moves = vec![GameAction::NerfTransactions(0)];
+            let moves = vec![SimScriptAction::NerfTransactions(0)];
 
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -7246,7 +7246,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let moves = vec![GameAction::NerfTransactions(1)];
+            let moves = vec![SimScriptAction::NerfTransactions(1)];
 
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -7292,9 +7292,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         .expect("should encode bad batch");
 
         let moves = vec![
-            GameAction::WaitBlocks(2, 0),
-            GameAction::InjectRawMessage(0, queued_bad_batch),
-            GameAction::WaitBlocks(20, 0),
+            SimScriptAction::WaitBlocks(2, 0),
+            SimScriptAction::InjectRawMessage(0, queued_bad_batch),
+            SimScriptAction::WaitBlocks(20, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -7320,9 +7320,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::WaitBlocks(5, 0),
-            GameAction::WrongParityProposal(0),
-            GameAction::WaitBlocks(20, 0),
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::WrongParityProposal(0),
+            SimScriptAction::WaitBlocks(20, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -7345,9 +7345,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let moves = vec![
-                GameAction::WaitBlocks(5, 0),
-                GameAction::InvalidProposalParameters(0),
-                GameAction::WaitBlocks(20, 0),
+                SimScriptAction::WaitBlocks(5, 0),
+                SimScriptAction::InvalidProposalParameters(0),
+                SimScriptAction::WaitBlocks(20, 0),
             ];
 
             let outcome = run_spacepoker_container_with_action_list_with_success_predicate(
@@ -7369,9 +7369,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::WaitBlocks(5, 0),
-            GameAction::InvalidProposalTimeout(0),
-            GameAction::WaitBlocks(20, 0),
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::InvalidProposalTimeout(0),
+            SimScriptAction::WaitBlocks(20, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -7392,10 +7392,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::WaitBlocks(3, 0),
-            GameAction::SelfAcceptProposal(0, GameID(1)),
-            GameAction::WaitBlocks(20, 0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::WaitBlocks(3, 0),
+            SimScriptAction::SelfAcceptProposal(0, GameID(1)),
+            SimScriptAction::WaitBlocks(20, 0),
         ];
 
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(

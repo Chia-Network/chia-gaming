@@ -8,10 +8,10 @@ workflow guidance stays in `DEBUGGING_GUIDE.md`.
 
 | File | Role |
 |------|------|
-| `src/test_support/game.rs` | `GameAction`, `ProposeTrigger`, `ChannelHandlerGame`, and default test constants |
-| `src/simulator/tests/potato_handler_sim.rs` | Simulation loop, test runner helpers, and most integration scenarios |
-| `src/test_support/calpoker.rs` | Calpoker test helpers such as `prefix_test_moves` |
-| `src/test_support/spacepoker.rs` | Space Poker test helpers |
+| `src/test_support/sim_script.rs` | `SimScriptAction`, `ProposeTrigger`, `ChannelHandlerGame`, and default test constants |
+| `src/simulator/tests/session_phases_sim.rs` | Simulation loop, test runner helpers, and most integration scenarios |
+| `src/test_support/calpoker_sim.rs` | Calpoker test helpers such as `prefix_test_moves` |
+| `src/test_support/spacepoker_sim.rs` | Space Poker test helpers |
 | `src/test_support/debug_game.rs` | Debug game setup helpers for focused channel/on-chain tests |
 
 ## Debug Game
@@ -28,7 +28,7 @@ the new mover after Alice's move, receives on timeout; Alice receives
 
 ## Explicit Game IDs
 
-`GameAction` variants reference games by explicit `GameID` values, not ordinal
+`SimScriptAction` variants reference games by explicit `GameID` values, not ordinal
 positions in a test script. `GameID` values are deterministic nonces assigned
 when proposing a game; each player's nonce counter increments independently.
 
@@ -50,9 +50,9 @@ Typical examples:
 | `Channel` | The proposing player has observed channel creation. |
 | `AfterGame(game_id)` | The given game ID has a terminal notification in either player's finished-game set. |
 
-## GameAction Reference
+## SimScriptAction Reference
 
-The full `sim-tests` enum lives in `src/test_support/game.rs`.
+The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 
 | Action | Effect |
 |--------|--------|
@@ -189,7 +189,7 @@ The sim loop handles this in two phases:
 
 ## Writing a Test
 
-1. Build a `Vec<GameAction>` using explicit `GameID` values for variants that
+1. Build a `Vec<SimScriptAction>` using explicit `GameID` values for variants that
    require them.
 2. Explicitly `ProposeNewGame` and `AcceptProposal` to start a game; the sim
    loop does not auto-propose or auto-accept.

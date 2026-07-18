@@ -579,20 +579,20 @@ The debug game (`b"debug"`) is a minimal game used for tests that need precise
 control over `mover_share`. It is registered in the Rust game table for test
 infrastructure only, not as a user-facing game. Its core handler/curry wiring
 lives in `src/test_support/debug_game.rs`, while `DebugGameTestMove::new(mover_share, slash)`
-is defined in `src/simulator/tests/potato_handler_sim.rs`.
+is defined in `src/simulator/tests/session_phases_sim.rs`.
 
 ### Simulation Test Actions
 
 Tests drive the simulation loop with a sequence of `GameAction` values defined
-in `src/test_support/game.rs`. The current action catalog, trigger semantics,
+in `src/test_support/sim_script.rs`. The current action catalog, trigger semantics,
 two-phase `AcceptProposal` behavior, and stall-detection notes live in
 `SIMULATOR_TESTING.md`.
 
 **Key code:**
 
 - `src/test_support/debug_game.rs` — `DebugGameHandler` and debug game registration
-- `src/simulator/tests/potato_handler_sim.rs` — `DebugGameTestMove` and integration scenarios
-- `src/test_support/game.rs` — `GameAction` enum (sim-tests variant)
+- `src/simulator/tests/session_phases_sim.rs` — `DebugGameTestMove` and integration scenarios
+- `src/test_support/sim_script.rs` — `GameAction` enum (sim-tests variant)
 - `SIMULATOR_TESTING.md` — simulator testing reference
 
 ---

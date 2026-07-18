@@ -1,2 +1,2 @@
 #[cfg(test)]
-pub mod session_phases;
+pub mod peer_harness;
