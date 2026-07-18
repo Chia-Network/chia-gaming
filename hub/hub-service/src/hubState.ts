@@ -4,7 +4,7 @@ import {
   Player,
   PlayerStatus,
   Challenge,
-} from './types/lobby';
+} from './types/hub';
 
 function randomHex(): string {
   return crypto.randomBytes(16).toString('hex');
@@ -14,7 +14,7 @@ function listOfObject<T>(object: Record<string, T>): T[] {
   return Object.keys(object).map((k) => object[k]);
 }
 
-export class Lobby {
+export class Hub {
   players: Record<string, Player> = {};
   challenges: Map<string, Challenge> = new Map();
 

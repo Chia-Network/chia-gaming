@@ -2,7 +2,7 @@ import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
 
-export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
+export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
 export type PeerLiveness = 'connected' | 'degraded' | 'dead' | null;
 

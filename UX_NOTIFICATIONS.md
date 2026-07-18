@@ -1,7 +1,7 @@
 # UX Notifications
 
 For the conceptual overview, see `OVERVIEW.md`. For the frontend component
-hierarchy, notification routing, tracker relay protocol, session persistence,
+hierarchy, notification routing, hub relay protocol, session persistence,
 peer message reliability, and reconnect reconciliation, see
 `FRONTEND_ARCHITECTURE.md`. For the authoritative settlement outcome glossary
 (off-chain accept + on-chain #1–#11), see
@@ -85,7 +85,7 @@ Flow:
 Each event is dispatched exactly once by `dispatchEvent()`, in a separate
 macrotask. Event types and their handlers:
 
-- `OutboundMessage` — send to peer via tracker
+- `OutboundMessage` — send to peer via hub
 - `Notification` — surface game/channel state to the UI
 - `ReceiveError` — peer message decode failure
 - `CoinSolutionRequest` — fetch puzzle/solution from blockchain

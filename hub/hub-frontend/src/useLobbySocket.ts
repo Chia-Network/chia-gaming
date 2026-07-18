@@ -240,7 +240,7 @@ export function useLobbySocket(
             setAliasLoaded(true);
             break;
           case 'error':
-            if (msg.error) console.warn('[lobby] tracker error:', msg.error);
+            if (msg.error) console.warn('[lobby] hub error:', msg.error);
             break;
           case 'keepalive':
             break;

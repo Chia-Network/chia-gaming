@@ -115,13 +115,13 @@ const originalWebSocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 
 // ---------------------------------------------------------------------------
 
 import {
-  TrackerConnection,
-  TrackerConnectionCallbacks,
-} from '../../services/TrackerConnection';
+  HubConnection,
+  HubConnectionCallbacks,
+} from '../../services/HubConnection';
 
-let trackerDisconnectCount = 0;
-let expectedTrackerDisconnects = 0;
-const activeConnections = new Set<TrackerConnection>();
+let hubDisconnectCount = 0;
+let expectedHubDisconnects = 0;
+const activeConnections = new Set<HubConnection>();
 
 beforeAll(() => {
   Object.defineProperty(globalThis, 'WebSocket', {
@@ -139,7 +139,7 @@ afterAll(() => {
   }
 });
 
-function makeCallbacks(presence?: { busy: boolean; alias?: string }): TrackerConnectionCallbacks & Record<string, jest.Mock> {
+function makeCallbacks(presence?: { busy: boolean; alias?: string }): HubConnectionCallbacks & Record<string, jest.Mock> {
   return {
     onAdvisoryStart: jest.fn(),
     onPeerMessage: jest.fn(),
@@ -147,32 +147,32 @@ function makeCallbacks(presence?: { busy: boolean; alias?: string }): TrackerCon
     onDeliveryFailure: jest.fn(),
     onRegistered: jest.fn(),
     onLobbyAttention: jest.fn(),
-    onTrackerDisconnected: jest.fn(() => { trackerDisconnectCount++; }),
-    onTrackerReconnected: jest.fn(),
-    onTrackerActivity: jest.fn(),
+    onHubDisconnected: jest.fn(() => { hubDisconnectCount++; }),
+    onHubReconnected: jest.fn(),
+    onHubActivity: jest.fn(),
     getPresence: jest.fn(() => presence ?? { busy: false }),
     onClosed: jest.fn(),
   };
 }
 
 function makeConnection(
-  trackerUrl: string,
+  hubUrl: string,
   sessionId: string,
-  callbacks: TrackerConnectionCallbacks,
-): TrackerConnection {
-  const conn = new TrackerConnection(trackerUrl, sessionId, callbacks);
+  callbacks: HubConnectionCallbacks,
+): HubConnection {
+  const conn = new HubConnection(hubUrl, sessionId, callbacks);
   activeConnections.add(conn);
   return conn;
 }
 
 beforeEach(() => {
-  trackerDisconnectCount = 0;
-  expectedTrackerDisconnects = 0;
+  hubDisconnectCount = 0;
+  expectedHubDisconnects = 0;
   MockWebSocket.instance = null;
 });
 
 afterEach(() => {
-  expect(trackerDisconnectCount).toBe(expectedTrackerDisconnects);
+  expect(hubDisconnectCount).toBe(expectedHubDisconnects);
   for (const conn of activeConnections) {
     conn.forceDisconnect();
   }
@@ -258,25 +258,25 @@ describe('event routing', () => {
     expect(cb.onDeliveryFailure).toHaveBeenCalledWith('p_target');
   });
 
-  it('fires onTrackerDisconnected on ws error', async () => {
-    expectedTrackerDisconnects = 1;
+  it('fires onHubDisconnected on ws error', async () => {
+    expectedHubDisconnects = 1;
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     MockWebSocket.instance!._fireError();
-    expect(cb.onTrackerDisconnected).toHaveBeenCalled();
+    expect(cb.onHubDisconnected).toHaveBeenCalled();
   });
 
-  it('fires onTrackerReconnected on ws reopen after error', async () => {
-    expectedTrackerDisconnects = 1;
+  it('fires onHubReconnected on ws reopen after error', async () => {
+    expectedHubDisconnects = 1;
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
     MockWebSocket.instance!._fireError();
     MockWebSocket.instance!.onopen?.({ type: 'open' });
-    expect(cb.onTrackerReconnected).toHaveBeenCalled();
+    expect(cb.onHubReconnected).toHaveBeenCalled();
   });
 });
 
@@ -423,7 +423,7 @@ describe('setBusy', () => {
     (cb.getPresence as jest.Mock).mockReturnValue({ busy: true });
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
-    expectedTrackerDisconnects = 1;
+    expectedHubDisconnects = 1;
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
@@ -445,7 +445,7 @@ describe('setBusy', () => {
     (cb.getPresence as jest.Mock).mockReturnValue({ busy: true, alias: 'Alice' });
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
-    expectedTrackerDisconnects = 1;
+    expectedHubDisconnects = 1;
 
     const ws1 = MockWebSocket.instance!;
     ws1._fireClose();
@@ -466,6 +466,6 @@ describe('setBusy', () => {
 
 describe('retry budget', () => {
   it('MAX_RECONNECT_ATTEMPTS is a positive number', () => {
-    expect(TrackerConnection.MAX_RECONNECT_ATTEMPTS).toBeGreaterThan(0);
+    expect(HubConnection.MAX_RECONNECT_ATTEMPTS).toBeGreaterThan(0);
   });
 });

@@ -17,7 +17,7 @@ export interface AdvisoryStartParams {
   unroll_timeout?: string;
 }
 
-export interface TrackerConnectionCallbacks {
+export interface HubConnectionCallbacks {
   onAdvisoryStart: (params: AdvisoryStartParams) => void;
   onPeerMessage: (from_id: string, from_alias: string, payload: Uint8Array) => void;
   onPeerAppMessage: (from_id: string, from_alias: string, data: PeerAppMessage) => void;
@@ -25,13 +25,13 @@ export interface TrackerConnectionCallbacks {
   onRegistered: (player_id: string) => void;
   onClosed: () => void;
   onLobbyAttention: () => void;
-  onTrackerDisconnected: () => void;
-  onTrackerReconnected: () => void;
-  onTrackerActivity: () => void;
+  onHubDisconnected: () => void;
+  onHubReconnected: () => void;
+  onHubActivity: () => void;
   getPresence: () => { busy: boolean; alias?: string };
 }
 
-type TrackerEnvelope =
+type HubEnvelope =
   | { type: 'advisory_start'; peer_id: string; peer_alias: string; my_amount: string; their_amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'registered'; player_id: string }
   | { type: 'delivery_failure'; to: string }
@@ -63,7 +63,7 @@ function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string 
   return value;
 }
 
-function decodeTrackerEnvelope(input: ArrayBuffer): TrackerEnvelope | null {
+function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
   const decoded = decodeBencodex(input);
   if (!isDictionary(decoded)) return null;
   const type = getText(decoded, 'type');
@@ -117,10 +117,10 @@ function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
   }
 }
 
-export class TrackerConnection {
-  private trackerUrl: string;
+export class HubConnection {
+  private hubUrl: string;
   private sessionId: string;
-  private callbacks: TrackerConnectionCallbacks;
+  private callbacks: HubConnectionCallbacks;
   private ws: WebSocket | null = null;
   private closed = false;
   private wasDisconnected = false;
@@ -138,8 +138,8 @@ export class TrackerConnection {
   private myPlayerId: string | null = null;
   private alias: string | undefined;
 
-  constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
-    this.trackerUrl = trackerUrl;
+  constructor(hubUrl: string, sessionId: string, callbacks: HubConnectionCallbacks) {
+    this.hubUrl = hubUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
     const presence = callbacks.getPresence();
@@ -149,7 +149,7 @@ export class TrackerConnection {
   }
 
   private getWsUrl(): string {
-    const url = new URL(this.trackerUrl);
+    const url = new URL(this.hubUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.pathname = '/ws/game';
     url.search = '';
@@ -179,17 +179,17 @@ export class TrackerConnection {
       wsUrl = this.getWsUrl();
     } catch {
       this.closed = true;
-      const msg = `Invalid tracker URL: ${this.trackerUrl}`;
-      log(`[tracker] ${msg}`);
+      const msg = `Invalid hub URL: ${this.hubUrl}`;
+      log(`[hub] ${msg}`);
       throw new Error(msg);
     }
     const ws = new WebSocket(wsUrl);
 
     const connectTimeout = globalThis.setTimeout(() => {
       if (this.ws === ws || this.closed) return;
-      log('[tracker] connection timeout, closing attempt');
+      log('[hub] connection timeout, closing attempt');
       try { ws.close(); } catch { /* ignore */ }
-    }, TrackerConnection.CONNECT_TIMEOUT_MS);
+    }, HubConnection.CONNECT_TIMEOUT_MS);
     if (typeof connectTimeout === 'object' && 'unref' in connectTimeout) connectTimeout.unref();
 
     ws.onopen = () => {
@@ -204,8 +204,8 @@ export class TrackerConnection {
         this.sendCloseRequest();
       }
       if (this.wasDisconnected) {
-        log('[tracker] reconnected to tracker');
-        this.callbacks.onTrackerReconnected();
+        log('[hub] reconnected to hub');
+        this.callbacks.onHubReconnected();
       }
       this.wasDisconnected = false;
       if (this.reconnectTimer !== null) {
@@ -219,20 +219,20 @@ export class TrackerConnection {
 
     ws.onmessage = (evt: MessageEvent) => {
       if (this.ws !== ws) return;
-      this.callbacks.onTrackerActivity();
+      this.callbacks.onHubActivity();
 
       if (evt.data instanceof ArrayBuffer) {
         if (this.closed) return;
         const bytes = new Uint8Array(evt.data);
         if (bytes[0] === 0x64) {
-          this.dispatchTrackerEnvelope(evt.data);
+          this.dispatchHubEnvelope(evt.data);
         } else {
           this.dispatchBinaryFrame(evt.data);
         }
         return;
       }
 
-      log('[tracker] recv unexpected text ws frame');
+      log('[hub] recv unexpected text ws frame');
     };
 
     ws.onerror = () => {
@@ -240,8 +240,8 @@ export class TrackerConnection {
       this.stopKeepaliveTimer();
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
-        log('[tracker] WS connection error, will auto-reconnect');
-        this.callbacks.onTrackerDisconnected();
+        log('[hub] WS connection error, will auto-reconnect');
+        this.callbacks.onHubDisconnected();
       }
     };
 
@@ -251,20 +251,20 @@ export class TrackerConnection {
       if (this.closed) return;
       if (!this.wasDisconnected) {
         this.wasDisconnected = true;
-        this.callbacks.onTrackerDisconnected();
+        this.callbacks.onHubDisconnected();
       }
       if (this.ws === ws) {
         this.ws = null;
       }
       if (this.reconnectTimer === null) {
-        if (this.reconnectAttempt >= TrackerConnection.MAX_RECONNECT_ATTEMPTS) {
-          log('[tracker] reconnect budget exhausted, declaring connection dead');
+        if (this.reconnectAttempt >= HubConnection.MAX_RECONNECT_ATTEMPTS) {
+          log('[hub] reconnect budget exhausted, declaring connection dead');
           this.closed = true;
           this.callbacks.onClosed();
           return;
         }
-        const base = TrackerConnection.RECONNECT_DELAYS[
-          Math.min(this.reconnectAttempt, TrackerConnection.RECONNECT_DELAYS.length - 1)
+        const base = HubConnection.RECONNECT_DELAYS[
+          Math.min(this.reconnectAttempt, HubConnection.RECONNECT_DELAYS.length - 1)
         ];
         const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
         this.reconnectAttempt++;
@@ -277,16 +277,16 @@ export class TrackerConnection {
     };
   }
 
-  private dispatchTrackerEnvelope(buf: ArrayBuffer): void {
-    let msg: TrackerEnvelope | null = null;
+  private dispatchHubEnvelope(buf: ArrayBuffer): void {
+    let msg: HubEnvelope | null = null;
     try {
-      msg = decodeTrackerEnvelope(buf);
+      msg = decodeHubEnvelope(buf);
     } catch {
-      log('[tracker] recv malformed bencodex envelope');
+      log('[hub] recv malformed bencodex envelope');
       return;
     }
     if (!msg || typeof msg !== 'object' || !('type' in msg)) {
-      log('[tracker] recv malformed ws envelope');
+      log('[hub] recv malformed ws envelope');
       return;
     }
 
@@ -300,17 +300,17 @@ export class TrackerConnection {
           channel_timeout: msg.channel_timeout,
           unroll_timeout: msg.unroll_timeout,
         };
-        log(`[tracker] advisory_start peer=${params.peer_id} alias=${params.peer_alias} my_amount=${params.my_amount} their_amount=${params.their_amount}`);
+        log(`[hub] advisory_start peer=${params.peer_id} alias=${params.peer_alias} my_amount=${params.my_amount} their_amount=${params.their_amount}`);
         this.callbacks.onAdvisoryStart(params);
         break;
       }
       case 'registered':
         this.myPlayerId = msg.player_id;
-        log(`[tracker] registered as player_id=${msg.player_id}`);
+        log(`[hub] registered as player_id=${msg.player_id}`);
         this.callbacks.onRegistered(msg.player_id);
         break;
       case 'delivery_failure':
-        log(`[tracker] delivery_failure to=${msg.to}`);
+        log(`[hub] delivery_failure to=${msg.to}`);
         this.callbacks.onDeliveryFailure(msg.to);
         break;
       case 'lobby_attention':
@@ -323,7 +323,7 @@ export class TrackerConnection {
       case 'keepalive':
         break;
       case 'error':
-        log(`[tracker] server error: ${msg.error ?? 'unknown'}`);
+        log(`[hub] server error: ${msg.error ?? 'unknown'}`);
         break;
       default:
         break;
@@ -331,7 +331,7 @@ export class TrackerConnection {
   }
 
   /**
-   * Send a binary payload to a specific peer through the tracker pipe.
+   * Send a binary payload to a specific peer through the hub pipe.
    * Wire format: [4-byte target_id_len BE][target_id UTF-8][payload]
    */
   sendToPeer(targetId: string, payload: Uint8Array): void {
@@ -344,11 +344,11 @@ export class TrackerConnection {
     frame.set(targetBuf, 4);
     frame.set(payload, 4 + targetBuf.byteLength);
     ws.send(frame);
-    log(`[tracker] send to=${targetId} len=${payload.byteLength}`);
+    log(`[hub] send to=${targetId} len=${payload.byteLength}`);
   }
 
   /**
-   * Send a bencodex app message to a specific peer through the tracker pipe.
+   * Send a bencodex app message to a specific peer through the hub pipe.
    */
   sendPeerAppMessage(targetId: string, data: PeerAppMessage): void {
     const payload = encodeBencodex(definedBencodexFields(data as Record<string, BencodexValue | undefined>));
@@ -362,7 +362,7 @@ export class TrackerConnection {
   forceDisconnect() {
     if (this.closed) return;
     this.closed = true;
-    log('[tracker] force disconnect');
+    log('[hub] force disconnect');
     this.stopKeepaliveTimer();
     this.ws?.close();
     this.ws = null;
@@ -383,7 +383,7 @@ export class TrackerConnection {
       return;
     }
     this.closePending = true;
-    log('[tracker] requesting close');
+    log('[hub] requesting close');
     this.sendCloseRequest();
   }
 
@@ -405,13 +405,13 @@ export class TrackerConnection {
   private dispatchBinaryFrame(buf: ArrayBuffer): void {
     // Inbound binary: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
     if (buf.byteLength < 4) {
-      log('[tracker] recv binary frame too short');
+      log('[hub] recv binary frame too short');
       return;
     }
     const view = new DataView(buf);
     const fromIdLen = view.getUint32(0, false);
     if (buf.byteLength < 4 + fromIdLen + 4) {
-      log('[tracker] recv binary frame header incomplete');
+      log('[hub] recv binary frame header incomplete');
       return;
     }
     const fromIdBytes = new Uint8Array(buf, 4, fromIdLen);
@@ -420,7 +420,7 @@ export class TrackerConnection {
     const fromAliasLen = view.getUint32(aliasOffset, false);
     const payloadStart = aliasOffset + 4 + fromAliasLen;
     if (buf.byteLength < payloadStart) {
-      log('[tracker] recv binary frame alias header incomplete');
+      log('[hub] recv binary frame alias header incomplete');
       return;
     }
     const fromAliasBytes = new Uint8Array(buf, aliasOffset + 4, fromAliasLen);
@@ -439,7 +439,7 @@ export class TrackerConnection {
       }
     }
 
-    log(`[tracker] recv from=${fromId} len=${payload.byteLength}`);
+    log(`[hub] recv from=${fromId} len=${payload.byteLength}`);
     this.callbacks.onPeerMessage(fromId, fromAlias, payload);
   }
 

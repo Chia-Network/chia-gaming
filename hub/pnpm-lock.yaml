@@ -6,7 +6,7 @@ settings:
 
 importers:
 
-  lobby-frontend:
+  hub-frontend:
     dependencies:
       '@radix-ui/react-slot':
         specifier: 1.2.4
@@ -46,7 +46,7 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
-  lobby-service:
+  hub-service:
     dependencies:
       chia-gaming-bencodex:
         specifier: file:../../shared/bencodex

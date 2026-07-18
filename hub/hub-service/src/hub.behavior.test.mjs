@@ -23,9 +23,9 @@ async function getFreePort() {
   });
 }
 
-async function startTracker() {
+async function startHub() {
   const port = await getFreePort();
-  const dir = mkdtempSync(path.join(tmpdir(), 'tracker-behavior-'));
+  const dir = mkdtempSync(path.join(tmpdir(), 'hub-behavior-'));
   const child = spawn(
     process.execPath,
     ['dist/index-rollup.cjs', '--self', `http://127.0.0.1:${port}`, '--dir', dir],
@@ -38,7 +38,7 @@ async function startTracker() {
   let output = '';
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`tracker did not start:\n${output}`));
+      reject(new Error(`hub did not start:\n${output}`));
     }, 5_000);
     const onData = (chunk) => {
       output += chunk.toString();
@@ -51,7 +51,7 @@ async function startTracker() {
     child.stderr.on('data', onData);
     child.once('exit', (code) => {
       clearTimeout(timer);
-      reject(new Error(`tracker exited with ${code}:\n${output}`));
+      reject(new Error(`hub exited with ${code}:\n${output}`));
     });
   });
   return {
@@ -167,12 +167,12 @@ async function identifyGameRegistered(origin, sessionId) {
 }
 
 test('game-channel identify does not clobber a lobby-chosen alias', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
     const sessionId = 'secret-alias-clobber';
-    const { lobby } = await joinLobby(tracker.origin, sessionId, 'Alice');
+    const { lobby } = await joinLobby(hub.origin, sessionId, 'Alice');
 
-    const game = await openWs(tracker.origin, '/ws/game');
+    const game = await openWs(hub.origin, '/ws/game');
     sendGame(game, {
       type: 'identify',
       session_id: sessionId,
@@ -188,7 +188,7 @@ test('game-channel identify does not clobber a lobby-chosen alias', async () => 
       alias: 'Player_deadbeef',
     });
 
-    const aliasProbe = await openWs(tracker.origin, '/ws/lobby');
+    const aliasProbe = await openWs(hub.origin, '/ws/lobby');
     sendJson(aliasProbe, { type: 'get_alias', session_id: sessionId });
     const aliasResult = await nextJson(aliasProbe, (msg) => msg.type === 'alias_result');
     assert.equal(aliasResult.alias, 'Alice');
@@ -197,62 +197,62 @@ test('game-channel identify does not clobber a lobby-chosen alias', async () => 
     await closeWs(game);
     await closeWs(aliasProbe);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('public lobby updates never include the secret nonce', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
     const secret = 'secret-nonce-public-update-test';
-    const { lobby, id } = await joinLobby(tracker.origin, secret, 'Alice');
+    const { lobby, id } = await joinLobby(hub.origin, secret, 'Alice');
     const update = await nextJson(lobby, (msg) => msg.type === 'lobby_update');
     assert.equal(JSON.stringify(update).includes(secret), false);
     assert.equal(update.players.some((player) => player.id === id), true);
     assert.equal(update.players.some((player) => 'session_id' in player), false);
     await closeWs(lobby);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('a different nonce cannot claim another public lobby id', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
-    const alice = await joinLobby(tracker.origin, 'secret-alice', 'Alice');
-    const bob = await joinLobby(tracker.origin, 'secret-bob', 'Bob', { id: alice.id });
+    const alice = await joinLobby(hub.origin, 'secret-alice', 'Alice');
+    const bob = await joinLobby(hub.origin, 'secret-bob', 'Bob', { id: alice.id });
     assert.notEqual(bob.id, alice.id);
     assert.equal(alice.lobby.readyState, WebSocket.OPEN);
     await closeWs(alice.lobby);
     await closeWs(bob.lobby);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('the same nonce reconnect intentionally replaces the old lobby socket', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
-    const first = await joinLobby(tracker.origin, 'secret-reconnect', 'Alice');
+    const first = await joinLobby(hub.origin, 'secret-reconnect', 'Alice');
     const closed = new Promise((resolve) => first.lobby.once('close', (code) => resolve(code)));
-    const second = await joinLobby(tracker.origin, 'secret-reconnect', 'Alice Reloaded');
+    const second = await joinLobby(hub.origin, 'secret-reconnect', 'Alice Reloaded');
     assert.equal(second.id, first.id);
     assert.equal(await closed, 4001);
     await closeWs(second.lobby);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('challenge authority and availability come from bound sessions', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
-    const alice = await joinLobby(tracker.origin, 'secret-alice-match', 'Alice');
-    const bob = await joinLobby(tracker.origin, 'secret-bob-match', 'Bob');
-    const carol = await joinLobby(tracker.origin, 'secret-carol-match', 'Carol');
-    const aliceGame = await identifyGame(tracker.origin, 'secret-alice-match');
-    const bobGame = await identifyGame(tracker.origin, 'secret-bob-match');
-    const carolGame = await identifyGame(tracker.origin, 'secret-carol-match');
+    const alice = await joinLobby(hub.origin, 'secret-alice-match', 'Alice');
+    const bob = await joinLobby(hub.origin, 'secret-bob-match', 'Bob');
+    const carol = await joinLobby(hub.origin, 'secret-carol-match', 'Carol');
+    const aliceGame = await identifyGame(hub.origin, 'secret-alice-match');
+    const bobGame = await identifyGame(hub.origin, 'secret-bob-match');
+    const carolGame = await identifyGame(hub.origin, 'secret-carol-match');
 
     sendJson(alice.lobby, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
     const challenge = await nextJson(bob.lobby, (msg) => msg.type === 'challenge_received');
@@ -297,17 +297,17 @@ test('challenge authority and availability come from bound sessions', async () =
     await closeWs(bobGame);
     await closeWs(carolGame);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('asymmetric buy-in amounts are perspective-corrected in advisory_start', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
-    const alice = await joinLobby(tracker.origin, 'secret-alice-asym', 'Alice');
-    const bob = await joinLobby(tracker.origin, 'secret-bob-asym', 'Bob');
-    const aliceGame = await identifyGame(tracker.origin, 'secret-alice-asym');
-    const bobGame = await identifyGame(tracker.origin, 'secret-bob-asym');
+    const alice = await joinLobby(hub.origin, 'secret-alice-asym', 'Alice');
+    const bob = await joinLobby(hub.origin, 'secret-bob-asym', 'Bob');
+    const aliceGame = await identifyGame(hub.origin, 'secret-alice-asym');
+    const bobGame = await identifyGame(hub.origin, 'secret-bob-asym');
 
     // Alice challenges Bob with asymmetric amounts
     sendJson(alice.lobby, {
@@ -333,17 +333,17 @@ test('asymmetric buy-in amounts are perspective-corrected in advisory_start', as
     await closeWs(aliceGame);
     await closeWs(bobGame);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('challenges with out-of-range timeouts are rejected by the server', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
-    const alice = await joinLobby(tracker.origin, 'secret-alice-timeout', 'Alice');
-    const bob = await joinLobby(tracker.origin, 'secret-bob-timeout', 'Bob');
-    const aliceGame = await identifyGame(tracker.origin, 'secret-alice-timeout');
-    const bobGame = await identifyGame(tracker.origin, 'secret-bob-timeout');
+    const alice = await joinLobby(hub.origin, 'secret-alice-timeout', 'Alice');
+    const bob = await joinLobby(hub.origin, 'secret-bob-timeout', 'Bob');
+    const aliceGame = await identifyGame(hub.origin, 'secret-alice-timeout');
+    const bobGame = await identifyGame(hub.origin, 'secret-bob-timeout');
 
     // channel_timeout too low (below min of 3)
     const errPromise1 = nextJson(alice.lobby, (msg) => msg.type === 'error');
@@ -397,45 +397,45 @@ test('challenges with out-of-range timeouts are rejected by the server', async (
     await closeWs(aliceGame);
     await closeWs(bobGame);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('same secret session_id keeps the same player_id across game disconnect', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
     const sessionId = 'secret-stable-across-disconnect';
-    const first = await identifyGameRegistered(tracker.origin, sessionId);
+    const first = await identifyGameRegistered(hub.origin, sessionId);
     await closeWs(first.game);
 
-    const second = await identifyGameRegistered(tracker.origin, sessionId);
+    const second = await identifyGameRegistered(hub.origin, sessionId);
     assert.equal(second.playerId, first.playerId);
     await closeWs(second.game);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('same secret session_id keeps the same player_id across lobby leave and rejoin', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
     const sessionId = 'secret-stable-lobby-rejoin';
-    const first = await joinLobby(tracker.origin, sessionId, 'Alice');
+    const first = await joinLobby(hub.origin, sessionId, 'Alice');
     await closeWs(first.lobby);
 
-    const second = await joinLobby(tracker.origin, sessionId, 'Alice');
+    const second = await joinLobby(hub.origin, sessionId, 'Alice');
     assert.equal(second.id, first.id);
     await closeWs(second.lobby);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });
 
 test('identify ignores client-supplied player_id and assigns from the secret', async () => {
-  const tracker = await startTracker();
+  const hub = await startHub();
   try {
     const sessionId = 'secret-ignore-client-player-id';
-    const game = await openWs(tracker.origin, '/ws/game');
+    const game = await openWs(hub.origin, '/ws/game');
     sendGame(game, {
       type: 'identify',
       session_id: sessionId,
@@ -447,6 +447,6 @@ test('identify ignores client-supplied player_id and assigns from the secret', a
     assert.match(registered.player_id, /^p_/);
     await closeWs(game);
   } finally {
-    await tracker.stop();
+    await hub.stop();
   }
 });

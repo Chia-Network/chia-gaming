@@ -9,10 +9,10 @@ import {
 export function isRestoreBlocked(
   restoring: boolean,
   restoreStatus: RestoreStatus,
-  trackerReconciled: boolean,
+  hubReconciled: boolean,
 ): boolean {
   return selectRestoreBlocked(createSessionModel({
-    restore: { restoring, status: restoreStatus, trackerReconciled, error: null },
+    restore: { restoring, status: restoreStatus, hubReconciled, error: null },
   }));
 }
 
@@ -24,13 +24,13 @@ export function shouldAdvertiseAvailable(
     restore: {
       restoring: restoreBlocked,
       status: restoreBlocked ? 'restoring' : 'restored',
-      trackerReconciled: !restoreBlocked,
+      hubReconciled: !restoreBlocked,
       error: null,
     },
   }), sessionPhase);
 }
 
-export function shouldReportTrackerBusy(sessionPhase: SessionPhase): boolean {
+export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
@@ -85,7 +85,7 @@ export function shouldMountGameSession(
   };
 }
 
-export function shouldSwitchToTrackerOnResolved(
+export function shouldSwitchToHubOnResolved(
   previousPhase: SessionPhase,
   hasError: boolean,
 ): boolean {

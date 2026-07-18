@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-Run the full local stack locally — player app, lobby tracker, and blockchain simulator:
+Run the full local stack locally — player app, hub, and blockchain simulator:
 
 ```bash
 ./run-local-demo.sh
@@ -13,7 +13,7 @@ Run the full local stack locally — player app, lobby tracker, and blockchain s
 | Service    | Default URL             | Override env var |
 | ---------- | ----------------------- | ---------------- |
 | Player app | `http://localhost:3002` | `GAME_PORT`      |
-| Tracker    | `http://localhost:3003` | `TRACKER_PORT`   |
+| Hub    | `http://localhost:3003` | `HUB_PORT`   |
 | Simulator  | `http://localhost:5800` | (hardcoded)      |
 
 
@@ -26,7 +26,7 @@ Press Ctrl-C to stop all services.
 
 You can use either the simulator, or mainnnet with the files hosted locally.
 
-This will run the player app on localhost:3002 and the tracker on localhost:3003
+This will run the player app on localhost:3002 and the hub on localhost:3003
 
 There are two game modes: playing on a simulated blockchain, or on Chia's mainnet.
 To play on mainnet, you must have the Chia Wallet 2.7.1 or later running and
@@ -77,7 +77,7 @@ fail with clang errors.
 This guide covers building and running the two production artifacts:
 
 1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
-2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
+2. **Hub** — Express + WebSocket service that provides the lobby UI (iframe)
   and relays game messages between peers.
 
 For architecture details, see [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md).
@@ -94,7 +94,7 @@ For the Rust test suite, see [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md).
 This produces four files in subdirectories (tgz and zip of each artifact):
 
 - `deploy_player_app/chia-gaming-YYYYMMDD-HASH.tgz` / `.zip` — player app
-- `deploy_tracker/chia-gaming-lobby-YYYYMMDD-HASH.tgz` / `.zip` — lobby frontend + service
+- `deploy_hub/chia-gaming-hub-YYYYMMDD-HASH.tgz` / `.zip` — lobby frontend + service
 
 Both formats have identical contents, ready to extract onto their respective
 servers.
@@ -164,20 +164,20 @@ Outputs `dist/js/index-rollup.js` and `dist/css/index.css`.
 ### 4. Lobby frontend
 
 ```bash
-(cd lobby && pnpm install --frozen-lockfile)
-(cd lobby && pnpm --filter chia-gaming-lobby-frontend run build)
+(cd hub && pnpm install --frozen-lockfile)
+(cd hub && pnpm --filter chia-gaming-hub-frontend run build)
 ```
 
-Outputs `lobby/lobby-frontend/public/index.js` and
-`lobby/lobby-frontend/dist/css/index.css`.
+Outputs `hub/hub-frontend/public/index.js` and
+`hub/hub-frontend/dist/css/index.css`.
 
-### 5. Lobby service
+### 5. Hub service
 
 ```bash
-(cd lobby && pnpm --filter chia-gaming-lobby-service run build)
+(cd hub && pnpm --filter chia-gaming-hub-service run build)
 ```
 
-Outputs `lobby/lobby-service/dist/index-rollup.cjs`.
+Outputs `hub/hub-service/dist/index-rollup.cjs`.
 
 ### 6. Simulator (development only)
 
@@ -214,13 +214,13 @@ app/
 ### Lobby
 
 ```
-index.html              ← lobby/lobby-frontend/public/index.html
+index.html              ← hub/hub-frontend/public/index.html
 build-meta.json         ← {"basePath":"/app/NONCE/"}
-service.js              ← lobby/lobby-service/dist/index-rollup.cjs
+service.js              ← hub/hub-service/dist/index-rollup.cjs
 app/
   NONCE/
-    index.js            ← lobby/lobby-frontend/public/index.js
-    index.css           ← lobby/lobby-frontend/dist/css/index.css
+    index.js            ← hub/hub-frontend/public/index.js
+    index.css           ← hub/hub-frontend/dist/css/index.css
 ```
 
 ## Running the Services
@@ -228,7 +228,7 @@ app/
 ### Running from Checkout
 
 Run from a repo checkout. See [Quick Start](#quick-start) for the full local
-stack (`./run-local-demo.sh` starts the player app, tracker, and simulator).
+stack (`./run-local-demo.sh` starts the player app, hub, and simulator).
 
 #### Player app
 
@@ -256,20 +256,20 @@ The `.` argument is the extracted root (the directory that contains
 `index.html`, `build-meta.json`, and `app/`). Production tarballs include
 `static-server.js` for this purpose.
 
-#### Tracker
+#### Hub
 
 ```bash
-PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
+PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
   --self 'http://localhost:3003' \
-  --dir lobby/lobby-frontend/serve
+  --dir hub/hub-frontend/serve
 ```
 
 | Flag / env  | Required | Purpose                                                                                        |
 | ----------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `--self`    | yes      | Public HTTP origin of this tracker (used for WebSocket URL derivation)                         |
+| `--self`    | yes      | Public HTTP origin of this hub (used for WebSocket URL derivation)                         |
 | `--dir`     | yes      | Root directory to serve static lobby files from                                                |
 | `--verbose` | no       | Verbose logging                                                                                |
-| `PORT`      | no       | Listen port (default `5801`; the local demo overrides it with `TRACKER_PORT`)                   |
+| `PORT`      | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                   |
 
 #### Simulator
 
@@ -300,32 +300,32 @@ caddy file-server --listen :3002
 See [Staging (Asset Layout)](#staging-asset-layout) for the directory
 structure. Apply the caching and origin rules below.
 
-#### Tracker
+#### Hub
 
 Extract the lobby tarball, then run the bundled service:
 
 ```bash
 PORT=443 node service.js \
-  --self 'https://tracker.example.com' \
+  --self 'https://hub.example.com' \
   --dir .
 ```
 
-Set `--self` to the tracker's public URL. The same `--dir`, `--self`,
+Set `--self` to the hub's public URL. The same `--dir`, `--self`,
 `--verbose`, and `PORT` flags apply as when running from checkout (see table above).
 
 #### Production notes
 
-- **Separate origins.** The player app and tracker must be served from
-different origins. The lobby loads inside an iframe from the tracker's
+- **Separate origins.** The player app and hub must be served from
+different origins. The lobby loads inside an iframe from the hub's
 origin; same-origin would break the security boundary.
 - **Asset co-location.** WASM files and `.hex` chialisp files must be
 under the same `basePath` as `index.js`. The WASM module fetches `.hex`
 files via relative HTTP paths at runtime.
-- `**--self` must match the public URL.** The tracker uses it to derive
+- `**--self` must match the public URL.** The hub uses it to derive
 WebSocket URLs. Mismatches cause connection failures.
 - **Caching rules.** Configure your production web server (nginx, Caddy,
 CloudFront, etc.) with these headers. The dev servers
-(`static-server.js` and the tracker service) already apply
+(`static-server.js` and the hub service) already apply
 them automatically.
   - `index.html` and `build-meta.json`: `**Cache-Control: no-store`** (must
   always be fresh so the app picks up new nonces).
@@ -337,8 +337,8 @@ their Chia wallet via WalletConnect and play against real XCH.
 [frontend workflow](.github/workflows/frontend.yml) produces two
 downloadable artifacts on each build:
   - `chia-gaming-frontend` — player app files (`dist/`, `public/`, `clsp/`)
-  - `chia-gaming-lobby` — lobby frontend files (`public/`, `dist/css/`) and
-  the tracker service (`service.js`, a copy of `index-rollup.cjs`)
+  - `chia-gaming-hub` — lobby frontend files (`public/`, `dist/css/`) and
+  the hub service (`service.js`, a copy of `index-rollup.cjs`)
 
 ## Troubleshooting
 
@@ -357,5 +357,5 @@ install scripts. The affected packages (`@parcel/watcher`, `esbuild`) ship
 pre-built native binaries as fallbacks, so the builds complete and the
 tarballs are correct without running those scripts. You can silence the
 warning by running `pnpm approve-builds` once in the relevant directory
-(`front-end/` or `lobby/`) and committing the updated
+(`front-end/` or `hub/`) and committing the updated
 `.pnpm-approve-builds` file.

@@ -1,5 +1,5 @@
 {
-  "name": "chia-gaming-lobby-service",
+  "name": "chia-gaming-hub-service",
   "main": "dist/index.js",
   "packageManager": "pnpm@10.33.0",
   "scripts": {

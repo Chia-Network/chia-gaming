@@ -112,10 +112,10 @@ jobs:
             deploy_player_app/chia-gaming-macos-*.tgz
             deploy_player_app/chia-gaming-macos-*.zip
 
-      - name: Upload lobby artifacts
+      - name: Upload hub artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: chia-gaming-lobby-macos
+          name: chia-gaming-hub-macos
           path: |
-            deploy_tracker/chia-gaming-lobby-macos-*.tgz
-            deploy_tracker/chia-gaming-lobby-macos-*.zip
+            deploy_hub/chia-gaming-hub-macos-*.tgz
+            deploy_hub/chia-gaming-hub-macos-*.zip

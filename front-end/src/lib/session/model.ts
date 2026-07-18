@@ -115,7 +115,7 @@ export interface RestoreModel {
   restoring: boolean;
   status: RestoreStatus;
   error: string | null;
-  trackerReconciled: boolean;
+  hubReconciled: boolean;
 }
 
 export interface PeerModel {
@@ -202,7 +202,7 @@ export interface SessionSnapshot {
 
 export type SessionEvent =
   | { type: 'restore-status'; status: RestoreStatus; error: string | null }
-  | { type: 'tracker-reconciled'; reconciled: boolean }
+  | { type: 'hub-reconciled'; reconciled: boolean }
   | { type: 'peer-connected'; connected: boolean | null }
   | { type: 'channel-status'; status: ChannelStatusModel }
   | { type: 'game-coin'; coin: GameCoinModel }
@@ -356,7 +356,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       restoring: false,
       status: 'idle',
       error: null,
-      trackerReconciled: false,
+      hubReconciled: false,
       ...partial.restore,
     },
     peer: {
@@ -420,10 +420,10 @@ export function updateSessionModel(model: SessionModel, event: SessionEvent): Se
         ...model,
         restore: { ...model.restore, status: event.status, error: event.error },
       };
-    case 'tracker-reconciled':
+    case 'hub-reconciled':
       return {
         ...model,
-        restore: { ...model.restore, trackerReconciled: event.reconciled },
+        restore: { ...model.restore, hubReconciled: event.reconciled },
       };
     case 'peer-connected':
       return { ...model, peer: { connected: event.connected } };
@@ -482,7 +482,7 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
 
 export function selectRestoreBlocked(model: SessionModel): boolean {
   return model.restore.restoring
-    && (model.restore.status !== 'restored' || !model.restore.trackerReconciled);
+    && (model.restore.status !== 'restored' || !model.restore.hubReconciled);
 }
 
 export function selectShouldAdvertiseAvailable(model: SessionModel, phase: SessionPhase): boolean {
@@ -1027,7 +1027,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
       restoring: !!save.serializedGameSession,
       status: save.serializedGameSession ? 'restoring' : 'idle',
       error: null,
-      trackerReconciled: false,
+      hubReconciled: false,
     },
     channel: {
       status: save.channelStatus

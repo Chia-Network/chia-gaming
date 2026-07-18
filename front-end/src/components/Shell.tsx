@@ -4,15 +4,15 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
-import { TrackerConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/TrackerConnection';
+import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, HubLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
+import { HubConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/HubConnection';
 import { PeerSession, generateSessionId } from '../services/PeerSession';
 import { subscribeLog } from '../services/log';
 import { reactPropSafeValue } from '../lib/reactPropSafe';
 import {
   getPlayerId,
   getSessionId,
-  ensureTrackerIdentity,
+  ensureHubIdentity,
   clearSessionId,
   getBlockchainType,
   getTheme,
@@ -40,10 +40,10 @@ import {
   setUnreadGame as saveUnreadGame,
   getWalletAlert as getSavedWalletAlert,
   setWalletAlert as saveWalletAlert,
-  getTrackerAlert as getSavedTrackerAlert,
-  setTrackerAlert as saveTrackerAlert,
-  getTrackerUrl,
-  setTrackerUrl as saveTrackerUrl,
+  getHubAlert as getSavedHubAlert,
+  setHubAlert as saveHubAlert,
+  getHubUrl,
+  setHubUrl as saveHubUrl,
   isLeaseConflict,
   claimLease,
   onFenced,
@@ -62,7 +62,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportTrackerBusy, shouldSwitchToTrackerOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportHubBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isCleanShutdownInProgress,
@@ -91,9 +91,9 @@ import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { Button } from './button';
 
-import { TrackerPicker } from './TrackerPicker';
+import { HubPicker } from './HubPicker';
 
-type TabId = 'wallet' | 'tracker' | 'game' | 'history' | 'log';
+type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
 
 const MOJOS_PER_XCH = 1_000_000_000_000;
 
@@ -103,7 +103,7 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
-function normalizeTrackerOrigin(origin: string): string {
+function normalizeHubOrigin(origin: string): string {
   try {
     const url = new URL(origin);
     if (url.hostname === '127.0.0.1' && url.port === '3003') {
@@ -226,7 +226,7 @@ const IDLE_PEER_CONNECTION: PeerConnectionResult = {
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
-  { id: 'tracker', label: 'Tracker' },
+  { id: 'hub', label: 'Hub' },
   { id: 'game', label: 'Game' },
   { id: 'history', label: 'History' },
   { id: 'log', label: 'Log' },
@@ -271,7 +271,7 @@ function isValidTimeoutString(v: string | undefined): boolean {
   return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
 }
 
-const TRACKER_LIVENESS_LABELS: Record<TrackerLiveness, string> = {
+const TRACKER_LIVENESS_LABELS: Record<HubLiveness, string> = {
   connected: 'Connected',
   reconnecting: 'Reconnecting',
   inactive: 'Inactive',
@@ -507,14 +507,14 @@ function LogPanel({ lines }: { lines: string[] }) {
 
 const Shell = () => {
   const uniqueId = getPlayerId();
-  // Do not mint tracker sessionId here — boot must hydrate IndexedDB first
+  // Do not mint hub sessionId here — boot must hydrate IndexedDB first
   // when a saved-session marker is present, or a remint poisons preferences.
   const [, setSessionId] = useState(() => loadState().sessionId ?? '');
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
     if (saved === 'session') return 'game';
-    const valid: TabId[] = ['wallet', 'tracker', 'game', 'history', 'log'];
+    const valid: TabId[] = ['wallet', 'hub', 'game', 'history', 'log'];
     return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
   });
   const setActiveTab = useCallback((tab: TabId) => {
@@ -536,7 +536,7 @@ const Shell = () => {
   const waitingEnteredAtRef = useRef<bigint | null>(null);
   const waitingStateRef = useRef<SessionModel['channel']['status']['state'] | null>(null);
 
-  // Consent prompt state for the new tracker protocol
+  // Consent prompt state for the new hub protocol
   const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
   const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
   const setPendingAdvisoryState = useCallback((next: AdvisoryStartParams | null) => {
@@ -587,16 +587,16 @@ const Shell = () => {
   }), []);
 
   const [walletConnected, setWalletConnected] = useState(false);
-  const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
+  const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
   const [sessionError, setSessionError] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [restoreTrackerReconciled, setRestoreTrackerReconciled] = useState(false);
+  const [restoreHubReconciled, setRestoreHubReconciled] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
-  const trackerWsUpRef = useRef(false);
-  const lastTrackerActivityRef = useRef(0);
+  const hubWsUpRef = useRef(false);
+  const lastHubActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
   // --- Boot state machine ---
   //
@@ -605,7 +605,7 @@ const Shell = () => {
   // We must not do that until the user has made a conscious choice.
   //
   //   1. Anything to resume or discard (marker, wallet choice, and/or
-  //      remembered tracker) → 'resumeDialog', or 'autoResuming' when the
+  //      remembered hub) → 'resumeDialog', or 'autoResuming' when the
   //      prior navigation was a stale-deploy reload (one-shot, no prompt).
   //   2. Otherwise if another tab holds the lease → 'tabConflict'
   //      (the other tab is live even if we don't have its save locally);
@@ -616,7 +616,7 @@ const Shell = () => {
   //   - Resume     → load IndexedDB, then if lease conflict, 'tabConflict';
   //                  otherwise claim + hydrate.
   // From 'autoResuming':
-  //   - Hydrate + mount the real shell invisibly (tracker/GameSession run).
+  //   - Hydrate + mount the real shell invisibly (hub/GameSession run).
   //   - Flip to 'ready' only once restore is presentable — one visible paint.
   //
   // From 'tabConflict':
@@ -647,8 +647,8 @@ const Shell = () => {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // Restore tracker session_id from disk before any mint / identify.
-      const sid = await ensureTrackerIdentity();
+      // Restore hub session_id from disk before any mint / identify.
+      const sid = await ensureHubIdentity();
       if (cancelled) return;
       setSessionId(sid);
 
@@ -664,7 +664,7 @@ const Shell = () => {
           setBootState({ kind: 'autoResuming' });
           return;
         }
-        console.log('[Shell] boot: wallet/tracker/session state present, showing resume dialog');
+        console.log('[Shell] boot: wallet/hub/session state present, showing resume dialog');
         setBootState({ kind: 'resumeDialog', loadError: null });
         return;
       }
@@ -684,13 +684,13 @@ const Shell = () => {
   // if we're still in a dialog, we haven't claimed the lease yet.
   useEffect(() => {
     const handler = () => {
-      trackerConnRef.current?.disconnect();
-      trackerConnRef.current = null;
+      hubConnRef.current?.disconnect();
+      hubConnRef.current = null;
       // Drop the lobby iframe immediately so its reconnect loop stops now,
       // not only after the async peekSession → tabConflict re-render.
       setIframeUrl('about:blank');
-      setTrackerOrigin(null);
-      setTrackerLiveness(null);
+      setHubOrigin(null);
+      setHubLiveness(null);
       if (blockchainTypeRef.current !== 'walletconnect') {
         activeBlockchainRef.current?.disconnect().catch(() => {});
       }
@@ -711,7 +711,7 @@ const Shell = () => {
   // leave stale TCP sockets that block new connections in the reloaded page.
   useEffect(() => {
     const cleanup = () => {
-      trackerConnRef.current?.disconnect();
+      hubConnRef.current?.disconnect();
       // WalletConnect sessions are intentionally durable across reloads.
       // Calling disconnect() here sends a protocol-level session_delete.
       if (blockchainTypeRef.current !== 'walletconnect') {
@@ -777,8 +777,8 @@ const Shell = () => {
   const setUnreadGame = useCallback((v: boolean) => { setUnreadGameRaw(v); saveUnreadGame(v); }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
   const setWalletAlert = useCallback((v: boolean) => { setWalletAlertRaw(v); saveWalletAlert(v); }, []);
-  const [trackerAlert, setTrackerAlertRaw] = useState(() => getSavedTrackerAlert());
-  const setTrackerAlert = useCallback((v: boolean) => { setTrackerAlertRaw(v); saveTrackerAlert(v); }, []);
+  const [hubAlert, setHubAlertRaw] = useState(() => getSavedHubAlert());
+  const setHubAlert = useCallback((v: boolean) => { setHubAlertRaw(v); saveHubAlert(v); }, []);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [balance, setBalance] = useState<bigint | undefined>();
 
@@ -881,7 +881,7 @@ const Shell = () => {
     }
   }, [isDark]);
 
-  const trackerConnRef = useRef<TrackerConnection | null>(null);
+  const hubConnRef = useRef<HubConnection | null>(null);
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionSave | null>(null);
@@ -967,7 +967,7 @@ const Shell = () => {
   }, []);
 
   const sendSessionReject = useCallback((peerId: string) => {
-    trackerConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
+    hubConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
   }, []);
 
   const resetPeerRelayState = useCallback(() => {
@@ -1010,12 +1010,12 @@ const Shell = () => {
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
-    setRestoreTrackerReconciled(false);
-    trackerConnRef.current?.setBusy(false);
+    setRestoreHubReconciled(false);
+    hubConnRef.current?.setBusy(false);
   }, [clearSessionPreservingHistory, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
   const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
-    const conn = trackerConnRef.current;
+    const conn = hubConnRef.current;
     if (!conn) return;
 
     const myContribution = parseSessionAmount(request.myAmount);
@@ -1024,7 +1024,7 @@ const Shell = () => {
     const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();
     const token = `peer_${request.peerId}_${Date.now()}`;
-    const trackerSessionId = getSessionId();
+    const hubSessionId = getSessionId();
 
     const existing = peerSessionRef.current;
     if (existing && !existing.isDestroyed() && existing.peerId === request.peerId && existing.sessionId === sessionId) {
@@ -1038,13 +1038,13 @@ const Shell = () => {
     const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
     // Persist the full pre-cradle handshake *and flush* before GameSession mounts
     // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
-    // the same pairing/amounts/peer ids and a stable tracker session_id.
+    // the same pairing/amounts/peer ids and a stable hub session_id.
     await saveSession({
       pairingToken: token,
       sessionPeerId: request.peerId,
       gameSessionId: sessionId,
-      sessionId: trackerSessionId,
-      ...(conn.getPlayerId() ? { myTrackerPlayerId: conn.getPlayerId()! } : {}),
+      sessionId: hubSessionId,
+      ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
       iStarted: request.iStarted,
       myContribution: myContribution.toString(),
       theirContribution: theirContribution.toString(),
@@ -1075,7 +1075,7 @@ const Shell = () => {
     setSessionError(false);
     setRestoreStatus('idle');
     setRestoreError(null);
-    setRestoreTrackerReconciled(true);
+    setRestoreHubReconciled(true);
     dashboardSessionModelRef.current = null;
     setDashboardSessionModel(null);
     destroySessionController();
@@ -1101,7 +1101,7 @@ const Shell = () => {
   }, [stablePeerConn, bindPeerMessageHandler]);
 
   const acceptPendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
-    const conn = trackerConnRef.current;
+    const conn = hubConnRef.current;
     if (!conn) return;
     setPendingAdvisoryState(null);
     const gameSessionId = generateSessionId();
@@ -1172,10 +1172,10 @@ const Shell = () => {
   useEffect(() => {
     const id = setInterval(() => {
       const now = Date.now();
-      const activityFresh = lastTrackerActivityRef.current > 0 && now - lastTrackerActivityRef.current <= 45_000;
-      setTrackerLiveness((prev) => {
+      const activityFresh = lastHubActivityRef.current > 0 && now - lastHubActivityRef.current <= 45_000;
+      setHubLiveness((prev) => {
         if (prev === null || prev === 'disconnected') return prev;
-        if (!trackerWsUpRef.current) return 'reconnecting';
+        if (!hubWsUpRef.current) return 'reconnecting';
         return activityFresh ? 'connected' : 'inactive';
       });
       const ps = peerSessionRef.current;
@@ -1261,33 +1261,33 @@ const Shell = () => {
     });
   }, [activeBlockchainPoller, blockchainType, startBalancePolling]);
 
-  const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
+  const [hubOrigin, setHubOrigin] = useState<string | null>(null);
 
-  // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
-  const connectToTracker = useCallback((rawOrigin: string, options: { resetSession?: boolean } = {}) => {
-    const origin = normalizeTrackerOrigin(rawOrigin);
-    trackerConnRef.current?.disconnect();
-    trackerConnRef.current = null;
+  // Connect to a hub by origin URL. Creates the lobby iframe + game relay WebSocket.
+  const connectToHub = useCallback((rawOrigin: string, options: { resetSession?: boolean } = {}) => {
+    const origin = normalizeHubOrigin(rawOrigin);
+    hubConnRef.current?.disconnect();
+    hubConnRef.current = null;
     if (options.resetSession) {
       clearSessionId();
     }
-    const trackerSessionId = getSessionId();
-    setSessionId(trackerSessionId);
+    const hubSessionId = getSessionId();
+    setSessionId(hubSessionId);
 
-    setTrackerOrigin(origin);
-    saveTrackerUrl(origin);
-    const lobbyUrl = `${origin}/?lobby=true&session=${trackerSessionId}&uniqueId=${uniqueId}`;
+    setHubOrigin(origin);
+    saveHubUrl(origin);
+    const lobbyUrl = `${origin}/?session=${hubSessionId}&uniqueId=${uniqueId}`;
     setIframeUrl(lobbyUrl);
 
-    setTrackerLiveness('reconnecting');
+    setHubLiveness('reconnecting');
 
-    let conn: TrackerConnection;
+    let conn: HubConnection;
     try {
-      conn = new TrackerConnection(origin, trackerSessionId, {
+      conn = new HubConnection(origin, hubSessionId, {
         onAdvisoryStart: (params: AdvisoryStartParams) => {
-          trackerWsUpRef.current = true;
-          lastTrackerActivityRef.current = Date.now();
-          setTrackerLiveness('connected');
+          hubWsUpRef.current = true;
+          lastHubActivityRef.current = Date.now();
+          setHubLiveness('connected');
           console.log('[Shell] advisory_start: peer=%s alias=%s my_amount=%s their_amount=%s', params.peer_id, params.peer_alias, params.my_amount, params.their_amount);
           if (!isAvailableForNewSessionPrompt()) {
             console.log('[Shell] advisory_start declined: client unavailable for new session');
@@ -1368,13 +1368,13 @@ const Shell = () => {
           syncPeerLiveness();
         },
         onRegistered: (playerId: string) => {
-          trackerWsUpRef.current = true;
-          lastTrackerActivityRef.current = Date.now();
-          setTrackerLiveness('connected');
+          hubWsUpRef.current = true;
+          lastHubActivityRef.current = Date.now();
+          setHubLiveness('connected');
           console.log('[Shell] registered as player_id=%s session_id=%s', playerId, getSessionId());
           const save = sessionSaveRef.current;
-          const prevMine = save?.myTrackerPlayerId ?? loadState().myTrackerPlayerId;
-          // Pre-cradle routing is by peer player_id. If *we* remapped (tracker
+          const prevMine = save?.myHubPlayerId ?? loadState().myHubPlayerId;
+          // Pre-cradle routing is by peer player_id. If *we* remapped (hub
           // restart or session_id churn), abort rather than handshaking at a
           // stale sessionPeerId. First-ever register (no prior id) is fine.
           if (
@@ -1388,28 +1388,28 @@ const Shell = () => {
             )
           ) {
             console.warn(
-              '[Shell] tracker player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+              '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
               prevMine,
               playerId,
             );
-            log(`[tracker] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`);
-            saveSession({ myTrackerPlayerId: playerId });
+            log(`[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`);
+            saveSession({ myHubPlayerId: playerId });
             cancelAttemptedSession();
             return;
           }
-          saveSession({ myTrackerPlayerId: playerId });
-          if (save) save.myTrackerPlayerId = playerId;
+          saveSession({ myHubPlayerId: playerId });
+          if (save) save.myHubPlayerId = playerId;
           const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
             peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
             bindPeerMessageHandler(peerSessionRef.current);
-            setRestoreTrackerReconciled(true);
+            setRestoreHubReconciled(true);
             // Restore never goes through startFreshSessionWithPeer, which is
-            // otherwise the only place that marks the tracker busy. Terminal
+            // otherwise the only place that marks the hub busy. Terminal
             // (Failed/Resolved*) saves must stay available in the lobby.
             conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
           } else if (save?.serializedGameSession || save?.pairingToken) {
-            setRestoreTrackerReconciled(true);
+            setRestoreHubReconciled(true);
             conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
           }
           if (peerSessionRef.current && sessionController) {
@@ -1417,29 +1417,29 @@ const Shell = () => {
           }
         },
         onLobbyAttention: () => {
-          if (activeTabRef.current !== 'tracker') {
-            setTrackerAlert(true);
+          if (activeTabRef.current !== 'hub') {
+            setHubAlert(true);
           }
         },
         onClosed: () => {
-          console.log('[Shell] tracker connection ended');
-          trackerWsUpRef.current = false;
+          console.log('[Shell] hub connection ended');
+          hubWsUpRef.current = false;
           markPeerInactive();
-          setTrackerLiveness('disconnected');
+          setHubLiveness('disconnected');
         },
-        onTrackerDisconnected: () => {
-          console.log('[Shell] tracker disconnected');
-          trackerWsUpRef.current = false;
-          setTrackerLiveness('reconnecting');
+        onHubDisconnected: () => {
+          console.log('[Shell] hub disconnected');
+          hubWsUpRef.current = false;
+          setHubLiveness('reconnecting');
         },
-        onTrackerReconnected: () => {
-          console.log('[Shell] tracker reconnected');
-          trackerWsUpRef.current = true;
-          lastTrackerActivityRef.current = Date.now();
-          setTrackerLiveness('connected');
+        onHubReconnected: () => {
+          console.log('[Shell] hub reconnected');
+          hubWsUpRef.current = true;
+          lastHubActivityRef.current = Date.now();
+          setHubLiveness('connected');
         },
-        onTrackerActivity: () => {
-          lastTrackerActivityRef.current = Date.now();
+        onHubActivity: () => {
+          lastHubActivityRef.current = Date.now();
         },
         getPresence: () => {
           const phase = sessionPhaseRef.current;
@@ -1448,7 +1448,7 @@ const Shell = () => {
           const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
           // A leftover cradle must not keep us busy after the session resolved
           // (wallet/handshake failures often leave Failed + persisted cradle).
-          const busy = shouldReportTrackerBusy(phase)
+          const busy = shouldReportHubBusy(phase)
             || (restoring && !terminalSave && !!(save?.serializedGameSession || save?.pairingToken));
           return {
             busy,
@@ -1461,59 +1461,59 @@ const Shell = () => {
         },
       });
     } catch (err) {
-      console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
-      saveTrackerUrl(undefined);
-      setTrackerOrigin(null);
+      console.error('[Shell] HubConnection failed for origin=%s', origin, err);
+      saveHubUrl(undefined);
+      setHubOrigin(null);
       setIframeUrl('about:blank');
       return;
     }
-    trackerConnRef.current = conn;
+    hubConnRef.current = conn;
 
   }, [uniqueId, syncPeerLiveness, markPeerActive, markPeerInactive, markPeerDead, cancelAttemptedSession, clearSessionPreservingHistory, isAvailableForNewSessionPrompt, sendSessionReject, setPendingAdvisoryState, setPendingProposalState, bindPeerMessageHandler]);
 
-  const requestTrackerConnect = useCallback((origin: string) => {
+  const requestHubConnect = useCallback((origin: string) => {
     if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
       setConfirmDialog({
-        title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
-        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
+        title: 'Disconnect from hub?',
+        body: 'Disconnecting from this hub will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
+        onConfirm: () => { setConfirmDialog(null); connectToHub(origin, { resetSession: true }); },
       });
     } else if (peerLiveness === 'connected' || peerLiveness === 'degraded') {
       setConfirmDialog({
-        title: 'Disconnect from tracker?',
+        title: 'Disconnect from hub?',
         body: 'This will end your peer connection.',
-        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin, { resetSession: true }); },
+        onConfirm: () => { setConfirmDialog(null); connectToHub(origin, { resetSession: true }); },
       });
     } else {
-      connectToTracker(origin, { resetSession: true });
+      connectToHub(origin, { resetSession: true });
     }
-  }, [peerLiveness, sessionPhase, connectToTracker]);
+  }, [peerLiveness, sessionPhase, connectToHub]);
 
-  // Auto-connect to saved tracker once this tab owns the app lease. Also while
+  // Auto-connect to saved hub once this tab owns the app lease. Also while
   // autoResuming (blank UI) so cradle restore can reconcile before first paint.
   useEffect(() => {
     if (bootState.kind !== 'ready' && bootState.kind !== 'autoResuming') {
-      trackerConnRef.current?.disconnect();
-      trackerConnRef.current = null;
+      hubConnRef.current?.disconnect();
+      hubConnRef.current = null;
       return;
     }
-    const url = getTrackerUrl();
-    console.log('[Shell] tracker-reconnect effect: %s trackerUrl=%s', bootState.kind, url ?? 'none');
-    if (url && !trackerConnRef.current) {
-      connectToTracker(url);
+    const url = getHubUrl();
+    console.log('[Shell] hub-reconnect effect: %s hubUrl=%s', bootState.kind, url ?? 'none');
+    if (url && !hubConnRef.current) {
+      connectToHub(url);
     }
     return () => {
-      trackerConnRef.current?.disconnect();
-      trackerConnRef.current = null;
+      hubConnRef.current?.disconnect();
+      hubConnRef.current = null;
     };
-  }, [bootState.kind, connectToTracker]);
+  }, [bootState.kind, connectToHub]);
 
   // Shared connection completion
   const completeConnection = useCallback((
     iface: InternalBlockchainInterface,
     bcType: 'simulator' | 'walletconnect',
     pollMs: number,
-    options: { switchToTracker?: boolean } = {},
+    options: { switchToHub?: boolean } = {},
   ) => {
     console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
@@ -1529,8 +1529,8 @@ const Shell = () => {
     setConnecting(false);
     setConnectionSetup(null);
     setUserReady(true);
-    if (options.switchToTracker) {
-      setActiveTab('tracker');
+    if (options.switchToHub) {
+      setActiveTab('hub');
     }
     startBalancePolling(bcType);
     log(`${bcType} wallet connected`);
@@ -1573,7 +1573,7 @@ const Shell = () => {
       await setup.finalize();
       if (wcAbortRef.current) return;
       log(`[Shell] handleConnect: finalize complete`);
-      completeConnection(iface, bcType, pollMs, { switchToTracker: !silent });
+      completeConnection(iface, bcType, pollMs, { switchToHub: !silent });
     } catch (err) {
       if (!wcAbortRef.current) {
         console.error(`[Shell] ${bcType} connect failed`, err);
@@ -1607,7 +1607,7 @@ const Shell = () => {
       await connectionSetup.finalize();
       log(`[Shell] handleFinalize: finalize complete`);
       setShowSimModal(false);
-      completeConnection(iface, blockchainType, pollMs, { switchToTracker: true });
+      completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
     } catch (err) {
       console.error(`[Shell] ${blockchainType} finalize failed`, err);
     } finally {
@@ -1682,17 +1682,17 @@ const Shell = () => {
     setDashboardSessionModel(null);
     setRestoreStatus('idle');
     setRestoreError(null);
-    setRestoreTrackerReconciled(false);
+    setRestoreHubReconciled(false);
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
-    trackerConnRef.current?.setBusy(false, alias);
+    hubConnRef.current?.setBusy(false, alias);
   }, [clearSessionPreservingHistory, clearSessionTimers, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   /**
    * End live protocol for a terminal channel but keep the dashboard freeze
    * (Resolved Clean / balances / last status) so the game tab still shows how
    * the session finished. Persist that freeze + boot marker so reload shows
-   * Resume/Start Over instead of silently booting into tracker prefs alone.
+   * Resume/Start Over instead of silently booting into hub prefs alone.
    */
   const finishResolvedSessionDisplay = useCallback((hasError: boolean) => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
@@ -1701,7 +1701,7 @@ const Shell = () => {
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');
     setSessionError(hasError);
-    trackerConnRef.current?.setBusy(false, alias);
+    hubConnRef.current?.setBusy(false, alias);
 
     // Stop the live peer route and cradle; do not send session_reject and do
     // not wipe the dashboard model (that would flash "No Session").
@@ -1710,7 +1710,7 @@ const Shell = () => {
 
     // Clear only live protocol fields. clearSession() would drop the boot
     // marker and finished channel snapshot — then reload skips Resume while
-    // still auto-connecting the saved tracker.
+    // still auto-connecting the saved hub.
     if (model) {
       const status = model.channel.status;
       void saveSession({
@@ -1751,17 +1751,17 @@ const Shell = () => {
     setPeerConn(null);
     setRestoreStatus('idle');
     setRestoreError(null);
-    setRestoreTrackerReconciled(false);
+    setRestoreHubReconciled(false);
   }, [clearSessionTimers, resetPeerRelayState]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
       if (sessionFinishedCleanupRef.current) return;
       const previousPhase = sessionPhaseRef.current;
-      const switchTracker = shouldSwitchToTrackerOnResolved(previousPhase, !!hasError);
+      const switchHub = shouldSwitchToHubOnResolved(previousPhase, !!hasError);
       finishResolvedSessionDisplay(!!hasError);
-      if (switchTracker) {
-        setActiveTab('tracker');
+      if (switchHub) {
+        setActiveTab('hub');
       }
       return;
     }
@@ -1769,7 +1769,7 @@ const Shell = () => {
     sessionPhaseRef.current = phase;
     setSessionPhase(phase);
     setSessionError(!!hasError);
-    trackerConnRef.current?.setBusy(shouldReportTrackerBusy(phase));
+    hubConnRef.current?.setBusy(shouldReportHubBusy(phase));
   }, [finishResolvedSessionDisplay, setActiveTab]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
@@ -1796,20 +1796,20 @@ const Shell = () => {
     stopBalancePolling();
   }, [stopBalancePolling]);
 
-  const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreTrackerReconciled);
+  const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
     if (tabId === 'game') setUnreadGame(false);
     if (tabId === 'wallet') setWalletAlert(false);
-    if (tabId === 'tracker') setTrackerAlert(false);
+    if (tabId === 'hub') setHubAlert(false);
   }, []);
 
-  useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
+  useThemeSyncToIframe('hub-iframe', [iframeUrl]);
 
   // Lobby owns the display name; keep local prefs aligned so presence and
   // session_proposal do not invent a Player_* fallback that later overwrites
-  // the tracker.
+  // the hub.
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       const data = ev.data;
@@ -1845,8 +1845,8 @@ const Shell = () => {
     setPeerConn(null);
     setRestoreStatus('idle');
     setRestoreError(null);
-    setRestoreTrackerReconciled(true);
-    trackerConnRef.current?.setBusy(false, save.myAlias ?? peekAlias());
+    setRestoreHubReconciled(true);
+    hubConnRef.current?.setBusy(false, save.myAlias ?? peekAlias());
     setResuming(false);
   }, [setActiveTab]);
 
@@ -1860,7 +1860,7 @@ const Shell = () => {
     setResuming(true);
     setRestoreStatus('restoring');
     setRestoreError(null);
-    setRestoreTrackerReconciled(false);
+    setRestoreHubReconciled(false);
     setSessionPhase('none');
     setSessionError(false);
 
@@ -2064,7 +2064,7 @@ const Shell = () => {
       return;
     }
     const restoring = !!sessionConfig.restoring;
-    const blocked = isRestoreBlocked(restoring, restoreStatus, restoreTrackerReconciled);
+    const blocked = isRestoreBlocked(restoring, restoreStatus, restoreHubReconciled);
     const { keepSession } = shouldMountGameSession(
       true,
       walletConnected,
@@ -2081,7 +2081,7 @@ const Shell = () => {
     peerConn,
     walletConnected,
     restoreStatus,
-    restoreTrackerReconciled,
+    restoreHubReconciled,
   ]);
 
   // User clicked "Take over" in the tabConflict dialog.
@@ -2123,8 +2123,8 @@ const Shell = () => {
 
   const handleCloseTab = useCallback(() => {
     stopBalancePolling();
-    trackerConnRef.current?.disconnect();
-    trackerConnRef.current = null;
+    hubConnRef.current?.disconnect();
+    hubConnRef.current = null;
     activeBlockchainRef.current?.disconnect().catch(() => {});
     activeBlockchainRef.current = null;
     setActiveBlockchainPoller(null);
@@ -2135,10 +2135,10 @@ const Shell = () => {
   const handleStartOver = useCallback(async () => {
     setStartingOver(true);
     // Close live connections before wiping storage. Open WalletConnect /
-    // tracker sockets can block IndexedDB deleteDatabase and hang Start Over.
+    // hub sockets can block IndexedDB deleteDatabase and hang Start Over.
     try {
-      trackerConnRef.current?.disconnect();
-      trackerConnRef.current = null;
+      hubConnRef.current?.disconnect();
+      hubConnRef.current = null;
       if (activeBlockchainRef.current) {
         try { await activeBlockchainRef.current.disconnect(); } catch { /* ignore */ }
       }
@@ -2194,39 +2194,39 @@ const Shell = () => {
     }
   }, [sessionPhase, doDisconnectWallet]);
 
-  const doDisconnectTracker = useCallback(() => {
-    trackerConnRef.current?.disconnect();
-    trackerConnRef.current = null;
+  const doDisconnectHub = useCallback(() => {
+    hubConnRef.current?.disconnect();
+    hubConnRef.current = null;
     clearSessionId();
     setSessionId('');
-    saveTrackerUrl(undefined);
-    setTrackerOrigin(null);
+    saveHubUrl(undefined);
+    setHubOrigin(null);
     setIframeUrl('about:blank');
-    setTrackerLiveness(null);
+    setHubLiveness(null);
     markPeerInactive();
   }, [markPeerInactive]);
 
-  const handleDisconnectTracker = useCallback(() => {
+  const handleDisconnectHub = useCallback(() => {
     if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
       setConfirmDialog({
-        title: 'Disconnect from tracker?',
-        body: 'Disconnecting from this tracker will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
-        onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
+        title: 'Disconnect from hub?',
+        body: 'Disconnecting from this hub will end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
+        onConfirm: () => { setConfirmDialog(null); doDisconnectHub(); },
       });
     } else if (peerLiveness === 'connected' || peerLiveness === 'degraded') {
       setConfirmDialog({
-        title: 'Disconnect from tracker?',
+        title: 'Disconnect from hub?',
         body: 'This will end your peer connection.',
-        onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
+        onConfirm: () => { setConfirmDialog(null); doDisconnectHub(); },
       });
     } else {
-      doDisconnectTracker();
+      doDisconnectHub();
     }
-  }, [peerLiveness, sessionPhase, doDisconnectTracker]);
+  }, [peerLiveness, sessionPhase, doDisconnectHub]);
 
   const handleEndPeerConnection = useCallback(() => {
     resetPeerRelayState();
-    trackerConnRef.current?.setBusy(shouldReportTrackerBusy(sessionPhaseRef.current));
+    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current));
   }, [resetPeerRelayState]);
 
   const startCleanShutdownGrace = useCallback(() => {
@@ -2255,7 +2255,7 @@ const Shell = () => {
     sessionController?.goOnChain();
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
-    trackerConnRef.current?.setBusy(shouldReportTrackerBusy('on-chain'));
+    hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
     setDashboardSessionModel(prev => prev
@@ -2512,7 +2512,7 @@ const Shell = () => {
 
   // --- Main tabbed app ---
   // autoResuming with session hydrated: mount the real tree invisibly so
-  // GameSession/tracker can finish restore, then flip to ready in one paint.
+  // GameSession/hub can finish restore, then flip to ready in one paint.
   const shellHidden = bootState.kind === 'autoResuming';
   return (
     <div
@@ -2536,7 +2536,7 @@ const Shell = () => {
           const showDot = !active && (
             (tab.id === 'game' && unreadGame) ||
             (tab.id === 'wallet' && walletAlert) ||
-            (tab.id === 'tracker' && trackerAlert)
+            (tab.id === 'hub' && hubAlert)
           );
 
           let dotColor: string | null = null;
@@ -2544,12 +2544,12 @@ const Shell = () => {
             case 'wallet':
               dotColor = walletConnected ? 'var(--color-success-solid)' : 'var(--color-alert-solid)';
               break;
-            case 'tracker':
-              if (trackerLiveness === 'connected') {
+            case 'hub':
+              if (hubLiveness === 'connected') {
                 dotColor = 'var(--color-success-solid)';
-              } else if (trackerLiveness === 'reconnecting') {
+              } else if (hubLiveness === 'reconnecting') {
                 dotColor = 'var(--color-warning-solid)';
-              } else if (trackerLiveness === 'inactive') {
+              } else if (hubLiveness === 'inactive') {
                 dotColor = 'var(--color-alert-solid)';
               } else {
                 dotColor = 'var(--color-canvas-text-subtle)';
@@ -2830,28 +2830,28 @@ const Shell = () => {
           )}
         </div>
 
-        {/* Tracker tab */}
-        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'flex' : 'none', flexDirection: 'column' }}>
-          {trackerOrigin ? (
+        {/* Hub tab */}
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'hub' ? 'flex' : 'none', flexDirection: 'column' }}>
+          {hubOrigin ? (
             <>
               <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
-                <span>Connected to {trackerOrigin}</span>
+                <span>Connected to {hubOrigin}</span>
                 <button
-                  onClick={handleDisconnectTracker}
+                  onClick={handleDisconnectHub}
                   className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
                 >
                   Disconnect
                 </button>
               </div>
               <iframe
-                id='tracker-iframe'
+                id='hub-iframe'
                 className='bg-canvas-bg-subtle'
                 style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
                 src={iframeUrl}
               />
             </>
           ) : (
-            <TrackerPicker onConnect={requestTrackerConnect} />
+            <HubPicker onConnect={requestHubConnect} />
           )}
         </div>
 

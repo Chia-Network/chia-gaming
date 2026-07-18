@@ -1,9 +1,9 @@
 import { PeerSession, type MessageHandler } from '../../services/PeerSession';
-import type { TrackerConnection } from '../../services/TrackerConnection';
+import type { HubConnection } from '../../services/HubConnection';
 
 /**
  * Mirrors Shell's restore/bind behavior: handlers may be registered before a
- * PeerSession exists (GameSession mounts during resume before tracker
+ * PeerSession exists (GameSession mounts during resume before hub
  * onRegistered recreates the peer). Creating the PeerSession later must still
  * attach those handlers, or inbound game messages are only buffered for
  * keepalives' liveness side-effect while proposals never reach WASM.
@@ -17,11 +17,11 @@ function bindPeerMessageHandler(
 }
 
 describe('delayed PeerSession message-handler binding', () => {
-  function mockTracker(): TrackerConnection {
+  function mockHub(): HubConnection {
     return {
       sendToPeer: jest.fn(),
       sendPeerAppMessage: jest.fn(),
-    } as unknown as TrackerConnection;
+    } as unknown as HubConnection;
   }
 
   it('delivers a proposal message that arrived before the handler was bound', () => {
@@ -38,8 +38,8 @@ describe('delayed PeerSession message-handler binding', () => {
     bindPeerMessageHandler(peerSession, pendingHandler);
     expect(delivered).toEqual([]);
 
-    // Tracker onRegistered recreates the PeerSession and must re-bind.
-    peerSession = new PeerSession('peer-1', 'session-1', mockTracker());
+    // Hub onRegistered recreates the PeerSession and must re-bind.
+    peerSession = new PeerSession('peer-1', 'session-1', mockHub());
     bindPeerMessageHandler(peerSession, pendingHandler);
 
     const frame = new Uint8Array(5 + 3);
@@ -53,7 +53,7 @@ describe('delayed PeerSession message-handler binding', () => {
 
   it('buffers inbound messages until the handler is bound after PeerSession exists', () => {
     const delivered: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const peerSession = new PeerSession('peer-1', 'session-1', mockTracker());
+    const peerSession = new PeerSession('peer-1', 'session-1', mockHub());
 
     const frame = new Uint8Array(5 + 2);
     frame[0] = 0x01;

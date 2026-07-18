@@ -5,12 +5,12 @@ set -E
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR/front-end"
 WASM_DIR="$SCRIPT_DIR/wasm"
-LOBBY_SERVICE_DIR="$SCRIPT_DIR/lobby/lobby-service"
-LOBBY_FRONTEND_DIR="$SCRIPT_DIR/lobby/lobby-frontend"
+HUB_SERVICE_DIR="$SCRIPT_DIR/hub/hub-service"
+HUB_FRONTEND_DIR="$SCRIPT_DIR/hub/hub-frontend"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
 GAME_PORT=${GAME_PORT:-3002}
-TRACKER_PORT=${TRACKER_PORT:-3003}
+HUB_PORT=${HUB_PORT:-3003}
 SIM_PORT=${SIM_PORT:-5800}
 
 SKIP_BUILD=0
@@ -113,11 +113,11 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Building gaming frontend ==="
     (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
-    echo "=== Building lobby-frontend ==="
-    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile --ignore-scripts)
-    (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
-    echo "=== Building lobby-service ==="
-    (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
+    echo "=== Building hub-frontend ==="
+    (cd "$SCRIPT_DIR/hub" && pnpm install --frozen-lockfile --ignore-scripts)
+    (cd "$HUB_FRONTEND_DIR" && pnpm run build)
+    echo "=== Building hub-service ==="
+    (cd "$HUB_SERVICE_DIR" && pnpm run build)
 fi
 
 # ── Assemble staging directories ────────────────────────────────────
@@ -146,7 +146,7 @@ cp "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
 cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
 echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"
-echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_NONCE_DIR/urls"
+echo "{\"hub\": \"http://localhost:$HUB_PORT\"}" > "$GAME_NONCE_DIR/urls"
 (cd "$CLSP_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
     mkdir -p "$GAME_NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$GAME_NONCE_DIR/clsp/$f"
@@ -161,15 +161,15 @@ for old in "$GAME_SERVE/app"/*; do
     rm -rf "$old"
 done
 
-echo "=== Assembling lobby-frontend staging directory ==="
-LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
-mkdir -p "$LOBBY_SERVE/app/$BUILD_NONCE"
-cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
-LOBBY_NONCE_DIR="$LOBBY_SERVE/app/$BUILD_NONCE"
-cp "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_NONCE_DIR/index.js"
-cp "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_NONCE_DIR/index.css"
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
-for old in "$LOBBY_SERVE/app"/*; do
+echo "=== Assembling hub-frontend staging directory ==="
+HUB_SERVE="$HUB_FRONTEND_DIR/serve"
+mkdir -p "$HUB_SERVE/app/$BUILD_NONCE"
+cp "$HUB_FRONTEND_DIR/public/index.html" "$HUB_SERVE/index.html"
+HUB_NONCE_DIR="$HUB_SERVE/app/$BUILD_NONCE"
+cp "$HUB_FRONTEND_DIR/public/index.js" "$HUB_NONCE_DIR/index.js"
+cp "$HUB_FRONTEND_DIR/dist/css/index.css" "$HUB_NONCE_DIR/index.css"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$HUB_SERVE/build-meta.json"
+for old in "$HUB_SERVE/app"/*; do
     [ -d "$old" ] || continue
     [ "$(basename "$old")" = "$BUILD_NONCE" ] && continue
     rm -rf "$old"
@@ -182,7 +182,7 @@ done
 # Use -sTCP:LISTEN to avoid killing the browsers themselves.
 echo "=== Stopping previous services ==="
 PREVIOUS_PIDS=()
-for p in $GAME_PORT $TRACKER_PORT $SIM_PORT; do
+for p in $GAME_PORT $HUB_PORT $SIM_PORT; do
     pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
     if [ -n "$pids" ]; then
         PREVIOUS_PIDS+=($pids)
@@ -213,14 +213,14 @@ echo "=== Starting player app static server (port $GAME_PORT) ==="
 node "$SCRIPT_DIR/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
-echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="
-(cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
+echo "=== Starting hub (hub-service + hub-frontend on port $HUB_PORT) ==="
+(cd "$HUB_SERVICE_DIR" && PORT=$HUB_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$HUB_PORT" --dir "$HUB_SERVE") &
 PIDS+=($!)
 
 echo "=== Waiting for services ==="
 for i in $(seq 1 10); do
     if curl -s "http://localhost:$GAME_PORT/" >/dev/null 2>&1 && \
-       curl -s "http://localhost:$TRACKER_PORT/" >/dev/null 2>&1; then
+       curl -s "http://localhost:$HUB_PORT/" >/dev/null 2>&1; then
         echo "All servers ready"
         break
     fi
@@ -231,7 +231,7 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"
 echo "    Player app: http://localhost:$GAME_PORT"
-echo "    Tracker:    http://localhost:$TRACKER_PORT"
+echo "    Hub:    http://localhost:$HUB_PORT"
 echo "    Simulator:  http://localhost:$SIM_PORT"
 echo ""
 echo "  Press Ctrl-C to stop all services."

@@ -5,12 +5,12 @@ import {
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
-  shouldReportTrackerBusy,
-  shouldSwitchToTrackerOnResolved,
+  shouldReportHubBusy,
+  shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
-  it('blocks restored-session behavior until wasm restore and tracker reconciliation both finish', () => {
+  it('blocks restored-session behavior until wasm restore and hub reconciliation both finish', () => {
     expect(isRestoreBlocked(true, 'idle', false)).toBe(true);
     expect(isRestoreBlocked(true, 'restoring', false)).toBe(true);
     expect(isRestoreBlocked(true, 'restored', false)).toBe(true);
@@ -27,11 +27,11 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
   });
 
-  it('keeps tracker presence busy until the session is resolved', () => {
-    expect(shouldReportTrackerBusy('none')).toBe(false);
-    expect(shouldReportTrackerBusy('resolved')).toBe(false);
-    expect(shouldReportTrackerBusy('off-chain')).toBe(true);
-    expect(shouldReportTrackerBusy('on-chain')).toBe(true);
+  it('keeps hub presence busy until the session is resolved', () => {
+    expect(shouldReportHubBusy('none')).toBe(false);
+    expect(shouldReportHubBusy('resolved')).toBe(false);
+    expect(shouldReportHubBusy('off-chain')).toBe(true);
+    expect(shouldReportHubBusy('on-chain')).toBe(true);
   });
 
   it('recognizes terminal channel states that must not keep the lobby busy', () => {
@@ -77,10 +77,10 @@ describe('restore lifecycle gates', () => {
     });
   });
 
-  it('only switches to tracker for a live clean-resolution transition', () => {
-    expect(shouldSwitchToTrackerOnResolved('none', false)).toBe(false);
-    expect(shouldSwitchToTrackerOnResolved('on-chain', false)).toBe(false);
-    expect(shouldSwitchToTrackerOnResolved('off-chain', true)).toBe(false);
-    expect(shouldSwitchToTrackerOnResolved('off-chain', false)).toBe(true);
+  it('only switches to hub for a live clean-resolution transition', () => {
+    expect(shouldSwitchToHubOnResolved('none', false)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('on-chain', false)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('off-chain', true)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('off-chain', false)).toBe(true);
   });
 });

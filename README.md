@@ -15,9 +15,9 @@ For production builds, tarballs, and step-by-step build instructions, see
 - **[OVERVIEW.md](OVERVIEW.md)** — How state channels, the referee, the
   potato protocol, and Calpoker work. Links to detailed docs.
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** — Build, debug, and run the player app and lobby
-  tracker locally or in production.
+  hub locally or in production.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
-  tracker: React components, WASM bridge, WebSocket relay protocol.
+  hub: React components, WASM bridge, WebSocket relay protocol.
 
 
 ## Project Structure
@@ -43,5 +43,5 @@ clsp/
 
 wasm/               — WebAssembly bindings for browser use
 front-end/          — Player frontend (React + WASM bridge)
-lobby/              — Lobby frontend and tracker service
+hub/                — Hub service + lobby UX frontend
 ```

@@ -1845,7 +1845,7 @@ export function useGameSession(
       restoring: params.restoring ?? false,
       status: restoreStatus,
       error: restoreError,
-      trackerReconciled: restoreStatus === 'restored',
+      hubReconciled: restoreStatus === 'restored',
     },
     channel: {
       status: channelStatus,

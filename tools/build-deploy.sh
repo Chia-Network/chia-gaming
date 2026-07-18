@@ -3,7 +3,7 @@
 #
 # Outputs (in the repo root):
 #   chia-gaming-YYYYMMDD-HASH.tgz/.zip       — player app (static files)
-#   chia-gaming-lobby-YYYYMMDD-HASH.tgz/.zip — lobby frontend + service
+#   chia-gaming-hub-YYYYMMDD-HASH.tgz/.zip — hub frontend + service
 #
 # See DEVELOPMENT.md for the full build/deploy guide.
 set -e
@@ -52,9 +52,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FE_DIR="$ROOT_DIR/front-end"
 WASM_DIR="$ROOT_DIR/wasm"
-LOBBY_DIR="$ROOT_DIR/lobby"
-LOBBY_FRONTEND_DIR="$LOBBY_DIR/lobby-frontend"
-LOBBY_SERVICE_DIR="$LOBBY_DIR/lobby-service"
+HUB_DIR="$ROOT_DIR/hub"
+HUB_FRONTEND_DIR="$HUB_DIR/hub-frontend"
+HUB_SERVICE_DIR="$HUB_DIR/hub-service"
 CLSP_DIR="$ROOT_DIR/clsp"
 
 DATE=$(date +%Y%m%d)
@@ -62,8 +62,8 @@ HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
 TAG="${PLATFORM:+${PLATFORM}-}${DATE}-${HASH}"
 GAME_TARBALL="chia-gaming-${TAG}.tgz"
 GAME_ZIP="chia-gaming-${TAG}.zip"
-LOBBY_TARBALL="chia-gaming-lobby-${TAG}.tgz"
-LOBBY_ZIP="chia-gaming-lobby-${TAG}.zip"
+HUB_TARBALL="chia-gaming-hub-${TAG}.tgz"
+HUB_ZIP="chia-gaming-hub-${TAG}.zip"
 
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
@@ -93,17 +93,17 @@ echo "=== Building player app ==="
 
 # ── 4. Lobby frontend ────────────────────────────────────────────────
 
-echo "=== Building lobby frontend ==="
+echo "=== Building hub frontend ==="
 # --ignore-scripts: skip native build scripts (esbuild, @parcel/watcher) that
 # pnpm 10+ blocks by default. These packages ship pre-built binaries, so the
 # scripts are unnecessary and their absence avoids ERR_PNPM_IGNORED_BUILDS.
-(cd "$LOBBY_DIR" && pnpm install --frozen-lockfile --ignore-scripts)
-(cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-frontend run build:deploy)
+(cd "$HUB_DIR" && pnpm install --frozen-lockfile --ignore-scripts)
+(cd "$HUB_DIR" && pnpm --filter chia-gaming-hub-frontend run build:deploy)
 
 # ── 5. Lobby service ─────────────────────────────────────────────────
 
-echo "=== Building lobby service ==="
-(cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-service run build)
+echo "=== Building hub service ==="
+(cd "$HUB_DIR" && pnpm --filter chia-gaming-hub-service run build)
 
 # ── Assemble player app staging tree ─────────────────────────────────
 
@@ -132,30 +132,30 @@ rm -f "$ROOT_DIR/deploy_player_app/$GAME_ZIP"
 (cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
 rm -rf "$GAME_STAGE"
 
-# ── Assemble lobby staging tree ──────────────────────────────────────
+# ── Assemble hub staging tree ──────────────────────────────────────
 
-echo "=== Assembling lobby (nonce: $BUILD_NONCE) ==="
+echo "=== Assembling hub (nonce: $BUILD_NONCE) ==="
 
-LOBBY_STAGE=$(mktemp -d)
-LOBBY_NONCE_DIR="$LOBBY_STAGE/app/$BUILD_NONCE"
-mkdir -p "$LOBBY_NONCE_DIR"
+HUB_STAGE=$(mktemp -d)
+HUB_NONCE_DIR="$HUB_STAGE/app/$BUILD_NONCE"
+mkdir -p "$HUB_NONCE_DIR"
 
 # Relocatable bundle: verbatim copy of the clean dir produced by build:deploy.
-cp -r "$LOBBY_FRONTEND_DIR/dist/app/." "$LOBBY_NONCE_DIR/"
+cp -r "$HUB_FRONTEND_DIR/dist/app/." "$HUB_NONCE_DIR/"
 
 # Framing/root files: page shell, generated nonce, and the node service.
-cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_STAGE/index.html"
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_STAGE/build-meta.json"
-cp "$LOBBY_SERVICE_DIR/dist/index-rollup.cjs"  "$LOBBY_STAGE/service.js"
+cp "$HUB_FRONTEND_DIR/public/index.html" "$HUB_STAGE/index.html"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$HUB_STAGE/build-meta.json"
+cp "$HUB_SERVICE_DIR/dist/index-rollup.cjs"  "$HUB_STAGE/service.js"
 
-node "$ROOT_DIR/tools/verify-stage.mjs" "$LOBBY_STAGE"
+node "$ROOT_DIR/tools/verify-stage.mjs" "$HUB_STAGE"
 
-echo "=== Creating $LOBBY_TARBALL and $LOBBY_ZIP ==="
-mkdir -p "$ROOT_DIR/deploy_tracker"
-tar -czf "$ROOT_DIR/deploy_tracker/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
-rm -f "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP"
-(cd "$LOBBY_STAGE" && zip -rq "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP" .)
-rm -rf "$LOBBY_STAGE"
+echo "=== Creating $HUB_TARBALL and $HUB_ZIP ==="
+mkdir -p "$ROOT_DIR/deploy_hub"
+tar -czf "$ROOT_DIR/deploy_hub/$HUB_TARBALL" -C "$HUB_STAGE" .
+rm -f "$ROOT_DIR/deploy_hub/$HUB_ZIP"
+(cd "$HUB_STAGE" && zip -rq "$ROOT_DIR/deploy_hub/$HUB_ZIP" .)
+rm -rf "$HUB_STAGE"
 
 # ── Done ─────────────────────────────────────────────────────────────
 
@@ -164,8 +164,8 @@ echo "════════════════════════�
 echo "  Artifacts:"
 echo "    $ROOT_DIR/deploy_player_app/$GAME_TARBALL"
 echo "    $ROOT_DIR/deploy_player_app/$GAME_ZIP"
-echo "    $ROOT_DIR/deploy_tracker/$LOBBY_TARBALL"
-echo "    $ROOT_DIR/deploy_tracker/$LOBBY_ZIP"
+echo "    $ROOT_DIR/deploy_hub/$HUB_TARBALL"
+echo "    $ROOT_DIR/deploy_hub/$HUB_ZIP"
 echo "════════════════════════════════════════════════════════"
 
 ABORTED=0

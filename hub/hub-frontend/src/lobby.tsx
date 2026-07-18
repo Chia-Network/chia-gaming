@@ -184,7 +184,7 @@ const LobbyScreen = () => {
             Choose a Display Name
           </h2>
           <p className="text-sm text-canvas-text text-center">
-            Pick a name other players will see in the tracker.
+            Pick a name other players will see in the hub.
           </p>
           <input
             autoFocus
@@ -201,7 +201,7 @@ const LobbyScreen = () => {
             onClick={confirmAlias}
             fullWidth
           >
-            Join Tracker
+            Join Hub
           </Button>
         </div>
       </div>
@@ -214,7 +214,7 @@ const LobbyScreen = () => {
   return (
     <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle">
       <div className="mb-4">
-        <h2 className="text-xl font-bold text-canvas-text-contrast">Game Tracker</h2>
+        <h2 className="text-xl font-bold text-canvas-text-contrast">Game Hub</h2>
       </div>
 
       <div className="mb-4">
@@ -388,7 +388,7 @@ const LobbyScreen = () => {
         </div>
       ) : isReconnecting && (
         <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
-          Reconnecting to tracker...
+          Reconnecting to hub...
         </div>
       )}
 
@@ -412,9 +412,9 @@ const LobbyScreen = () => {
           ) : (
             <>
               <h6 className="text-lg font-medium text-canvas-text-contrast">
-                Waiting for Tracker
+                Waiting for Hub
               </h6>
-              <p className="text-sm text-canvas-text">No tracker update received yet...</p>
+              <p className="text-sm text-canvas-text">No hub update received yet...</p>
             </>
           )}
         </div>

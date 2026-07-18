@@ -2,9 +2,9 @@
 //
 // Usage: node tools/verify-deploy-archives.mjs [--platform=linux|macos]
 //
-// Discovers tgz/zip pairs in deploy_player_app/ and deploy_tracker/, extracts
+// Discovers tgz/zip pairs in deploy_player_app/ and deploy_hub/, extracts
 // each format, runs verify-stage + floor checks, compares tgz vs zip trees,
-// and smoke-tests HTTP serving from the extracted player/lobby trees.
+// and smoke-tests HTTP serving from the extracted player/hub trees.
 
 import {
   existsSync,
@@ -43,8 +43,8 @@ function playerPrefix() {
   return platform ? `chia-gaming-${platform}-` : "chia-gaming-";
 }
 
-function lobbyPrefix() {
-  return platform ? `chia-gaming-lobby-${platform}-` : "chia-gaming-lobby-";
+function hubPrefix() {
+  return platform ? `chia-gaming-hub-${platform}-` : "chia-gaming-hub-";
 }
 
 function findOneArchive(dir, prefix, ext) {
@@ -148,7 +148,7 @@ function floorCheckPlayer(stageDir) {
   }
 }
 
-function floorCheckLobby(stageDir) {
+function floorCheckHub(stageDir) {
   const errors = [];
   for (const f of ["index.html", "build-meta.json", "service.js"]) {
     if (!existsSync(join(stageDir, f))) {
@@ -162,7 +162,7 @@ function floorCheckLobby(stageDir) {
     }
   }
   if (errors.length) {
-    fail(`lobby floor check failed for ${stageDir}:\n  - ${errors.join("\n  - ")}`);
+    fail(`hub floor check failed for ${stageDir}:\n  - ${errors.join("\n  - ")}`);
   }
 }
 
@@ -279,7 +279,7 @@ async function smokeTestPlayer(stageDir) {
   }
 }
 
-async function smokeTestLobby(stageDir) {
+async function smokeTestHub(stageDir) {
   const port = await freePort();
   const host = "127.0.0.1";
   const child = spawn(
@@ -297,19 +297,19 @@ async function smokeTestLobby(stageDir) {
     await waitForHttp(`${base}/`);
 
     const indexRes = await fetch(`${base}/`);
-    if (!indexRes.ok) fail(`lobby GET / -> ${indexRes.status}`);
+    if (!indexRes.ok) fail(`hub GET / -> ${indexRes.status}`);
 
     const metaRes = await fetch(`${base}/build-meta.json`);
-    if (!metaRes.ok) fail(`lobby GET /build-meta.json -> ${metaRes.status}`);
+    if (!metaRes.ok) fail(`hub GET /build-meta.json -> ${metaRes.status}`);
     const meta = await metaRes.json();
     const basePath = meta.basePath || "/";
 
     for (const asset of ["index.js", "index.css"]) {
       const url = `${base}${basePath}${asset}`;
       const res = await fetch(url);
-      if (!res.ok) fail(`lobby GET ${url} -> ${res.status}`);
+      if (!res.ok) fail(`hub GET ${url} -> ${res.status}`);
     }
-    console.log(`verify-deploy-archives: lobby HTTP smoke ok (port ${port})`);
+    console.log(`verify-deploy-archives: hub HTTP smoke ok (port ${port})`);
   } finally {
     await killServer(child);
   }
@@ -321,7 +321,7 @@ function verifyExtracted(stageDir, kind, format) {
   if (kind === "player") {
     floorCheckPlayer(stageDir);
   } else {
-    floorCheckLobby(stageDir);
+    floorCheckHub(stageDir);
   }
 }
 
@@ -342,7 +342,7 @@ async function verifyArtifactPair({ label, kind, tgz, zip }) {
     if (kind === "player") {
       await smokeTestPlayer(tgzDir);
     } else {
-      await smokeTestLobby(tgzDir);
+      await smokeTestHub(tgzDir);
     }
 
     console.log(`verify-deploy-archives: ${label} ok`);
@@ -353,18 +353,18 @@ async function verifyArtifactPair({ label, kind, tgz, zip }) {
 
 async function main() {
   const playerDir = join(ROOT, "deploy_player_app");
-  const lobbyDir = join(ROOT, "deploy_tracker");
+  const hubDir = join(ROOT, "deploy_hub");
 
   const playerTgz = findOneArchive(playerDir, playerPrefix(), ".tgz");
   const playerZip = findOneArchive(playerDir, playerPrefix(), ".zip");
-  const lobbyTgz = findOneArchive(lobbyDir, lobbyPrefix(), ".tgz");
-  const lobbyZip = findOneArchive(lobbyDir, lobbyPrefix(), ".zip");
+  const hubTgz = findOneArchive(hubDir, hubPrefix(), ".tgz");
+  const hubZip = findOneArchive(hubDir, hubPrefix(), ".zip");
 
   console.log("verify-deploy-archives: archives:");
   console.log(`  player tgz: ${playerTgz}`);
   console.log(`  player zip: ${playerZip}`);
-  console.log(`  lobby  tgz: ${lobbyTgz}`);
-  console.log(`  lobby  zip: ${lobbyZip}`);
+  console.log(`  hub  tgz: ${hubTgz}`);
+  console.log(`  hub  zip: ${hubZip}`);
 
   await verifyArtifactPair({
     label: "player app",
@@ -373,10 +373,10 @@ async function main() {
     zip: playerZip,
   });
   await verifyArtifactPair({
-    label: "lobby",
-    kind: "lobby",
-    tgz: lobbyTgz,
-    zip: lobbyZip,
+    label: "hub",
+    kind: "hub",
+    tgz: hubTgz,
+    zip: hubZip,
   });
 
   console.log("verify-deploy-archives: all checks passed");

@@ -1,5 +1,5 @@
 import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
-import { TrackerConnection, type PeerAppMessage } from './TrackerConnection';
+import { HubConnection, type PeerAppMessage } from './HubConnection';
 import { log } from './log';
 
 export type MessageHandler = {
@@ -29,7 +29,7 @@ function buildFrame(tag: number, msgno: number, data?: Uint8Array): Uint8Array {
 export class PeerSession implements PeerConnectionResult {
   readonly sessionId: string;
   readonly peerId: string;
-  private trackerConn: TrackerConnection;
+  private hubConn: HubConnection;
   private _liveness: PeerLiveness = null;
   private _lastActivity: number = 0;
   private messageHandler: MessageHandler | null = null;
@@ -37,27 +37,27 @@ export class PeerSession implements PeerConnectionResult {
   private destroyed = false;
   private livenessListeners = new Set<(liveness: PeerLiveness) => void>();
 
-  constructor(peerId: string, sessionId: string, trackerConn: TrackerConnection) {
+  constructor(peerId: string, sessionId: string, hubConn: HubConnection) {
     this.peerId = peerId;
     this.sessionId = sessionId;
-    this.trackerConn = trackerConn;
+    this.hubConn = hubConn;
   }
 
   // --- PeerConnectionResult interface ---
 
   sendMessage(msgno: number, input: Uint8Array): void {
     if (this.destroyed) return;
-    this.trackerConn.sendToPeer(this.peerId, buildFrame(0x01, msgno, input));
+    this.hubConn.sendToPeer(this.peerId, buildFrame(0x01, msgno, input));
   }
 
   sendAck(ackMsgno: number): void {
     if (this.destroyed) return;
-    this.trackerConn.sendToPeer(this.peerId, buildFrame(0x02, ackMsgno));
+    this.hubConn.sendToPeer(this.peerId, buildFrame(0x02, ackMsgno));
   }
 
   sendKeepalive(): void {
     if (this.destroyed) return;
-    this.trackerConn.sendToPeer(this.peerId, new Uint8Array([0x03]));
+    this.hubConn.sendToPeer(this.peerId, new Uint8Array([0x03]));
   }
 
   hostLog(_msg: string): void { /* no-op */ }
@@ -117,7 +117,7 @@ export class PeerSession implements PeerConnectionResult {
     this.messageHandler = null;
   }
 
-  // --- Inbound message delivery (called by Shell's tracker callbacks) ---
+  // --- Inbound message delivery (called by Shell's hub callbacks) ---
 
   deliverRawPeerMessage(fromId: string, payload: Uint8Array): boolean {
     if (this.destroyed || this._liveness === 'dead') return false;
@@ -147,7 +147,7 @@ export class PeerSession implements PeerConnectionResult {
 
   sendAppMessage(msg: PeerAppMessage): void {
     if (this.destroyed) return;
-    this.trackerConn.sendPeerAppMessage(this.peerId, msg);
+    this.hubConn.sendPeerAppMessage(this.peerId, msg);
   }
 
   // --- Lifecycle ---

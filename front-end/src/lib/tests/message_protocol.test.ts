@@ -586,7 +586,7 @@ describe('restore ordering', () => {
       restoreSession(
         blob,
         {
-          version: 6n,
+          version: 7n,
           playerId: 'p1',
           serializedGameSession: new Uint8Array([1, 2, 3]),
           gameSessionSchemaVersion: 1n,

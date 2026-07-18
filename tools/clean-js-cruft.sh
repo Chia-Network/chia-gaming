@@ -43,13 +43,13 @@ EXCLUDE_DIRS=(
 
 TARGETS=(
     "front-end/node_modules"
-    "lobby/lobby-frontend/node_modules"
-    "lobby/lobby-service/node_modules"
+    "hub/hub-frontend/node_modules"
+    "hub/hub-service/node_modules"
     "front-end/dist"
-    "lobby/lobby-frontend/dist"
-    "lobby/lobby-service/dist"
+    "hub/hub-frontend/dist"
+    "hub/hub-service/dist"
     "front-end/serve"
-    "lobby/lobby-frontend/serve"
+    "hub/hub-frontend/serve"
 )
 
 if [ "$INCLUDE_RUST" -eq 1 ]; then

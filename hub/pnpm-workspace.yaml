@@ -1,6 +1,6 @@
 packages:
-  - "lobby-frontend"
-  - "lobby-service"
+  - "hub-frontend"
+  - "hub-service"
 confirmModulesPurge: false
 allowBuilds:
   '@parcel/watcher': true

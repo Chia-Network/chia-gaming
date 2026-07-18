@@ -10,8 +10,8 @@ import {
   getSaveList,
   getPlayerId,
   getSessionId,
-  ensureTrackerIdentity,
-  getMyTrackerPlayerId,
+  ensureHubIdentity,
+  getMyHubPlayerId,
   clearSessionId,
   getBlockchainType,
   loadAppState,
@@ -22,8 +22,8 @@ import {
   setTheme,
   hardReset,
   flushSessionSave,
-  getTrackerAlert,
-  setTrackerAlert,
+  getHubAlert,
+  setHubAlert,
   claimLease,
   checkLease,
   isLeaseConflict,
@@ -190,13 +190,13 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
-  it('treats leftover trackerUrl without a marker as resume-worthy', async () => {
-    saveSession({ trackerUrl: 'http://localhost:3003' });
+  it('treats leftover hubUrl without a marker as resume-worthy', async () => {
+    saveSession({ hubUrl: 'http://localhost:3003' });
     await flushSessionSave();
     clearSavedSessionMarker();
 
     expect(shouldOfferResumeOrStartOver()).toBe(true);
-    expect(await peekSession()).toMatchObject({ trackerUrl: 'http://localhost:3003' });
+    expect(await peekSession()).toMatchObject({ hubUrl: 'http://localhost:3003' });
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
@@ -277,7 +277,7 @@ describe('session persistence', () => {
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 6n,
+      version: 7n,
       playerId: 'player',
       blockchainType: 'simulator',
     });
@@ -288,7 +288,7 @@ describe('session persistence', () => {
   it('keeps Resume marker for a finished channel snapshot without a live cradle', async () => {
     saveSession({
       blockchainType: 'simulator',
-      trackerUrl: 'http://localhost:3000',
+      hubUrl: 'http://localhost:3000',
       pairingToken: undefined,
       serializedGameSession: undefined,
       channelStatus: {
@@ -315,7 +315,7 @@ describe('session persistence', () => {
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 6n,
+      version: 7n,
       playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
@@ -459,7 +459,7 @@ describe('flat state', () => {
     expect(getSessionId()).toBe(sid);
   });
 
-  it('ensureTrackerIdentity restores sessionId from IndexedDB when preferences omit it', async () => {
+  it('ensureHubIdentity restores sessionId from IndexedDB when preferences omit it', async () => {
     const sid = getSessionId();
     markSavedSession();
     saveSession({
@@ -480,19 +480,19 @@ describe('flat state', () => {
     }));
     localStorage.setItem('appState_savedSession', '1');
 
-    expect(() => getSessionId()).toThrow(/before ensureTrackerIdentity/);
-    const restored = await ensureTrackerIdentity();
+    expect(() => getSessionId()).toThrow(/before ensureHubIdentity/);
+    const restored = await ensureHubIdentity();
     expect(restored).toBe(sid);
     expect(getSessionId()).toBe(sid);
   });
 
-  it('persists myTrackerPlayerId in preferences and restores it across reload', async () => {
+  it('persists myHubPlayerId in preferences and restores it across reload', async () => {
     const sid = getSessionId();
     markSavedSession();
     saveSession({
       pairingToken: 'tok-pid',
       sessionId: sid,
-      myTrackerPlayerId: 'p_stable_abc',
+      myHubPlayerId: 'p_stable_abc',
       myContribution: '100',
       theirContribution: '100',
       perGameAmount: '10',
@@ -501,31 +501,31 @@ describe('flat state', () => {
     await flushSessionSave();
 
     const prefs = JSON.parse(localStorage.getItem('appPreferences')!);
-    expect(prefs.myTrackerPlayerId).toBe('p_stable_abc');
+    expect(prefs.myHubPlayerId).toBe('p_stable_abc');
 
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
     localStorage.setItem('appPreferences', JSON.stringify({
       playerId: 'player-local',
       sessionId: sid,
-      myTrackerPlayerId: 'p_stable_abc',
+      myHubPlayerId: 'p_stable_abc',
     }));
     localStorage.setItem('appState_savedSession', '1');
 
-    await ensureTrackerIdentity();
-    expect(getMyTrackerPlayerId()).toBe('p_stable_abc');
+    await ensureHubIdentity();
+    expect(getMyHubPlayerId()).toBe('p_stable_abc');
     expect(getSessionId()).toBe(sid);
   });
 
-  it('clearSessionId wipes only the tracker session ID', () => {
+  it('clearSessionId wipes only the hub session ID', () => {
     const id = getSessionId();
     setAlias('MyName');
-    saveSession({ myTrackerPlayerId: 'p_to_clear' });
+    saveSession({ myHubPlayerId: 'p_to_clear' });
 
     clearSessionId();
 
     expect(loadAppState().sessionId).toBeUndefined();
-    expect(loadAppState().myTrackerPlayerId).toBeUndefined();
+    expect(loadAppState().myHubPlayerId).toBeUndefined();
     expect(loadAppState().alias).toBe('MyName');
     expect(getSessionId()).toBeTruthy();
     expect(getSessionId()).not.toBe(id);
@@ -558,7 +558,7 @@ describe('flat state', () => {
     expect(loadAppState().alias).toBe('MyName');
   });
 
-  it('clearSession drops the boot marker when no blockchainType or trackerUrl remains', async () => {
+  it('clearSession drops the boot marker when no blockchainType or hubUrl remains', async () => {
     markSavedSession();
     saveSession(sampleSession);
     await flushSessionSave();
@@ -570,15 +570,15 @@ describe('flat state', () => {
     expect(await peekSession()).toBeNull();
   });
 
-  it('clearSession keeps the boot marker when only trackerUrl remains', async () => {
+  it('clearSession keeps the boot marker when only hubUrl remains', async () => {
     markSavedSession();
-    saveSession({ trackerUrl: 'http://localhost:3003' });
+    saveSession({ hubUrl: 'http://localhost:3003' });
     await flushSessionSave();
 
     await clearSession();
 
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(await peekSession()).toMatchObject({ trackerUrl: 'http://localhost:3003' });
+    expect(await peekSession()).toMatchObject({ hubUrl: 'http://localhost:3003' });
   });
 
   it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-cradle handshake', async () => {
@@ -586,7 +586,7 @@ describe('flat state', () => {
     saveSession({
       ...sampleSession,
       blockchainType: 'simulator',
-      trackerUrl: 'http://localhost:3003',
+      hubUrl: 'http://localhost:3003',
       humanHistory: ['keep-me'],
       diagnosticLog: ['diag-keep'],
       sessionPeerId: 'peer-abc',
@@ -602,7 +602,7 @@ describe('flat state', () => {
     expect(hasSavedSessionMarker()).toBe(true);
     const remaining = await peekSession();
     expect(remaining?.blockchainType).toBe('simulator');
-    expect(remaining?.trackerUrl).toBe('http://localhost:3003');
+    expect(remaining?.hubUrl).toBe('http://localhost:3003');
     expect(remaining?.humanHistory).toEqual(['keep-me']);
     expect(remaining?.diagnosticLog).toEqual(['diag-keep']);
     expect(remaining?.serializedGameSession).toBeUndefined();
@@ -622,7 +622,7 @@ describe('flat state', () => {
   it('pairingToken-only pending handshake is resumable without a cradle', async () => {
     saveSession({
       blockchainType: 'simulator',
-      trackerUrl: 'http://localhost:3003',
+      hubUrl: 'http://localhost:3003',
       pairingToken: 'peer_x_1',
       sessionPeerId: 'peer-x',
       gameSessionId: 'gs-pending',
@@ -664,7 +664,7 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(6n);
+    expect(state.version).toBe(7n);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {
@@ -920,16 +920,16 @@ describe('alias and theme', () => {
   });
 });
 
-describe('tracker alert', () => {
-  it('getTrackerAlert returns false initially', () => {
-    expect(getTrackerAlert()).toBe(false);
+describe('hub alert', () => {
+  it('getHubAlert returns false initially', () => {
+    expect(getHubAlert()).toBe(false);
   });
 
-  it('setTrackerAlert / getTrackerAlert round-trip', () => {
-    setTrackerAlert(true);
-    expect(getTrackerAlert()).toBe(true);
-    setTrackerAlert(false);
-    expect(getTrackerAlert()).toBe(false);
+  it('setHubAlert / getHubAlert round-trip', () => {
+    setHubAlert(true);
+    expect(getHubAlert()).toBe(true);
+    setHubAlert(false);
+    expect(getHubAlert()).toBe(false);
   });
 });
 

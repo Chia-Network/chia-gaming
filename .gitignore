@@ -20,8 +20,8 @@ wheels/
 node_modules/
 .pnp.cjs
 .pnp.loader.mjs
-lobby/**/public/index.js
-lobby/**/serve/
+hub/**/public/index.js
+hub/**/serve/
 front-end/**/serve/
 wc-stub/package-lock.json
 # Virtual environments
@@ -35,7 +35,7 @@ pnpm-store/
 
 # Deploy output
 deploy_player_app/
-deploy_tracker/
+deploy_hub/
 
 # macos
 .DS_Store
@@ -56,3 +56,4 @@ chia-blockchain/
 
 # Local working notes
 NAMING_AUDIT.md
+DEAD_CODE_LAYER_AUDIT.md
