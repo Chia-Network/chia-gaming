@@ -148,3 +148,17 @@ export function formatMojos(mojos: bigint): string {
   }
   return `${mojos.toLocaleString()} mojos`;
 }
+
+/** Encode a non-negative integer as CLVM atom hex (big-endian, minimal). */
+export function encodeU64AsClvmHex(val: bigint): string {
+  if (val === 0n) return '';
+  const bytes: number[] = [];
+  let h = val;
+  while (h > 0n) {
+    bytes.push(Number(h & 0xffn));
+    h >>= 8n;
+  }
+  bytes.reverse();
+  if (bytes[0] & 0x80) bytes.unshift(0);
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+}

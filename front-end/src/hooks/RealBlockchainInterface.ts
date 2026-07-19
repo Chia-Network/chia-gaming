@@ -8,7 +8,13 @@ import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { log } from '../services/log';
-import { coinIdFromBytes, normalizeHexString, toUint8, toHexString } from '../util';
+import {
+  coinIdFromBytes,
+  encodeU64AsClvmHex,
+  normalizeHexString,
+  toUint8,
+  toHexString,
+} from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
 import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
@@ -84,21 +90,6 @@ function clearCachedChangeAddresses(): void {
 
 function clearCachedRemoteWalletIds(): void {
   clearCachedWalletConnectKeys(REMOTE_WALLET_STORAGE_PREFIX);
-}
-
-function encodeU64AsClvmHex(val: bigint): string {
-  if (val === 0n) return '';
-  const bytes: number[] = [];
-  let h = val;
-  while (h > 0n) {
-    bytes.push(Number(h & 0xffn));
-    h >>= 8n;
-  }
-  bytes.reverse();
-  if (bytes[0] & 0x80) {
-    bytes.unshift(0);
-  }
-  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function decodeNonNegativeClvmIntHex(hex: string): bigint {

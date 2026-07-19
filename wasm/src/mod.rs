@@ -22,11 +22,12 @@ mod gaming_wasm {
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        chia_dialect, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount,
+        chia_dialect, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount,
         CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
         CoinsetSpendRecord, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
         Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
+    use chia_gaming::utils::map_m;
 
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
@@ -860,15 +861,6 @@ mod gaming_wasm {
         Ok(GameID(id.parse::<u64>().map_err(|e| {
             JsValue::from_str(&format!("bad game id: {e}"))
         })?))
-    }
-
-    #[wasm_bindgen]
-    pub fn propose_game(cid: i32, game: JsValue, parameters: &[u8]) -> Result<JsValue, JsValue> {
-        let games_arr = js_sys::Array::new();
-        games_arr.push(&game);
-        let params_arr = js_sys::Array::new();
-        params_arr.push(&js_sys::Uint8Array::from(parameters).into());
-        propose_games(cid, games_arr.into(), params_arr.into())
     }
 
     #[wasm_bindgen]

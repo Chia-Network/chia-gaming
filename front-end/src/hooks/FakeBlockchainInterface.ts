@@ -1,4 +1,4 @@
-import { normalizeCoinStringHex } from '../util';
+import { encodeU64AsClvmHex, normalizeCoinStringHex } from '../util';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { jsonParse, jsonStringify } from '../util/jsonSafe';
 
@@ -21,19 +21,6 @@ function getWebSocketClass(): any {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   try { return require('ws'); } catch { /* not available */ }
   throw new Error('No WebSocket implementation available');
-}
-
-function encodeU64AsClvmHex(val: bigint): string {
-  if (val === 0n) return '';
-  const bytes: number[] = [];
-  let h = val;
-  while (h > 0n) {
-    bytes.push(Number(h & 0xffn));
-    h >>= 8n;
-  }
-  bytes.reverse();
-  if (bytes[0] & 0x80) bytes.unshift(0);
-  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {

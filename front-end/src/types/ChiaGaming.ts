@@ -249,7 +249,6 @@ export interface WasmConnection {
   coin_string_to_name: (hex_coinstring: string) => string;
 
   // Game
-  propose_game: (cid: number, game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array) => WasmResult | undefined;
   propose_games: (cid: number, games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]) => WasmResult | undefined;
   accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
@@ -299,10 +298,6 @@ export class ChiaGame {
     this.wasm = wasm;
     this.waiting_messages = [] as Uint8Array[];
     this.session = sessionId;
-  }
-
-  propose_game(game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array): WasmResult | undefined {
-    return this.wasm.propose_game(this.session, game, parameters);
   }
 
   propose_games(games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]): WasmResult | undefined {

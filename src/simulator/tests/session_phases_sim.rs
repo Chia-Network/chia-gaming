@@ -1636,26 +1636,26 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        let new_ids = cradles[*who].propose_game(
+                        let new_ids = cradles[*who].propose_games(
                             allocator,
-                            &GameProposal {
+                            &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(timeout),
                                 parameters,
-                            },
+                            }],
                         )?;
                         local_uis[*who]
                             .proposed_game_ids
                             .extend(new_ids.iter().cloned());
                     }
                     SimScriptAction::ProposeKrunkGroup(who, _trigger) => {
-                        let new_ids = cradles[*who].propose_game(
+                        let new_ids = cradles[*who].propose_games(
                             allocator,
-                            &GameProposal {
+                            &[GameProposal {
                                 game_type: GameType(b"krunk".to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters: Program::from_hex("64")?,
-                            },
+                            }],
                         )?;
                         local_uis[*who]
                             .proposed_game_ids
@@ -1870,13 +1870,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        cradles[*who].propose_game(
+                        cradles[*who].propose_games(
                             allocator,
-                            &GameProposal {
+                            &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters,
-                            },
+                            }],
                         )?;
                         cradles[*who].flush_pending(allocator)?;
                         cradles[*who].replace_last_message(|msg_envelope| {
@@ -1913,13 +1913,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        cradles[*who].propose_game(
+                        cradles[*who].propose_games(
                             allocator,
-                            &GameProposal {
+                            &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters,
-                            },
+                            }],
                         )?;
                         cradles[*who].flush_pending(allocator)?;
                         cradles[*who].replace_last_message(|msg_envelope| {
@@ -1956,13 +1956,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        cradles[*who].propose_game(
+                        cradles[*who].propose_games(
                             allocator,
-                            &GameProposal {
+                            &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(15),
                                 parameters,
-                            },
+                            }],
                         )?;
                         cradles[*who].flush_pending(allocator)?;
                         cradles[*who].replace_last_message(|msg_envelope| {
@@ -3915,13 +3915,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params1 =
             Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
-        let result1 = outcome.cradles[0].propose_game(
+        let result1 = outcome.cradles[0].propose_games(
             &mut allocator,
-            &GameProposal {
+            &[GameProposal {
                 game_type: GameType(game_type.to_vec()),
                 timeout: Timeout::new(15),
                 parameters: params1,
-            },
+            }],
         );
 
         assert!(result1.is_ok());
@@ -3935,13 +3935,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params2 =
             Program::from_nodeptr(&mut allocator, params2_node).expect("debug parameters");
-        let result2 = outcome.cradles[1].propose_game(
+        let result2 = outcome.cradles[1].propose_games(
             &mut allocator,
-            &GameProposal {
+            &[GameProposal {
                 game_type: GameType(game_type.to_vec()),
                 timeout: Timeout::new(15),
                 parameters: params2,
-            },
+            }],
         );
 
         for _i in 0..100 {

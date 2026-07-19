@@ -137,15 +137,6 @@ pub trait PeerLifecyclePhase {
             "provide_coin_spend_bundle not available in this phase".to_string(),
         ))
     }
-    fn propose_game(
-        &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _game: &GameProposal,
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(Error::StrErr(
-            "propose_game: not in off-chain phase".to_string(),
-        ))
-    }
     fn propose_games(
         &mut self,
         _env: &mut ChannelEnv<'_>,
@@ -1353,14 +1344,6 @@ impl GameSession {
 
     pub fn handshake_finished(&self) -> bool {
         self.peer.handshake_finished()
-    }
-
-    pub fn propose_game(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        game: &GameProposal,
-    ) -> Result<Vec<GameID>, Error> {
-        self.propose_games(allocator, std::slice::from_ref(game))
     }
 
     pub fn propose_games(

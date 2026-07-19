@@ -1432,14 +1432,6 @@ impl OffChainPhase {
 }
 
 impl FromLocalUI for OffChainPhase {
-    fn propose_game(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        game: &GameProposal,
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        FromLocalUI::propose_games(self, env, std::slice::from_ref(game))
-    }
-
     fn propose_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -1743,13 +1735,6 @@ impl PeerLifecyclePhase for OffChainPhase {
     }
     fn handshake_finished(&self) -> bool {
         OffChainPhase::handshake_finished(self)
-    }
-    fn propose_game(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        game: &GameProposal,
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        <Self as FromLocalUI>::propose_game(self, env, game)
     }
     fn propose_games(
         &mut self,

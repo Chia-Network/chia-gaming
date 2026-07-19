@@ -28,12 +28,13 @@ use crate::common::constants::{
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    check_for_hex, convert_coinset_org_spend_to_spend, map_m, u64_from_atom, Aggsig, AllocEncoder,
-    Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
-    Error, Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
+    check_for_hex, convert_coinset_org_spend_to_spend, u64_from_atom, Aggsig, AllocEncoder, Amount,
+    CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error,
+    Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
 use crate::game_session::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
+use crate::utils::map_m;
 use clvm_traits::Atom;
 use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;

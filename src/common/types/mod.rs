@@ -49,4 +49,3 @@ pub use self::spend::{
     CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Spend, SpendBundle,
 };
 pub use self::timeout::Timeout;
-pub use crate::utils::map_m;

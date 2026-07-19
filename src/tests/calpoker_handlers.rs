@@ -303,7 +303,6 @@ struct GameSetup {
     bob_validator: NodePtr,
     initial_validator_hash: NodePtr,
     initial_state: NodePtr,
-    initial_move: NodePtr,
     initial_max_move_size: i64,
     initial_mover_share: i64,
 }
@@ -332,7 +331,6 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
         bob_handler: record[10],
         bob_validator: record[11],
         initial_validator_hash: record[4],
-        initial_move: record[5],
         initial_max_move_size: int_from_node(allocator, record[6]),
         initial_state: record[7],
         initial_mover_share: int_from_node(allocator, record[8]),

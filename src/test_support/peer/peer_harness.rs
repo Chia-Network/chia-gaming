@@ -570,14 +570,14 @@ pub fn test_peer_smoke() {
             let parameters =
                 Program::from_nodeptr(&mut allocator, params_node).expect("proposal parameters");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            let (game_ids, effects1) = FromLocalUI::propose_game(
+            let (game_ids, effects1) = FromLocalUI::propose_games(
                 &mut peers[1],
                 &mut env,
-                &GameProposal {
+                &[GameProposal {
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(15),
                     parameters,
-                },
+                }],
             )
             .expect("should run");
             (game_ids, effects1)

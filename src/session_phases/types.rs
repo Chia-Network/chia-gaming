@@ -56,12 +56,6 @@ pub trait ToLocalUI {
 }
 
 pub trait FromLocalUI {
-    fn propose_game(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        game: &GameProposal,
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
-
     fn propose_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
