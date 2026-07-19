@@ -199,9 +199,8 @@ impl GameHandler {
             )));
         }
 
-        let name_atom = atom_from_clvm(allocator, pl[0]).ok_or_else(|| {
-            Error::StrErr("game handler name was not an atom".to_string())
-        })?;
+        let name_atom = atom_from_clvm(allocator, pl[0])
+            .ok_or_else(|| Error::StrErr("game handler name was not an atom".to_string()))?;
         let name = std::str::from_utf8(&name_atom)
             .map_err(|e| Error::StrErr(format!("game handler name is not valid UTF-8: {e}")))?;
         let max_move_size =
@@ -363,9 +362,8 @@ impl GameHandler {
 
         let decode_slash_evidence = |allocator: &mut AllocEncoder| {
             let mut lst = Vec::new();
-            let lst_nodeptr = proper_list(allocator.allocator(), pl[1], true).ok_or_else(|| {
-                Error::StrErr("slash evidence was not a list".to_string())
-            })?;
+            let lst_nodeptr = proper_list(allocator.allocator(), pl[1], true)
+                .ok_or_else(|| Error::StrErr("slash evidence was not a list".to_string()))?;
 
             for v in lst_nodeptr.into_iter() {
                 lst.push(Evidence::from_nodeptr(allocator, v)?);

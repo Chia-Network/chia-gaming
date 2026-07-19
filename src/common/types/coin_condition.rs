@@ -34,7 +34,10 @@ pub enum CoinCondition {
 /// - `Ok(Some(...))` — recognized and well-formed
 /// - `Ok(None)` — unrecognized opcode / shape (skip at the chain boundary)
 /// - `Err(...)` — recognized opcode with malformed arguments
-fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Result<Option<CoinCondition>, Error> {
+fn parse_condition(
+    allocator: &AllocEncoder,
+    condition: NodePtr,
+) -> Result<Option<CoinCondition>, Error> {
     let Some(exploded) = proper_list(allocator.allocator_ref(), condition, true) else {
         return Ok(None);
     };
@@ -54,9 +57,8 @@ fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Result<Optio
             .map(|a| allocator.allocator_ref().atom(*a).to_vec())
             .collect();
         if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
-            let pk = PublicKey::from_slice(&atoms[1]).map_err(|e| {
-                Error::StrErr(format!("AGG_SIG_UNSAFE public key: {e:?}"))
-            })?;
+            let pk = PublicKey::from_slice(&atoms[1])
+                .map_err(|e| Error::StrErr(format!("AGG_SIG_UNSAFE public key: {e:?}")))?;
             return Ok(Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec())));
         } else if *atoms[0] == AGG_SIG_ME_ATOM {
             let pk = PublicKey::from_slice(&atoms[1])
@@ -99,9 +101,8 @@ fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Result<Optio
             return Ok(Some(CoinCondition::AssertCoinAnnouncement(arg)));
         }
         if *op == RESERVE_FEE_ATOM {
-            let val = u64_from_atom(&arg).ok_or_else(|| {
-                Error::StrErr("RESERVE_FEE value was not a u64 atom".to_string())
-            })?;
+            let val = u64_from_atom(&arg)
+                .ok_or_else(|| Error::StrErr("RESERVE_FEE value was not a u64 atom".to_string()))?;
             return Ok(Some(CoinCondition::ReserveFee(Amount::new(val))));
         }
     }
@@ -110,10 +111,12 @@ fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Result<Optio
 }
 
 impl CoinCondition {
-    pub fn from_nodeptr(allocator: &AllocEncoder, conditions: NodePtr) -> Result<Vec<CoinCondition>, Error> {
-        let exploded = proper_list(allocator.allocator_ref(), conditions, true).ok_or_else(|| {
-            Error::StrErr("coin conditions were not a list".to_string())
-        })?;
+    pub fn from_nodeptr(
+        allocator: &AllocEncoder,
+        conditions: NodePtr,
+    ) -> Result<Vec<CoinCondition>, Error> {
+        let exploded = proper_list(allocator.allocator_ref(), conditions, true)
+            .ok_or_else(|| Error::StrErr("coin conditions were not a list".to_string()))?;
         let mut out = Vec::with_capacity(exploded.len());
         for cond in exploded {
             if let Some(parsed) = parse_condition(allocator, cond)? {

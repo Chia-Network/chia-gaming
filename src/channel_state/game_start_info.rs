@@ -54,12 +54,12 @@ impl GameStartInfo {
         }
 
         let returned_amount = Amount::from_clvm(allocator, lst[0])?;
-        let my_turn = if let Some(a) = atom_from_clvm(allocator, lst[1]).and_then(|a| usize_from_atom(&a))
-        {
-            a != 0
-        } else {
-            return Err(Error::StrErr("bad my_turn in game start info".to_string()));
-        };
+        let my_turn =
+            if let Some(a) = atom_from_clvm(allocator, lst[1]).and_then(|a| usize_from_atom(&a)) {
+                a != 0
+            } else {
+                return Err(Error::StrErr("bad my_turn in game start info".to_string()));
+            };
         let returned_handler = if my_turn {
             GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, lst[2])?.into())
         } else {
