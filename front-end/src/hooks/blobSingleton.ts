@@ -1,5 +1,5 @@
 import { SessionController } from './SessionController';
-import { WasmStateInit, loadGameHexes, GameHexes } from './WasmStateInit';
+import { WasmStateInit } from './WasmStateInit';
 import {
   PeerConnectionResult,
 } from '../types/ChiaGaming';
@@ -62,25 +62,10 @@ async function fetchPreset(fetchUrl: string): Promise<Uint8Array> {
     return new Uint8Array(await resp.arrayBuffer());
 }
 
-async function fetchHexString(fetchUrl: string): Promise<string> {
-    const url = resolveDeployAssetUrl(fetchUrl);
-    const resp = await fetch(url);
-    if (!resp.ok) {
-        await recoverFromMissingDeployAsset(
-            'fetchHexString',
-            url,
-            resp.status,
-            resp.statusText,
-        );
-    }
-    return resp.text();
-}
-
 export async function configSessionController(
   sc: SessionController,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
-  gameHexes: GameHexes,
   blockchain: BlockchainPoller,
   uniqueId: string,
   channelTimeout?: number,
@@ -95,7 +80,7 @@ export async function configSessionController(
   let address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
   const theirContribution = sc.theirContribution;
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
   sc.setGameSession(cradle);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
@@ -254,15 +239,12 @@ export function getOrCreateSessionController(
         // asset fetch so a stale-deploy reload can Resume into newSession again.
         await flushSessionSave();
         if (sessionController !== owningController) return;
-        const gameHexes = await loadGameHexes(fetchHexString);
-        if (sessionController !== owningController) return;
         await clearGameSessionPreservingHistory();
         if (sessionController !== owningController) return;
         await configSessionController(
           owningController,
           iStarted,
           wasmStateInit,
-          gameHexes,
           blockchain,
           uniqueId,
           channelTimeout,

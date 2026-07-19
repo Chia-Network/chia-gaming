@@ -1,7 +1,7 @@
 import {
   cardIdToRankSuit,
   handValueToDescription,
-} from '../../types/ChiaGaming';
+} from '../../types/californiaPoker';
 import {
   shouldAutoFireCalpokerMove,
   shouldProcessCalpokerOpponentMoved,

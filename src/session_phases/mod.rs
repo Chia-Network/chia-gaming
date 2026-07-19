@@ -25,13 +25,14 @@ use crate::utils::proper_list;
 
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::types::{
-    BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState,
-    SpendWalletReceiver, WireGameSpec, WireProposalGroup,
+    BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState, WireGameSpec,
+    WireProposalGroup,
 };
 
 use crate::session_phases::proposal::GameProposal;
 
 pub mod effects;
+pub mod game_collection;
 pub mod handler_base;
 pub mod handshake;
 pub mod handshake_initiator;
@@ -40,6 +41,10 @@ pub mod on_chain;
 pub mod proposal;
 pub mod spend_channel_coin_phase;
 pub mod types;
+pub mod wallet_traits;
+
+pub use game_collection::{game_collection, register_all};
+pub use wallet_traits::{ChannelFundingWallet, SpendWalletReceiver, WalletSpendInterface};
 
 fn serialize_game_type_map<S: Serializer>(
     map: &BTreeMap<GameType, GameFactory>,

@@ -37,6 +37,7 @@ mod gaming_wasm {
     };
     use chia_gaming::transaction_manager::{CoinStateRecord, ManagerDrain, TransactionManager};
     use chia_gaming::session_phases::effects::{GameSessionEvent, GameNotification};
+    use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::GameProposal;
     use chia_gaming::session_phases::types::{GameFactory, ToLocalUI};
@@ -54,8 +55,6 @@ mod gaming_wasm {
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
 
-    use clvm_traits::{clvm_curried_args, ToClvm};
-    use clvm_utils::CurriedProgram;
     use clvmr::run_program;
 
     #[cfg(target_arch = "wasm32")]
@@ -116,7 +115,6 @@ mod gaming_wasm {
 
     export type GameSessionConfig = {
         "seed": string | undefined,
-        "game_types": Map<string, string>,
         "have_potato": boolean,
         "my_contribution": Amount,
         "their_contribution": Amount,
@@ -212,13 +210,7 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
-    struct JsGameFactory {
-        hex: String,
-    }
-
-    #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameSessionConfig {
-        game_types: BTreeMap<String, JsGameFactory>,
         rng_id: i32,
         have_potato: bool,
         my_contribution: JsAmount,
@@ -226,62 +218,6 @@ mod gaming_wasm {
         channel_timeout: i32,
         unroll_timeout: i32,
         reward_puzzle_hash: String,
-    }
-
-    fn convert_game_factory(
-        name: &str,
-        js_factory: &JsGameFactory,
-    ) -> Result<(GameType, GameFactory), JsValue> {
-        let name_data = GameType(name.bytes().collect());
-        let byte_data = hex::decode(&js_factory.hex).map_err(|e| {
-            js_error(&format!(
-                "game factory '{name}' hex decode: {e:?} (length={})",
-                js_factory.hex.len(),
-            ))
-        })?;
-        Ok((
-            name_data,
-            GameFactory {
-                program: Some(Program::from_bytes(&byte_data).into()),
-            },
-        ))
-    }
-
-    fn convert_game_types(
-        collection: &BTreeMap<String, JsGameFactory>,
-    ) -> Result<BTreeMap<GameType, GameFactory>, JsValue> {
-        use chia_gaming::common::load_clvm::read_krunk_dict_dat;
-
-        let mut result = BTreeMap::new();
-        for (name, gf) in collection.iter() {
-            let (name_data, mut game_factory) = convert_game_factory(name, gf)?;
-            if name == "krunk" {
-                let mut allocator = AllocEncoder::new();
-                let (dict_pubkey, dict_tree) = read_krunk_dict_dat(
-                    &mut allocator,
-                    "clsp/games/krunk/krunk_signed_dict_tree.dat",
-                )
-                .map_err(|e| js_error(&format!("load dict dat: {e:?}")))?;
-
-                if let Some(ref prog) = game_factory.program {
-                    let prog_node = prog
-                        .to_nodeptr(&mut allocator)
-                        .map_err(|e| js_error(&format!("proposal to nodeptr: {e:?}")))?;
-                    let curried = CurriedProgram {
-                        program: prog_node,
-                        args: clvm_curried_args!(dict_pubkey, dict_tree),
-                    }
-                    .to_clvm(&mut allocator)
-                    .map_err(|e| js_error(&format!("curry proposal: {e:?}")))?;
-                    game_factory.program =
-                        Some(Program::from_nodeptr(&mut allocator, curried)
-                            .map_err(|e| js_error(&format!("proposal from nodeptr: {e:?}")))?
-                            .into());
-                }
-            }
-            result.insert(name_data, game_factory);
-        }
-        Ok(result)
     }
 
     struct GameConfigPartial {
@@ -297,7 +233,8 @@ mod gaming_wasm {
 
     fn parse_game_config(js_config: JsValue) -> Result<GameConfigPartial, JsValue> {
         let jsconfig: JsGameSessionConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
-        let game_types = convert_game_types(&jsconfig.game_types)?;
+        let mut allocator = AllocEncoder::new();
+        let game_types = game_collection(&mut allocator);
         let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).map_err(|e| {
             js_error(&format!(
                 "reward_puzzle_hash hex decode: {e:?} (length={})",

@@ -1080,8 +1080,8 @@ const Shell = () => {
     setDashboardSessionModel(null);
     destroySessionController();
     // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
-    // loadGameHexes, so a deploy-stale reload resumed into an empty session.
-    // blobSingleton.newSession clears after assets load successfully.
+    // WASM preset load, so a deploy-stale reload resumed into an empty session.
+    // blobSingleton.newSession clears after session setup succeeds.
     try { getActiveBlockchain().start(); } catch { /* not connected */ }
     setSessionConfig({
       iStarted: request.iStarted,

@@ -1,4 +1,4 @@
-import { cardIdToRankSuit } from '@/src/types/ChiaGaming';
+import { cardIdToRankSuit } from '@/src/types/californiaPoker';
 
 const LOG_RANKS: Record<number, string> = {
   14: 'A', 13: 'K', 12: 'Q', 11: 'J', 10: 'T',

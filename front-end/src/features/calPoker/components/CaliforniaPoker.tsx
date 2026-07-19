@@ -5,6 +5,8 @@ import {
   CaliforniapokerProps,
   CardValueSuit,
   MovingCardData,
+  cardIdToRankSuit,
+  handValueToDescription,
 } from '../../../types/californiaPoker';
 // Constants
 import {
@@ -16,10 +18,6 @@ import {
 // Utils
 import { formatHandDescription, makeDescription, formatCardsForLog, formatOrderedCardsForLog, orderUsedCardsForLog } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import {
-  cardIdToRankSuit,
-  handValueToDescription,
-} from '../../../types/ChiaGaming';
 import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
 import {
   CalpokerDisplaySnapshotView,

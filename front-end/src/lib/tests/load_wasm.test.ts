@@ -15,7 +15,6 @@ import { Subscription } from 'rxjs';
 import {
   WasmStateInit,
   storeInitArgs,
-  loadGameHexes,
 } from '../../hooks/WasmStateInit';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
@@ -54,10 +53,6 @@ function rooted(name: string) {
 
 async function fetchPreset(key: string): Promise<Uint8Array> {
   return new Uint8Array(fs.readFileSync(rooted(key)));
-}
-
-async function fetchHex(key: string): Promise<string> {
-  return fs.readFileSync(rooted(key), 'utf8');
 }
 
 function preset_file(name: string) {
@@ -468,8 +463,7 @@ async function initSessionController(
     peer_conn,
   );
 
-  let gameHexes = await loadGameHexes(fetchHex);
-  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId);
+  await configSessionController(gameObject, iStarted, wasmStateInit, blockchain, uniqueId);
 
   return gameObject;
 }

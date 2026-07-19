@@ -21,11 +21,11 @@ use crate::game_session::{
     report_coin_changes_to_peer, CoinReportPhase, FullCoinSetAdapter, GameSession,
     GameSessionConfig, MessagePeerQueue, MessagePipe, PeerLifecyclePhase, WatchEntry, WatchReport,
 };
-use crate::games::poker_collection;
 use crate::session_phases::effects::{
     apply_effects, CancelReason, ChannelStatus, Effect, GameNotification, GameSessionEvent,
     GameStatusKind, SettlementOutcome,
 };
+use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
@@ -1132,7 +1132,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let gid_diag_on = gid_diag_enabled();
     let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
     // Coinset adapter for each side.
-    let game_type_map = poker_collection(allocator);
+    let game_type_map = game_collection(allocator);
 
     let neutral_pk: PrivateKey = rng.random();
     let neutral_identity = ChiaIdentity::new(allocator, neutral_pk)?;

@@ -17,8 +17,9 @@ use crate::common::types::{GameID, PrivateKey, Program, Timeout};
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
 #[cfg(test)]
-use crate::games::poker_collection;
 use crate::session_phases::effects::{apply_effects, Effect, GameNotification};
+#[cfg(test)]
+use crate::session_phases::game_collection;
 #[cfg(test)]
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 #[cfg(test)]
@@ -475,7 +476,7 @@ pub fn test_peer_smoke() {
     let mut pipe_sender: [Pipe; 2] = Default::default();
     pipe_sender[1].message_pipe.my_id = 1;
 
-    let game_type_map = poker_collection(&mut allocator);
+    let game_type_map = game_collection(&mut allocator);
 
     let new_handler = |allocator: &mut AllocEncoder,
                        rng: &mut ChaCha8Rng,
