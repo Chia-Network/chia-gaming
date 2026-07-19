@@ -592,6 +592,10 @@ describe('restore ordering', () => {
           gameSessionSchemaVersion: 1n,
           messageNumber: 5n,
           remoteNumber: 1n,
+          channelReady: false,
+          iStarted: true,
+          pairingToken: 'tok',
+          activeGameIds: [],
           unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
           wasmNotificationHistory: ['notification'],
           diagnosticLog: ['diagnostic'],
@@ -725,6 +729,12 @@ describe('cradle serialization schema restore guard', () => {
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion: 1n,
       pairingToken: 'restore-corruption-test',
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      channelReady: false,
+      iStarted: true,
+      activeGameIds: [],
+      unackedMessages: [],
     });
     await flushSessionSave();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {

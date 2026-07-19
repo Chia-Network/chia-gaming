@@ -448,6 +448,11 @@ export function useKrunkHand(
       transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false });
     } catch (e) {
       console.error('[krunk] alice auto-clue failed', e);
+      transition({
+        ...gs,
+        error: e instanceof Error ? e.message : String(e),
+        myTurn: false,
+      });
     }
   }, [gs, transition, finishGame]);
 
@@ -473,6 +478,13 @@ export function useKrunkHand(
       go.makeMove(gid, wordToProgram(normalised));
     } catch (e) {
       console.error('[krunk] commit failed', e);
+      transition({
+        ...cur,
+        handler: KrunkHandler.WaitingCommit,
+        myTurn: true,
+        secretWord: null,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }, [transition]);
 
@@ -503,6 +515,12 @@ export function useKrunkHand(
       go.makeMove(gid, wordToProgram(normalised));
     } catch (e) {
       console.error('[krunk] guess failed', e);
+      transition({
+        ...cur,
+        handler: KrunkHandler.BobGuess,
+        myTurn: true,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }, [transition]);
 

@@ -188,9 +188,14 @@ type SessionStartRequest = {
 
 function parseSessionAmount(raw: string): bigint {
   try {
-    return BigInt(raw);
-  } catch {
-    return FALLBACK_AMOUNT;
+    const amount = BigInt(raw);
+    if (amount <= 0n) {
+      throw new Error(`session amount must be positive, got ${raw}`);
+    }
+    return amount;
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('session amount')) throw e;
+    throw new Error(`invalid session amount: ${raw}`);
   }
 }
 
@@ -232,7 +237,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'log', label: 'Log' },
 ];
 
-const FALLBACK_AMOUNT = 100n;
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
 
@@ -1018,8 +1022,16 @@ const Shell = () => {
     const conn = hubConnRef.current;
     if (!conn) return;
 
-    const myContribution = parseSessionAmount(request.myAmount);
-    const theirContribution = parseSessionAmount(request.theirAmount);
+    let myContribution: bigint;
+    let theirContribution: bigint;
+    try {
+      myContribution = parseSessionAmount(request.myAmount);
+      theirContribution = parseSessionAmount(request.theirAmount);
+    } catch (e) {
+      console.error('[Shell] rejecting session start with invalid amounts', e);
+      setSessionError(true);
+      return;
+    }
     const minContribution = myContribution < theirContribution ? myContribution : theirContribution;
     const perGame = minContribution / 10n || 1n;
     const sessionId = request.gameSessionId ?? generateSessionId();

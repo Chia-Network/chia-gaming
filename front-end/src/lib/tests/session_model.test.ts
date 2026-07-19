@@ -768,6 +768,7 @@ describe('session model selectors', () => {
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion: 1n,
       channelReady: true,
+      activeGameIds: [],
       channelStatus: {
         state: 'Active',
         advisory: null,
@@ -843,6 +844,7 @@ describe('session model selectors', () => {
     const save = {
       version: 8n,
       playerId: 'p1',
+      activeGameIds: [],
       channelNotifQueue: [
         { id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' },
       ],
@@ -871,6 +873,7 @@ describe('session model selectors', () => {
     const restored = sessionModelFromSave({
       version: 8n,
       playerId: 'p1',
+      activeGameIds: snapshot.activeGameIds ?? [],
       gameHandStatus: snapshot.gameHandStatus,
       gameCoinHex: snapshot.gameCoinHex,
       gameTurnState: snapshot.gameTurnState,
@@ -912,6 +915,7 @@ describe('session model selectors', () => {
     const restored = sessionModelFromSave({
       version: 8n,
       playerId: 'p1',
+      activeGameIds: snapshot.activeGameIds ?? [],
       currentHandGameIds: snapshot.currentHandGameIds,
       gameInstances: snapshot.gameInstances,
     });

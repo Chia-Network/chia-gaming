@@ -284,7 +284,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     fee: bigint,
     removals: CoinsetCoin[],
   ): Promise<TransactionRecord> {
-    const puzzleHash = this.blockchainAddressData.puzzleHash || '0'.repeat(64);
+    const puzzleHash = this.blockchainAddressData.puzzleHash;
+    if (!puzzleHash) {
+      throw new Error('buildTransactionRecord: blockchain address puzzle hash is not set');
+    }
     const toAddress = encodePuzzleHashToBech32m(puzzleHash);
 
     const nameBytes = new TextEncoder().encode(jsonStringify(spendBundle));

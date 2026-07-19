@@ -558,7 +558,7 @@ impl SpendChannelCoinPhase {
 
         // Not a clean shutdown — an unroll landed.  Find the unroll coin
         // by matching its puzzle hash against our known unroll puzzle hashes.
-        let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
+        let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr)?;
         let unroll_coin = {
             let ch = self.base.channel_state()?;
             let map = ch.unroll_puzzle_hash_map();

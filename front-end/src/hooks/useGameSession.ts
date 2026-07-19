@@ -901,17 +901,30 @@ export function useGameSession(
     });
   }, [sc]);
 
-  const cancelStalePeerProposals = useCallback((exceptId?: string) => {
+  const cancelProposalOrThrow = useCallback((gameId: string) => {
     const go = scRef.current;
+    if (!go) return;
+    try {
+      go.cancel_proposal(gameId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/no proposal with id|cancel for unknown proposal|not in off-chain phase/i.test(msg)) {
+        return;
+      }
+      throw e;
+    }
+  }, []);
+
+  const cancelStalePeerProposals = useCallback((exceptId?: string) => {
     const cached = cachedPeerProposalRef.current;
     if (cached && cached.id !== exceptId) {
-      try { go?.cancel_proposal(cached.id); } catch (_) { /* already cancelled */ }
+      cancelProposalOrThrow(cached.id);
     }
     const review = reviewPeerProposalRef.current;
     if (review && review.id !== exceptId) {
-      try { go?.cancel_proposal(review.id); } catch (_) { /* already cancelled */ }
+      cancelProposalOrThrow(review.id);
     }
-  }, []);
+  }, [cancelProposalOrThrow]);
 
   const persistFullSession = useCallback((): Promise<void> => {
     const go = scRef.current;
@@ -1068,8 +1081,9 @@ export function useGameSession(
         proposalGroupIdsByIdRef.current[id] = ids;
         outgoingProposalIdsRef.current.add(id);
       }
-    } catch (_) {
-      // proposal can fail if channel isn't ready yet; user can retry
+    } catch (e) {
+      console.error('[notify] proposeNewGame failed:', e);
+      throw e;
     }
   }, [iStarted]);
 
@@ -1204,7 +1218,7 @@ export function useGameSession(
 
       if (gameIdsRef.current.length > 0) {
         log(`[notify] rejecting proposal id=${incoming.id} — game active`);
-        try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+        cancelProposalOrThrow(incoming.id);
         return;
       }
 
@@ -1249,7 +1263,7 @@ export function useGameSession(
             pendingRetryTermsRef.current = null;
             for (const id of Array.from(outgoingProposalIdsRef.current)) {
               if (id === incoming.id) continue;
-              try { go?.cancel_proposal(id); } catch (_) { /* already gone */ }
+              cancelProposalOrThrow(id);
             }
             outgoingProposalIdsRef.current.clear();
             setReviewPeerProposal(incoming);
@@ -1260,7 +1274,7 @@ export function useGameSession(
             setNewHandRequested(false);
             if (matchesLastTerms) {
               log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
-              try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+              cancelProposalOrThrow(incoming.id);
               proposeNewGame(retryTerms);
             } else {
               setReviewPeerProposal(incoming);
@@ -1277,7 +1291,7 @@ export function useGameSession(
             pendingRetryTermsRef.current = null;
             if (termsEqual(incoming.terms, lastHandTermsRef.current)) {
               log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
-              try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+              cancelProposalOrThrow(incoming.id);
               proposeNewGame(retryTerms);
             } else {
               setComposeProposalSent(false);
@@ -1288,7 +1302,7 @@ export function useGameSession(
             }
           } else if (termsEqual(incoming.terms, rejectedOnceTermsRef.current)) {
             log(`[notify] ProposalMade id=${incoming.id} auto-rejecting one-shot remembered terms`);
-            try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+            cancelProposalOrThrow(incoming.id);
             setRejectedOnceTerms(null);
           } else {
             setReviewPeerProposal(incoming);
@@ -1660,7 +1674,7 @@ export function useGameSession(
       log(`[game] action failed: ${reason}`);
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, replaceGameInstances, updateGameInstance]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance]);
 
   // Subscribe to WASM events
   useEffect(() => {

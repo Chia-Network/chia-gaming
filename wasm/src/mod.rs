@@ -1437,7 +1437,7 @@ mod gaming_wasm {
         )
         .into_gen()
         .into_js()?;
-        let conditions = CoinCondition::from_nodeptr(&allocator, run_output.1);
+        let conditions = CoinCondition::from_nodeptr(&allocator, run_output.1).into_js()?;
         let mut watch_result = WatchReport::default();
         watch_result.deleted_watched.insert(coin_string.clone());
         for condition in conditions.into_iter() {

@@ -541,10 +541,15 @@ impl OffChainPhase {
                 };
                 let status = {
                     let ch = self.channel_state()?;
-                    if ch.game_is_my_turn(game_id).unwrap_or(false) {
-                        GameStatusKind::MyTurn
-                    } else {
-                        GameStatusKind::TheirTurn
+                    match ch.game_is_my_turn(game_id) {
+                        Some(true) => GameStatusKind::MyTurn,
+                        Some(false) => GameStatusKind::TheirTurn,
+                        None => {
+                            return Err(Error::StrErr(format!(
+                                "received_message: no turn mapping for game {:?}",
+                                game_id
+                            )));
+                        }
                     }
                 };
                 effects.push(Effect::Notify(GameNotification::GameStatus {
@@ -728,7 +733,7 @@ impl OffChainPhase {
                     };
                     let finished = {
                         let ch = self.channel_state()?;
-                        ch.is_game_finished(game_id)
+                        ch.is_game_finished(game_id)?
                     };
                     let opponent_readable =
                         ReadableMove::from_program(move_result.readable_their_move);
@@ -1135,10 +1140,10 @@ impl OffChainPhase {
                     pending_shutdown = Some((channel_coin.clone(), spend.solution.clone()));
                 }
                 GameAction::SendPotato => {
-                    // Legacy/restored state may still contain this marker action.
-                    // Draining a queue should never trap the WASM runtime; the
-                    // current potato state already determines whether we can send.
-                    continue;
+                    return Err(Error::StrErr(
+                        "SendPotato action is obsolete and must not appear in the queue"
+                            .to_string(),
+                    ));
                 }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {

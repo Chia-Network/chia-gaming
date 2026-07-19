@@ -95,7 +95,10 @@ impl LiveGame {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
-        // assert!(self.referee_maker.is_my_turn());
+        game_assert!(
+            self.referee_maker.is_my_turn(),
+            "internal_make_move called when it is not our turn"
+        );
         let (new_ref, referee_result) = self.referee_maker.my_turn_make_move(
             allocator,
             readable_move,

@@ -969,10 +969,10 @@ function parseNotificationId(id: unknown): bigint {
     try {
       return BigInt(id);
     } catch {
-      return 0n;
+      throw new Error(`Garbled save: invalid notification id: ${id}`);
     }
   }
-  return 0n;
+  throw new Error(`Garbled save: missing notification id`);
 }
 
 function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
@@ -994,9 +994,13 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  const activeIds = save.activeGameIds && save.activeGameIds.length > 0
-    ? save.activeGameIds
-    : save.activeGameId ? [save.activeGameId] : [];
+  if (save.activeGameIds === undefined) {
+    throw new Error('Garbled save: missing activeGameIds');
+  }
+  if (!Array.isArray(save.activeGameIds)) {
+    throw new Error('Garbled save: invalid activeGameIds');
+  }
+  const activeIds = [...save.activeGameIds];
   const currentHandIds = save.currentHandGameIds ?? activeIds;
   const instances: Record<string, GameInstanceModel> = Object.fromEntries(
     Object.entries(save.gameInstances ?? {}).map(([id, instance]) => [
@@ -1041,10 +1045,8 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
             havePotato: save.channelStatus.have_potato ?? null,
           }
-        : save.channelReady
-          ? { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' }
-          : INITIAL_CHANNEL_STATUS_MODEL,
-      connection: save.channelReady
+        : INITIAL_CHANNEL_STATUS_MODEL,
+      connection: save.channelStatus
         ? { stateIdentifier: 'running', stateDetail: [] }
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: save.goOnChainPressed ?? false,
@@ -1055,7 +1057,13 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     game: {
       coin: {
         coinHex: save.gameCoinHex ?? null,
-        turnState: (save.gameTurnState as GameTurnState | undefined) ?? 'my-turn',
+        turnState: (() => {
+          if (save.gameTurnState === undefined || save.gameTurnState === null) {
+            if (activeIds.length === 0) return 'my-turn' as GameTurnState;
+            throw new Error('Garbled save: missing gameTurnState');
+          }
+          return save.gameTurnState as GameTurnState;
+        })(),
       },
       handStatus: (save.gameHandStatus as HandStatus | undefined) ?? 'none',
       terminal: save.gameTerminalType && save.gameTerminalType !== 'none'
@@ -1074,7 +1082,11 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
       currentHandIds,
       instances,
       lastDisplayedId: activeIds[0] ?? null,
-      activeGameType: save.activeGameType ?? 'calpoker',
+      activeGameType: (() => {
+        if (save.activeGameType) return save.activeGameType;
+        if (activeIds.length === 0) return 'calpoker';
+        throw new Error('Garbled save: missing activeGameType');
+      })(),
       handState: save.handState ?? null,
       queue: parseQueuedNotifications(save.gameNotifQueue),
     },

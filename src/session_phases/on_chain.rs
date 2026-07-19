@@ -265,27 +265,26 @@ impl OnChainPhase {
         None
     }
 
-    pub fn is_game_over(&self, game_id: &GameID) -> bool {
-        self.get_game_by_id(game_id)
-            .map(|idx| self.live_games[idx].is_game_over())
-            .unwrap_or(false)
+    pub fn is_game_over(&self, game_id: &GameID) -> Result<bool, Error> {
+        let idx = self.get_game_by_id(game_id)?;
+        Ok(self.live_games[idx].is_game_over())
     }
 
     /// Should we auto-accept this game on our turn?
     /// True when: mover_share == game_amount (claim — we get 100%)
     ///        or: game_over && mover_share > 0 (terminal clean end).
     /// When both are true simultaneously, this still returns true (treated as terminal).
-    fn should_auto_settle(&self, game_id: &GameID, is_my_turn: bool) -> bool {
+    fn should_auto_settle(&self, game_id: &GameID, is_my_turn: bool) -> Result<bool, Error> {
         if !is_my_turn {
-            return false;
+            return Ok(false);
         }
-        let our_share = self.get_game_our_current_share(game_id).unwrap_or_default();
-        let game_amt = self.get_game_amount(game_id).unwrap_or_default();
+        let our_share = self.get_game_our_current_share(game_id)?;
+        let game_amt = self.get_game_amount(game_id)?;
         if our_share == game_amt {
-            return true;
+            return Ok(true);
         }
-        let game_over = self.is_game_over(game_id);
-        game_over && our_share > Amount::default()
+        let game_over = self.is_game_over(game_id)?;
+        Ok(game_over && our_share > Amount::default())
     }
 
     pub fn get_game_amount(&self, game_id: &GameID) -> Result<Amount, Error> {
@@ -665,10 +664,10 @@ impl OnChainPhase {
                         post_move_last_ph,
                     )?;
 
-                    let game_over = self
-                        .get_game_by_id(&pending.game_id)
-                        .map(|idx| self.live_games[idx].is_game_over())
-                        .unwrap_or(false);
+                    let game_over = {
+                        let idx = self.get_game_by_id(&pending.game_id)?;
+                        self.live_games[idx].is_game_over()
+                    };
                     let gt = old_def.game_timeout.clone();
                     self.game_map.insert(
                         new_coin.clone(),
@@ -1024,7 +1023,7 @@ impl OnChainPhase {
                 // Turn ownership on the next coin must flip from the previous tracked coin,
                 // regardless of whether live_games' off-chain referee view has drifted.
                 let is_my_turn = !old_definition.our_turn;
-                let game_over = self.is_game_over(&game_id);
+                let game_over = self.is_game_over(&game_id)?;
                 let terminal = old_definition.game_finished || game_over;
 
                 let gt = old_definition.game_timeout.clone();
@@ -1038,7 +1037,7 @@ impl OnChainPhase {
                     },
                 );
 
-                let auto_settle = self.should_auto_settle(&game_id, is_my_turn);
+                let auto_settle = self.should_auto_settle(&game_id, is_my_turn)?;
                 if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_id) {
                         state.game_finished = true;
@@ -1051,10 +1050,7 @@ impl OnChainPhase {
                 let zero_reward_terminal = !auto_settle
                     && is_my_turn
                     && game_over
-                    && self
-                        .get_game_our_current_share(&game_id)
-                        .unwrap_or_default()
-                        == Amount::default();
+                    && self.get_game_our_current_share(&game_id)? == Amount::default();
 
                 if zero_reward_terminal {
                     // The Expected classification means our referee already
@@ -1186,7 +1182,7 @@ impl OnChainPhase {
 
                 let game_id = old_definition.game_id;
                 let gt = old_definition.game_timeout.clone();
-                let game_over = self.is_game_over(&game_id);
+                let game_over = self.is_game_over(&game_id)?;
                 let terminal = old_definition.game_finished || game_over;
                 self.game_map.insert(
                     new_coin_string.clone(),
@@ -1197,7 +1193,7 @@ impl OnChainPhase {
                         ..old_definition
                     },
                 );
-                let auto_settle = self.should_auto_settle(&game_id, true);
+                let auto_settle = self.should_auto_settle(&game_id, true)?;
                 if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_string) {
                         state.game_finished = true;
@@ -1211,10 +1207,7 @@ impl OnChainPhase {
                 // terminal instead of a phantom "your turn".
                 let zero_reward_terminal = !auto_settle
                     && game_over
-                    && self
-                        .get_game_our_current_share(&game_id)
-                        .unwrap_or_default()
-                        == Amount::default();
+                    && self.get_game_our_current_share(&game_id)? == Amount::default();
 
                 if zero_reward_terminal {
                     self.emit_loser_forfeit_terminal(
@@ -1422,7 +1415,14 @@ impl OnChainPhase {
     ) -> Result<Option<Effect>, Error> {
         let my_turn = self.my_move_in_game(&game_id);
         if my_turn.is_none() {
-            return Ok(None);
+            return Err(Error::StrErr(format!(
+                "do_on_chain_move: Move for game {:?} has no turn mapping. \
+                 coin={:?}, queue_len={}, game_map={:?}",
+                game_id,
+                current_coin,
+                self.game_action_queue.len(),
+                self.game_map.keys().collect::<Vec<_>>(),
+            )));
         }
         if my_turn == Some(false) {
             return Err(Error::StrErr(format!(
@@ -1527,7 +1527,7 @@ impl OnChainPhase {
                         .into_iter()
                         .collect())
                 }
-                Err(_) => Ok(Vec::new()),
+                Err(e) => Err(e),
             },
             GameAction::Cheat(game_id, mover_share, entropy) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
@@ -1550,7 +1550,14 @@ impl OnChainPhase {
                             .into_iter()
                             .collect())
                     } else if my_turn.is_none() {
-                        Ok(Vec::new())
+                        Err(Error::StrErr(format!(
+                            "do_on_chain_action: Cheat for game {:?} has no turn mapping. \
+                             coin={:?}, queue_len={}, game_map keys={:?}",
+                            game_id,
+                            current_coin,
+                            self.game_action_queue.len(),
+                            self.game_map.keys().collect::<Vec<_>>(),
+                        )))
                     } else {
                         panic!(
                             "do_on_chain_action: Cheat for game {:?} deferred (not our turn, my_turn={:?}). \
@@ -1559,7 +1566,7 @@ impl OnChainPhase {
                         );
                     }
                 }
-                Err(_) => Ok(Vec::new()),
+                Err(e) => Err(e),
             },
             GameAction::AcceptSettlement(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;
@@ -1580,7 +1587,12 @@ impl OnChainPhase {
                     .game_map
                     .get(&current_coin)
                     .map(|d| d.game_timeout.clone())
-                    .unwrap_or_else(|| Timeout::new(0));
+                    .ok_or_else(|| {
+                        Error::StrErr(format!(
+                            "do_on_chain_action: AcceptSettlement missing game_map entry for {:?}",
+                            current_coin
+                        ))
+                    })?;
                 let mut effects = Vec::new();
                 if let Some(claim) = self.build_timeout_claim(env, &game_id, &current_coin)? {
                     effects.push(Effect::RegisterCoin {
@@ -1597,7 +1609,9 @@ impl OnChainPhase {
                 Ok(effects)
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
-            GameAction::SendPotato => Ok(Vec::new()),
+            GameAction::SendPotato => Err(Error::StrErr(
+                "SendPotato action is obsolete and must not appear in the queue".to_string(),
+            )),
             GameAction::QueuedProposalGroup(_, _)
             | GameAction::QueuedAcceptProposal(_)
             | GameAction::QueuedCancelProposal(_)

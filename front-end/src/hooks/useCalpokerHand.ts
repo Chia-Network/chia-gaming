@@ -150,6 +150,8 @@ export function useCalpokerHand(
               opponentHandRef.current = cards.opponentHand;
             } catch (e) {
               console.error('parseCards from OpponentMoved failed:', e);
+              handFinishedRef.current = true;
+              throw e;
             }
           } else if (currentMove >= 2n) {
             const myDiscardsBitfield = selectedCardsToBitfield(
@@ -188,6 +190,8 @@ export function useCalpokerHand(
             opponentHandRef.current = cards.opponentHand;
           } catch (e) {
             console.error('parseCards failed:', e, 'readable:', evt.GameMessage.readable);
+            handFinishedRef.current = true;
+            throw e;
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;

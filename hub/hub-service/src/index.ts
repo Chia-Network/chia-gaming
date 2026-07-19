@@ -316,7 +316,10 @@ function cancelPlayerChallenges(playerId: string): void {
 
 function applyPlayerBusy(playerId: string, busy: boolean): void {
   const status = busy ? 'busy' : 'waiting';
-  hub.setPlayerStatus(playerId, status);
+  // Not in lobby yet: busy is held on game meta and applied on join.
+  if (!hub.setPlayerStatus(playerId, status)) {
+    return;
+  }
   if (busy) {
     cancelPlayerChallenges(playerId);
   }
@@ -516,6 +519,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
       accepter_id: accepter_id ?? null,
       expected_target_id: challenge?.target_id ?? null,
     });
+    sendWs(ws, 'error', { error: 'Invalid or unknown challenge accept.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: challenge_id ?? null, accepted: false });
     return;
   }
   const challenger = hub.players[challenge.from_id];
@@ -563,8 +568,12 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
 
   const challengerAlias = hub.players[challenge.from_id]?.alias ?? challenge.from_id;
 
-  // Notify the lobby of the challenger that the challenge was accepted
+  // Notify both lobby sides that the challenge was accepted.
   sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
+    challenge_id,
+    accepted: true,
+  });
+  sendWs(ws, 'challenge_resolved', {
     challenge_id,
     accepted: true,
   });
@@ -596,6 +605,10 @@ function onChallengeDecline(ws: WebSocket, msg: Extract<LobbyInboundMessage, { t
   });
   hub.removeChallenge(msg.challenge_id);
   sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
+    challenge_id: msg.challenge_id,
+    accepted: false,
+  });
+  sendWs(ws, 'challenge_resolved', {
     challenge_id: msg.challenge_id,
     accepted: false,
   });

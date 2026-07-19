@@ -27,9 +27,10 @@ pub trait Sha256tree {
 
 impl<X: ToClvm<AllocEncoder>> Sha256tree for X {
     fn sha256tree(&self, allocator: &mut AllocEncoder) -> PuzzleHash {
-        self.to_clvm(allocator)
-            .map(|node| PuzzleHash::from_bytes(tree_hash(allocator.allocator(), node).into()))
-            .unwrap_or_default()
+        match self.to_clvm(allocator) {
+            Ok(node) => PuzzleHash::from_bytes(tree_hash(allocator.allocator(), node).into()),
+            Err(e) => panic!("sha256tree: ToClvm encoding failed: {e:?}"),
+        }
     }
 }
 

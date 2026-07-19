@@ -1075,18 +1075,14 @@ export class SessionController implements PollingGameSession {
     if (paramsList.length !== 1) {
       throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
     }
-    try {
-      const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
-      const parametersList = paramsList.map(({ parameters }) => clvmToBytes(parameters));
-      const result = this.cradle.propose_games(games, parametersList);
-      this.processResult(result);
-      return result?.ids || [];
-    } catch (e) {
-      const msg = extractErrorMessage(e);
-      console.error('[wasm] proposeGames failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
-      return [];
+    const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
+    const parametersList = paramsList.map(({ parameters }) => clvmToBytes(parameters));
+    const result = this.cradle.propose_games(games, parametersList);
+    this.processResult(result);
+    if (!result?.ids) {
+      throw new Error('proposeGames returned no ids');
     }
+    return result.ids;
   }
 
   acceptProposal(gameId: string): void {

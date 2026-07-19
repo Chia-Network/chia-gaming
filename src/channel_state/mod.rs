@@ -1184,10 +1184,9 @@ impl ChannelState {
         self.live_games.iter().any(|g| &g.game_id == game_id)
     }
 
-    pub fn is_game_finished(&self, game_id: &GameID) -> bool {
-        self.get_game_by_id(game_id)
-            .map(|idx| self.live_games[idx].is_my_turn() && self.live_games[idx].is_game_over())
-            .unwrap_or(false)
+    pub fn is_game_finished(&self, game_id: &GameID) -> Result<bool, Error> {
+        let idx = self.get_game_by_id(game_id)?;
+        Ok(self.live_games[idx].is_my_turn() && self.live_games[idx].is_game_over())
     }
 
     pub fn get_game_our_current_share(&self, game_id: &GameID) -> Result<Amount, Error> {
@@ -1561,7 +1560,7 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         conditions: NodePtr,
     ) -> Result<(usize, PuzzleHash), Error> {
-        let all_conditions = CoinCondition::from_nodeptr(env.allocator, conditions);
+        let all_conditions = CoinCondition::from_nodeptr(env.allocator, conditions)?;
         for c in &all_conditions {
             if let CoinCondition::CreateCoin(ph, _) = c {
                 if let Some(info) = self.unroll_puzzle_hash_map.get(ph) {

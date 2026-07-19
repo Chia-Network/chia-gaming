@@ -345,6 +345,7 @@ describe('RealBlockchainInterface', () => {
     const peerPuzzleHash = '55'.repeat(32);
     const peerAmount = 80n;
     const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = { puzzleHash };
     mockPushTransactions.mockResolvedValue({ success: true });
 
     await blockchain.rememberLocalRemovals({

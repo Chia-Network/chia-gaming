@@ -160,7 +160,7 @@ impl GameRunner {
             self.identities.len()
         ));
         let coinset_adapter = FullCoinSetAdapter::default();
-        let simulator = Simulator::default();
+        let simulator = Simulator::new_strict();
         self.detach_simulator(simulator, coinset_adapter);
         Ok("1\n".to_string())
     }
@@ -1075,7 +1075,7 @@ fn run_game_actor(
     height: Arc<AtomicUsize>,
     ready: std_mpsc::SyncSender<Result<(), String>>,
 ) {
-    let simulator = Simulator::default();
+    let simulator = Simulator::new_strict();
     let coinset_adapter = FullCoinSetAdapter::default();
     let mut game_runner = match GameRunner::new(simulator, coinset_adapter) {
         Ok(runner) => runner,

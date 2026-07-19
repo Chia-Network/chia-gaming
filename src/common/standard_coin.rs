@@ -368,7 +368,7 @@ pub fn standard_solution_partial(
     // The conditions we send in are the ones we get out in the standard coin
     // so in this case we can front load the conditions without running the puzzle.
     // Ensure we unborrow allocator before the code below.
-    let conds = CoinCondition::from_nodeptr(allocator, conditions);
+    let conds = CoinCondition::from_nodeptr(allocator, conditions)?;
     let mut one_create = false;
     for cond in conds.iter() {
         match cond {
@@ -403,18 +403,6 @@ pub fn standard_solution_partial(
             }
             _ => {}
         }
-    }
-
-    // Assume something like create coin if nothing else.
-    if aggregated_signature.is_none() {
-        add_signature(
-            &mut aggregated_signature,
-            if partial {
-                partial_signer(private_key, aggregate_public_key, &coin_agg_sig_me_message)
-            } else {
-                private_key.sign(&coin_agg_sig_me_message)
-            },
-        );
     }
 
     if let Some(signature) = aggregated_signature {

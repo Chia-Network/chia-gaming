@@ -388,7 +388,7 @@ export function useLobbySocket(
         type: 'challenge_accept',
         challenge_id: challengeId,
       });
-      setPendingChallenge(null);
+      // Clear pending only on challenge_resolved from the hub.
     },
     [send],
   );
@@ -399,7 +399,7 @@ export function useLobbySocket(
         type: 'challenge_decline',
         challenge_id: challengeId,
       });
-      setPendingChallenge(null);
+      // Clear pending only on challenge_resolved from the hub.
     },
     [send],
   );

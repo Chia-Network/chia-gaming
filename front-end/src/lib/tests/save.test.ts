@@ -81,6 +81,7 @@ const sampleSession: Partial<SessionSave> = {
   remoteNumber: 3n,
   channelReady: true,
   iStarted: true,
+  activeGameIds: [],
   myContribution: '60',
   theirContribution: '40',
   perGameAmount: '10',
