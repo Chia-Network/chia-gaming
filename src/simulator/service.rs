@@ -2196,7 +2196,11 @@ mod regression_tests {
         assert!(balance_response["error"].is_null(), "{balance_response}");
         let balance = balance_response["result"]
             .as_u64()
-            .or_else(|| balance_response["result"].as_str().and_then(|s| s.parse().ok()))
+            .or_else(|| {
+                balance_response["result"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok())
+            })
             .expect("get_balance did not return a number");
         assert_eq!(
             balance, 1_000_000,
