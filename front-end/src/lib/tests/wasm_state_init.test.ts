@@ -71,4 +71,25 @@ describe('WasmStateInit eager load', () => {
     expect(initFn).toHaveBeenCalledTimes(1);
     expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length);
   });
+
+  it('retries after a failed load instead of pinning the rejection', async () => {
+    const wasm = mockWasm();
+    const initFn = jest.fn(async () => {});
+    let failOnce = true;
+    const fetchPreset = jest.fn(async () => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('transient preset fetch');
+      }
+      return new Uint8Array([1]);
+    });
+
+    new WasmStateInit(fetchPreset);
+    storeInitArgs(initFn, wasm);
+
+    await expect(ensureWasmLoaded()).rejects.toThrow('transient preset fetch');
+    await expect(ensureWasmLoaded()).resolves.toBe(wasm);
+    expect(initFn).toHaveBeenCalledTimes(2);
+    expect(fetchPreset.mock.calls.length).toBeGreaterThan(PRESET_FILES.length);
+  });
 });

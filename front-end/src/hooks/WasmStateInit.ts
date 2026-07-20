@@ -99,28 +99,34 @@ async function runWasmLoad(): Promise<WasmConnection> {
 }
 
 /**
- * Idempotent: starts WASM + CLSP load once and reuses the same promise.
- * Safe to call from page load and again from session Accept.
+ * Idempotent while in flight or after success: reuses the same promise.
+ * On failure, clears so a later getWasmConnection / Accept can retry.
  * Requires storeInitArgs to have run (or waits for it).
  */
 export function ensureWasmLoaded(): Promise<WasmConnection> {
   if (!loadPromise) {
-    loadPromise = new Promise<WasmConnection>((resolve, reject) => {
-      const start = () => {
-        runWasmLoad().then(resolve, reject);
-      };
-      if (chia_gaming_init && cg) {
-        start();
-        return;
+    loadPromise = (async () => {
+      try {
+        if (!chia_gaming_init || !cg) {
+          await new Promise<void>((resolve, reject) => {
+            const sub = waitForReadyToInit.subscribe({
+              next: () => {
+                sub.unsubscribe();
+                resolve();
+              },
+              error: (e) => {
+                sub.unsubscribe();
+                reject(e);
+              },
+            });
+          });
+        }
+        return await runWasmLoad();
+      } catch (err) {
+        loadPromise = null;
+        throw err;
       }
-      const sub = waitForReadyToInit.subscribe({
-        next: () => {
-          sub.unsubscribe();
-          start();
-        },
-        error: reject,
-      });
-    });
+    })();
   }
   return loadPromise;
 }
