@@ -20,6 +20,7 @@ import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
   channelStateNeedsGameTabAttention,
   gameplayEventNeedsGameTabAttention,
+  peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
@@ -895,6 +896,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       onGameActivity?.();
     }
   }, [session.betweenHandMode, onGameActivity]);
+
+  // Rising edge: proposal cached in decision mode, or replaced while reviewing.
+  // Combined id so promoting cache → review does not double-fire.
+  const attentionProposalId =
+    session.reviewPeerProposal?.id ?? session.cachedPeerProposal?.id ?? null;
+  const prevAttentionProposalId = useRef(attentionProposalId);
+  useEffect(() => {
+    const prev = prevAttentionProposalId.current;
+    prevAttentionProposalId.current = attentionProposalId;
+    if (peerProposalIdNeedsGameTabAttention(prev, attentionProposalId)) {
+      onGameActivity?.();
+    }
+  }, [attentionProposalId, onGameActivity]);
 
   // Rising edge: clean shutdown / going on-chain begins (skip restore and
   // transitions between already-attention channel states).

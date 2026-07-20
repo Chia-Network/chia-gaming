@@ -1,6 +1,7 @@
 import {
   channelStateNeedsGameTabAttention,
   gameplayEventNeedsGameTabAttention,
+  peerProposalIdNeedsGameTabAttention,
 } from '../gameTabAttention';
 import type { GameplayEvent } from '../../hooks/useGameSession';
 
@@ -46,5 +47,13 @@ describe('gameTabAttention', () => {
     expect(channelStateNeedsGameTabAttention('Unrolling')).toBe(true);
     expect(channelStateNeedsGameTabAttention('Active')).toBe(false);
     expect(channelStateNeedsGameTabAttention('ResolvedClean')).toBe(false);
+  });
+
+  it('marks new or replaced peer proposal ids as attention', () => {
+    expect(peerProposalIdNeedsGameTabAttention(null, '5')).toBe(true);
+    expect(peerProposalIdNeedsGameTabAttention('5', '7')).toBe(true);
+    expect(peerProposalIdNeedsGameTabAttention('5', '5')).toBe(false);
+    expect(peerProposalIdNeedsGameTabAttention('5', null)).toBe(false);
+    expect(peerProposalIdNeedsGameTabAttention(null, null)).toBe(false);
   });
 });

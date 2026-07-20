@@ -28,3 +28,16 @@ export function channelStateNeedsGameTabAttention(state: ChannelStatus): boolean
     || state === 'Unrolling'
   );
 }
+
+/**
+ * True when a peer hand proposal id newly appears or is replaced.
+ * Used for both decision-mode cache and review-mode proposals so a user on
+ * another tab is notified even when betweenHandMode does not change.
+ * Clearing (non-null → null) and restore/hydration (same id) do not fire.
+ */
+export function peerProposalIdNeedsGameTabAttention(
+  prevId: string | null,
+  nextId: string | null,
+): boolean {
+  return nextId != null && nextId !== prevId;
+}
