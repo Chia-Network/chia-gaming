@@ -160,7 +160,8 @@ impl GameRunner {
             self.identities.len()
         ));
         let coinset_adapter = FullCoinSetAdapter::default();
-        let simulator = Simulator::new_strict();
+        // Non-strict: demo/service soft-rejects like a real chain (tests use new_strict).
+        let simulator = Simulator::new(false);
         self.detach_simulator(simulator, coinset_adapter);
         Ok("1\n".to_string())
     }
@@ -1075,7 +1076,8 @@ fn run_game_actor(
     height: Arc<AtomicUsize>,
     ready: std_mpsc::SyncSender<Result<(), String>>,
 ) {
-    let simulator = Simulator::new_strict();
+    // Non-strict: demo/service soft-rejects like a real chain (tests use new_strict).
+    let simulator = Simulator::new(false);
     let coinset_adapter = FullCoinSetAdapter::default();
     let mut game_runner = match GameRunner::new(simulator, coinset_adapter) {
         Ok(runner) => runner,
