@@ -105,6 +105,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  // Cancel debounced flushes so a late queueWrite cannot run after the suite.
+  _resetForTests();
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');
 });

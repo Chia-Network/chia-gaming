@@ -85,6 +85,20 @@ function shouldLogRpcError(method: ChiaMethod): boolean {
   return method !== ChiaMethod.GetCoinRecordsByNames;
 }
 
+/** High-frequency poll methods — skip success traces to avoid drowning the log. */
+function shouldLogRpcTraffic(method: ChiaMethod): boolean {
+  return (
+    method !== ChiaMethod.GetCoinRecordsByNames &&
+    method !== ChiaMethod.GetHeightInfo &&
+    method !== ChiaMethod.GetWalletBalance
+  );
+}
+
+function summarizeRpcValue(value: unknown, maxLen = 400): string {
+  const text = toDebugJson(value);
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+}
+
 function deepNumbersToBigInt(value: unknown): unknown {
   if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
   if (Array.isArray(value)) return value.map(deepNumbersToBigInt);
@@ -209,13 +223,24 @@ class WalletConnectRpcClient {
 
     await waitForRelayerConnected();
 
+    if (shouldLogRpcTraffic(prepared.method)) {
+      log(
+        `[WC RPC] → ${prepared.method} keys=[${prepared.paramKeys}] params=${summarizeRpcValue(prepared.params)}`,
+      );
+    }
+
     try {
       const raw = await client.request({
         topic: session.topic,
         chainId: walletConnectState.getChainId(),
         request: { method: prepared.method, params: prepared.params },
       });
-      return this.normalizeResult(prepared, raw);
+      const result = this.normalizeResult(prepared, raw);
+      if (shouldLogRpcTraffic(prepared.method)) {
+        const elapsed = Date.now() - prepared.enqueuedAt;
+        log(`[WC RPC] ← ${prepared.method} ok ${elapsed}ms result=${summarizeRpcValue(result)}`);
+      }
+      return result;
     } catch (e) {
       throw e;
     }

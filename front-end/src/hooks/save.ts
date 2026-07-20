@@ -568,49 +568,10 @@ function capPersistedHistories(state: SessionSave): void {
   }
 }
 
-function estimateRecordBytes(value: unknown, seen = new Set<object>()): number {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === 'string') return new TextEncoder().encode(value).byteLength;
-  if (typeof value === 'bigint') return value.toString().length;
-  if (typeof value === 'boolean') return 1;
-  if (typeof value !== 'object') return 8;
-  if (ArrayBuffer.isView(value)) return value.byteLength;
-  if (seen.has(value)) return 0;
-  seen.add(value);
-  // Degraded cradles are plain numeric-keyed objects; do not Object.entries them
-  // (enumerating hundreds of thousands of keys can OOM).
-  if (!Array.isArray(value) && isDenseNumericByteObject(value)) {
-    return 4096;
-  }
-  if (Array.isArray(value)) {
-    return value.reduce((total, item) => total + estimateRecordBytes(item, seen), 0);
-  }
-  return Object.entries(value as Record<string, unknown>).reduce(
-    (total, [key, item]) => total + key.length * 2 + estimateRecordBytes(item, seen),
-    0,
-  );
-}
-
-function logPersistenceMetrics(state: SessionSave): void {
-  const developmentRuntime = typeof window === 'undefined'
-    ? process.env.NODE_ENV !== 'production'
-    : window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  if (!developmentRuntime) return;
-  console.debug('[save] persistence metrics', {
-    rawGameSessionBytes: state.serializedGameSession?.byteLength ?? 0,
-    estimatedIndexedDbRecordBytes: estimateRecordBytes(state),
-    historicalUnrollCount: state.historicalUnrollCount?.toString() ?? 'unavailable',
-    humanHistoryCount: state.humanHistory?.length ?? 0,
-    wasmNotificationHistoryCount: state.wasmNotificationHistory?.length ?? 0,
-    diagnosticLogCount: state.diagnosticLog?.length ?? 0,
-  });
-}
-
 function queueWrite(state: SessionSave): Promise<void> {
   const snapshot = structuredClone(state);
   capPersistedHistories(snapshot);
   assertNoNumbers(snapshot, 'SessionSave');
-  logPersistenceMetrics(snapshot);
   writeChain = writeChain.catch(() => {}).then(async () => {
     if (fenced) return;
     await writeSessionRecord(snapshot);

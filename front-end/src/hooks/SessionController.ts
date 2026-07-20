@@ -203,11 +203,7 @@ export class SessionController implements PollingGameSession {
       }
     };
     this.beforeUnloadHandler = () => {
-      const hadPending = !!this.saveTimer;
       void this.flushPendingSave();
-      if (hadPending) {
-        console.log('[wasm] beforeunload: flushed pending save');
-      }
     };
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
