@@ -5,20 +5,20 @@ describe('reactPropSafeValue', () => {
     const cradle = new Uint8Array([1, 2, 3, 255]);
     const save = {
       pairingToken: 'tok',
-      cradleSchemaVersion: 1n,
-      serializedCradle: cradle,
+      gameSessionSchemaVersion: 1n,
+      serializedGameSession: cradle,
       unackedMessages: [{ msgno: 4n, msg: new Uint8Array([9, 8, 7]) }],
     };
 
     const safe = reactPropSafeValue(save);
 
-    expect(safe.serializedCradle).toBeInstanceOf(Uint8Array);
-    expect(safe.serializedCradle).toEqual(cradle);
-    expect(safe.serializedCradle).toBe(cradle);
+    expect(safe.serializedGameSession).toBeInstanceOf(Uint8Array);
+    expect(safe.serializedGameSession).toEqual(cradle);
+    expect(safe.serializedGameSession).toBe(cradle);
     expect(safe.unackedMessages?.[0].msg).toBeInstanceOf(Uint8Array);
     expect(safe.unackedMessages?.[0].msg).toEqual(new Uint8Array([9, 8, 7]));
-    expect(safe.cradleSchemaVersion).toBe(1n);
-    expect(Object.keys(safe)).not.toContain('cradleSchemaVersion');
+    expect(safe.gameSessionSchemaVersion).toBe(1n);
+    expect(Object.keys(safe)).not.toContain('gameSessionSchemaVersion');
   });
 
   it('would have produced a plain object before the typed-array guard (regression shape)', () => {
@@ -35,8 +35,8 @@ describe('reactPropSafeValue', () => {
     for (let i = 0; i < 5000; i++) degraded[String(i)] = i & 0xff;
     expect(isDenseNumericByteObject(degraded)).toBe(true);
 
-    const save = { pairingToken: 'tok', serializedCradle: degraded };
+    const save = { pairingToken: 'tok', serializedGameSession: degraded };
     const safe = reactPropSafeValue(save);
-    expect(safe.serializedCradle).toBe(degraded);
+    expect(safe.serializedGameSession).toBe(degraded);
   });
 });

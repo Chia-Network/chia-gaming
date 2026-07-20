@@ -1,7 +1,7 @@
 import { PeerSession, generateSessionId } from '../../services/PeerSession';
-import type { TrackerConnection } from '../../services/TrackerConnection';
+import type { HubConnection } from '../../services/HubConnection';
 
-function mockTrackerConnection(): TrackerConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> } {
+function mockHubConnection(): HubConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> } {
   const conn = {
     sentPeerMessages: [] as Array<{ targetId: string; payload: Uint8Array }>,
     sentAppMessages: [] as Array<{ targetId: string; data: unknown }>,
@@ -11,14 +11,14 @@ function mockTrackerConnection(): TrackerConnection & { sentPeerMessages: Array<
     sendPeerAppMessage(targetId: string, data: unknown) {
       conn.sentAppMessages.push({ targetId, data });
     },
-  } as unknown as TrackerConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> };
+  } as unknown as HubConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> };
   return conn;
 }
 
 describe('PeerSession', () => {
   describe('lifecycle', () => {
     it('starts with null liveness', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       expect(ps.liveness).toBeNull();
       expect(ps.peerId).toBe('peer1');
@@ -27,7 +27,7 @@ describe('PeerSession', () => {
     });
 
     it('destroy makes the session inert', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.notePeerActivity();
       expect(ps.liveness).toBe('connected');
@@ -40,7 +40,7 @@ describe('PeerSession', () => {
     });
 
     it('destroy clears liveness listeners', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const updates: Array<string | null> = [];
       ps.onLivenessChange((l) => updates.push(l));
@@ -56,7 +56,7 @@ describe('PeerSession', () => {
 
   describe('liveness', () => {
     it('notePeerActivity sets connected and records timestamp', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const before = Date.now();
       ps.notePeerActivity();
@@ -65,7 +65,7 @@ describe('PeerSession', () => {
     });
 
     it('markDegraded sets degraded from connected', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.notePeerActivity();
       ps.markDegraded();
@@ -73,14 +73,14 @@ describe('PeerSession', () => {
     });
 
     it('markDead sets dead', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
       expect(ps.liveness).toBe('dead');
     });
 
     it('notePeerActivity is no-op when dead', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
       ps.notePeerActivity();
@@ -88,7 +88,7 @@ describe('PeerSession', () => {
     });
 
     it('markDegraded is no-op when dead', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
       ps.markDegraded();
@@ -96,7 +96,7 @@ describe('PeerSession', () => {
     });
 
     it('markInactive resets to null unless dead', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.notePeerActivity();
       ps.markInactive();
@@ -105,7 +105,7 @@ describe('PeerSession', () => {
     });
 
     it('markInactive is no-op when dead', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
       ps.markInactive();
@@ -113,7 +113,7 @@ describe('PeerSession', () => {
     });
 
     it('onLivenessChange fires on changes', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const updates: Array<string | null> = [];
       ps.onLivenessChange((l) => updates.push(l));
@@ -125,7 +125,7 @@ describe('PeerSession', () => {
     });
 
     it('onLivenessChange unsubscribe stops notifications', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const updates: Array<string | null> = [];
       const unsub = ps.onLivenessChange((l) => updates.push(l));
@@ -139,7 +139,7 @@ describe('PeerSession', () => {
 
   describe('message routing', () => {
     it('buffers messages until handler is registered', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<{ type: string; msgno: number; data?: Uint8Array }> = [];
 
@@ -165,7 +165,7 @@ describe('PeerSession', () => {
     });
 
     it('routes messages directly when handler is registered', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<{ type: string; msgno: number }> = [];
 
@@ -181,7 +181,7 @@ describe('PeerSession', () => {
     });
 
     it('rejects messages from wrong peer', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<unknown> = [];
 
@@ -198,7 +198,7 @@ describe('PeerSession', () => {
     });
 
     it('rejects messages when dead', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
 
@@ -208,7 +208,7 @@ describe('PeerSession', () => {
     });
 
     it('rejects messages when destroyed', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.destroy();
 
@@ -220,7 +220,7 @@ describe('PeerSession', () => {
 
   describe('send methods', () => {
     it('sendMessage builds and sends correct frame', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
       ps.sendMessage(42, new Uint8Array([0xDE, 0xAD]));
@@ -234,7 +234,7 @@ describe('PeerSession', () => {
     });
 
     it('sendAck builds correct frame', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
       ps.sendAck(7);
@@ -246,7 +246,7 @@ describe('PeerSession', () => {
     });
 
     it('sendKeepalive sends 0x03 byte', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
       ps.sendKeepalive();
@@ -255,7 +255,7 @@ describe('PeerSession', () => {
     });
 
     it('send methods are no-ops when destroyed', () => {
-      const conn = mockTrackerConnection();
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.destroy();
 
@@ -265,8 +265,8 @@ describe('PeerSession', () => {
       expect(conn.sentPeerMessages).toHaveLength(0);
     });
 
-    it('sendAppMessage delegates to tracker', () => {
-      const conn = mockTrackerConnection();
+    it('sendAppMessage delegates to hub', () => {
+      const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
       ps.sendAppMessage({ type: 'session_reject' });

@@ -1,8 +1,8 @@
 use clvm_traits::ToClvm;
 use clvmr::NodePtr;
 
-use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::channel_handler::ChannelHandler;
+use crate::channel_state::types::ChannelEnv;
+use crate::channel_state::ChannelState;
 use crate::common::constants::CREATE_COIN;
 use crate::common::types::{AllocEncoder, Amount, Error, IntoErr, Node, PuzzleHash};
 
@@ -33,9 +33,9 @@ fn compute_shutdown_conditions(
 }
 
 /// Given a channel handler and env, compute the CREATE_COIN conditions for clean shutdown.
-pub fn get_conditions_with_channel_handler(
-    env: &mut ChannelHandlerEnv<'_>,
-    ch: &ChannelHandler,
+pub fn get_conditions_with_channel_state(
+    env: &mut ChannelEnv<'_>,
+    ch: &ChannelState,
 ) -> Result<NodePtr, Error> {
     let our_reward_ph = ch.get_reward_puzzle_hash(env)?;
     let our_share = ch.get_our_current_share();

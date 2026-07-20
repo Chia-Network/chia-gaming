@@ -1,4 +1,4 @@
-import { BlockchainPoller, PollingCradle } from '../../hooks/BlockchainPoller';
+import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoller';
 import { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
@@ -82,7 +82,7 @@ describe('BlockchainPoller', () => {
     // height so the transaction manager can detect the rollback.
     const rpc = makeRpc([100n, 90n]);
     const reportedPeaks: bigint[] = [];
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [],
       reportCoinStates: () => {},
       reportNewBlock: (peak) => {
@@ -91,7 +91,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     // Drive the poll loop directly, twice, without the setTimeout backoff.
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -120,7 +120,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reportedPeaks: bigint[] = [];
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
       reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
@@ -129,7 +129,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     // Registration fails: no report (a partial snapshot would be misread).
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -160,7 +160,7 @@ describe('BlockchainPoller', () => {
           (() => Promise.resolve(undefined)),
       },
     );
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => {
         snapshotCalls++;
         return interests;
@@ -170,7 +170,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
     expect(snapshotCalls).toBe(1);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -342,13 +342,13 @@ describe('BlockchainPoller', () => {
           (() => Promise.resolve(undefined)),
       },
     );
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
       reportCoinStates: () => {},
       reportNewBlock: () => {},
     };
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     scope = '100';
@@ -382,7 +382,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-buried' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
@@ -390,7 +390,7 @@ describe('BlockchainPoller', () => {
       reportNewBlock: () => {},
     };
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -438,7 +438,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [
         { coin_name: nameA!, coin_string: 'coin-a' },
         { coin_name: nameB!, coin_string: 'coin-b' },
@@ -450,7 +450,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -510,7 +510,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: nameA, coin_string: 'coin-a' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
@@ -519,7 +519,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
@@ -552,7 +552,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingCradle = {
+    const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-spent' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
@@ -561,7 +561,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachCradle(cradle);
+    poller.attachGameSession(cradle);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 

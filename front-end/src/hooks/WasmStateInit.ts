@@ -7,8 +7,6 @@ import {
 import { Observable, Subject } from 'rxjs';
 import { SessionController } from './SessionController';
 
-export type GameHexes = Record<string, string>;
-
 var chia_gaming_init: WasmInitFn | undefined = undefined;
 var cg: WasmConnection | undefined = undefined;
 var logInitialized = false;
@@ -114,7 +112,7 @@ export class WasmStateInit {
         if (!this.wasmConnection) {
           throw new Error('this.wasmConnection undefined in loadPresets');
         }
-        this.wasmConnection?.deposit_file(
+        this.wasmConnection?.cache_file(
           nameAndContent.name,
           nameAndContent.content,
         );
@@ -145,19 +143,7 @@ export class WasmStateInit {
     // return this.wasmConnection?.chia_identity(rngSeed);
   }
 
-  async loadGameHexes(): Promise<GameHexes> {
-    const dec = new TextDecoder();
-    const fetchText = (url: string) => this.fetchPreset(url).then(b => dec.decode(b));
-    const [calpoker, spacepoker, krunk] = await Promise.all([
-      fetchText('clsp/games/calpoker/calpoker_include_calpoker_factory.hex'),
-      fetchText('clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex'),
-      fetchText('clsp/games/krunk/krunk_include_krunk_factory.hex'),
-    ]);
-    return { calpoker, spacepoker, krunk };
-  }
-
   createGame(
-    gameHexes: GameHexes,
     rngId: number,
     wasm: WasmConnection,
     have_potato: boolean,
@@ -167,13 +153,8 @@ export class WasmStateInit {
     channelTimeout = 15,
     unrollTimeout = 15,
   ): { game: ChiaGame, puzzleHash: string } {
-    const game_types: Record<string, { version: number; hex: string }> = {};
-    for (const [name, hex] of Object.entries(gameHexes)) {
-      game_types[name] = { version: 1, hex };
-    }
-    const result = wasm.create_game_cradle({
+    const result = wasm.create_game_session({
       rng_id: rngId,
-      game_types,
       have_potato: have_potato,
       my_contribution: { amt: my_contribution },
       their_contribution: { amt: their_contribution },
@@ -195,16 +176,7 @@ export class WasmStateInit {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);
     const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
-    let chiaGameId = wasm.create_serialized_game(serializedGame, seedHex);
+    let chiaGameId = wasm.restore_session(serializedGame, seedHex);
     return new ChiaGame(wasm, chiaGameId);
   }
-}
-
-export async function loadGameHexes(fetchHex: (filename: string) => Promise<string>): Promise<GameHexes> {
-  const [calpoker, spacepoker, krunk] = await Promise.all([
-    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_factory.hex'),
-    fetchHex('clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex'),
-    fetchHex('clsp/games/krunk/krunk_include_krunk_factory.hex'),
-  ]);
-  return { calpoker, spacepoker, krunk };
 }

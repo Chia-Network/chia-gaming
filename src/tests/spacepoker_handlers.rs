@@ -23,7 +23,6 @@ fn run_clvm(allocator: &mut AllocEncoder, program: NodePtr, args: NodePtr) -> No
         .1
 }
 
-#[allow(dead_code)]
 fn atom_bytes(allocator: &mut AllocEncoder, node: NodePtr) -> Vec<u8> {
     match allocator.allocator().sexp(node) {
         SExp::Atom => allocator.allocator().atom(node).to_vec(),
@@ -106,7 +105,6 @@ fn run_validator(
     parse_validator_output(allocator, result)
 }
 
-#[allow(dead_code)]
 struct MyTurnResult {
     move_bytes_node: NodePtr,
     validator_for_my_move: NodePtr,
@@ -168,7 +166,6 @@ fn call_my_turn_handler(
     }
 }
 
-#[allow(dead_code)]
 struct TheirTurnResult {
     readable_move: NodePtr,
     evidence_list: NodePtr,
@@ -247,7 +244,6 @@ fn call_their_turn_handler(
     }
 }
 
-#[allow(dead_code)]
 struct GameSetup {
     alice_handler: NodePtr,
     alice_validator: NodePtr,
@@ -255,7 +251,6 @@ struct GameSetup {
     bob_validator: NodePtr,
     initial_validator_hash: NodePtr,
     initial_state: NodePtr,
-    initial_move: NodePtr,
     initial_max_move_size: i64,
     initial_mover_share: i64,
 }
@@ -291,7 +286,6 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
         bob_validator: record[11],
         initial_validator_hash: record[4],
         initial_state: record[7],
-        initial_move: record[5],
         initial_max_move_size: int_from_node(allocator, record[6]),
         initial_mover_share: int_from_node(allocator, record[8]),
     }

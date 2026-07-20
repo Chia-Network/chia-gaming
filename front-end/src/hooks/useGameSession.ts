@@ -8,8 +8,9 @@ import {
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
-  ChannelState,
+  ChannelStatus,
   ChannelStatusPayload,
+  GameSettledPayload,
   GameStatusPayload,
   GameStatusState,
   MoveRejectedPayload,
@@ -22,9 +23,15 @@ import {
 } from './blobSingleton';
 import { SessionController, RestoreStatus } from './SessionController';
 import type { BlockchainPoller } from './BlockchainPoller';
-import { SessionState, saveSession, getDefaultFee, getBlockchainType } from './save';
+import { SessionSave, saveSession, getDefaultFee, getBlockchainType } from './save';
 import { coinIdFromBytes, coerceToBytes } from '../util';
 import { log } from '../services/log';
+import {
+  isSettlementOutcome,
+  parseSettlementShare,
+  settlementLabel,
+  type SettlementOutcome,
+} from '../lib/settlement';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
@@ -47,7 +54,7 @@ export type GameplayEvent =
   | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
-  | { Timeout: { gameId: string; byUs: boolean; forfeited: boolean } }
+  | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
   | { GameError: { gameId: string; reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
@@ -66,29 +73,18 @@ export function gameplayEventForMoveRejected(
   };
 }
 
-export function terminalEventForInfo(
+export function settledEventForInfo(
   gameId: string,
   info: GameTerminalInfo,
-  status: GameStatusState,
 ): GameplayEvent | null {
-  if (info.cleanEnd) return null;
-
-  switch (info.type) {
-    case 'forfeit':
-      // A forfeit is a timeout-based terminal where the loser intentionally
-      // skipped its final move (no point paying for an on-chain move that wins
-      // nothing). Carry the distinction so games can label it "Forfeit" rather
-      // than the misleading "Timed Out". Direction follows the status: our own
-      // forfeit arrives as ended-we-timed-out, the opponent's as
-      // ended-opponent-timed-out.
-      return { Timeout: { gameId, byUs: status === 'ended-we-timed-out', forfeited: true } };
-    case 'we-timed-out':
-      return { Timeout: { gameId, byUs: true, forfeited: false } };
-    case 'opponent-timed-out':
-      return { Timeout: { gameId, byUs: false, forfeited: false } };
-    default:
-      return { GameError: { gameId, reason: info.label ?? info.type } };
-  }
+  if (info.type !== 'settled' || info.outcome == null) return null;
+  return {
+    Settled: {
+      gameId,
+      outcome: info.outcome,
+      ourShare: info.myReward ?? '0',
+    },
+  };
 }
 
 export function gameplayEventsForGameStatus(
@@ -115,6 +111,29 @@ export function gameplayEventsForGameStatus(
     events.push(terminalEvent);
   }
   return events;
+}
+
+export function terminalInfoFromGameSettled(
+  payload: GameSettledPayload,
+  rewardCoinHex: string | null,
+): GameTerminalInfo {
+  const outcome = isSettlementOutcome(payload.outcome) ? payload.outcome : null;
+  if (outcome == null) {
+    return {
+      type: 'game-error',
+      outcome: null,
+      label: `Unknown settlement: ${String(payload.outcome)}`,
+      myReward: parseSettlementShare(payload.our_share),
+      rewardCoinHex,
+    };
+  }
+  return {
+    type: 'settled',
+    outcome,
+    label: settlementLabel(outcome),
+    myReward: parseSettlementShare(payload.our_share),
+    rewardCoinHex,
+  };
 }
 
 export function activeIdsAfterProposalAccepted(
@@ -157,22 +176,17 @@ export interface GameCoinInfo {
 
 export type GameTerminalType =
   | 'none'
-  | 'forfeit'
-  | 'we-timed-out'
-  | 'opponent-timed-out'
-  | 'we-slashed-opponent'
-  | 'opponent-slashed-us'
-  | 'opponent-successfully-cheated'
+  | 'settled'
   | 'insufficient-balance'
   | 'ended-cancelled'
   | 'game-error';
 
 export interface GameTerminalInfo {
   type: GameTerminalType;
+  outcome: SettlementOutcome | null;
   label: string | null;
   myReward: string | null;
   rewardCoinHex: string | null;
-  cleanEnd?: boolean;
 }
 
 export interface GameTerminalAttentionInfo {
@@ -200,7 +214,7 @@ export interface QueuedNotification {
 }
 
 export interface ChannelStatusInfo {
-  state: ChannelState;
+  state: ChannelStatus;
   advisory: string | null;
   coinHex: string | null;
   coinAmount: string | null;
@@ -241,6 +255,7 @@ function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | nu
 
 const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
   type: 'none',
+  outcome: null,
   label: null,
   myReward: null,
   rewardCoinHex: null,
@@ -248,21 +263,21 @@ const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
 
 // Channel states that still warrant a pop-up. Routine transitions are shown in
 // the status bar instead; only error resolutions interrupt the user.
-const ERROR_CHANNEL_STATES: ChannelState[] = ['ResolvedStale', 'Failed'];
+const ERROR_CHANNEL_STATUSES: ChannelStatus[] = ['ResolvedStale', 'Failed'];
 
-const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+const WINDING_DOWN_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
   'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
 ]);
 
-const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
 ]);
 
 export function nextGameTurnAfterLocalTurn(
   current: GameTurnState,
   isMyTurn: boolean,
-  channelState: ChannelState,
+  channelState: ChannelStatus,
 ): GameTurnState {
   if (current === 'ended') {
     return 'ended';
@@ -276,7 +291,7 @@ export function nextGameTurnAfterLocalTurn(
 export function nextGameInstanceAfterLocalTurn(
   instance: GameInstanceModel,
   isMyTurn: boolean,
-  channelState: ChannelState,
+  channelState: ChannelStatus,
 ): GameInstanceModel {
   const turnState = nextGameTurnAfterLocalTurn(
     instance.coin.turnState,
@@ -320,16 +335,16 @@ const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
   'GameActive',
 ]);
 
-export function isWindingDown(state: ChannelState): boolean {
+export function isWindingDown(state: ChannelStatus): boolean {
   return WINDING_DOWN_STATES.has(state);
 }
 
-const RESOLVED_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+const RESOLVED_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
 ]);
 
 export function deriveSessionPhase(
-  channelState: ChannelState,
+  channelState: ChannelStatus,
   goOnChainPressed: boolean,
   activeGameId?: string | null,
 ): Exclude<SessionPhase, 'none'> {
@@ -363,96 +378,16 @@ function parseTimeoutBlocks(v: unknown): bigint | null {
   }
 }
 
-export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
-  if (gs.status === 'ended-we-timed-out') {
-    const clean = !!gs.other_params?.game_finished;
-    const forfeited = !!gs.other_params?.forfeited;
-    const offChainAccept =
-      !clean
-      && !gs.coin_id
-      && gs.reason !== 'move too late'
-      && gs.other_params?.forfeited === undefined;
-    if (forfeited) {
-      return {
-        type: 'forfeit',
-        label: 'Forfeited',
-        myReward: parseAmount(gs.my_reward),
-        rewardCoinHex,
-      };
-    }
-    let label: string;
-    if (clean) {
-      label = 'Ended cleanly';
-    } else if (offChainAccept) {
-      label = 'Folded';
-    } else if (turnState === 'replaying' || turnState === 'their-turn') {
-      label = 'Move too late';
-    } else {
-      label = 'Timed out';
-    }
-    return {
-      type: 'we-timed-out',
-      label,
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-      cleanEnd: clean,
-    };
-  }
-
-  if (gs.status === 'ended-opponent-timed-out') {
-    const clean = !!gs.other_params?.game_finished;
-    const forfeited = !!gs.other_params?.forfeited;
-    const offChainAccept =
-      !clean
-      && !gs.coin_id
-      && gs.other_params?.forfeited === undefined;
-    if (forfeited) {
-      return {
-        type: 'forfeit',
-        label: 'Forfeited',
-        myReward: parseAmount(gs.my_reward),
-        rewardCoinHex,
-      };
-    }
-    return {
-      type: 'opponent-timed-out',
-      label: clean ? 'Ended cleanly' : offChainAccept ? 'Opponent folded' : 'Opponent timed out',
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-      cleanEnd: clean,
-    };
-  }
-
-  if (gs.status === 'ended-we-slashed-opponent') {
-    return {
-      type: 'we-slashed-opponent',
-      label: 'Slashed opponent',
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-    };
-  }
-
-  if (gs.status === 'ended-opponent-slashed-us') {
-    return {
-      type: 'opponent-slashed-us',
-      label: 'Opponent slashed us',
-      myReward: null,
-      rewardCoinHex: null,
-    };
-  }
-
-  if (gs.status === 'ended-opponent-successfully-cheated') {
-    return {
-      type: 'opponent-successfully-cheated',
-      label: 'Opponent cheated',
-      myReward: parseAmount(gs.my_reward),
-      rewardCoinHex,
-    };
-  }
-
+/** Non-settlement terminals that still arrive as GameStatus (cancelled / error). */
+export function parseGameStatusTerminalInfo(
+  gs: GameStatusPayload,
+  _rewardCoinHex: string | null,
+  _turnState: GameTurnState,
+): GameTerminalInfo {
   if (gs.status === 'ended-cancelled') {
     return {
       type: 'ended-cancelled',
+      outcome: null,
       label: 'Cancelled',
       myReward: null,
       rewardCoinHex: null,
@@ -462,6 +397,7 @@ export function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex
   if (gs.status === 'ended-error') {
     return {
       type: 'game-error',
+      outcome: null,
       label: gs.reason ?? 'Error',
       myReward: null,
       rewardCoinHex: null,
@@ -681,7 +617,7 @@ export function useGameSession(
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
-  sessionSave?: SessionState,
+  sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
   onTerminal?: () => void,
 ): UseGameSessionResult {
@@ -726,15 +662,15 @@ export function useGameSession(
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
     return restoredModel?.channel.status ?? INITIAL_CHANNEL_STATUS;
   });
-  const channelStateRef = useRef<ChannelState>(
+  const channelStatusRef = useRef<ChannelStatus>(
     restoredModel?.channel.status.state ?? INITIAL_CHANNEL_STATUS.state
   );
 
-  const [dismissedChannelState, setDismissedChannelState] = useState<ChannelState | null>(
-    () => restoredModel?.channel.dismissedChannelState ?? null
+  const [dismissedChannelStatus, setDismissedChannelStatus] = useState<ChannelStatus | null>(
+    () => restoredModel?.channel.dismissedChannelStatus ?? null
   );
-  const dismissedChannelStateRef = useRef<ChannelState | null>(dismissedChannelState);
-  dismissedChannelStateRef.current = dismissedChannelState;
+  const dismissedChannelStatusRef = useRef<ChannelStatus | null>(dismissedChannelStatus);
+  dismissedChannelStatusRef.current = dismissedChannelStatus;
 
   const [channelQueue, setChannelQueue] = useState<QueuedNotification[]>(() =>
     restoredModel?.channel.queue as QueuedNotification[] ?? []
@@ -769,7 +705,7 @@ export function useGameSession(
       if (dismissed?.kind === 'channel-state') {
         // Remember: user dismissed the notification for the current channel
         // state. Don't re-notify for the same state on reload or re-event.
-        setDismissedChannelState(channelStateRef.current);
+        setDismissedChannelStatus(channelStatusRef.current);
       }
       return prev.slice(1);
     });
@@ -965,17 +901,30 @@ export function useGameSession(
     });
   }, [sc]);
 
-  const cancelStalePeerProposals = useCallback((exceptId?: string) => {
+  const cancelProposalOrThrow = useCallback((gameId: string) => {
     const go = scRef.current;
+    if (!go) return;
+    try {
+      go.cancel_proposal(gameId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/no proposal with id|cancel for unknown proposal|not in off-chain phase/i.test(msg)) {
+        return;
+      }
+      throw e;
+    }
+  }, []);
+
+  const cancelStalePeerProposals = useCallback((exceptId?: string) => {
     const cached = cachedPeerProposalRef.current;
     if (cached && cached.id !== exceptId) {
-      try { go?.cancel_proposal(cached.id); } catch (_) { /* already cancelled */ }
+      cancelProposalOrThrow(cached.id);
     }
     const review = reviewPeerProposalRef.current;
     if (review && review.id !== exceptId) {
-      try { go?.cancel_proposal(review.id); } catch (_) { /* already cancelled */ }
+      cancelProposalOrThrow(review.id);
     }
-  }, []);
+  }, [cancelProposalOrThrow]);
 
   const persistFullSession = useCallback((): Promise<void> => {
     const go = scRef.current;
@@ -993,7 +942,7 @@ export function useGameSession(
         connection: gameConnectionState,
         goOnChainPressed,
         cleanShutdownStarted,
-        dismissedChannelState,
+        dismissedChannelStatus,
         queue: channelQueue,
       },
       game: {
@@ -1037,10 +986,10 @@ export function useGameSession(
     delete modelSnapshot.humanHistory;
     delete modelSnapshot.diagnosticLog;
 
-    const save: Partial<SessionState> = {
+    const save: Partial<SessionSave> = {
       blockchainType: getBlockchainType(),
-      serializedCradle: wasm.serializedCradle,
-      cradleSchemaVersion: wasm.cradleSchemaVersion,
+      serializedGameSession: wasm.serializedGameSession,
+      gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
       pairingToken: wasm.pairingToken,
       messageNumber: wasm.messageNumber,
       remoteNumber: wasm.remoteNumber,
@@ -1072,7 +1021,7 @@ export function useGameSession(
     composePerHandAmount, composeGameTimeout, composeGameType, lastHandTerms, rejectedOnceTerms,
     activeGameType, composeProposalSent, newHandRequested,
     cachedPeerProposal, reviewPeerProposal,
-    channelQueue, dismissedChannelState, gameQueue,
+    channelQueue, dismissedChannelStatus, gameQueue,
   ]);
 
   // Save when JS-side state changes
@@ -1132,8 +1081,9 @@ export function useGameSession(
         proposalGroupIdsByIdRef.current[id] = ids;
         outgoingProposalIdsRef.current.add(id);
       }
-    } catch (_) {
-      // proposal can fail if channel isn't ready yet; user can retry
+    } catch (e) {
+      console.error('[notify] proposeNewGame failed:', e);
+      throw e;
     }
   }, [iStarted]);
 
@@ -1148,13 +1098,13 @@ export function useGameSession(
 
   const onTurnChanged = useCallback((gameId: string, isMyTurn: boolean) => {
     updateGameInstance(gameId, instance =>
-      nextGameInstanceAfterLocalTurn(instance, isMyTurn, channelStateRef.current)
+      nextGameInstanceAfterLocalTurn(instance, isMyTurn, channelStatusRef.current)
     );
 
     const ts = nextGameTurnAfterLocalTurn(
       turnStateRef.current,
       isMyTurn,
-      channelStateRef.current,
+      channelStatusRef.current,
     );
     if (ts === turnStateRef.current) {
       return;
@@ -1165,7 +1115,7 @@ export function useGameSession(
       setHandStatus(prev => prev === 'ended' ? prev : 'active');
     } else if (isMyTurn) {
       setHandStatus('our-turn');
-    } else if (ON_CHAIN_FLOW_STATES.has(channelStateRef.current)) {
+    } else if (ON_CHAIN_FLOW_STATES.has(channelStatusRef.current)) {
       setHandStatus('playing-move');
     } else {
       setHandStatus('active');
@@ -1188,18 +1138,18 @@ export function useGameSession(
       if (!cs) return;
       const coinHex = await coinIdHex(cs.coin);
       const info = channelStatusFromPayload(cs, coinHex);
-      channelStateRef.current = info.state;
+      channelStatusRef.current = info.state;
       setChannelStatus(info);
       // If the channel state has moved away from (or to something other than)
       // the state the user previously dismissed a notification for, forget
       // that dismissal so future events for this state will notify again.
-      if (dismissedChannelStateRef.current !== null
-          && dismissedChannelStateRef.current !== cs.state) {
-        dismissedChannelStateRef.current = null;
-        setDismissedChannelState(null);
+      if (dismissedChannelStatusRef.current !== null
+          && dismissedChannelStatusRef.current !== cs.state) {
+        dismissedChannelStatusRef.current = null;
+        setDismissedChannelStatus(null);
       }
-      if (ERROR_CHANNEL_STATES.includes(cs.state)
-          && dismissedChannelStateRef.current !== cs.state) {
+      if (ERROR_CHANNEL_STATUSES.includes(cs.state)
+          && dismissedChannelStatusRef.current !== cs.state) {
         pushChannel({ kind: 'channel-state', title: 'Error', message: info.advisory ?? '', payload: info });
       }
       if (cs.state === 'Active' && info.gameAllocated === '0') {
@@ -1268,7 +1218,7 @@ export function useGameSession(
 
       if (gameIdsRef.current.length > 0) {
         log(`[notify] rejecting proposal id=${incoming.id} — game active`);
-        try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+        cancelProposalOrThrow(incoming.id);
         return;
       }
 
@@ -1313,7 +1263,7 @@ export function useGameSession(
             pendingRetryTermsRef.current = null;
             for (const id of Array.from(outgoingProposalIdsRef.current)) {
               if (id === incoming.id) continue;
-              try { go?.cancel_proposal(id); } catch (_) { /* already gone */ }
+              cancelProposalOrThrow(id);
             }
             outgoingProposalIdsRef.current.clear();
             setReviewPeerProposal(incoming);
@@ -1324,7 +1274,7 @@ export function useGameSession(
             setNewHandRequested(false);
             if (matchesLastTerms) {
               log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
-              try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+              cancelProposalOrThrow(incoming.id);
               proposeNewGame(retryTerms);
             } else {
               setReviewPeerProposal(incoming);
@@ -1341,7 +1291,7 @@ export function useGameSession(
             pendingRetryTermsRef.current = null;
             if (termsEqual(incoming.terms, lastHandTermsRef.current)) {
               log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
-              try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+              cancelProposalOrThrow(incoming.id);
               proposeNewGame(retryTerms);
             } else {
               setComposeProposalSent(false);
@@ -1352,7 +1302,7 @@ export function useGameSession(
             }
           } else if (termsEqual(incoming.terms, rejectedOnceTermsRef.current)) {
             log(`[notify] ProposalMade id=${incoming.id} auto-rejecting one-shot remembered terms`);
-            try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
+            cancelProposalOrThrow(incoming.id);
             setRejectedOnceTerms(null);
           } else {
             setReviewPeerProposal(incoming);
@@ -1436,11 +1386,49 @@ export function useGameSession(
         setBetweenHandMode('decision');
       }
       gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as bigint | number | string } });
+    } else if ('GameSettled' in n) {
+      const settled = n.GameSettled as GameSettledPayload | undefined;
+      if (!settled) return;
+      const terminalId = String(settled.id);
+      const rewardCoinHex = await coinIdHex(settled.coin_id);
+      const terminalInfo = terminalInfoFromGameSettled(settled, rewardCoinHex);
+      setGameTerminal(terminalInfo);
+
+      updateGameInstance(terminalId, instance => ({
+        ...instance,
+        coin: { coinHex: null, turnState: 'ended' },
+        handStatus: 'ended',
+        terminal: terminalInfo,
+      }));
+      const remaining = gameIdsRef.current.filter(id => id !== terminalId);
+      setGameIds(remaining);
+      gameIdsRef.current = remaining;
+
+      if (remaining.length === 0) {
+        turnStateRef.current = 'ended';
+        setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
+        setHandStatus('ended');
+        cancelStalePeerProposals();
+        setBetweenHandMode('decision');
+        setCachedPeerProposal(null);
+        setReviewPeerProposal(null);
+        clearTrackedProposals();
+      }
+
+      const settledEvent = settledEventForInfo(terminalId, terminalInfo);
+      if (settledEvent) {
+        gameplayEventSubject.next(settledEvent);
+      } else if (terminalInfo.type === 'game-error') {
+        gameplayEventSubject.next({
+          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error' },
+        });
+      }
+      return;
     } else if ('GameStatus' in n) {
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;
       const status = gs.status;
-      const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStateRef.current);
+      const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStatusRef.current);
       const isOnChainTurnStatus =
         status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
       const isLocalTurnStatus = status === 'my-turn' || status === 'their-turn';
@@ -1480,9 +1468,10 @@ export function useGameSession(
           clearTrackedProposals();
         }
 
-        const terminalEvent = terminalEventForInfo(terminalId, terminalInfo, status);
-        if (terminalEvent) {
-          gameplayEventSubject.next(terminalEvent);
+        if (terminalInfo.type === 'game-error' || terminalInfo.type === 'ended-cancelled') {
+          gameplayEventSubject.next({
+            GameError: { gameId: terminalId, reason: terminalInfo.label ?? terminalInfo.type },
+          });
         }
         return;
       }
@@ -1685,7 +1674,7 @@ export function useGameSession(
       log(`[game] action failed: ${reason}`);
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, replaceGameInstances, updateGameInstance]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -1870,14 +1859,14 @@ export function useGameSession(
       restoring: params.restoring ?? false,
       status: restoreStatus,
       error: restoreError,
-      trackerReconciled: restoreStatus === 'restored',
+      hubReconciled: restoreStatus === 'restored',
     },
     channel: {
       status: channelStatus,
       connection: gameConnectionState,
       goOnChainPressed,
       cleanShutdownStarted,
-      dismissedChannelState,
+      dismissedChannelStatus,
       queue: channelQueue,
     },
     game: {
@@ -1918,7 +1907,7 @@ export function useGameSession(
   }), [
     params.restoring, restoreStatus, restoreError,
     channelStatus, gameConnectionState, goOnChainPressed, cleanShutdownStarted,
-    dismissedChannelState, channelQueue, gameCoin, handStatus, gameTerminal, handKey,
+    dismissedChannelStatus, channelQueue, gameCoin, handStatus, gameTerminal, handKey,
     gameIds, currentHandGameIds, gameInstances, lastDisplayedGameId, activeGameType, sc.handState,
     gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
     rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,

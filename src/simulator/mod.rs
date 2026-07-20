@@ -29,28 +29,28 @@ use crate::common::types::{
 use crate::utils::map_m;
 
 #[cfg(test)]
-use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
+use crate::simulator::tests::session_phases_sim::test_funs as session_phases_sim_tests;
 #[cfg(test)]
 use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 #[cfg(test)]
-use crate::test_support::calpoker::test_funs as calpoker_tests;
+use crate::test_support::calpoker_sim::test_funs as calpoker_tests;
 #[cfg(test)]
-use crate::test_support::krunk::test_funs as krunk_sim_tests;
+use crate::test_support::krunk_sim::test_funs as krunk_sim_tests;
 #[cfg(test)]
-use crate::test_support::spacepoker::test_funs as spacepoker_tests;
+use crate::test_support::spacepoker_sim::test_funs as spacepoker_tests;
 
 #[cfg(test)]
 use crate::common::types::divmod::test_funs as divmod_tests;
 #[cfg(test)]
 use crate::test_support::debug_game::test_funs as debug_game_tests;
 #[cfg(test)]
-use crate::test_support::peer::potato_handler::test_funs as potato_handler_tests;
+use crate::test_support::peer::peer_harness::test_funs as peer_harness_tests;
 #[cfg(test)]
 use crate::tests::calpoker_handlers::test_funs as calpoker_handler_tests;
 #[cfg(test)]
 use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 #[cfg(test)]
-use crate::tests::channel_handler::test_funs as channel_handler_tests;
+use crate::tests::channel_state::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
 #[cfg(test)]
@@ -983,12 +983,12 @@ pub fn run_simulation_tests() {
         channel_handler_tests(),
         referee_conditions_tests(),
         debug_game_tests(),
-        potato_handler_tests(),
+        peer_harness_tests(),
         simulator_tests(),
         calpoker_tests(),
         spacepoker_tests(),
         krunk_sim_tests(),
-        potato_handler_sim_tests(),
+        session_phases_sim_tests(),
     ];
 
     let from_filter: Option<String> = std::env::var("SIM_TEST_FROM")

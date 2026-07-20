@@ -246,8 +246,8 @@ fn round_trip_complex() {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     enum Action {
         Move(u64),
-        #[serde(rename = "Accept")]
-        AcceptTimeout(u64),
+        #[serde(rename = "AcceptSettlement")]
+        AcceptSettlement(u64),
     }
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -259,7 +259,7 @@ fn round_trip_complex() {
     }
 
     let val = Batch {
-        actions: vec![Action::Move(5), Action::AcceptTimeout(10)],
+        actions: vec![Action::Move(5), Action::AcceptSettlement(10)],
         count: 2,
         done: true,
         label: None,

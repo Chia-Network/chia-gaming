@@ -3,11 +3,11 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{
+use crate::channel_state::game_handler::{
     GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnResult,
 };
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
@@ -22,8 +22,8 @@ use crate::referee::types::{
     RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult, ValidationInfoHash,
+    GameMoveDetails, GameMoveStateInfo, RefereeFixedContext, SlashOutcome,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
 };
 use crate::referee::Referee;
 
@@ -55,7 +55,7 @@ impl TheirTurnRefereeGameState {
 // roles each turn.  See the detailed flow comment on MyTurnReferee.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TheirTurnReferee {
-    pub fixed: Rc<RMFixed>,
+    pub fixed: Rc<RefereeFixedContext>,
 
     pub finished: bool,
     pub message_handler: Option<MessageHandler>,

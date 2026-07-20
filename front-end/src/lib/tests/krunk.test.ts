@@ -112,8 +112,7 @@ describe('Krunk first guess drafting', () => {
       revealedWord: null,
       outcome: null,
       moverShare: null,
-      timeoutByUs: null,
-      timeoutForfeited: false,
+      settlementOutcome: null,
       error: null,
     };
     expect(applyKrunkMoveRejected(alice, {
@@ -144,7 +143,7 @@ describe('Krunk first guess drafting', () => {
     });
   });
 
-  it('shows clock timeouts instead of guessing-result placeholders', () => {
+  it('maps settlement outcomes to terminal status copy', () => {
     const timedOut: KrunkGameState = {
       handler: KrunkHandler.Terminal,
       myTurn: false,
@@ -154,8 +153,7 @@ describe('Krunk first guess drafting', () => {
       revealedWord: null,
       outcome: 'lose',
       moverShare: null,
-      timeoutByUs: true,
-      timeoutForfeited: false,
+      settlementOutcome: 'timed_out_waiting_for_our_move',
       error: null,
     };
 
@@ -163,12 +161,16 @@ describe('Krunk first guess drafting', () => {
     expect(krunkTerminalStatus({
       ...timedOut,
       role: 'alice',
-      timeoutByUs: false,
+      settlementOutcome: 'opponent_timed_out',
     }, 'Peer')).toBe('Peer timed out.');
     expect(krunkTerminalStatus({
       ...timedOut,
-      timeoutForfeited: true,
+      settlementOutcome: 'forfeited_skipped_reveal',
     }, 'Peer')).toBe('We forfeited.');
+    expect(krunkTerminalStatus({
+      ...timedOut,
+      settlementOutcome: 'settled_cleanly',
+    }, 'Peer')).toBe('Settled.');
   });
 
   it('leaves bob correct-guess copy to the win-amount UI', () => {
@@ -181,8 +183,7 @@ describe('Krunk first guess drafting', () => {
       revealedWord: 'CRANE',
       outcome: 'win',
       moverShare: '100',
-      timeoutByUs: null,
-      timeoutForfeited: false,
+      settlementOutcome: null,
       error: null,
     };
     expect(krunkTerminalStatus(bobWin, 'Peer')).toBeNull();

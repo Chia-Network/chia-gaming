@@ -12,7 +12,7 @@ thread_local! {
     pub static PRESET_FILES: RefCell<HashMap<String, Vec<u8>>> = RefCell::default();
 }
 
-pub fn wasm_deposit_file(name: &str, data: &[u8]) {
+pub fn wasm_cache_file(name: &str, data: &[u8]) {
     PRESET_FILES.with(|p| {
         p.borrow_mut().insert(name.to_string(), data.to_vec());
     });
@@ -23,7 +23,7 @@ pub fn hex_to_sexp(allocator: &mut AllocEncoder, hex_data: &str) -> Result<NodeP
     node_from_bytes(allocator.allocator(), &hex_stream).into_gen()
 }
 
-/// Load a file deposited via `wasm_deposit_file`, falling back to disk.
+/// Load a file cached via `wasm_cache_file`, falling back to disk.
 pub fn read_preset_or_file(name: &str) -> Result<Vec<u8>, Error> {
     if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
         return Ok(data);

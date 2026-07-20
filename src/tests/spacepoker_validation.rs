@@ -14,7 +14,6 @@ const BET_UNIT: i64 = 10;
 enum MoveCode {
     MakeMove = 0,
     Slash = 2,
-    #[allow(dead_code)]
     ClvmException = 6,
 }
 
@@ -308,18 +307,6 @@ fn run_step_and_check(
     }
 }
 
-#[allow(dead_code)]
-fn initial_move_result(lib: &ValidatorLibrary) -> MoveResult {
-    let bet_unit_bytes = BET_UNIT.to_be_bytes();
-    let _trimmed = &bet_unit_bytes[bet_unit_bytes.iter().position(|&b| b != 0).unwrap_or(7)..];
-    MoveResult {
-        move_code: MoveCode::MakeMove,
-        next_validator_hash: Some(lib.hashes[0]),
-        state: NodePtr::NIL, // will be set properly below
-        next_max_move_size: 32,
-    }
-}
-
 fn make_step(
     move_bytes: &[u8],
     mover_share: i64,
@@ -336,28 +323,6 @@ fn make_step(
         on_chain,
         validator_name,
     }
-}
-
-#[allow(dead_code)]
-fn run_sequence(
-    allocator: &mut AllocEncoder,
-    lib: &ValidatorLibrary,
-    initial: &MoveResult,
-    steps: &[StepSpec],
-) -> Option<MoveResult> {
-    let mut current = MoveResult {
-        move_code: initial.move_code,
-        next_validator_hash: initial.next_validator_hash,
-        state: initial.state,
-        next_max_move_size: initial.next_max_move_size,
-    };
-    for step in steps {
-        match run_step_and_check(allocator, lib, &current, step) {
-            Some(next) => current = next,
-            None => return None,
-        }
-    }
-    Some(current)
 }
 
 fn make_initial(allocator: &mut AllocEncoder, lib: &ValidatorLibrary) -> MoveResult {

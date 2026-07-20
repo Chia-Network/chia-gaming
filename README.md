@@ -15,18 +15,18 @@ For production builds, tarballs, and step-by-step build instructions, see
 - **[OVERVIEW.md](OVERVIEW.md)** — How state channels, the referee, the
   potato protocol, and Calpoker work. Links to detailed docs.
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** — Build, debug, and run the player app and lobby
-  tracker locally or in production.
+  hub locally or in production.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
-  tracker: React components, WASM bridge, WebSocket relay protocol.
+  hub: React components, WASM bridge, WebSocket relay protocol.
 
 
 ## Project Structure
 
 ```
 src/
-  channel_handler/  — State channel management and the potato protocol
+  channel_state/  — State channel management and the potato protocol
   referee/          — Referee coin logic (on-chain move validation, slashing)
-  potato_handler/   — High-level game orchestration and on-chain actions
+  session_phases/   — High-level game orchestration and on-chain actions
   games/            — Game registration (calpoker, spacepoker, test-only debug game)
   peer_container.rs — Peer-to-peer game cradle (synchronous wrapper)
   simulator/        — Chia blockchain simulator and integration tests
@@ -43,5 +43,5 @@ clsp/
 
 wasm/               — WebAssembly bindings for browser use
 front-end/          — Player frontend (React + WASM bridge)
-lobby/              — Lobby frontend and tracker service
+hub/                — Hub service + lobby UX frontend
 ```

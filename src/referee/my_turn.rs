@@ -3,11 +3,9 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
-};
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
+use crate::channel_state::game_handler::{GameHandler, MessageHandler, MyTurnInputs, MyTurnResult};
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{Evidence, ReadableMove, ValidationInfo};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
@@ -17,8 +15,8 @@ use crate::common::types::{
 use crate::referee::referee_initial_setup;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
-    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed,
-    StateUpdateResult, ValidationInfoHash,
+    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData,
+    RefereeFixedContext, StateUpdateResult, ValidationInfoHash,
 };
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
@@ -159,7 +157,7 @@ impl MyTurnRefereeGameState {
 /// same validation program as the incoming move that follows.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MyTurnReferee {
-    pub fixed: Rc<RMFixed>,
+    pub fixed: Rc<RefereeFixedContext>,
 
     pub finished: bool,
     pub enable_cheating: Option<(Vec<u8>, Amount)>,

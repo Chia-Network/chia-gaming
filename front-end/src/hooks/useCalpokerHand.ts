@@ -7,6 +7,7 @@ import {
 import { SessionController } from './SessionController';
 import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
 import { GameplayEvent } from './useGameSession';
+import { type SettlementOutcome } from '../lib/settlement';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
@@ -55,8 +56,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
-  timeoutByUs: boolean | null;
-  timeoutForfeited: boolean;
+  settlementOutcome: SettlementOutcome | null;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
@@ -109,8 +109,7 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [timeoutByUs, setTimeoutByUs] = useState<boolean | null>(null);
-  const [timeoutForfeited, setTimeoutForfeited] = useState<boolean>(false);
+  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(null);
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -151,6 +150,8 @@ export function useCalpokerHand(
               opponentHandRef.current = cards.opponentHand;
             } catch (e) {
               console.error('parseCards from OpponentMoved failed:', e);
+              handFinishedRef.current = true;
+              throw e;
             }
           } else if (currentMove >= 2n) {
             const myDiscardsBitfield = selectedCardsToBitfield(
@@ -189,13 +190,14 @@ export function useCalpokerHand(
             opponentHandRef.current = cards.opponentHand;
           } catch (e) {
             console.error('parseCards failed:', e, 'readable:', evt.GameMessage.readable);
+            handFinishedRef.current = true;
+            throw e;
           }
-        } else if ('Timeout' in evt) {
-          if (evt.Timeout.gameId !== gameIdRef.current) return;
+        } else if ('Settled' in evt) {
+          if (evt.Settled.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
-            setTimeoutByUs(evt.Timeout.byUs);
-            setTimeoutForfeited(evt.Timeout.forfeited);
+            setSettlementOutcome(evt.Settled.outcome);
           }
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
@@ -345,8 +347,7 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber,
     outcome,
-    timeoutByUs,
-    timeoutForfeited,
+    settlementOutcome,
     handleMakeMove,
     handleCheat,
     handleNerf,

@@ -21,7 +21,7 @@ import {
   snapshotFromSessionModel,
   updateSessionModel,
 } from '../session/model';
-import type { SessionState } from '../../hooks/save';
+import type { SessionSave } from '../../hooks/save';
 import {
   gameplayEventsForGameStatus,
   nextGameInstanceAfterLocalTurn,
@@ -29,7 +29,8 @@ import {
   isActivelyPlayingOnChain,
   isFinishingGameStatus,
   parseGameStatusTerminalInfo,
-  terminalEventForInfo,
+  settledEventForInfo,
+  terminalInfoFromGameSettled,
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
@@ -43,7 +44,7 @@ describe('session model selectors', () => {
     });
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'MakingOffer' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OurWalletMakingOffer' } },
     }))).toMatchObject({
       actionLabel: 'Cancel',
       actionEnabled: true,
@@ -198,7 +199,8 @@ describe('session model selectors', () => {
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
-          type: 'forfeit',
+          type: 'settled',
+          outcome: 'forfeited_skipped_reveal',
           label: 'Forfeited',
           myReward: '20',
           rewardCoinHex: null,
@@ -229,7 +231,7 @@ describe('session model selectors', () => {
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-        terminal: { type: 'none', label: null, myReward: null, rewardCoinHex: null },
+        terminal: { type: 'none', outcome: null, label: null, myReward: null, rewardCoinHex: null },
       },
     }));
 
@@ -383,8 +385,9 @@ describe('session model selectors', () => {
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
-          type: 'opponent-timed-out',
-          label: 'Opponent took too long to move',
+          type: 'settled',
+          outcome: 'opponent_timed_out',
+          label: 'Opponent timed out',
           myReward: '20',
           rewardCoinHex: 'abcd',
         },
@@ -392,26 +395,26 @@ describe('session model selectors', () => {
     }));
 
     expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBe('Opponent took too long to move');
+    expect(view.handDetail).toBe('Opponent timed out');
   });
 
-  it('keeps a clean opponent timeout collapsed (no premature-timeout detail)', () => {
+  it('shows settled cleanly as an ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
-          type: 'opponent-timed-out',
-          label: 'Ended cleanly',
+          type: 'settled',
+          outcome: 'settled_cleanly',
+          label: 'Settled cleanly',
           myReward: '20',
           rewardCoinHex: null,
-          cleanEnd: true,
         },
       },
     }));
 
     expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBeNull();
+    expect(view.handDetail).toBe('Settled cleanly');
   });
 
   it('shows move-too-late as an ended detail distinct from forfeit', () => {
@@ -420,8 +423,9 @@ describe('session model selectors', () => {
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
-          type: 'we-timed-out',
-          label: 'Move too late',
+          type: 'settled',
+          outcome: 'attempt_to_move_failed',
+          label: 'Attempt to move failed',
           myReward: '0',
           rewardCoinHex: null,
         },
@@ -429,69 +433,72 @@ describe('session model selectors', () => {
     }));
 
     expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBe('Move too late');
+    expect(view.handDetail).toBe('Attempt to move failed');
   });
 
-  it('labels off-chain non-terminal accepts as folds instead of timeouts', () => {
-    expect(parseGameStatusTerminalInfo({
+  it('parses GameSettled into glossary labels without session-level Folded', () => {
+    expect(terminalInfoFromGameSettled({
       id: '7',
-      status: 'ended-we-timed-out',
-      my_reward: { amt: 0n },
+      outcome: 'accept_settlement',
+      our_share: { Amount: 0 },
       coin_id: null,
-      reason: null,
-      other_params: null,
-    }, null, 'my-turn')).toMatchObject({
-      label: 'Folded',
+    }, null)).toMatchObject({
+      type: 'settled',
+      outcome: 'accept_settlement',
+      label: 'Accepted',
+      myReward: '0',
     });
 
-    expect(parseGameStatusTerminalInfo({
+    expect(terminalInfoFromGameSettled({
       id: '7',
-      status: 'ended-opponent-timed-out',
-      my_reward: { amt: 20n },
+      outcome: 'opponent_timed_out',
+      our_share: '20',
       coin_id: null,
-      reason: null,
-      other_params: null,
-    }, null, 'their-turn')).toMatchObject({
-      label: 'Opponent folded',
-    });
-  });
-
-  it('does not mislabel an explicit on-chain clock timeout as a fold', () => {
-    expect(parseGameStatusTerminalInfo({
-      id: '7',
-      status: 'ended-we-timed-out',
-      my_reward: { amt: 0n },
-      coin_id: null,
-      reason: null,
-      other_params: { forfeited: false },
-    }, null, 'my-turn')).toMatchObject({
-      type: 'we-timed-out',
-      label: 'Timed out',
-    });
-
-    expect(parseGameStatusTerminalInfo({
-      id: '7',
-      status: 'ended-opponent-timed-out',
-      my_reward: { amt: 20n },
-      coin_id: null,
-      reason: null,
-      other_params: { forfeited: false },
-    }, null, 'their-turn')).toMatchObject({
-      type: 'opponent-timed-out',
+    }, null)).toMatchObject({
+      type: 'settled',
+      outcome: 'opponent_timed_out',
       label: 'Opponent timed out',
     });
+
+    expect(terminalInfoFromGameSettled({
+      id: '7',
+      outcome: 'attempt_to_move_failed',
+      our_share: '0',
+      coin_id: null,
+    }, null)).toMatchObject({
+      label: 'Attempt to move failed',
+    });
+
+    expect(settledEventForInfo('7', terminalInfoFromGameSettled({
+      id: '7',
+      outcome: 'settled_cleanly',
+      our_share: '20',
+    }, null))).toEqual({
+      Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
+    });
   });
 
-  it('keeps explicit on-chain move-too-late labels', () => {
+  it('keeps cancelled/error GameStatus terminals separate from settlement', () => {
     expect(parseGameStatusTerminalInfo({
       id: '7',
-      status: 'ended-we-timed-out',
-      my_reward: { amt: 0n },
+      status: 'ended-cancelled',
+      my_reward: null,
       coin_id: null,
-      reason: 'move too late',
+      reason: null,
       other_params: null,
-    }, null, 'their-turn')).toMatchObject({
-      label: 'Move too late',
+    }, null, 'my-turn')).toMatchObject({
+      type: 'ended-cancelled',
+      label: 'Cancelled',
+    });
+
+    expect(parseGameStatusTerminalInfo({
+      id: '7',
+      status: 'ended-error',
+      reason: 'boom',
+      other_params: null,
+    }, null, 'my-turn')).toMatchObject({
+      type: 'game-error',
+      label: 'boom',
     });
   });
 
@@ -502,7 +509,8 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
         terminal: {
-          type: 'forfeit',
+          type: 'settled',
+          outcome: 'forfeited_skipped_reveal',
           label: 'Forfeited',
           myReward: '20',
           rewardCoinHex: null,
@@ -527,11 +535,11 @@ describe('session model selectors', () => {
       coin: { coinHex: null, turnState: 'ended' as const },
       handStatus: 'ended' as const,
       terminal: {
-        type: 'opponent-timed-out' as const,
-        label: 'Ended cleanly',
+        type: 'settled' as const,
+        outcome: 'settled_cleanly' as const,
+        label: 'Settled cleanly',
         myReward,
         rewardCoinHex: null,
-        cleanEnd: true,
       },
     });
 
@@ -660,7 +668,7 @@ describe('session model selectors', () => {
         status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean', ourBalance: '60', theirBalance: '40' },
       },
       game: {
-        terminal: { type: 'opponent-timed-out', label: 'done', myReward: '10', rewardCoinHex: null, cleanEnd: true },
+        terminal: { type: 'settled', outcome: 'settled_cleanly', label: 'done', myReward: '10', rewardCoinHex: null },
       },
     }));
     expect(clean).toEqual([
@@ -682,7 +690,7 @@ describe('session model selectors', () => {
       restore: {
         restoring: true,
         status: 'restored',
-        trackerReconciled: false,
+        hubReconciled: false,
         error: null,
       },
       peer: { connected: false },
@@ -691,7 +699,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: false,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
     });
@@ -712,7 +720,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: false,
         cleanShutdownStarted: true,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
     });
@@ -754,12 +762,13 @@ describe('session model selectors', () => {
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {
-    const save: SessionState = {
-      version: 6n,
+    const save: SessionSave = {
+      version: 8n,
       playerId: 'p1',
-      serializedCradle: new Uint8Array([1, 2, 3]),
-      cradleSchemaVersion: 1n,
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      gameSessionSchemaVersion: 1n,
       channelReady: true,
+      activeGameIds: [],
       channelStatus: {
         state: 'Active',
         advisory: null,
@@ -792,7 +801,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: false,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
       game: {
@@ -833,15 +842,16 @@ describe('session model selectors', () => {
 
   it('normalizes restored notification ids to bigint', () => {
     const save = {
-      version: 6n,
+      version: 8n,
       playerId: 'p1',
+      activeGameIds: [],
       channelNotifQueue: [
         { id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' },
       ],
       gameNotifQueue: [
         { id: '8', kind: 'game-terminal', title: 'Game', message: 'Done' },
       ],
-    } as unknown as SessionState;
+    } as unknown as SessionSave;
 
     const restored = sessionModelFromSave(save);
 
@@ -861,8 +871,9 @@ describe('session model selectors', () => {
     expect(snapshot.gameHandStatus).toBe('playing-move');
 
     const restored = sessionModelFromSave({
-      version: 6n,
+      version: 8n,
       playerId: 'p1',
+      activeGameIds: snapshot.activeGameIds ?? [],
       gameHandStatus: snapshot.gameHandStatus,
       gameCoinHex: snapshot.gameCoinHex,
       gameTurnState: snapshot.gameTurnState,
@@ -889,11 +900,11 @@ describe('session model selectors', () => {
             coin: { coinHex: null, turnState: 'ended' },
             handStatus: 'ended',
             terminal: {
-              type: 'opponent-timed-out',
-              label: 'Ended cleanly',
+              type: 'settled',
+              outcome: 'settled_cleanly',
+              label: 'Settled cleanly',
               myReward: '80',
               rewardCoinHex: null,
-              cleanEnd: true,
             },
           },
         },
@@ -902,8 +913,9 @@ describe('session model selectors', () => {
 
     const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave({
-      version: 6n,
+      version: 8n,
       playerId: 'p1',
+      activeGameIds: snapshot.activeGameIds ?? [],
       currentHandGameIds: snapshot.currentHandGameIds,
       gameInstances: snapshot.gameInstances,
     });
@@ -919,7 +931,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: true,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
       game: {
@@ -951,7 +963,7 @@ describe('session model selectors', () => {
         connection: { stateIdentifier: 'end', stateDetail: [] },
         goOnChainPressed: true,
         cleanShutdownStarted: false,
-        dismissedChannelState: null,
+        dismissedChannelStatus: null,
         queue: [],
       },
     });
@@ -1009,7 +1021,7 @@ describe('session model selectors', () => {
     const model = createSessionModel({
       game: {
         coin: { coinHex: 'abcd', turnState: 'replaying' },
-        terminal: { type: 'none', label: null, myReward: null, rewardCoinHex: null },
+        terminal: { type: 'none', outcome: null, label: null, myReward: null, rewardCoinHex: null },
         handKey: 2,
         activeIds: ['7'],
         lastDisplayedId: '6',
@@ -1066,34 +1078,37 @@ describe('session model selectors', () => {
     expect(isFinishingGameStatus('my-turn', true)).toBe(false);
   });
 
-  it('orders terminal readable gameplay events before the terminal marker', () => {
+  it('orders readable gameplay events before the Settled marker', () => {
     const notification = {
       GameStatus: {
         id: '7',
-        status: 'ended-opponent-timed-out',
+        status: 'their-turn',
         coin_id: null,
         other_params: {
           readable: [1, 2, 3],
           mover_share: '0',
-          forfeited: true,
         },
       },
     };
 
-    const terminalEvent = { Timeout: { gameId: '7', byUs: false, forfeited: true } };
+    const terminalEvent = {
+      Settled: { gameId: '7', outcome: 'forfeited_opponent_won' as const, ourShare: '0' },
+    };
     expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
       { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7', moverShare: '0' } },
-      { Timeout: { gameId: '7', byUs: false, forfeited: true } },
+      { Settled: { gameId: '7', outcome: 'forfeited_opponent_won', ourShare: '0' } },
     ]);
   });
 
-  it('does not emit gameplay timeout events for clean terminal accepts', () => {
-    expect(terminalEventForInfo('7', {
-      type: 'opponent-timed-out',
-      label: 'Ended cleanly',
+  it('always emits Settled gameplay events including clean settles', () => {
+    expect(settledEventForInfo('7', {
+      type: 'settled',
+      outcome: 'settled_cleanly',
+      label: 'Settled cleanly',
       myReward: '20',
       rewardCoinHex: null,
-      cleanEnd: true,
-    }, 'ended-opponent-timed-out')).toBeNull();
+    })).toEqual({
+      Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
+    });
   });
 });

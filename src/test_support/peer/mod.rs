@@ -1,2 +1,2 @@
 #[cfg(test)]
-pub mod potato_handler;
+pub mod peer_harness;

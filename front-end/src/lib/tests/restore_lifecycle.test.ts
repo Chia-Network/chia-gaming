@@ -1,16 +1,16 @@
 import {
   isRestoreBlocked,
-  isTerminalChannelState,
+  isTerminalChannelStatus,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
-  shouldReportTrackerBusy,
-  shouldSwitchToTrackerOnResolved,
+  shouldReportHubBusy,
+  shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
-  it('blocks restored-session behavior until wasm restore and tracker reconciliation both finish', () => {
+  it('blocks restored-session behavior until wasm restore and hub reconciliation both finish', () => {
     expect(isRestoreBlocked(true, 'idle', false)).toBe(true);
     expect(isRestoreBlocked(true, 'restoring', false)).toBe(true);
     expect(isRestoreBlocked(true, 'restored', false)).toBe(true);
@@ -27,28 +27,28 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
   });
 
-  it('keeps tracker presence busy until the session is resolved', () => {
-    expect(shouldReportTrackerBusy('none')).toBe(false);
-    expect(shouldReportTrackerBusy('resolved')).toBe(false);
-    expect(shouldReportTrackerBusy('off-chain')).toBe(true);
-    expect(shouldReportTrackerBusy('on-chain')).toBe(true);
+  it('keeps hub presence busy until the session is resolved', () => {
+    expect(shouldReportHubBusy('none')).toBe(false);
+    expect(shouldReportHubBusy('resolved')).toBe(false);
+    expect(shouldReportHubBusy('off-chain')).toBe(true);
+    expect(shouldReportHubBusy('on-chain')).toBe(true);
   });
 
   it('recognizes terminal channel states that must not keep the lobby busy', () => {
-    expect(isTerminalChannelState('Failed')).toBe(true);
-    expect(isTerminalChannelState('ResolvedClean')).toBe(true);
-    expect(isTerminalChannelState('ResolvedUnrolled')).toBe(true);
-    expect(isTerminalChannelState('ResolvedStale')).toBe(true);
-    expect(isTerminalChannelState('Active')).toBe(false);
-    expect(isTerminalChannelState('Handshaking')).toBe(false);
-    expect(isTerminalChannelState(null)).toBe(false);
+    expect(isTerminalChannelStatus('Failed')).toBe(true);
+    expect(isTerminalChannelStatus('ResolvedClean')).toBe(true);
+    expect(isTerminalChannelStatus('ResolvedUnrolled')).toBe(true);
+    expect(isTerminalChannelStatus('ResolvedStale')).toBe(true);
+    expect(isTerminalChannelStatus('Active')).toBe(false);
+    expect(isTerminalChannelStatus('Handshaking')).toBe(false);
+    expect(isTerminalChannelStatus(null)).toBe(false);
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
     expect(shouldCancelOnPeerUnreachable('none', null)).toBe(true);
     expect(shouldCancelOnPeerUnreachable('none', 'Handshaking')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Handshaking')).toBe(true);
-    expect(shouldCancelOnPeerUnreachable('off-chain', 'MakingOffer')).toBe(true);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'OurWalletMakingOffer')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
   });
@@ -77,10 +77,10 @@ describe('restore lifecycle gates', () => {
     });
   });
 
-  it('only switches to tracker for a live clean-resolution transition', () => {
-    expect(shouldSwitchToTrackerOnResolved('none', false)).toBe(false);
-    expect(shouldSwitchToTrackerOnResolved('on-chain', false)).toBe(false);
-    expect(shouldSwitchToTrackerOnResolved('off-chain', true)).toBe(false);
-    expect(shouldSwitchToTrackerOnResolved('off-chain', false)).toBe(true);
+  it('only switches to hub for a live clean-resolution transition', () => {
+    expect(shouldSwitchToHubOnResolved('none', false)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('on-chain', false)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('off-chain', true)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('off-chain', false)).toBe(true);
   });
 });

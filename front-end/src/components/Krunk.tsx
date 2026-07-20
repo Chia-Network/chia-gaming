@@ -345,7 +345,7 @@ const Krunk: React.FC<KrunkProps> = ({
   const bobWon =
     bobHand.gameState.handler === KrunkHandler.Terminal
     && bobHand.gameState.outcome === 'win'
-    && bobHand.gameState.timeoutByUs === null;
+    && bobHand.gameState.settlementOutcome === null;
 
   const bobStatus = useMemo(() => {
     if (bobWon) return null;

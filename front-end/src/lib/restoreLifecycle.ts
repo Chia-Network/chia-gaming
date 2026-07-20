@@ -9,10 +9,10 @@ import {
 export function isRestoreBlocked(
   restoring: boolean,
   restoreStatus: RestoreStatus,
-  trackerReconciled: boolean,
+  hubReconciled: boolean,
 ): boolean {
   return selectRestoreBlocked(createSessionModel({
-    restore: { restoring, status: restoreStatus, trackerReconciled, error: null },
+    restore: { restoring, status: restoreStatus, hubReconciled, error: null },
   }));
 }
 
@@ -24,18 +24,18 @@ export function shouldAdvertiseAvailable(
     restore: {
       restoring: restoreBlocked,
       status: restoreBlocked ? 'restoring' : 'restored',
-      trackerReconciled: !restoreBlocked,
+      hubReconciled: !restoreBlocked,
       error: null,
     },
   }), sessionPhase);
 }
 
-export function shouldReportTrackerBusy(sessionPhase: SessionPhase): boolean {
+export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
 /** Channel states that already finished — resume must not keep the lobby busy. */
-export function isTerminalChannelState(state: string | null | undefined): boolean {
+export function isTerminalChannelStatus(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'
     || state === 'ResolvedUnrolled'
     || state === 'ResolvedStale'
@@ -44,7 +44,7 @@ export function isTerminalChannelState(state: string | null | undefined): boolea
 
 const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
 
 /**
@@ -85,7 +85,7 @@ export function shouldMountGameSession(
   };
 }
 
-export function shouldSwitchToTrackerOnResolved(
+export function shouldSwitchToHubOnResolved(
   previousPhase: SessionPhase,
   hasError: boolean,
 ): boolean {

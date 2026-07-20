@@ -4,7 +4,7 @@
  *
  * React cannot safely enumerate bigint props; we hide them. Typed arrays must
  * NOT be expanded into plain `{0:n,1:n,...}` objects — that destroys
- * `serializedCradle` / message bytes and makes WASM restore fail with
+ * `serializedGameSession` / message bytes and makes WASM restore fail with
  * bencodex "unexpected end of input".
  *
  * Degraded byte blobs (numeric-keyed plain objects from a prior spread of a

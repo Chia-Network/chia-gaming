@@ -6,14 +6,14 @@
 
 #[macro_use]
 pub mod common;
-pub mod channel_handler;
-pub mod games;
+pub mod channel_state;
 /// Provides as simple as possible a full blockchain interface that can be spoken
 /// with via a trait interface that's either local and synchronous or over a pipe.
-pub mod peer_container;
-pub mod potato_handler;
+pub mod game_session;
+pub mod games;
 pub mod protocol_pretty;
 mod referee;
+pub mod session_phases;
 pub mod shutdown;
 #[cfg(feature = "sim-tests")]
 pub mod simulator;

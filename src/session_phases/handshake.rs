@@ -1,0 +1,66 @@
+use crate::channel_state::types::StateUpdateSignatures;
+use crate::common::types::{
+    Aggsig, Amount, CoinID, CoinString, PublicKey, PuzzleHash, SpendBundle,
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadB {
+    pub channel_public_key: PublicKey,
+    pub unroll_public_key: PublicKey,
+    pub reward_puzzle_hash: PuzzleHash,
+    pub referee_pubkey: PublicKey,
+    pub reward_payout_signature: Aggsig,
+    pub channel_key_pop: Aggsig,
+    pub unroll_key_pop: Aggsig,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadC {
+    pub launcher_coin: CoinString,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadD {
+    pub signatures: StateUpdateSignatures,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadE {
+    pub bundle: SpendBundle,
+    pub signatures: StateUpdateSignatures,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakePayloadF {
+    pub bundle: SpendBundle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeStepInfo {
+    pub first_player_hs_info: HandshakePayloadB,
+    pub second_player_hs_info: HandshakePayloadB,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoinSpendRequest {
+    pub amount: Amount,
+    pub conditions: Vec<RawCoinCondition>,
+    pub coin_id: Option<CoinID>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawCoinCondition {
+    pub opcode: u32,
+    pub args: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeStepWithSpend {
+    pub info: HandshakeStepInfo,
+    pub spend: SpendBundle,
+}

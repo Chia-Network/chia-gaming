@@ -25,7 +25,7 @@ fi
 
 FE_DIR="$REPO_ROOT/front-end"
 WASM_DIR="$REPO_ROOT/wasm"
-LOBBY_FRONTEND_DIR="$REPO_ROOT/lobby/lobby-frontend"
+HUB_FRONTEND_DIR="$REPO_ROOT/hub/hub-frontend"
 
 SKIP_BUILD=0
 SKIP_NATIVE=0
@@ -68,10 +68,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building WASM (nodejs target for tests, profile $WASM_PROFILE) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" "$WASM_PROFILE" --target=nodejs)
 
-    echo "=== Installing lobby workspace deps ==="
-    (cd "$REPO_ROOT/lobby" && pnpm install --frozen-lockfile)
-    echo "=== Building lobby-frontend ==="
-    (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
+    echo "=== Installing hub workspace deps ==="
+    (cd "$REPO_ROOT/hub" && pnpm install --frozen-lockfile)
+    echo "=== Building hub-frontend ==="
+    (cd "$HUB_FRONTEND_DIR" && pnpm run build)
 
     echo "=== Installing gaming-fe deps ==="
     (cd "$FE_DIR" && pnpm install --frozen-lockfile)
@@ -82,8 +82,8 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     fi
 fi
 
-echo "=== Running lobby-service tests ==="
-(cd "$REPO_ROOT/lobby/lobby-service" && pnpm run test)
+echo "=== Running hub-service tests ==="
+(cd "$REPO_ROOT/hub/hub-service" && pnpm run test)
 
 # Kill any stale simulator on our port before starting a fresh one
 lsof -ti:5800 -sTCP:LISTEN | xargs kill 2>/dev/null || true

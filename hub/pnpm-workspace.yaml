@@ -1,0 +1,7 @@
+packages:
+  - "hub-frontend"
+  - "hub-service"
+confirmModulesPurge: false
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true

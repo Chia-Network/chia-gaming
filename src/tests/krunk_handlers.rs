@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs};
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
+use crate::channel_state::types::ReadableMove;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, Error, Hash, Program, Puzzle, Sha256Input,
@@ -123,10 +123,6 @@ struct MyTurnResult {
     move_bytes_node: NodePtr,
     validator_for_my_move: NodePtr,
     validator_for_my_move_hash: NodePtr,
-    #[allow(dead_code)]
-    validator_for_their_next_move: NodePtr,
-    #[allow(dead_code)]
-    validator_for_their_move_hash: NodePtr,
     max_move_size: i64,
     new_mover_share: i64,
     their_turn_handler: NodePtr,
@@ -158,8 +154,6 @@ fn call_my_turn_handler(
         move_bytes_node: items[1],
         validator_for_my_move: items[2],
         validator_for_my_move_hash: items[3],
-        validator_for_their_next_move: items[4],
-        validator_for_their_move_hash: items[5],
         max_move_size: int_from_node(allocator, items[6]),
         new_mover_share: int_from_node(allocator, items[7]),
         their_turn_handler: if items.len() > 8 {
@@ -171,7 +165,6 @@ fn call_my_turn_handler(
 }
 
 struct TheirTurnResult {
-    #[allow(dead_code)]
     readable_move: NodePtr,
     evidence_list: NodePtr,
     my_turn_handler: NodePtr,

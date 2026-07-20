@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState, type RefObject, ty
 import { Observable } from 'rxjs';
 import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
+import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
@@ -16,17 +16,18 @@ import {
 import SpacePoker from './SpacePoker';
 import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
+import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   selectComposeAmountAfterGameTypeChoice,
   selectHideGameInterfaceForBetweenHandDialog,
   type SessionModel,
 } from '../lib/session/model';
-import type { ChannelState } from '../types/ChiaGaming';
+import type { ChannelStatus } from '../types/ChiaGaming';
 
-const PRE_ACTIVE_STATES: ReadonlySet<ChannelState> = new Set([
+const PRE_ACTIVE_STATES: ReadonlySet<ChannelStatus> = new Set([
   'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'MakingOffer', 'MakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
 ]);
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
@@ -263,7 +264,7 @@ function useViewportClampedDragWithInsets(
 }
 
 
-function ChannelStateContent({ info }: { info: ChannelStatusInfo }) {
+function ChannelStatusContent({ info }: { info: ChannelStatusInfo }) {
   return (
     <>
       {info.advisory && (
@@ -345,7 +346,7 @@ function NotificationOverlay({
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
-            <ChannelStateContent info={notification.payload as ChannelStatusInfo} />
+            <ChannelStatusContent info={notification.payload as ChannelStatusInfo} />
           )}
           {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
             <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
@@ -440,8 +441,7 @@ function CalpokerHand({
     setHandOrder,
     moveNumber,
     outcome,
-    timeoutByUs,
-    timeoutForfeited,
+    settlementOutcome,
     handleMakeMove,
     handleCheat,
     handleNerf,
@@ -497,8 +497,7 @@ function CalpokerHand({
       initialSnapshot={stringifyCalpokerSnapshot(initialDisplaySnapshot)}
       myName={myName}
       opponentName={opponentName}
-      timeoutByUs={timeoutByUs}
-      timeoutForfeited={timeoutForfeited}
+      settlementOutcome={settlementOutcome}
     />
   );
 }
@@ -807,7 +806,7 @@ export interface GameSessionProps {
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
   registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../hooks/save').SessionState;
+  sessionSave?: import('../hooks/save').SessionSave;
   onGameActivity?: () => void;
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
@@ -849,15 +848,16 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   useEffect(() => {
     if (!onSessionPhaseChange || suppressPhaseReporting) return;
     const phase = session.sessionPhase;
+    const settledOutcome = session.gameTerminal.outcome;
     const hasError =
       session.channelStatus.state === 'Failed' ||
       session.channelStatus.state === 'ResolvedStale' ||
-      session.gameTerminal.type === 'forfeit' ||
-      session.gameTerminal.type === 'opponent-successfully-cheated' ||
       session.gameTerminal.type === 'game-error' ||
-      (session.gameTerminal.type === 'we-timed-out' && !session.gameTerminal.cleanEnd);
+      (session.gameTerminal.type === 'settled'
+        && settledOutcome != null
+        && isErrorSettlementOutcome(settledOutcome));
     onSessionPhaseChange(phase, hasError);
-  }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange, suppressPhaseReporting]);
+  }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.outcome, onSessionPhaseChange, suppressPhaseReporting]);
 
   useEffect(() => {
     if (!onGameActivity) return;

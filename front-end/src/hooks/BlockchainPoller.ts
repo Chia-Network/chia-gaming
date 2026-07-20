@@ -22,7 +22,7 @@ export const COIN_EVICTION_CONFIRMATION_DEPTH = 32n;
  */
 export type CoinPollInterest = { coin_name: string; coin_string: string };
 
-export interface PollingCradle {
+export interface PollingGameSession {
   snapshotWatchedCoins(): CoinPollInterest[];
   reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
   // Advance to `peak` with no coin-state change.  Lets the poller deliver a
@@ -40,8 +40,8 @@ type BalanceCallbacks = {
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
   private readonly adapter: InternalBlockchainInterface;
-  private cradles = new Set<PollingCradle>();
-  private cradleCoins = new Map<PollingCradle, CoinPollInterest[]>();
+  private sessions = new Set<PollingGameSession>();
+  private sessionCoins = new Map<PollingGameSession, CoinPollInterest[]>();
   private registeredNames = new Set<string>();
   private observedNames = new Set<string>();
   private running = false;
@@ -165,30 +165,30 @@ export class BlockchainPoller {
     });
   }
 
-  attachCradle(cradle: PollingCradle) {
-    this.cradles.add(cradle);
-    this.snapshotCradleCoinInterest(cradle);
+  attachGameSession(cradle: PollingGameSession) {
+    this.sessions.add(cradle);
+    this.snapshotGameSessionCoinInterest(cradle);
   }
 
-  detachCradle(cradle: PollingCradle) {
-    this.cradles.delete(cradle);
-    this.cradleCoins.delete(cradle);
+  detachGameSession(cradle: PollingGameSession) {
+    this.sessions.delete(cradle);
+    this.sessionCoins.delete(cradle);
     this.refreshCoinInterest();
   }
 
-  snapshotCradleCoinInterest(cradle: PollingCradle): void {
-    if (!this.cradles.has(cradle)) return;
-    this.cradleCoins.set(cradle, cradle.snapshotWatchedCoins());
+  snapshotGameSessionCoinInterest(cradle: PollingGameSession): void {
+    if (!this.sessions.has(cradle)) return;
+    this.sessionCoins.set(cradle, cradle.snapshotWatchedCoins());
     this.refreshCoinInterest();
   }
 
-  watchCoin(cradle: PollingCradle, coin: CoinPollInterest): void {
-    if (!this.cradles.has(cradle)) return;
+  watchCoin(cradle: PollingGameSession, coin: CoinPollInterest): void {
+    if (!this.sessions.has(cradle)) return;
     const byName = new Map(
-      (this.cradleCoins.get(cradle) ?? []).map((existing) => [existing.coin_name, existing]),
+      (this.sessionCoins.get(cradle) ?? []).map((existing) => [existing.coin_name, existing]),
     );
     byName.set(coin.coin_name, coin);
-    this.cradleCoins.set(cradle, [...byName.values()]);
+    this.sessionCoins.set(cradle, [...byName.values()]);
     this.refreshCoinInterest();
   }
 
@@ -223,13 +223,13 @@ export class BlockchainPoller {
     this.balancePollingScheduler.stop();
   }
 
-  private collectCradleCoins(): Array<{ c: PollingCradle; coins: CoinPollInterest[] }> {
-    return [...this.cradles].map((c) => ({ c, coins: this.cradleCoins.get(c) ?? [] }));
+  private collectGameSessionCoins(): Array<{ c: PollingGameSession; coins: CoinPollInterest[] }> {
+    return [...this.sessions].map((c) => ({ c, coins: this.sessionCoins.get(c) ?? [] }));
   }
 
   private refreshCoinInterest(): void {
     if (!this.running) return;
-    const hasCoins = this.collectCradleCoins().some(({ coins }) => coins.length > 0);
+    const hasCoins = this.collectGameSessionCoins().some(({ coins }) => coins.length > 0);
     if (hasCoins) {
       this.coinPollingScheduler.start(this.pollIntervalMs);
     } else {
@@ -275,7 +275,7 @@ export class BlockchainPoller {
       // Deliver the height tick immediately, before the (potentially slow) coin
       // record lookup. A cradle's new_block only needs the height, so cradles
       // whose watched coins aren't on chain yet can advance right away.
-      for (const { c } of this.collectCradleCoins()) {
+      for (const { c } of this.collectGameSessionCoins()) {
         c.reportNewBlock(height);
       }
 
@@ -295,10 +295,10 @@ export class BlockchainPoller {
 
   private async runCoinPoll(): Promise<void> {
     try {
-      const perCradle = this.collectCradleCoins();
+      const perSession = this.collectGameSessionCoins();
 
       const allNames = new Set<string>();
-      for (const { coins } of perCradle) {
+      for (const { coins } of perSession) {
         for (const { coin_name } of coins) allNames.add(coin_name);
       }
       const names = [...allNames];
@@ -312,7 +312,7 @@ export class BlockchainPoller {
       const records = namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
       const recordByName = await this.recordMap(records);
       if (recordByName) {
-        const reportedNames = this.reportToCradles(perCradle, recordByName, this.peak, this.previousPeakForCoinReport);
+        const reportedNames = this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
         this.evictBuriedSpentCoins(recordByName, reportedNames);
       }
       this.consecutiveFailures = 0;
@@ -338,8 +338,8 @@ export class BlockchainPoller {
       }
     }
     if (evictedNames.size === 0) return;
-    for (const [cradle, coins] of this.cradleCoins) {
-      this.cradleCoins.set(
+    for (const [cradle, coins] of this.sessionCoins) {
+      this.sessionCoins.set(
         cradle,
         coins.filter(({ coin_name }) => !evictedNames.has(coin_name)),
       );
@@ -378,19 +378,19 @@ export class BlockchainPoller {
   // partial-snapshot guards that keep transient RPC misses from looking like
   // deletions to the transaction manager.
   private reportToCradles(
-    perCradle: Array<{ c: PollingCradle; coins: CoinPollInterest[] }>,
+    perSession: Array<{ c: PollingGameSession; coins: CoinPollInterest[] }>,
     recordByName: Map<string, CoinRecord>,
     height: bigint,
     previousPeak: bigint,
   ): Set<string> {
     const interestCounts = new Map<string, number>();
     const reportedCounts = new Map<string, number>();
-    for (const { coins } of perCradle) {
+    for (const { coins } of perSession) {
       for (const { coin_name } of coins) {
         interestCounts.set(coin_name, (interestCounts.get(coin_name) ?? 0) + 1);
       }
     }
-    for (const { c, coins } of perCradle) {
+    for (const { c, coins } of perSession) {
       if (coins.length === 0) {
         continue;
       }

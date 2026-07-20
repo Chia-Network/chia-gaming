@@ -21,19 +21,20 @@ use serde_json::{self, Value};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 
-use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_state::types::ChannelEnv;
 use crate::common::constants::{
     ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
 };
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    check_for_hex, convert_coinset_org_spend_to_spend, map_m, u64_from_atom, Aggsig, AllocEncoder,
-    Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
-    Error, Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
+    check_for_hex, convert_coinset_org_spend_to_spend, u64_from_atom, Aggsig, AllocEncoder, Amount,
+    CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error,
+    Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
-use crate::peer_container::{FullCoinSetAdapter, WatchReport};
+use crate::game_session::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
+use crate::utils::map_m;
 use clvm_traits::Atom;
 use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;
@@ -159,7 +160,7 @@ impl GameRunner {
             self.identities.len()
         ));
         let coinset_adapter = FullCoinSetAdapter::default();
-        let simulator = Simulator::default();
+        let simulator = Simulator::new_strict();
         self.detach_simulator(simulator, coinset_adapter);
         Ok("1\n".to_string())
     }
@@ -473,7 +474,7 @@ impl GameRunner {
             }
         }
 
-        let env = ChannelHandlerEnv::new(&mut self.allocator)?;
+        let env = ChannelEnv::new(&mut self.allocator)?;
         let mut condition_nodes: Vec<Node> = create_targets
             .iter()
             .map(|(ph, amt)| {
@@ -1074,7 +1075,7 @@ fn run_game_actor(
     height: Arc<AtomicUsize>,
     ready: std_mpsc::SyncSender<Result<(), String>>,
 ) {
-    let simulator = Simulator::default();
+    let simulator = Simulator::new_strict();
     let coinset_adapter = FullCoinSetAdapter::default();
     let mut game_runner = match GameRunner::new(simulator, coinset_adapter) {
         Ok(runner) => runner,

@@ -1,5 +1,5 @@
 import { SessionController } from './SessionController';
-import { WasmStateInit, loadGameHexes, GameHexes } from './WasmStateInit';
+import { WasmStateInit } from './WasmStateInit';
 import {
   PeerConnectionResult,
 } from '../types/ChiaGaming';
@@ -7,10 +7,9 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   clearSession,
   clearGameSessionPreservingHistory,
-  flushSessionState,
+  flushSessionSave,
   markSavedSession,
-  startNewSession,
-  SessionState,
+  SessionSave,
 } from './save';
 import { coerceToBytes } from '../util';
 import { log } from '../services/log';
@@ -26,13 +25,23 @@ export var sessionController: SessionController | null = null;
 export { sessionController as blobSingleton };
 export var initStarted = false;
 
-function parseBigIntCounter(value: unknown, fallback: bigint): bigint {
+function requireBigIntCounter(value: unknown, label: string): bigint {
     if (typeof value === 'bigint') return value;
     if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
     if (typeof value === 'string') {
         try { return BigInt(value); } catch { /* fall through */ }
     }
-    return fallback;
+    throw new Error(`restoreSession: missing or invalid ${label}`);
+}
+
+function requireBoolean(value: unknown, label: string): boolean {
+    if (typeof value === 'boolean') return value;
+    throw new Error(`restoreSession: missing or invalid ${label}`);
+}
+
+function requireString(value: unknown, label: string): string {
+    if (typeof value === 'string') return value;
+    throw new Error(`restoreSession: missing or invalid ${label}`);
 }
 
 export function setInitStarted(value: boolean) {
@@ -63,25 +72,10 @@ async function fetchPreset(fetchUrl: string): Promise<Uint8Array> {
     return new Uint8Array(await resp.arrayBuffer());
 }
 
-async function fetchHexString(fetchUrl: string): Promise<string> {
-    const url = resolveDeployAssetUrl(fetchUrl);
-    const resp = await fetch(url);
-    if (!resp.ok) {
-        await recoverFromMissingDeployAsset(
-            'fetchHexString',
-            url,
-            resp.status,
-            resp.statusText,
-        );
-    }
-    return resp.text();
-}
-
 export async function configSessionController(
   sc: SessionController,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
-  gameHexes: GameHexes,
   blockchain: BlockchainPoller,
   uniqueId: string,
   channelTimeout?: number,
@@ -96,8 +90,8 @@ export async function configSessionController(
   let address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
   const theirContribution = sc.theirContribution;
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
-  sc.setGameCradle(cradle);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
+  sc.setGameSession(cradle);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
   sc.activateSpend();
@@ -107,19 +101,19 @@ export async function configSessionController(
 
 export async function restoreSession(
   sc: SessionController,
-  save: SessionState,
+  save: SessionSave,
   wasmStateInit: WasmStateInit,
 ): Promise<void> {
-  if (!save.serializedCradle) {
-    throw new Error('restoreSession called without serializedCradle');
+  if (!save.serializedGameSession) {
+    throw new Error('restoreSession called without serializedGameSession');
   }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
-  const currentSchema = BigInt(wasmConnection.cradle_serialization_schema());
-  if (save.cradleSchemaVersion === undefined || save.cradleSchemaVersion !== currentSchema) {
-    const savedSchema = save.cradleSchemaVersion === undefined
+  const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
+  if (save.gameSessionSchemaVersion === undefined || save.gameSessionSchemaVersion !== currentSchema) {
+    const savedSchema = save.gameSessionSchemaVersion === undefined
       ? 'missing'
-      : save.cradleSchemaVersion.toString();
+      : save.gameSessionSchemaVersion.toString();
     await clearSession();
     markSavedSession();
     throw new Error(
@@ -127,18 +121,21 @@ export async function restoreSession(
     );
   }
 
-  const cradleBytes = save.serializedCradle instanceof Uint8Array
-    ? save.serializedCradle
-    : (() => { throw new Error('restoreSession serializedCradle must be a Uint8Array'); })();
+  const cradleBytes = save.serializedGameSession instanceof Uint8Array
+    ? save.serializedGameSession
+    : (() => { throw new Error('restoreSession serializedGameSession must be a Uint8Array'); })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
-  sc.messageNumber = parseBigIntCounter(save.messageNumber, 1n);
-  sc.remoteNumber = parseBigIntCounter(save.remoteNumber, 0n);
-  sc.channelReady = save.channelReady ?? false;
-  sc.iStarted = save.iStarted ?? false;
-  sc.pairingToken = save.pairingToken ?? '';
-  sc.unackedMessages = (save.unackedMessages ?? []).map(m => ({
-    msgno: parseBigIntCounter(m.msgno, 0n),
+  sc.messageNumber = requireBigIntCounter(save.messageNumber, 'messageNumber');
+  sc.remoteNumber = requireBigIntCounter(save.remoteNumber, 'remoteNumber');
+  sc.channelReady = requireBoolean(save.channelReady, 'channelReady');
+  sc.iStarted = requireBoolean(save.iStarted, 'iStarted');
+  sc.pairingToken = requireString(save.pairingToken, 'pairingToken');
+  if (!Array.isArray(save.unackedMessages)) {
+    throw new Error('restoreSession: missing or invalid unackedMessages');
+  }
+  sc.unackedMessages = save.unackedMessages.map(m => ({
+    msgno: requireBigIntCounter(m.msgno, 'unackedMessages.msgno'),
     msg: m.msg,
   }));
   sc.wasmNotificationHistory = recentEntries(
@@ -147,10 +144,11 @@ export async function restoreSession(
   );
   sc.diagnosticLog = recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
   sc.durabilityWarning = save.durabilityWarning;
-  sc.activeGameId = save.activeGameId ?? null;
-  sc.activeGameIds = save.activeGameIds && save.activeGameIds.length > 0
-    ? [...save.activeGameIds]
-    : save.activeGameId ? [save.activeGameId] : [];
+  if (!Array.isArray(save.activeGameIds)) {
+    throw new Error('restoreSession: missing or invalid activeGameIds');
+  }
+  sc.activeGameIds = [...save.activeGameIds];
+  sc.activeGameId = save.activeGameIds[0] ?? save.activeGameId ?? null;
   sc.handState = save.handState ?? null;
   sc.lastChannelStatus = save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
@@ -159,7 +157,7 @@ export async function restoreSession(
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
   sc.markRestored();
-  sc.setGameCradle(cradle);
+  sc.setGameSession(cradle);
 
   log('[restore] session restored');
 }
@@ -172,7 +170,7 @@ export function getOrCreateSessionController(
   myContribution: bigint,
   theirContribution: bigint,
   iStarted: boolean,
-  sessionSave?: SessionState,
+  sessionSave?: SessionSave,
   pairingToken?: string,
   perGameAmount?: bigint,
   getFee?: () => bigint,
@@ -227,7 +225,7 @@ export function getOrCreateSessionController(
 
   // Only cradle restores go through restoreSession. pairingToken-only saves are
   // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
-  if (sessionSave?.serializedCradle) {
+  if (sessionSave?.serializedGameSession) {
     const restoringObject = sessionController;
     const doRestore = async () => {
       try {
@@ -253,18 +251,14 @@ export function getOrCreateSessionController(
         }
         // Pending handshake fields must already be on disk (Shell). Flush before
         // asset fetch so a stale-deploy reload can Resume into newSession again.
-        await flushSessionState();
-        if (sessionController !== owningController) return;
-        const gameHexes = await loadGameHexes(fetchHexString);
+        await flushSessionSave();
         if (sessionController !== owningController) return;
         await clearGameSessionPreservingHistory();
         if (sessionController !== owningController) return;
-        startNewSession();
         await configSessionController(
           owningController,
           iStarted,
           wasmStateInit,
-          gameHexes,
           blockchain,
           uniqueId,
           channelTimeout,

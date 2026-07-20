@@ -1,10 +1,9 @@
 import {
   init,
   config_scaffold,
-  create_game_cradle,
+  create_game_session,
   deliver_message,
-  deposit_file,
-  opening_coin,
+  cache_file,
   chia_identity,
   Spend,
   CoinSpend,
@@ -16,9 +15,8 @@ import { Subscription } from 'rxjs';
 import {
   WasmStateInit,
   storeInitArgs,
-  loadGameHexes,
 } from '../../hooks/WasmStateInit';
-import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../util';
+import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
   PeerConnectionResult,
@@ -30,7 +28,7 @@ import {
 } from '../../hooks/FakeBlockchainInterface';
 import {
   _resetForTests as resetSaveState,
-  flushSessionState,
+  flushSessionSave,
   hasSavedSessionMarker,
   peekSession,
   saveSession,
@@ -57,12 +55,8 @@ async function fetchPreset(key: string): Promise<Uint8Array> {
   return new Uint8Array(fs.readFileSync(rooted(key)));
 }
 
-async function fetchHex(key: string): Promise<string> {
-  return fs.readFileSync(rooted(key), 'utf8');
-}
-
 function preset_file(name: string) {
-  deposit_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
+  cache_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
 }
 
 interface SimpleMessage { msgno: number; msg: Uint8Array };
@@ -325,26 +319,26 @@ function assertCradleRoundTrip(
   controller: SessionController,
 ): Uint8Array {
   const wasmFields = controller.getWasmFields();
-  const serialized = wasmFields?.serializedCradle;
+  const serialized = wasmFields?.serializedGameSession;
   assert.ok(serialized instanceof Uint8Array, `${stage}: expected serialized cradle bytes`);
   assert.equal(
-    wasmFields?.cradleSchemaVersion,
-    BigInt(WholeWasmObject.cradle_serialization_schema()),
+    wasmFields?.gameSessionSchemaVersion,
+    BigInt(WholeWasmObject.game_session_serialization_schema()),
     `${stage}: expected current cradle schema`,
   );
   assert.ok(serialized.byteLength > 0, `${stage}: expected non-empty serialized cradle`);
-  // Fingerprint immediately: if serialize_cradle returned a WASM-memory view,
+  // Fingerprint immediately: if serialize_game_session returned a WASM-memory view,
   // later WASM activity would mutate these bytes in place.
   const ownedFingerprint = Uint8Array.from(serialized);
   const state = controller.getProtocolStatePretty() ?? 'unknown';
   const protocolType = state.split('\n', 1)[0];
   try {
-    const restoredId = WholeWasmObject.create_serialized_game(
+    const restoredId = WholeWasmObject.restore_session(
       serialized,
       `reload-regression-${stage}`,
     );
     assert.equal(typeof restoredId, 'number');
-    const reserialized = WholeWasmObject.serialize_cradle(restoredId);
+    const reserialized = WholeWasmObject.serialize_game_session(restoredId);
     assert.deepEqual(
       serialized,
       ownedFingerprint,
@@ -383,7 +377,7 @@ async function action_with_messages(
 
   // The poller drives each cradle's coin polling directly via report_coin_states.
   cradles.forEach((c) => {
-    if (c.blob) poller.attachCradle(c.blob);
+    if (c.blob) poller.attachGameSession(c.blob);
   });
 
   let evt_results: Array<boolean> = cradles.map((c) => c.observedActiveStatus());
@@ -445,7 +439,7 @@ async function action_with_messages(
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
     cradles.forEach((c) => {
-      if (c.blob) poller.detachCradle(c.blob);
+      if (c.blob) poller.detachGameSession(c.blob);
     });
   }
 }
@@ -469,8 +463,7 @@ async function initSessionController(
     peer_conn,
   );
 
-  let gameHexes = await loadGameHexes(fetchHex);
-  await configSessionController(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId);
+  await configSessionController(gameObject, iStarted, wasmStateInit, blockchain, uniqueId);
 
   return gameObject;
 }
@@ -634,32 +627,32 @@ it(
       wasm_blob1.onSaveNeeded = () => Promise.resolve();
       wasm_blob2.onSaveNeeded = () => Promise.resolve();
       void saveSession({
-        serializedCradle: makingOfferAcceptanceBytes,
-        cradleSchemaVersion: BigInt(WholeWasmObject.cradle_serialization_schema()),
+        serializedGameSession: makingOfferAcceptanceBytes,
+        gameSessionSchemaVersion: BigInt(WholeWasmObject.game_session_serialization_schema()),
         pairingToken: 'reload-regression',
       });
-      await flushSessionState();
+      await flushSessionSave();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
       resetSaveState();
       assert.ok(hasSavedSessionMarker());
       void saveSession({ diagnosticLog: ['boot-before-resume'] });
-      await flushSessionState();
+      await flushSessionSave();
 
       resetSaveState();
       const reloaded = await peekSession();
-      assert.ok(reloaded?.serializedCradle instanceof Uint8Array);
+      assert.ok(reloaded?.serializedGameSession instanceof Uint8Array);
       assert.equal(
-        reloaded.serializedCradle.byteLength,
+        reloaded.serializedGameSession.byteLength,
         makingOfferAcceptanceBytes.byteLength,
       );
-      assert.deepEqual(reloaded.serializedCradle, makingOfferAcceptanceBytes);
+      assert.deepEqual(reloaded.serializedGameSession, makingOfferAcceptanceBytes);
       assert.ok(
         reloaded.diagnosticLog?.includes('boot-before-resume'),
         'preference patch during marker-only boot must be retained',
       );
-      const restoredId = WholeWasmObject.create_serialized_game(
-        reloaded.serializedCradle,
+      const restoredId = WholeWasmObject.restore_session(
+        reloaded.serializedGameSession,
         'reload-regression-seed',
       );
       assert.equal(typeof restoredId, 'number');
@@ -668,7 +661,7 @@ it(
       assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
       testLog(
         `reload regression makingOfferAcceptance=${makingOfferAcceptanceBytes.byteLength}` +
-        ` restored=${reloaded.serializedCradle.byteLength}`,
+        ` restored=${reloaded.serializedGameSession.byteLength}`,
       );
 
       testLog('before action_with_messages');

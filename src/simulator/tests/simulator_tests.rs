@@ -12,27 +12,27 @@ use crate::common::types::{
     PrivateKey, Program, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
     ToQuotedProgram,
 };
-use crate::peer_container::{DrainResult, WatchReport};
-use crate::potato_handler::effects::CradleEvent;
+use crate::game_session::{DrainResult, WatchReport};
+use crate::session_phases::effects::GameSessionEvent;
 use crate::simulator::Simulator;
-use crate::transaction_manager::{ManagedCradle, TransactionManager};
+use crate::transaction_manager::{ManagedGameSession, TransactionManager};
 
-/// A scripted [`ManagedCradle`] for driving a [`TransactionManager`] over real
+/// A scripted [`ManagedGameSession`] for driving a [`TransactionManager`] over real
 /// simulator coin state.  Pre-queued event batches are returned in order from
-/// `cradle_flush_and_collect`; blocks are accepted and ignored.
+/// `session_flush_and_collect`; blocks are accepted and ignored.
 #[derive(Default)]
-struct ScriptedCradle {
-    drains: std::collections::VecDeque<Vec<CradleEvent>>,
+struct ScriptedGameSession {
+    drains: std::collections::VecDeque<Vec<GameSessionEvent>>,
 }
 
-impl ScriptedCradle {
-    fn queue(&mut self, events: Vec<CradleEvent>) {
+impl ScriptedGameSession {
+    fn queue(&mut self, events: Vec<GameSessionEvent>) {
         self.drains.push_back(events);
     }
 }
 
-impl ManagedCradle for ScriptedCradle {
-    fn cradle_new_block(
+impl ManagedGameSession for ScriptedGameSession {
+    fn session_new_block(
         &mut self,
         _allocator: &mut AllocEncoder,
         _height: u64,
@@ -41,7 +41,7 @@ impl ManagedCradle for ScriptedCradle {
         Ok(())
     }
 
-    fn cradle_flush_and_collect(
+    fn session_flush_and_collect(
         &mut self,
         _allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, crate::common::types::Error> {
@@ -818,15 +818,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         };
 
         // The cradle wants to watch the child and submit the creating tx.
-        let mut cradle = ScriptedCradle::default();
+        let mut cradle = ScriptedGameSession::default();
         cradle.queue(vec![
-            CradleEvent::WatchCoin {
+            GameSessionEvent::WatchCoin {
                 coin_name: child.to_coin_id(),
                 coin_string: child.clone(),
                 timeout: Timeout::new(100),
                 spend: None,
             },
-            CradleEvent::OutboundTransaction(creating_tx.clone(), None),
+            GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(cradle);
         mgr.flush_and_collect(&mut allocator).expect("flush");

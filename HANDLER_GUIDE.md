@@ -778,7 +778,7 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 
 - Handlers: `clsp/games/calpoker/calpoker_generate.clinc`
 - Validators: `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
-- Rust-side handler invocation: `src/channel_handler/game_handler.rs`
+- Rust-side handler invocation: `src/channel_state/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
 - Handler API reference: `clsp/handler_api.md`

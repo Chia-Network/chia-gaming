@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{ReadableMove, ValidationInfo};
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, PublicKey,
@@ -18,12 +18,12 @@ use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     canonical_atom_from_usize, curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails,
     GameMoveStateInfo, GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution,
-    ParsedRefereeSolution, RMFixed, RefereePuzzleArgs, TheirTurnCoinSpentResult,
+    ParsedRefereeSolution, RefereeFixedContext, RefereePuzzleArgs, TheirTurnCoinSpentResult,
     TheirTurnMoveResult, ValidationInfoHash,
 };
 
 pub(crate) struct RefereeInitialSetup {
-    pub fixed: Rc<RMFixed>,
+    pub fixed: Rc<RefereeFixedContext>,
     pub ref_puzzle_args: Rc<RefereePuzzleArgs>,
     pub puzzle_hash: PuzzleHash,
 }
@@ -50,7 +50,7 @@ pub(crate) fn referee_initial_setup(
     };
     let my_turn = game_start_info.game_handler.is_my_turn();
 
-    let fixed = Rc::new(RMFixed {
+    let fixed = Rc::new(RefereeFixedContext {
         referee_coin_puzzle,
         referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
         their_referee_pubkey: their_pubkey.clone(),
@@ -162,7 +162,7 @@ impl Referee {
         }
     }
 
-    fn fixed(&self) -> Rc<RMFixed> {
+    fn fixed(&self) -> Rc<RefereeFixedContext> {
         match self {
             Referee::MyTurn(t) => t.fixed.clone(),
             Referee::TheirTurn(t) => t.fixed.clone(),
@@ -420,7 +420,7 @@ impl Referee {
         let outcome_ph = self.outcome_referee_puzzle_hash(allocator)?;
         let coin_ph = coin_string.to_parts().map(|(_, ph, _)| ph);
 
-        let (puzzle, amount_for_timeout) =
+        let (puzzle, timeout_claim_amount) =
             if coin_ph.as_ref() == Some(&outcome_ph) && coin_ph.as_ref() != Some(&on_chain_ph) {
                 (
                     self.outcome_referee_puzzle(allocator)?,
@@ -490,7 +490,7 @@ impl Referee {
                 waiter_payout_ph,
                 aggregate_signature,
             },
-            amount_for_timeout,
+            timeout_claim_amount,
         )
     }
 

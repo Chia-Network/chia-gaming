@@ -2,7 +2,7 @@ import { Subject, NextObserver } from 'rxjs';
 import { Program } from 'clvm-lib';
 
 import {
-  CradleEvent,
+  GameSessionEvent,
   PeerConnectionResult,
   WasmConnection,
   ChiaGame,
@@ -14,14 +14,14 @@ import {
   BlockchainInboundAddressResult,
   WasmEvent,
 } from '../types/ChiaGaming';
-import { BlockchainPoller, PollingCradle } from './BlockchainPoller';
+import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import {
   spend_bundle_to_clvm,
   coerceToBytes,
 } from '../util';
 import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
-import { flushSessionState } from './save';
+import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
@@ -32,8 +32,8 @@ import {
 } from '../lib/session/historyLimits';
 
 export interface WasmFields {
-  serializedCradle: Uint8Array;
-  cradleSchemaVersion: bigint;
+  serializedGameSession: Uint8Array;
+  gameSessionSchemaVersion: bigint;
   pairingToken: string;
   messageNumber: bigint;
   remoteNumber: bigint;
@@ -90,7 +90,7 @@ export function isBenignTransactionSubmitError(message: string): boolean {
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
-export class SessionController implements PollingCradle {
+export class SessionController implements PollingGameSession {
   myContribution: bigint;
   theirContribution: bigint;
   perGameAmount: bigint;
@@ -118,7 +118,7 @@ export class SessionController implements PollingCradle {
   private blockchainAttached = false;
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
-  private eventQueue: CradleEvent[] = [];
+  private eventQueue: GameSessionEvent[] = [];
   private drainScheduled = false;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCoinStates: { peak: bigint; records: CoinStateRecord[] } | null = null;
@@ -218,15 +218,15 @@ export class SessionController implements PollingCradle {
 
   attachBlockchain(blockchain: BlockchainPoller) {
     if (this.blockchain && this.blockchain !== blockchain) {
-      this.blockchain.detachCradle(this);
+      this.blockchain.detachGameSession(this);
       this.blockchainAttached = false;
     }
     const alreadyAttached = this.blockchain === blockchain && this.blockchainAttached;
     this.blockchain = blockchain;
     if (alreadyAttached) {
-      blockchain.snapshotCradleCoinInterest(this);
+      blockchain.snapshotGameSessionCoinInterest(this);
     } else {
-      blockchain.attachCradle(this);
+      blockchain.attachGameSession(this);
       this.blockchainAttached = true;
     }
     this.flushPendingCoinStates();
@@ -236,7 +236,7 @@ export class SessionController implements PollingCradle {
 
   detachBlockchain(blockchain: BlockchainPoller) {
     if (this.blockchain !== blockchain) return;
-    blockchain.detachCradle(this);
+    blockchain.detachGameSession(this);
     this.blockchainAttached = false;
     this.blockchain = null;
   }
@@ -250,7 +250,7 @@ export class SessionController implements PollingCradle {
     this.cleanShutdownCalled = true;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
-    this.blockchain?.detachCradle(this);
+    this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
     this.blockchain = null;
     if (this.saveTimer) {
@@ -371,9 +371,9 @@ export class SessionController implements PollingCradle {
     }
   }
 
-  setGameCradle(cradle: ChiaGame) {
+  setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
-    this.blockchain?.snapshotCradleCoinInterest(this);
+    this.blockchain?.snapshotGameSessionCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
@@ -653,7 +653,7 @@ export class SessionController implements PollingCradle {
     throw new Error('SessionController pending work did not settle');
   }
 
-  private dispatchEvent(event: CradleEvent): void {
+  private dispatchEvent(event: GameSessionEvent): void {
     if ('OutboundMessage' in event) {
       if (this.onChain) return;
       const msgno = this.messageNumber++;
@@ -667,7 +667,7 @@ export class SessionController implements PollingCradle {
         const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
         if (cs) {
           // The `coin` field is a serialized CoinString (a byte blob). Normalize
-          // it to a Uint8Array so the persisted SessionState carries a typed
+          // it to a Uint8Array so the persisted SessionSave carries a typed
           // array (exempt from the save-time number check, stored losslessly as
           // $bytes) rather than a degraded plain array/object of numbers.
           this.lastChannelStatus = { ...cs, coin: coerceToBytes(cs.coin) } as unknown as ChannelStatusPayload;
@@ -830,7 +830,7 @@ export class SessionController implements PollingCradle {
     }
   }
 
-  // --- PollingCradle: driven by the BlockchainPoller ---
+  // --- PollingGameSession: driven by the BlockchainPoller ---
 
   snapshotWatchedCoins(): Array<{ coin_name: string; coin_string: string }> {
     if (!this.cradle) return [];
@@ -906,7 +906,7 @@ export class SessionController implements PollingCradle {
     // queued a full-session save without SessionController's timer being set.
     // onSaveNeeded is required to update `cached` synchronously before returning
     // its Promise so this flush snapshots the new cradle, not a pre-save state.
-    const persistence = flushSessionState();
+    const persistence = flushSessionSave();
     const durability = this.flushDurabilityAndSend();
     return Promise.all([saveRequest, persistence, durability]).then(() => {});
   }
@@ -962,7 +962,7 @@ export class SessionController implements PollingCradle {
         // returning its Promise (see flushPendingSave). Flushing first then
         // persists that snapshot; awaiting the Promise only waits for the
         // outer debounce settlement.
-        await flushSessionState();
+        await flushSessionSave();
         await saveRequest;
       } catch (error) {
         const detail = extractErrorMessage(error);
@@ -1005,10 +1005,10 @@ export class SessionController implements PollingCradle {
     // failures must throw so callers like durability flush do not treat a
     // failed snapshot as a successful no-op.
     if (!this.cradle || !this.wc) return null;
-    const serializedCradle = this.cradle.serialize();
+    const serializedGameSession = this.cradle.serialize();
     return {
-      serializedCradle,
-      cradleSchemaVersion: BigInt(this.wc.cradle_serialization_schema()),
+      serializedGameSession,
+      gameSessionSchemaVersion: BigInt(this.wc.game_session_serialization_schema()),
       pairingToken: this.pairingToken,
       messageNumber: this.messageNumber,
       remoteNumber: this.remoteNumber,
@@ -1067,25 +1067,22 @@ export class SessionController implements PollingCradle {
   // --- Game actions (called by higher layer) ---
 
   proposeGame(params: ProposeGameParams): string[] {
-    if (!this.cradle) throw new Error('no cradle');
-    try {
-      const { parameters, ...wasmParams } = params;
-      const result = this.cradle.propose_game(wasmParams, clvmToBytes(parameters));
-      this.processResult(result);
-      return result?.ids || [];
-    } catch (e) {
-      const msg = extractErrorMessage(e);
-      console.error('[wasm] proposeGame failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
-      return [];
-    }
+    return this.proposeGames([params]);
   }
 
   proposeGames(paramsList: ProposeGameParams[]): string[] {
+    if (!this.cradle) throw new Error('no cradle');
     if (paramsList.length !== 1) {
       throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
     }
-    return this.proposeGame(paramsList[0]);
+    const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
+    const parametersList = paramsList.map(({ parameters }) => clvmToBytes(parameters));
+    const result = this.cradle.propose_games(games, parametersList);
+    this.processResult(result);
+    if (!result?.ids) {
+      throw new Error('proposeGames returned no ids');
+    }
+    return result.ids;
   }
 
   acceptProposal(gameId: string): void {
@@ -1125,14 +1122,14 @@ export class SessionController implements PollingCradle {
     }
   }
 
-  acceptTimeout(gameId: string): void {
+  acceptSettlement(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
     try {
-      const result = this.cradle.accept(gameId);
+      const result = this.cradle.acceptSettlement(gameId);
       this.processResult(result);
     } catch (e) {
       const msg = extractErrorMessage(e);
-      console.error('[wasm] acceptTimeout failed:', msg);
+      console.error('[wasm] acceptSettlement failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
     }
   }

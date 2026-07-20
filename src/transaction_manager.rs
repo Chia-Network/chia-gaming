@@ -30,9 +30,9 @@ use serde::{Deserialize, Serialize};
 use crate::common::types::{
     AllocEncoder, CoinCondition, CoinID, CoinString, Error, SpendBundle, Timeout,
 };
-use crate::peer_container::{DrainResult, GameCradle, SynchronousGameCradle, WatchReport};
-use crate::potato_handler::effects::{
-    ChannelState, CradleEvent, CradleEventQueue, GameNotification,
+use crate::game_session::{DrainResult, GameSession, WatchReport};
+use crate::session_phases::effects::{
+    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -148,24 +148,24 @@ impl WatchedCoin {
 /// manager and are not present here.
 #[derive(Default)]
 pub struct ManagerDrain {
-    pub events: CradleEventQueue,
+    pub events: GameSessionEventQueue,
     pub watch_coins: Vec<CoinString>,
     pub resync: Option<(usize, bool)>,
     pub terminal: bool,
 }
 
 /// The minimal interface the [`TransactionManager`] needs from the cradle it
-/// wraps.  Implemented by [`SynchronousGameCradle`] in production and by
-/// `MockGameCradle` in unit tests.
-pub trait ManagedCradle {
-    fn cradle_new_block(
+/// wraps.  Implemented by [`GameSession`] in production and by
+/// `MockGameSession` in unit tests.
+pub trait ManagedGameSession {
+    fn session_new_block(
         &mut self,
         allocator: &mut AllocEncoder,
         height: u64,
         report: &WatchReport,
     ) -> Result<(), Error>;
 
-    fn cradle_flush_and_collect(
+    fn session_flush_and_collect(
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error>;
@@ -175,22 +175,22 @@ pub trait ManagedCradle {
     }
 }
 
-impl ManagedCradle for SynchronousGameCradle {
-    fn cradle_new_block(
+impl ManagedGameSession for GameSession {
+    fn session_new_block(
         &mut self,
         allocator: &mut AllocEncoder,
         height: u64,
         report: &WatchReport,
     ) -> Result<(), Error> {
-        use crate::peer_container::GameCradle;
-        GameCradle::new_block(self, allocator, height, report)
+        use crate::game_session::GameSession;
+        GameSession::new_block(self, allocator, height, report)
     }
 
-    fn cradle_flush_and_collect(
+    fn session_flush_and_collect(
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error> {
-        SynchronousGameCradle::flush_and_collect(self, allocator)
+        GameSession::flush_and_collect(self, allocator)
     }
 
     fn is_terminal(&self) -> bool {
@@ -211,7 +211,7 @@ pub struct TransactionManager<C> {
     pending_submissions: Vec<(SpendBundle, Option<u64>)>,
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
-    pending_events: CradleEventQueue,
+    pending_events: GameSessionEventQueue,
     /// Watch registrations intercepted during draining.  Runtime hosts consume
     /// these as deltas; restore still seeds from the durable watched set.
     #[serde(skip)]
@@ -294,7 +294,7 @@ impl<C> TransactionManager<C> {
             cradle,
             watched_coins: HashMap::new(),
             pending_submissions: Vec::new(),
-            pending_events: CradleEventQueue::default(),
+            pending_events: GameSessionEventQueue::default(),
             pending_watch_coins: Vec::new(),
             pending_resync: None,
             confirmation_depth: DEFAULT_CONFIRMATION_DEPTH,
@@ -311,7 +311,7 @@ impl<C> TransactionManager<C> {
         &self.cradle
     }
 
-    pub fn cradle_mut(&mut self) -> &mut C {
+    pub fn session_mut(&mut self) -> &mut C {
         &mut self.cradle
     }
 
@@ -403,13 +403,13 @@ impl<C> TransactionManager<C> {
 
     /// Partition cradle events: intercept outbound transactions and watch-coin
     /// registrations; buffer the rest for the hosting layer.
-    fn absorb_events(&mut self, events: CradleEventQueue) {
+    fn absorb_events(&mut self, events: GameSessionEventQueue) {
         for event in events {
             match event {
-                CradleEvent::OutboundTransaction(tx, expiry) => {
+                GameSessionEvent::OutboundTransaction(tx, expiry) => {
                     self.pending_submissions.push((tx, expiry));
                 }
-                CradleEvent::WatchCoin {
+                GameSessionEvent::WatchCoin {
                     coin_string,
                     timeout,
                     spend,
@@ -426,7 +426,7 @@ impl<C> TransactionManager<C> {
     }
 }
 
-impl TransactionManager<SynchronousGameCradle> {
+impl TransactionManager<GameSession> {
     /// Whether the channel has failed.  True if the manager observed the
     /// channel-creation transaction expire (the deadline it now owns) or if the
     /// inner cradle reports a failure of its own (e.g. an on-chain failure).
@@ -443,7 +443,7 @@ impl TransactionManager<SynchronousGameCradle> {
     }
 }
 
-impl<C: ManagedCradle> TransactionManager<C> {
+impl<C: ManagedGameSession> TransactionManager<C> {
     /// Report the latest confirmed height and the on-chain state of the watched
     /// coins.  Computes the created/deleted diff against tracked state and feeds
     /// it to the inner cradle.  Does not drain events; call
@@ -616,7 +616,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // We emit each such coin in BOTH created_watched and deleted_watched so
         // subscribers see a created-then-spent pair, processed sequentially.
         // Handlers that only do real work on creation (the handshake handlers,
-        // which transition to PotatoHandler on coin_created) would otherwise
+        // which transition to OffChainPhase on coin_created) would otherwise
         // miss the channel coin entirely when it jumps straight to spent, never
         // transition, and never handle the spend.  They are deliberately NOT
         // added to present_coins: they are already spent and must not be tracked
@@ -680,7 +680,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
             deleted_watched,
         };
 
-        self.cradle.cradle_new_block(allocator, height, &report)?;
+        self.cradle.session_new_block(allocator, height, &report)?;
 
         self.evict_confirmed_spends(height);
         self.check_channel_expiry(height);
@@ -785,15 +785,17 @@ impl<C: ManagedCradle> TransactionManager<C> {
         self.submitted
             .retain(|tx| tx.spent_coin_ids != spent_coin_ids);
         self.pending_events
-            .push_back(CradleEvent::Notification(GameNotification::ChannelStatus {
-                state: ChannelState::Failed,
-                advisory: Some("channel coin not confirmed in time".to_string()),
-                coin: None,
-                our_balance: None,
-                their_balance: None,
-                game_allocated: None,
-                have_potato: None,
-            }));
+            .push_back(GameSessionEvent::Notification(
+                GameNotification::ChannelStatus {
+                    state: ChannelStatus::Failed,
+                    advisory: Some("channel coin not confirmed in time".to_string()),
+                    coin: None,
+                    our_balance: None,
+                    their_balance: None,
+                    game_allocated: None,
+                    have_potato: None,
+                },
+            ));
     }
 
     /// Coins that vanished (reorged out) without a confirmed spend, whose
@@ -808,7 +810,7 @@ impl<C: ManagedCradle> TransactionManager<C> {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<ManagerDrain, Error> {
-        let result = self.cradle.cradle_flush_and_collect(allocator)?;
+        let result = self.cradle.session_flush_and_collect(allocator)?;
         if result.resync.is_some() {
             self.pending_resync = result.resync;
         }
@@ -830,7 +832,7 @@ mod tests {
     use crate::common::types::{
         Amount, CoinID, CoinSpend, Hash, Program, Puzzle, PuzzleHash, Spend, ToQuotedProgram,
     };
-    use crate::potato_handler::effects::CradleEvent;
+    use crate::session_phases::effects::GameSessionEvent;
     use clvm_traits::ToClvm;
 
     fn test_coin(tag: u8) -> CoinString {
@@ -874,24 +876,28 @@ mod tests {
     }
 
     /// A scriptable cradle for exercising the manager in isolation.  Each call
-    /// to `cradle_flush_and_collect` returns the next queued `DrainResult`.
+    /// to `session_flush_and_collect` returns the next queued `DrainResult`.
     #[derive(Default)]
-    struct MockGameCradle {
-        /// Reports seen via `cradle_new_block`, for assertions.
+    struct MockGameSession {
+        /// Reports seen via `session_new_block`, for assertions.
         seen_reports: Vec<(u64, WatchReport)>,
         /// Pre-scripted drains, returned in order.
         scripted_drains: std::collections::VecDeque<DrainResult>,
     }
 
-    impl MockGameCradle {
-        fn queue_drain(&mut self, events: Vec<CradleEvent>) {
+    impl MockGameSession {
+        fn queue_drain(&mut self, events: Vec<GameSessionEvent>) {
             self.scripted_drains.push_back(DrainResult {
                 events: events.into_iter().collect(),
                 resync: None,
             });
         }
 
-        fn queue_drain_with_resync(&mut self, events: Vec<CradleEvent>, resync: (usize, bool)) {
+        fn queue_drain_with_resync(
+            &mut self,
+            events: Vec<GameSessionEvent>,
+            resync: (usize, bool),
+        ) {
             self.scripted_drains.push_back(DrainResult {
                 events: events.into_iter().collect(),
                 resync: Some(resync),
@@ -899,8 +905,8 @@ mod tests {
         }
     }
 
-    impl ManagedCradle for MockGameCradle {
-        fn cradle_new_block(
+    impl ManagedGameSession for MockGameSession {
+        fn session_new_block(
             &mut self,
             _allocator: &mut AllocEncoder,
             height: u64,
@@ -910,7 +916,7 @@ mod tests {
             Ok(())
         }
 
-        fn cradle_flush_and_collect(
+        fn session_flush_and_collect(
             &mut self,
             _allocator: &mut AllocEncoder,
         ) -> Result<DrainResult, Error> {
@@ -919,10 +925,10 @@ mod tests {
     }
 
     #[derive(Default, Serialize, Deserialize)]
-    struct PersistableMockCradle;
+    struct PersistableMockGameSession;
 
-    impl ManagedCradle for PersistableMockCradle {
-        fn cradle_new_block(
+    impl ManagedGameSession for PersistableMockGameSession {
+        fn session_new_block(
             &mut self,
             _allocator: &mut AllocEncoder,
             _height: u64,
@@ -931,7 +937,7 @@ mod tests {
             Ok(())
         }
 
-        fn cradle_flush_and_collect(
+        fn session_flush_and_collect(
             &mut self,
             _allocator: &mut AllocEncoder,
         ) -> Result<DrainResult, Error> {
@@ -939,8 +945,8 @@ mod tests {
         }
     }
 
-    fn watch_event(coin: &CoinString, timeout: u64) -> CradleEvent {
-        CradleEvent::WatchCoin {
+    fn watch_event(coin: &CoinString, timeout: u64) -> GameSessionEvent {
+        GameSessionEvent::WatchCoin {
             coin_name: coin.to_coin_id(),
             coin_string: coin.clone(),
             timeout: Timeout::new(timeout),
@@ -949,8 +955,12 @@ mod tests {
     }
 
     /// A `WatchCoin` event that also registers an eager timeout spend.
-    fn watch_event_with_spend(coin: &CoinString, timeout: u64, spend: SpendBundle) -> CradleEvent {
-        CradleEvent::WatchCoin {
+    fn watch_event_with_spend(
+        coin: &CoinString,
+        timeout: u64,
+        spend: SpendBundle,
+    ) -> GameSessionEvent {
+        GameSessionEvent::WatchCoin {
             coin_name: coin.to_coin_id(),
             coin_string: coin.clone(),
             timeout: Timeout::new(timeout),
@@ -962,7 +972,7 @@ mod tests {
     fn intercepts_watch_coin_and_tracks_timeout() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(1);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 100)]);
         let mut mgr = TransactionManager::new(mock);
 
@@ -980,10 +990,10 @@ mod tests {
     #[test]
     fn intercepts_outbound_transaction_into_submissions() {
         let mut allocator = AllocEncoder::new();
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![
-            CradleEvent::OutboundTransaction(test_bundle("tx-a"), None),
-            CradleEvent::Log("kept".to_string()),
+            GameSessionEvent::OutboundTransaction(test_bundle("tx-a"), None),
+            GameSessionEvent::Log("kept".to_string()),
         ]);
         let mut mgr = TransactionManager::new(mock);
 
@@ -991,7 +1001,7 @@ mod tests {
 
         // The log is forwarded; the transaction is intercepted.
         assert_eq!(drain.events.len(), 1);
-        assert!(matches!(drain.events[0], CradleEvent::Log(_)));
+        assert!(matches!(drain.events[0], GameSessionEvent::Log(_)));
         let subs = mgr.drain_submissions();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].name.as_deref(), Some("tx-a"));
@@ -1002,14 +1012,14 @@ mod tests {
     #[test]
     fn serialization_prunes_transient_event_and_watch_delivery_queues() {
         let coin = test_coin(2);
-        let mut mgr = TransactionManager::new(PersistableMockCradle);
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
         mgr.pending_events
-            .push_back(CradleEvent::Log("transient".to_string()));
+            .push_back(GameSessionEvent::Log("transient".to_string()));
         mgr.pending_watch_coins.push(coin);
         mgr.pending_resync = Some((7, true));
 
         let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
-        let decoded: TransactionManager<PersistableMockCradle> =
+        let decoded: TransactionManager<PersistableMockGameSession> =
             bencodex::from_slice(&encoded).expect("deserialize manager");
 
         assert!(decoded.pending_events.is_empty());
@@ -1021,7 +1031,7 @@ mod tests {
     fn records_birthday_and_spend_and_emits_diff() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(2);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1076,7 +1086,7 @@ mod tests {
     fn does_not_track_unwatched_coins_but_passes_diff_through() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(3);
-        let mut mgr = TransactionManager::new(MockGameCradle::default());
+        let mut mgr = TransactionManager::new(MockGameSession::default());
 
         let records = vec![CoinStateRecord {
             coin: coin.clone(),
@@ -1100,7 +1110,7 @@ mod tests {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(10);
         let claim = test_bundle("timeout-claim");
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event_with_spend(&coin, 5, claim.clone())]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1134,7 +1144,7 @@ mod tests {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(11);
         let claim = test_bundle("timeout-claim");
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event_with_spend(&coin, 5, claim.clone())]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1171,7 +1181,7 @@ mod tests {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(12);
         let claim = test_bundle("timeout-claim");
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event_with_spend(&coin, 5, claim.clone())]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1221,11 +1231,11 @@ mod tests {
             }],
         };
 
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         // The cradle wants to watch the child and submits the creating tx.
         mock.queue_drain(vec![
             watch_event(&child, 50),
-            CradleEvent::OutboundTransaction(creating_tx.clone(), None),
+            GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
@@ -1274,10 +1284,10 @@ mod tests {
         let creating_tx =
             test_bundle_spending_creating("create-untracked-child", &parent, &untracked_child);
 
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![
             watch_event(&protocol_child, 50),
-            CradleEvent::OutboundTransaction(creating_tx, None),
+            GameSessionEvent::OutboundTransaction(creating_tx, None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
@@ -1318,8 +1328,8 @@ mod tests {
             .filter(|e| {
                 matches!(
                     e,
-                    CradleEvent::Notification(GameNotification::ChannelStatus {
-                        state: ChannelState::Failed,
+                    GameSessionEvent::Notification(GameNotification::ChannelStatus {
+                        state: ChannelStatus::Failed,
                         ..
                     })
                 )
@@ -1332,11 +1342,11 @@ mod tests {
         let mut allocator = AllocEncoder::new();
         let (_parent, channel_coin, funding_tx) = funding_setup();
 
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         // Watch the channel coin and submit the funding tx with expiry 100.
         mock.queue_drain(vec![
             watch_event(&channel_coin, 1_000_000),
-            CradleEvent::OutboundTransaction(funding_tx, Some(100)),
+            GameSessionEvent::OutboundTransaction(funding_tx, Some(100)),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1380,10 +1390,10 @@ mod tests {
         let mut allocator = AllocEncoder::new();
         let (_parent, channel_coin, funding_tx) = funding_setup();
 
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![
             watch_event(&channel_coin, 1_000_000),
-            CradleEvent::OutboundTransaction(funding_tx, Some(100)),
+            GameSessionEvent::OutboundTransaction(funding_tx, Some(100)),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1421,7 +1431,7 @@ mod tests {
     fn out_of_range_height_is_rejected_without_touching_state() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(7);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1457,7 +1467,7 @@ mod tests {
     fn reorg_resets_creation_and_spend_above_new_tip() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(4);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1510,7 +1520,7 @@ mod tests {
     fn reorg_drops_birthday_when_creation_rolled_back() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(5);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1553,7 +1563,7 @@ mod tests {
     fn reorg_vanished_coin_is_not_forwarded_as_deleted() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(8);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1594,7 +1604,7 @@ mod tests {
     fn reorg_remine_in_same_report_clears_vanished_and_allows_later_spend() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(9);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1652,7 +1662,7 @@ mod tests {
     fn forward_progress_disappearance_is_a_spend_not_a_vanish() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(6);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1683,7 +1693,7 @@ mod tests {
     fn coin_first_seen_already_spent_is_forwarded_as_spend() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(40);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1695,7 +1705,7 @@ mod tests {
         // already spent.  Because the coin was never recorded as present, a pure
         // present->absent set difference would miss it -- but the manager must
         // still forward it as a spend, or a handler waiting on the coin (e.g.
-        // SpendChannelCoinHandler in UnrollSpend) never learns it resolved.
+        // SpendChannelCoinPhase in UnrollSpend) never learns it resolved.
         mgr.report_coin_states(
             &mut allocator,
             12,
@@ -1731,7 +1741,7 @@ mod tests {
     fn spent_coin_evicted_after_confirmation_depth() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(7);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![watch_event(&coin, 50)]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -1764,7 +1774,7 @@ mod tests {
     #[test]
     fn surfaces_resync_signal() {
         let mut allocator = AllocEncoder::new();
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain_with_resync(vec![], (7, true));
         let mut mgr = TransactionManager::new(mock);
 
@@ -1778,8 +1788,8 @@ mod tests {
     #[test]
     fn requeue_submitted_replays_retained_transactions() {
         let mut allocator = AllocEncoder::new();
-        let mut mock = MockGameCradle::default();
-        mock.queue_drain(vec![CradleEvent::OutboundTransaction(
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
             test_bundle("tx-a"),
             None,
         )]);
@@ -1809,10 +1819,10 @@ mod tests {
             &Amount::new(1),
         );
         let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![
             watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+            GameSessionEvent::OutboundTransaction(spend_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
@@ -1848,10 +1858,10 @@ mod tests {
             &Amount::new(1),
         );
         let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![
             watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+            GameSessionEvent::OutboundTransaction(spend_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
@@ -1902,10 +1912,10 @@ mod tests {
             &Amount::new(1),
         );
         let spend_tx = test_bundle_spending_creating("spend-coin", &coin, &child);
-        let mut mock = MockGameCradle::default();
+        let mut mock = MockGameSession::default();
         mock.queue_drain(vec![
             watch_event(&coin, 50),
-            CradleEvent::OutboundTransaction(spend_tx.clone(), None),
+            GameSessionEvent::OutboundTransaction(spend_tx.clone(), None),
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");

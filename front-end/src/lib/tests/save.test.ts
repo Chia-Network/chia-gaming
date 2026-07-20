@@ -4,26 +4,22 @@ import {
   peekSession,
   clearSession,
   clearGameSessionPreservingHistory,
-  startNewSession,
-  saveGame,
-  loadSave,
-  getSaveList,
   getPlayerId,
   getSessionId,
-  ensureTrackerIdentity,
-  getMyTrackerPlayerId,
+  ensureHubIdentity,
+  getMyHubPlayerId,
   clearSessionId,
   getBlockchainType,
-  loadAppState,
+  loadState,
   getAlias,
   setAlias,
   peekAlias,
   getTheme,
   setTheme,
   hardReset,
-  flushSessionState,
-  getTrackerAlert,
-  setTrackerAlert,
+  flushSessionSave,
+  getHubAlert,
+  setHubAlert,
   claimLease,
   checkLease,
   isLeaseConflict,
@@ -34,7 +30,7 @@ import {
   markAutoResumeOnce,
   peekAutoResumeOnce,
   clearAutoResumeOnce,
-  SessionState,
+  SessionSave,
   _resetForTests,
   _writeRawState,
 } from '../../hooks/save';
@@ -77,14 +73,15 @@ function clearTestGlobal(key: string) {
   Reflect.deleteProperty(globalThis, key);
 }
 
-const sampleSession: Partial<SessionState> = {
-  serializedCradle: new Uint8Array([0, 1, 2, 255]),
-  cradleSchemaVersion: 1n,
+const sampleSession: Partial<SessionSave> = {
+  serializedGameSession: new Uint8Array([0, 1, 2, 255]),
+  gameSessionSchemaVersion: 1n,
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
   channelReady: true,
   iStarted: true,
+  activeGameIds: [],
   myContribution: '60',
   theirContribution: '40',
   perGameAmount: '10',
@@ -118,10 +115,10 @@ describe('session persistence', () => {
     saveSession({
       ...sampleSession,
       rawBuffer,
-    } as Partial<SessionState>);
-    await flushSessionState();
+    } as Partial<SessionSave>);
+    await flushSessionSave();
 
-    const stored = await new Promise<{ count: number; record: SessionState & { rawBuffer: ArrayBuffer } }>(
+    const stored = await new Promise<{ count: number; record: SessionSave & { rawBuffer: ArrayBuffer } }>(
       (resolve, reject) => {
         const open = indexedDB.open(SESSION_DB_NAME, 1);
         open.onerror = () => reject(open.error);
@@ -136,7 +133,7 @@ describe('session persistence', () => {
             db.close();
             resolve({
               count: count.result,
-              record: record.result as SessionState & { rawBuffer: ArrayBuffer },
+              record: record.result as SessionSave & { rawBuffer: ArrayBuffer },
             });
           };
         };
@@ -144,15 +141,15 @@ describe('session persistence', () => {
     );
 
     expect(stored.count).toBe(1);
-    expect(stored.record.serializedCradle).toBeInstanceOf(Uint8Array);
+    expect(stored.record.serializedGameSession).toBeInstanceOf(Uint8Array);
     expect(stored.record.rawBuffer).toBeInstanceOf(ArrayBuffer);
     expect(new Uint8Array(stored.record.rawBuffer)).toEqual(new Uint8Array([9, 8, 7]));
     expect(typeof stored.record.messageNumber).toBe('bigint');
 
     _resetForTests();
-    const loaded = await peekSession() as (SessionState & { rawBuffer: ArrayBuffer }) | null;
+    const loaded = await peekSession() as (SessionSave & { rawBuffer: ArrayBuffer }) | null;
     expect(loaded).toMatchObject(sampleSession);
-    expect(loaded?.serializedCradle).toBeInstanceOf(Uint8Array);
+    expect(loaded?.serializedGameSession).toBeInstanceOf(Uint8Array);
     expect(loaded?.rawBuffer).toBeInstanceOf(ArrayBuffer);
     expect(loaded?.unackedMessages?.[0].msg).toBeInstanceOf(Uint8Array);
     expect(typeof loaded?.messageNumber).toBe('bigint');
@@ -164,7 +161,7 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(false);
 
     saveSession(sampleSession);
-    await flushSessionState();
+    await flushSessionSave();
     expect(hasSavedSessionMarker()).toBe(true);
 
     await clearSession();
@@ -174,7 +171,7 @@ describe('session persistence', () => {
   it('keeps an explicit pre-game marker across blockchainType preference writes', async () => {
     markSavedSession();
     saveSession({ blockchainType: 'simulator' });
-    await flushSessionState();
+    await flushSessionSave();
 
     expect(hasSavedSessionMarker()).toBe(true);
     expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
@@ -182,7 +179,7 @@ describe('session persistence', () => {
 
   it('treats leftover blockchainType without a marker as resume-worthy', async () => {
     saveSession({ blockchainType: 'walletconnect' });
-    await flushSessionState();
+    await flushSessionSave();
     clearSavedSessionMarker();
 
     expect(shouldOfferResumeOrStartOver()).toBe(true);
@@ -190,13 +187,13 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
-  it('treats leftover trackerUrl without a marker as resume-worthy', async () => {
-    saveSession({ trackerUrl: 'http://localhost:3003' });
-    await flushSessionState();
+  it('treats leftover hubUrl without a marker as resume-worthy', async () => {
+    saveSession({ hubUrl: 'http://localhost:3003' });
+    await flushSessionSave();
     clearSavedSessionMarker();
 
     expect(shouldOfferResumeOrStartOver()).toBe(true);
-    expect(await peekSession()).toMatchObject({ trackerUrl: 'http://localhost:3003' });
+    expect(await peekSession()).toMatchObject({ hubUrl: 'http://localhost:3003' });
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
@@ -223,28 +220,23 @@ describe('session persistence', () => {
     expect(peekAutoResumeOnce()).toBe(false);
   });
 
-  it('does not set the saved-session marker from startNewSession alone', () => {
-    expect(hasSavedSessionMarker()).toBe(false);
-    startNewSession();
-    expect(hasSavedSessionMarker()).toBe(false);
-  });
 
   it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
     saveSession(sampleSession);
-    await flushSessionState();
+    await flushSessionSave();
     expect(hasSavedSessionMarker()).toBe(true);
 
     // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
     _resetForTests();
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(loadAppState().serializedCradle).toBeUndefined();
+    expect(loadState().serializedGameSession).toBeUndefined();
 
     saveSession({ diagnosticLog: ['boot log'] });
-    await flushSessionState();
+    await flushSessionSave();
 
     _resetForTests();
     const loaded = await peekSession();
-    expect(loaded?.serializedCradle).toEqual(sampleSession.serializedCradle);
+    expect(loaded?.serializedGameSession).toEqual(sampleSession.serializedGameSession);
     expect(loaded?.pairingToken).toBe(sampleSession.pairingToken);
     expect(loaded?.diagnosticLog).toEqual(['boot log']);
   });
@@ -254,30 +246,30 @@ describe('session persistence', () => {
     const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
     markSavedSession();
     saveSession({
-      serializedCradle: first,
-      cradleSchemaVersion: 1n,
+      serializedGameSession: first,
+      gameSessionSchemaVersion: 1n,
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     saveSession({
-      serializedCradle: second,
-      cradleSchemaVersion: 1n,
+      serializedGameSession: second,
+      gameSessionSchemaVersion: 1n,
       pairingToken: 'tok-v2',
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     _resetForTests();
     const loaded = await peekSession();
-    expect(loaded?.serializedCradle).toEqual(second);
+    expect(loaded?.serializedGameSession).toEqual(second);
     expect(loaded?.pairingToken).toBe('tok-v2');
   });
 
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 6n,
+      version: 8n,
       playerId: 'player',
       blockchainType: 'simulator',
     });
@@ -288,9 +280,9 @@ describe('session persistence', () => {
   it('keeps Resume marker for a finished channel snapshot without a live cradle', async () => {
     saveSession({
       blockchainType: 'simulator',
-      trackerUrl: 'http://localhost:3000',
+      hubUrl: 'http://localhost:3000',
       pairingToken: undefined,
-      serializedCradle: undefined,
+      serializedGameSession: undefined,
       channelStatus: {
         state: 'ResolvedClean',
         advisory: null,
@@ -301,7 +293,7 @@ describe('session persistence', () => {
         have_potato: true,
       },
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     expect(hasSavedSessionMarker()).toBe(true);
     _resetForTests();
@@ -315,7 +307,7 @@ describe('session persistence', () => {
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 6n,
+      version: 8n,
       playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
@@ -326,21 +318,21 @@ describe('session persistence', () => {
     clearTestGlobal('indexedDB');
     const scheduled = saveSession(sampleSession);
 
-    await expect(flushSessionState()).rejects.toThrow('IndexedDB is unavailable');
+    await expect(flushSessionSave()).rejects.toThrow('IndexedDB is unavailable');
     await expect(scheduled).rejects.toThrow('IndexedDB is unavailable');
     setTestGlobal('indexedDB', testIndexedDb);
   });
 
   it('keeps serialized session bytes out of localStorage', async () => {
     saveSession(sampleSession);
-    await flushSessionState();
+    await flushSessionSave();
 
     expect(localStorage.getItem('appState')).toBeNull();
     const localValues = Array.from(
       { length: localStorage.length },
       (_, i) => localStorage.getItem(localStorage.key(i)!),
     ).join('\n');
-    expect(localValues).not.toMatch(/serializedCradle|unackedMessages|\$bytes|000102ff|AAEC\/w==/);
+    expect(localValues).not.toMatch(/serializedGameSession|unackedMessages|\$bytes|000102ff|AAEC\/w==/);
   });
 
   it('persists only the configured recent history entries', async () => {
@@ -353,7 +345,7 @@ describe('session persistence', () => {
       ),
       diagnosticLog: Array.from({ length: DIAGNOSTIC_LOG_LIMIT + 2 }, (_, i) => `diag-${i}`),
     });
-    await flushSessionState();
+    await flushSessionSave();
     _resetForTests();
 
     const loaded = await peekSession();
@@ -371,7 +363,7 @@ describe('session persistence', () => {
 
   it('clearSession asynchronously deletes resumable state', async () => {
     saveSession(sampleSession);
-    await flushSessionState();
+    await flushSessionSave();
     await clearSession();
     _resetForTests();
     expect(await peekSession()).toBeNull();
@@ -379,7 +371,7 @@ describe('session persistence', () => {
 
   it('saveSession preserves blockchainType', async () => {
     saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
-    await flushSessionState();
+    await flushSessionSave();
     expect((await peekSession())?.blockchainType).toBe('walletconnect');
   });
 
@@ -424,10 +416,10 @@ describe('flat state', () => {
       perGameAmount: '10',
       blockchainType: 'simulator',
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     // Drop sessionId from the IDB record only; preferences still hold sid.
-    const record = await new Promise<SessionState>((resolve, reject) => {
+    const record = await new Promise<SessionSave>((resolve, reject) => {
       const open = indexedDB.open(SESSION_DB_NAME, 1);
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
@@ -436,7 +428,7 @@ describe('flat state', () => {
         const get = tx.objectStore('session').get('current');
         tx.oncomplete = () => {
           db.close();
-          resolve(get.result as SessionState);
+          resolve(get.result as SessionSave);
         };
         tx.onerror = () => reject(tx.error);
       };
@@ -459,7 +451,7 @@ describe('flat state', () => {
     expect(getSessionId()).toBe(sid);
   });
 
-  it('ensureTrackerIdentity restores sessionId from IndexedDB when preferences omit it', async () => {
+  it('ensureHubIdentity restores sessionId from IndexedDB when preferences omit it', async () => {
     const sid = getSessionId();
     markSavedSession();
     saveSession({
@@ -470,7 +462,7 @@ describe('flat state', () => {
       perGameAmount: '10',
       blockchainType: 'simulator',
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
@@ -480,53 +472,53 @@ describe('flat state', () => {
     }));
     localStorage.setItem('appState_savedSession', '1');
 
-    expect(() => getSessionId()).toThrow(/before ensureTrackerIdentity/);
-    const restored = await ensureTrackerIdentity();
+    expect(() => getSessionId()).toThrow(/before ensureHubIdentity/);
+    const restored = await ensureHubIdentity();
     expect(restored).toBe(sid);
     expect(getSessionId()).toBe(sid);
   });
 
-  it('persists myTrackerPlayerId in preferences and restores it across reload', async () => {
+  it('persists myHubPlayerId in preferences and restores it across reload', async () => {
     const sid = getSessionId();
     markSavedSession();
     saveSession({
       pairingToken: 'tok-pid',
       sessionId: sid,
-      myTrackerPlayerId: 'p_stable_abc',
+      myHubPlayerId: 'p_stable_abc',
       myContribution: '100',
       theirContribution: '100',
       perGameAmount: '10',
       blockchainType: 'simulator',
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     const prefs = JSON.parse(localStorage.getItem('appPreferences')!);
-    expect(prefs.myTrackerPlayerId).toBe('p_stable_abc');
+    expect(prefs.myHubPlayerId).toBe('p_stable_abc');
 
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
     localStorage.setItem('appPreferences', JSON.stringify({
       playerId: 'player-local',
       sessionId: sid,
-      myTrackerPlayerId: 'p_stable_abc',
+      myHubPlayerId: 'p_stable_abc',
     }));
     localStorage.setItem('appState_savedSession', '1');
 
-    await ensureTrackerIdentity();
-    expect(getMyTrackerPlayerId()).toBe('p_stable_abc');
+    await ensureHubIdentity();
+    expect(getMyHubPlayerId()).toBe('p_stable_abc');
     expect(getSessionId()).toBe(sid);
   });
 
-  it('clearSessionId wipes only the tracker session ID', () => {
+  it('clearSessionId wipes only the hub session ID', () => {
     const id = getSessionId();
     setAlias('MyName');
-    saveSession({ myTrackerPlayerId: 'p_to_clear' });
+    saveSession({ myHubPlayerId: 'p_to_clear' });
 
     clearSessionId();
 
-    expect(loadAppState().sessionId).toBeUndefined();
-    expect(loadAppState().myTrackerPlayerId).toBeUndefined();
-    expect(loadAppState().alias).toBe('MyName');
+    expect(loadState().sessionId).toBeUndefined();
+    expect(loadState().myHubPlayerId).toBeUndefined();
+    expect(loadState().alias).toBe('MyName');
     expect(getSessionId()).toBeTruthy();
     expect(getSessionId()).not.toBe(id);
   });
@@ -544,24 +536,24 @@ describe('flat state', () => {
     markSavedSession();
     saveSession({ ...sampleSession, blockchainType: 'simulator' });
     setAlias('MyName');
-    await flushSessionState();
+    await flushSessionSave();
 
     await clearSession();
 
-    expect(loadAppState().sessionId).toBe(sid);
+    expect(loadState().sessionId).toBe(sid);
     expect(getBlockchainType()).toBe('simulator');
     expect(hasSavedSessionMarker()).toBe(true);
     const remaining = await peekSession();
     expect(remaining).not.toBeNull();
     expect(remaining?.blockchainType).toBe('simulator');
     expect(remaining?.pairingToken).toBeUndefined();
-    expect(loadAppState().alias).toBe('MyName');
+    expect(loadState().alias).toBe('MyName');
   });
 
-  it('clearSession drops the boot marker when no blockchainType or trackerUrl remains', async () => {
+  it('clearSession drops the boot marker when no blockchainType or hubUrl remains', async () => {
     markSavedSession();
     saveSession(sampleSession);
-    await flushSessionState();
+    await flushSessionSave();
     expect(getBlockchainType()).toBeUndefined();
 
     await clearSession();
@@ -570,15 +562,15 @@ describe('flat state', () => {
     expect(await peekSession()).toBeNull();
   });
 
-  it('clearSession keeps the boot marker when only trackerUrl remains', async () => {
+  it('clearSession keeps the boot marker when only hubUrl remains', async () => {
     markSavedSession();
-    saveSession({ trackerUrl: 'http://localhost:3003' });
-    await flushSessionState();
+    saveSession({ hubUrl: 'http://localhost:3003' });
+    await flushSessionSave();
 
     await clearSession();
 
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(await peekSession()).toMatchObject({ trackerUrl: 'http://localhost:3003' });
+    expect(await peekSession()).toMatchObject({ hubUrl: 'http://localhost:3003' });
   });
 
   it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-cradle handshake', async () => {
@@ -586,7 +578,7 @@ describe('flat state', () => {
     saveSession({
       ...sampleSession,
       blockchainType: 'simulator',
-      trackerUrl: 'http://localhost:3003',
+      hubUrl: 'http://localhost:3003',
       humanHistory: ['keep-me'],
       diagnosticLog: ['diag-keep'],
       sessionPeerId: 'peer-abc',
@@ -595,17 +587,17 @@ describe('flat state', () => {
       unrollTimeout: '50',
       opponentAlias: 'Opponent',
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     await clearGameSessionPreservingHistory();
 
     expect(hasSavedSessionMarker()).toBe(true);
     const remaining = await peekSession();
     expect(remaining?.blockchainType).toBe('simulator');
-    expect(remaining?.trackerUrl).toBe('http://localhost:3003');
+    expect(remaining?.hubUrl).toBe('http://localhost:3003');
     expect(remaining?.humanHistory).toEqual(['keep-me']);
     expect(remaining?.diagnosticLog).toEqual(['diag-keep']);
-    expect(remaining?.serializedCradle).toBeUndefined();
+    expect(remaining?.serializedGameSession).toBeUndefined();
     // Handshake checkpoint survives so a reload mid-hex-load can Resume.
     expect(remaining?.pairingToken).toBe('tok-123');
     expect(remaining?.sessionPeerId).toBe('peer-abc');
@@ -622,7 +614,7 @@ describe('flat state', () => {
   it('pairingToken-only pending handshake is resumable without a cradle', async () => {
     saveSession({
       blockchainType: 'simulator',
-      trackerUrl: 'http://localhost:3003',
+      hubUrl: 'http://localhost:3003',
       pairingToken: 'peer_x_1',
       sessionPeerId: 'peer-x',
       gameSessionId: 'gs-pending',
@@ -634,11 +626,11 @@ describe('flat state', () => {
       unrollTimeout: '80',
       humanHistory: ['accepted proposal'],
     });
-    await flushSessionState();
+    await flushSessionSave();
 
     expect(shouldOfferResumeOrStartOver()).toBe(true);
     const loaded = await peekSession();
-    expect(loaded?.serializedCradle).toBeUndefined();
+    expect(loaded?.serializedGameSession).toBeUndefined();
     expect(loaded?.pairingToken).toBe('peer_x_1');
     expect(loaded?.myContribution).toBe('100');
     expect(loaded?.sessionPeerId).toBe('peer-x');
@@ -657,21 +649,21 @@ describe('flat state', () => {
 
   it('saveSession merges fields into the flat state', () => {
     saveSession(sampleSession);
-    const state = loadAppState();
-    expect(state.serializedCradle).toBe(sampleSession.serializedCradle);
+    const state = loadState();
+    expect(state.serializedGameSession).toBe(sampleSession.serializedGameSession);
     expect(state.pairingToken).toBe(sampleSession.pairingToken);
   });
 
   it('version field is set on fresh state', () => {
-    const state = loadAppState();
-    expect(state.version).toBe(6n);
+    const state = loadState();
+    expect(state.version).toBe(8n);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {
     _writeRawState({ version: 2, playerId: 'old-player' });
     await peekSession();
     expect(localStorage.getItem('appState')).toBeNull();
-    expect(loadAppState().playerId).not.toBe('old-player');
+    expect(loadState().playerId).not.toBe('old-player');
   });
 
   it('rejects and deletes a stale IndexedDB record but keeps the boot marker', async () => {
@@ -679,7 +671,7 @@ describe('flat state', () => {
     await writeSessionRecord({
       version: 5n,
       playerId: 'old-player',
-      serializedCradle: new Uint8Array([1]),
+      serializedGameSession: new Uint8Array([1]),
     });
     expect(await peekSession()).toBeNull();
     expect(localStorage.getItem('appState_savedSession')).toBe('1');
@@ -723,7 +715,7 @@ describe('flat state', () => {
         },
       },
     });
-    await flushSessionState();
+    await flushSessionSave();
     _resetForTests();
 
     const state = (await peekSession())!;
@@ -761,7 +753,7 @@ describe('flat state', () => {
         },
       },
     });
-    await flushSessionState();
+    await flushSessionSave();
     _resetForTests();
 
     const handState = (await peekSession())?.handState?.state as any;
@@ -894,7 +886,7 @@ describe('alias and theme', () => {
     const alias = getAlias();
     expect(alias).toMatch(/^Player_/);
     expect(getAlias()).toBe(alias);
-    expect(loadAppState().alias).toBe(alias);
+    expect(loadState().alias).toBe(alias);
   });
 
   it('peekAlias returns undefined until set, without inventing', () => {
@@ -920,43 +912,20 @@ describe('alias and theme', () => {
   });
 });
 
-describe('tracker alert', () => {
-  it('getTrackerAlert returns false initially', () => {
-    expect(getTrackerAlert()).toBe(false);
+describe('hub alert', () => {
+  it('getHubAlert returns false initially', () => {
+    expect(getHubAlert()).toBe(false);
   });
 
-  it('setTrackerAlert / getTrackerAlert round-trip', () => {
-    setTrackerAlert(true);
-    expect(getTrackerAlert()).toBe(true);
-    setTrackerAlert(false);
-    expect(getTrackerAlert()).toBe(false);
+  it('setHubAlert / getHubAlert round-trip', () => {
+    setHubAlert(true);
+    expect(getHubAlert()).toBe(true);
+    setHubAlert(false);
+    expect(getHubAlert()).toBe(false);
   });
 });
 
 describe('game saves', () => {
-  it('startNewSession clears all game saves', () => {
-    saveGame({ id: 'g1', searchParams: {}, url: '' });
-    saveGame({ id: 'g2', searchParams: {}, url: '' });
-    expect(getSaveList()).toEqual(['g2', 'g1']);
 
-    startNewSession();
-    expect(getSaveList()).toEqual([]);
-    expect(loadSave('g1')).toBeUndefined();
-    expect(loadSave('g2')).toBeUndefined();
-  });
 
-  it('saveGame caps at 3 entries, evicting oldest', () => {
-    saveGame({ id: 'a', searchParams: {}, url: '' });
-    saveGame({ id: 'b', searchParams: {}, url: '' });
-    saveGame({ id: 'c', searchParams: {}, url: '' });
-    expect(getSaveList()).toEqual(['c', 'b', 'a']);
-
-    saveGame({ id: 'd', searchParams: {}, url: '' });
-    expect(getSaveList()).toEqual(['d', 'c', 'b']);
-    expect(loadSave('a')).toBeUndefined();
-  });
-
-  it('loadSave returns undefined for unknown id', () => {
-    expect(loadSave('nonexistent')).toBeUndefined();
-  });
 });

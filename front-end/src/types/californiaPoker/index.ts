@@ -6,7 +6,12 @@ import { FormatHandProps } from './FormatHandProps';
 import { BestHandType } from './BestHandType';
 import { HandDisplayProps } from './HandDisplayProps';
 import { CaliforniapokerProps } from './CaliforniapokerProps';
-export type {  
+import {
+  OutcomeHandType,
+  cardIdToRankSuit,
+  handValueToDescription,
+} from './cardHelpers';
+export type {
     CardValueSuit,
     CardContentProps,
     CardRenderProps,
@@ -16,4 +21,6 @@ export type {
     BestHandType,
     HandDisplayProps,
     CaliforniapokerProps,
-    };
+    OutcomeHandType,
+};
+export { cardIdToRankSuit, handValueToDescription };

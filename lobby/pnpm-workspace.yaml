@@ -1,7 +1,0 @@
-packages:
-  - "lobby-frontend"
-  - "lobby-service"
-confirmModulesPurge: false
-allowBuilds:
-  '@parcel/watcher': true
-  esbuild: true

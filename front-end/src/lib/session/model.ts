@@ -1,11 +1,13 @@
 import type {
-  ChannelState,
+  ChannelStatus,
   GameConnectionState,
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { PersistedGameState, SessionState } from '../../hooks/save';
+import type { PersistedGameState, SessionSave } from '../../hooks/save';
+import type { SettlementOutcome } from '../settlement';
+import { isSettlementOutcome } from '../settlement';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -35,12 +37,7 @@ export type HandStatus =
 
 export type GameTerminalType =
   | 'none'
-  | 'forfeit'
-  | 'we-timed-out'
-  | 'opponent-timed-out'
-  | 'we-slashed-opponent'
-  | 'opponent-slashed-us'
-  | 'opponent-successfully-cheated'
+  | 'settled'
   | 'insufficient-balance'
   | 'ended-cancelled'
   | 'game-error';
@@ -56,7 +53,7 @@ export type NotificationKind =
   | 'insufficient-bal';
 
 export interface ChannelStatusModel {
-  state: ChannelState;
+  state: ChannelStatus;
   advisory: string | null;
   coinHex: string | null;
   coinAmount: string | null;
@@ -73,10 +70,10 @@ export interface GameCoinModel {
 
 export interface GameTerminalModel {
   type: GameTerminalType;
+  outcome: SettlementOutcome | null;
   label: string | null;
   myReward: string | null;
   rewardCoinHex: string | null;
-  cleanEnd?: boolean;
 }
 
 export interface GameInstanceModel {
@@ -118,7 +115,7 @@ export interface RestoreModel {
   restoring: boolean;
   status: RestoreStatus;
   error: string | null;
-  trackerReconciled: boolean;
+  hubReconciled: boolean;
 }
 
 export interface PeerModel {
@@ -130,7 +127,7 @@ export interface ChannelModel {
   connection: GameConnectionState;
   goOnChainPressed: boolean;
   cleanShutdownStarted: boolean;
-  dismissedChannelState: ChannelState | null;
+  dismissedChannelStatus: ChannelStatus | null;
   queue: QueuedNotificationModel[];
 }
 
@@ -205,7 +202,7 @@ export interface SessionSnapshot {
 
 export type SessionEvent =
   | { type: 'restore-status'; status: RestoreStatus; error: string | null }
-  | { type: 'tracker-reconciled'; reconciled: boolean }
+  | { type: 'hub-reconciled'; reconciled: boolean }
   | { type: 'peer-connected'; connected: boolean | null }
   | { type: 'channel-status'; status: ChannelStatusModel }
   | { type: 'game-coin'; coin: GameCoinModel }
@@ -275,6 +272,7 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
 
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
   type: 'none',
+  outcome: null,
   label: null,
   myReward: null,
   rewardCoinHex: null,
@@ -291,14 +289,14 @@ export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
   gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
 };
 
-const RESOLVED_STATES = new Set<ChannelState>([
+const RESOLVED_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
   'Failed',
 ]);
 
-const WINDING_DOWN_STATES = new Set<ChannelState>([
+const WINDING_DOWN_STATES = new Set<ChannelStatus>([
   'ShutdownTransactionPending',
   'GoingOnChain',
   'Unrolling',
@@ -308,7 +306,7 @@ const WINDING_DOWN_STATES = new Set<ChannelState>([
   'Failed',
 ]);
 
-const ON_CHAIN_HAND_STATES = new Set<ChannelState>([
+const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
@@ -316,12 +314,12 @@ const ON_CHAIN_HAND_STATES = new Set<ChannelState>([
   'ResolvedStale',
 ]);
 
-const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
+const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
   WaitingForHeightToAccept: 'Waiting For Height To Accept',
-  MakingOffer: 'Making Offer',
-  MakingOfferAcceptance: 'Making Offer Acceptance',
+  OurWalletMakingOffer: 'Our Wallet Making Offer',
+  OurWalletMakingOfferAcceptance: 'Our Wallet Making Offer Acceptance',
   OfferSent: 'Offer Sent',
   TransactionPending: 'Making Channel',
   Active: 'Active',
@@ -358,7 +356,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       restoring: false,
       status: 'idle',
       error: null,
-      trackerReconciled: false,
+      hubReconciled: false,
       ...partial.restore,
     },
     peer: {
@@ -370,7 +368,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       connection: { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: false,
       cleanShutdownStarted: false,
-      dismissedChannelState: null,
+      dismissedChannelStatus: null,
       queue: [],
       ...channel,
     },
@@ -422,10 +420,10 @@ export function updateSessionModel(model: SessionModel, event: SessionEvent): Se
         ...model,
         restore: { ...model.restore, status: event.status, error: event.error },
       };
-    case 'tracker-reconciled':
+    case 'hub-reconciled':
       return {
         ...model,
-        restore: { ...model.restore, trackerReconciled: event.reconciled },
+        restore: { ...model.restore, hubReconciled: event.reconciled },
       };
     case 'peer-connected':
       return { ...model, peer: { connected: event.connected } };
@@ -462,7 +460,7 @@ export function updateSessionModel(model: SessionModel, event: SessionEvent): Se
   }
 }
 
-export function isWindingDownChannelState(state: ChannelState): boolean {
+export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
   return WINDING_DOWN_STATES.has(state);
 }
 
@@ -476,7 +474,7 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
   }
   if (RESOLVED_STATES.has(model.channel.status.state)) return 'resolved';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
-  if (model.channel.goOnChainPressed || isWindingDownChannelState(model.channel.status.state)) {
+  if (model.channel.goOnChainPressed || isWindingDownChannelStatus(model.channel.status.state)) {
     return 'on-chain';
   }
   return 'off-chain';
@@ -484,7 +482,7 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
 
 export function selectRestoreBlocked(model: SessionModel): boolean {
   return model.restore.restoring
-    && (model.restore.status !== 'restored' || !model.restore.trackerReconciled);
+    && (model.restore.status !== 'restored' || !model.restore.hubReconciled);
 }
 
 export function selectShouldAdvertiseAvailable(model: SessionModel, phase: SessionPhase): boolean {
@@ -633,9 +631,6 @@ function collapsedHandDetail(model: SessionModel): string | null {
   if (terminal.type === 'none') {
     return null;
   }
-  if (terminal.cleanEnd && terminal.label !== 'Forfeited') {
-    return null;
-  }
   return terminal.label;
 }
 
@@ -648,7 +643,7 @@ function instanceHandStatus(instance: GameInstanceModel): HandStatus {
 
 function instanceTerminalDetail(instance: GameInstanceModel): string | null {
   const terminal = instance.terminal;
-  if (terminal.type === 'none' || (terminal.cleanEnd && terminal.label !== 'Forfeited')) {
+  if (terminal.type === 'none') {
     return null;
   }
   return terminal.label;
@@ -672,7 +667,7 @@ function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifec
   });
 }
 
-export const ABANDON_WAITING_STATES = new Set<ChannelState>([
+export const ABANDON_WAITING_STATES = new Set<ChannelStatus>([
   'OfferSent', 'TransactionPending', 'ShutdownTransactionPending',
   'GoingOnChain', 'Unrolling',
 ]);
@@ -686,8 +681,8 @@ function dashboardActionFor(
     case 'Handshaking':
     case 'WaitingForHeightToOffer':
     case 'WaitingForHeightToAccept':
-    case 'MakingOffer':
-    case 'MakingOfferAcceptance':
+    case 'OurWalletMakingOffer':
+    case 'OurWalletMakingOfferAcceptance':
       return { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' };
     case 'OfferSent':
     case 'TransactionPending':
@@ -744,7 +739,7 @@ export function selectGameDashboardView(
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false, options.abandonEnabled ?? false);
 
   return {
-    channelStatusLabel: CHANNEL_STATE_LABELS[channel.state],
+    channelStatusLabel: CHANNEL_STATUS_LABELS[channel.state],
     channelDetail: channelStatusDetail(model),
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
@@ -908,7 +903,7 @@ function requireBigintString(value: string | undefined, label: string): bigint {
 }
 
 export function sessionAmountsFromSave(
-  save: Pick<SessionState, 'myContribution' | 'theirContribution' | 'perGameAmount'>,
+  save: Pick<SessionSave, 'myContribution' | 'theirContribution' | 'perGameAmount'>,
 ): { myContribution: bigint; theirContribution: bigint; perGameAmount: bigint } {
   const myContribution = requireBigintString(save.myContribution, 'myContribution');
   const theirContribution = requireBigintString(save.theirContribution, 'theirContribution');
@@ -974,10 +969,10 @@ function parseNotificationId(id: unknown): bigint {
     try {
       return BigInt(id);
     } catch {
-      return 0n;
+      throw new Error(`Garbled save: invalid notification id: ${id}`);
     }
   }
-  return 0n;
+  throw new Error(`Garbled save: missing notification id`);
 }
 
 function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
@@ -991,7 +986,7 @@ function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
   });
 }
 
-export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): SessionModel {
+export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): SessionModel {
   const fallbackTerms: HandTermsModel = {
     gameType: 'calpoker',
     myContribution: perGameAmount,
@@ -999,9 +994,13 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  const activeIds = save.activeGameIds && save.activeGameIds.length > 0
-    ? save.activeGameIds
-    : save.activeGameId ? [save.activeGameId] : [];
+  if (save.activeGameIds === undefined) {
+    throw new Error('Garbled save: missing activeGameIds');
+  }
+  if (!Array.isArray(save.activeGameIds)) {
+    throw new Error('Garbled save: invalid activeGameIds');
+  }
+  const activeIds = [...save.activeGameIds];
   const currentHandIds = save.currentHandGameIds ?? activeIds;
   const instances: Record<string, GameInstanceModel> = Object.fromEntries(
     Object.entries(save.gameInstances ?? {}).map(([id, instance]) => [
@@ -1016,10 +1015,12 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
         handStatus: instance.handStatus as HandStatus,
         terminal: {
           type: instance.terminal.type as GameTerminalType,
+          outcome: isSettlementOutcome(instance.terminal.outcome)
+            ? instance.terminal.outcome
+            : null,
           label: instance.terminal.label,
           myReward: instance.terminal.myReward,
           rewardCoinHex: instance.terminal.rewardCoinHex,
-          cleanEnd: instance.terminal.cleanEnd,
         },
       },
     ]),
@@ -1027,10 +1028,10 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
 
   return createSessionModel({
     restore: {
-      restoring: !!save.serializedCradle,
-      status: save.serializedCradle ? 'restoring' : 'idle',
+      restoring: !!save.serializedGameSession,
+      status: save.serializedGameSession ? 'restoring' : 'idle',
       error: null,
-      trackerReconciled: false,
+      hubReconciled: false,
     },
     channel: {
       status: save.channelStatus
@@ -1044,30 +1045,36 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
             gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
             havePotato: save.channelStatus.have_potato ?? null,
           }
-        : save.channelReady
-          ? { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' }
-          : INITIAL_CHANNEL_STATUS_MODEL,
-      connection: save.channelReady
+        : INITIAL_CHANNEL_STATUS_MODEL,
+      connection: save.channelStatus
         ? { stateIdentifier: 'running', stateDetail: [] }
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: save.goOnChainPressed ?? false,
       cleanShutdownStarted: save.cleanShutdownStarted ?? false,
-      dismissedChannelState: (save.dismissedChannelState as ChannelState | undefined) ?? null,
+      dismissedChannelStatus: (save.dismissedChannelStatus as ChannelStatus | undefined) ?? null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
     },
     game: {
       coin: {
         coinHex: save.gameCoinHex ?? null,
-        turnState: (save.gameTurnState as GameTurnState | undefined) ?? 'my-turn',
+        turnState: (() => {
+          if (save.gameTurnState === undefined || save.gameTurnState === null) {
+            if (activeIds.length === 0) return 'my-turn' as GameTurnState;
+            throw new Error('Garbled save: missing gameTurnState');
+          }
+          return save.gameTurnState as GameTurnState;
+        })(),
       },
       handStatus: (save.gameHandStatus as HandStatus | undefined) ?? 'none',
       terminal: save.gameTerminalType && save.gameTerminalType !== 'none'
         ? {
             type: save.gameTerminalType as GameTerminalType,
+            outcome: isSettlementOutcome(save.gameTerminalOutcome)
+              ? save.gameTerminalOutcome
+              : null,
             label: save.gameTerminalLabel ?? null,
             myReward: save.gameTerminalReward ?? null,
             rewardCoinHex: save.gameTerminalRewardCoin ?? null,
-            cleanEnd: save.gameTerminalCleanEnd,
           }
         : INITIAL_GAME_TERMINAL_MODEL,
       handKey: (activeIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
@@ -1075,7 +1082,11 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
       currentHandIds,
       instances,
       lastDisplayedId: activeIds[0] ?? null,
-      activeGameType: save.activeGameType ?? 'calpoker',
+      activeGameType: (() => {
+        if (save.activeGameType) return save.activeGameType;
+        if (activeIds.length === 0) return 'calpoker';
+        throw new Error('Garbled save: missing activeGameType');
+      })(),
       handState: save.handState ?? null,
       queue: parseQueuedNotifications(save.gameNotifQueue),
     },
@@ -1118,7 +1129,7 @@ export function sessionModelFromSave(save: SessionState, perGameAmount = 0n): Se
   });
 }
 
-export function snapshotFromSessionModel(model: SessionModel): Partial<SessionState> {
+export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSave> {
   const termsSnapshot = (terms: HandTermsModel) => ({
     my_contribution: terms.myContribution.toString(),
     their_contribution: terms.theirContribution.toString(),
@@ -1158,10 +1169,10 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
         }))
       : undefined,
     gameTerminalType: model.game.terminal.type !== 'none' ? model.game.terminal.type : undefined,
+    gameTerminalOutcome: model.game.terminal.outcome ?? undefined,
     gameTerminalLabel: model.game.terminal.label,
     gameTerminalReward: model.game.terminal.myReward,
     gameTerminalRewardCoin: model.game.terminal.rewardCoinHex,
-    gameTerminalCleanEnd: model.game.terminal.cleanEnd,
     myRunningBalance: model.myRunningBalance !== 0n ? model.myRunningBalance.toString() : undefined,
     channelNotifQueue: model.channel.queue.length > 0
       ? model.channel.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
@@ -1169,7 +1180,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSt
     gameNotifQueue: model.game.queue.length > 0
       ? model.game.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
       : undefined,
-    dismissedChannelState: model.channel.dismissedChannelState ?? undefined,
+    dismissedChannelStatus: model.channel.dismissedChannelStatus ?? undefined,
     goOnChainPressed: model.channel.goOnChainPressed || undefined,
     cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
     betweenHandMode: model.betweenHand.mode,

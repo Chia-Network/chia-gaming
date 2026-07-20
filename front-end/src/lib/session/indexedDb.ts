@@ -1,4 +1,4 @@
-import type { SessionState } from '../../hooks/save';
+import type { SessionSave } from '../../hooks/save';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
 const SESSION_DB_VERSION = 1;
@@ -38,7 +38,7 @@ function deleteDatabase(): Promise<void> {
   });
 }
 
-export async function readSessionRecord(): Promise<SessionState | null> {
+export async function readSessionRecord(): Promise<SessionSave | null> {
   if (typeof indexedDB === 'undefined') return null;
   let db: IDBDatabase;
   try {
@@ -58,7 +58,7 @@ export async function readSessionRecord(): Promise<SessionState | null> {
       request.onerror = () => reject(request.error ?? new Error('Failed to read session record'));
     });
     await transactionComplete(transaction);
-    return record && typeof record === 'object' ? record as SessionState : null;
+    return record && typeof record === 'object' ? record as SessionSave : null;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'NotFoundError') {
       db.close();
@@ -71,7 +71,7 @@ export async function readSessionRecord(): Promise<SessionState | null> {
   }
 }
 
-export async function writeSessionRecord(record: SessionState): Promise<void> {
+export async function writeSessionRecord(record: SessionSave): Promise<void> {
   if (typeof indexedDB === 'undefined') {
     throw new Error('IndexedDB is unavailable; refusing to send without durable session storage');
   }

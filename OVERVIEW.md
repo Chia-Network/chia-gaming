@@ -144,8 +144,8 @@ move until someone initiates a dispute or shutdown.
 - On clean shutdown, both players agree to spend the channel coin directly to
 payout coins (no unroll needed).
 
-**Key code:** `src/channel_handler/types/channel_coin.rs`,
-`ChannelHandler` in `src/channel_handler/mod.rs`
+**Key code:** `src/channel_state/types/channel_coin.rs`,
+`ChannelState` in `src/channel_state/mod.rs`
 
 ### Unroll Coin
 
@@ -181,7 +181,7 @@ recent unroll received from them).  For preemption, only the latest state
 is needed — it has the highest sequence number and the correct parity.
 However, the opponent can broadcast *any* unroll we ever sent them (all
 carry valid aggregate signatures from the time they were created).  To
-identify these on-chain, the `ChannelHandler` maintains an
+identify these on-chain, the `ChannelState` maintains an
 `unroll_puzzle_hash_map` that maps each unroll puzzle hash to a compact
 historical record: state number, committed conditions hash, and timeout
 conditions. The map deliberately does not retain historical signatures or
@@ -194,11 +194,11 @@ cannot be discarded: the opponent may publish any previously signed unroll,
 so recognizing every historical hash is the minimum needed to choose the
 correct timeout record safely.
 
-Browser session persistence stores the serialized cradle as raw binary in
+Browser session persistence stores the serialized game session as raw binary in
 IndexedDB. Compact historical unroll records are therefore part of the durable
 minimum even though obsolete full signatures and preemption conditions are not.
 
-**Key code:** `src/channel_handler/types/unroll_coin.rs`,
+**Key code:** `src/channel_state/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`
 
 ### Game Coin (Referee)
@@ -229,7 +229,7 @@ the holder permission to update state. Only the player holding the potato can:
 - Propose a new game
 - Accept or cancel a game proposal
 - Make a move
-- Accept a game result (accept_timeout)
+- Accept a game result (accept_settlement)
 - Initiate clean shutdown
 
 When a player wants to act but doesn't have the potato, they **request** it.
@@ -252,8 +252,8 @@ Every potato pass is a single `PeerMessage::Batch` containing:
   - `AcceptProposal` — accept a pending game proposal
   - `CancelProposal` — cancel a pending proposal
   - `Move` — make a game move
-  - `AcceptTimeout` — accept a game result (end game)
-2. `**signatures: PotatoSignatures`** — two half-signatures covering the final
+  - `AcceptSettlement` — accept a game result (end game)
+2. `**signatures: StateUpdateSignatures`** — two half-signatures covering the final
   channel state after all actions in the batch have been applied:
   - A half-signature of the **channel coin** spend committing to the new unroll
   coin (so both players can unroll to the latest agreed state).
@@ -273,11 +273,11 @@ Every potato pass is a single `PeerMessage::Batch` containing:
 
 The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. Rejection uses a **rollback mechanism**: before peer
-batch processing begins, `PotatoHandler` snapshots both the `ChannelHandler` and
+batch processing begins, `OffChainPhase` snapshots both the `ChannelState` and
 the local `game_action_queue`. If any action or signature verification fails,
 both snapshots are restored. This makes a peer batch atomic across all state that
 could otherwise affect dispute recovery: intermediate mutations to `live_games`,
-`pending_accept_timeouts`, balances, `state_number`, `cached_last_actions`, and
+`pending_settlements`, balances, `state_number`, `cached_redo_actions`, and
 queued local actions are not allowed to leak out of a failed peer batch. The
 error then triggers go-on-chain (the peer sent a bad batch, so we dispute
 on-chain).
@@ -332,33 +332,33 @@ peer-data recovery path.
 `PeerMessage::Message` (for advisory game messages) remains a separate type
 that does not carry the potato and can be sent at any time.
 
-**Key code:** `src/potato_handler/mod.rs` (`PotatoHandler`, `PotatoState`)
+**Key code:** `src/session_phases/mod.rs` (`OffChainPhase`, `PotatoState`)
 
 ### Handshake (6-Message Protocol)
 
 Before play begins, the two players execute a multi-step handshake
 (steps A through F) to exchange public keys, agree on channel parameters,
-co-sign the initial channel coin, and transition to `PotatoHandler`.
+co-sign the initial channel coin, and transition to `OffChainPhase`.
 
 The protocol is designed so that Alice (the initiator) commits the channel
 coin ID — derived from a singleton launcher — before either party signs any
 unroll state. This prevents either side from stealing funds or burning the
 other's money.
 
-Each side runs its own handler: `HandshakeInitiatorHandler` (the player who
-starts the channel) and `HandshakeReceiverHandler`. The A-F labels are the
+Each side runs its own handler: `HandshakeInitiatorPhase` (the player who
+starts the channel) and `HandshakeReceiverPhase`. The A-F labels are the
 wire/message protocol labels. Internally, the split handlers use semantic
 state names (`SentA`, `WaitingForLauncher`, `SentC`, etc.) while still speaking
 the same A-F wire messages. Handshake messages are not sent via `Batch`:
 
-| Step | Sender | Message | Payload |
-|------|--------|---------|---------|
-| A | Initiator | `HandshakeA` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
-| B | Receiver | `HandshakeB` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
-| C | Initiator | `HandshakeC` | `CoinString` of the launcher coin (parent + SINGLETON_LAUNCHER_HASH + 0) |
-| D | Receiver | `HandshakeD` | State-0 `PotatoSignatures` (half-sigs for channel and unroll coins) |
-| E | Initiator | `HandshakeE` | Partial `SpendBundle` (wallet spend + launcher spend) + state-0 `PotatoSignatures` |
-| F | Receiver | `HandshakeF` | Final combined `SpendBundle` (initiator's spends + receiver's wallet spend) |
+| Step | Sender | Message | Payload type |
+|------|--------|---------|--------------|
+| A | Initiator | `HandshakeA` | `HandshakePayloadA` (= `HandshakePayloadB`): keys, reward ph, PoPs, contributions |
+| B | Receiver | `HandshakeB` | `HandshakePayloadB`: same shape as A |
+| C | Initiator | `HandshakeC` | `HandshakePayloadC`: launcher `CoinString` |
+| D | Receiver | `HandshakeD` | `HandshakePayloadD`: state-0 `StateUpdateSignatures` |
+| E | Initiator | `HandshakeE` | `HandshakePayloadE`: partial `SpendBundle` + state-0 sigs |
+| F | Receiver | `HandshakeF` | `HandshakePayloadF`: final combined `SpendBundle` |
 
 #### Between-message wallet interactions
 
@@ -367,7 +367,7 @@ that will serve as the launcher parent. The library emits
 `Effect::NeedLauncherCoinId`; the hosting layer (WASM wrapper or simulator)
 calls `selectCoins`, computes the launcher coin, and feeds it back via
 the split handler callback (`provide_launcher_coin` on the active
-`PeerHandler` implementation).
+`PeerLifecyclePhase` implementation).
 
 The receiver verifies in C that the launcher coin's puzzle hash equals
 `SINGLETON_LAUNCHER_HASH`, ensuring the channel coin parent is a standard
@@ -408,15 +408,15 @@ WaitingForA → SentB → SentD → WaitingForCompletion → Finished
 ```
 
 Handshake-specific wallet callback plumbing now lives in the split handshake
-handlers, not in `PotatoHandler` monolithic handshake state.
+handlers, not in `OffChainPhase` monolithic handshake state.
 
-The transition to `PotatoHandler` is driven by `coin_created` — the channel
+The transition to `OffChainPhase` is driven by `coin_created` — the channel
 coin appearing on-chain. Since the coin cannot exist before E is sent, this
 is the ground truth for "the channel is live." A late-arriving `HandshakeF`
-after the transition is silently ignored by `PotatoHandler`. Internally, the
+after the transition is silently ignored by `OffChainPhase`. Internally, the
 split handshake handlers move from `Finished` to `Done` during this handoff:
 `Finished` means the handshake's own protocol work is complete, while `Done`
-means the replacement `PotatoHandler` has been created and the old handshake
+means the replacement `OffChainPhase` has been created and the old handshake
 handler no longer reports channel status.
 
 #### Security properties
@@ -429,7 +429,7 @@ handler no longer reports channel status.
    puzzle hash is `SINGLETON_LAUNCHER_HASH`, ensuring the initiator cannot
    substitute an arbitrary coin.
 3. **Signature symmetry:** Both sides call
-   `ChannelHandler::verify_and_store_initial_peer_signatures` at the first
+   `ChannelState::verify_and_store_initial_peer_signatures` at the first
    point where they receive the peer's state-0 signatures (initiator on D,
    receiver on E), verifying and storing them before proceeding.
 4. **Proof-of-possession (PoP) for aggregate keys:** The channel and unroll
@@ -487,10 +487,10 @@ transaction contains three spends:
 This produces the channel coin as a child of the launcher, with the agreed
 puzzle hash and combined amount.
 
-**Key code:** `src/potato_handler/handshake_initiator.rs`,
-`src/potato_handler/handshake_receiver.rs`,
-`src/potato_handler/handshake.rs` (shared types),
-`src/channel_handler/mod.rs` (`get_initial_signatures`,
+**Key code:** `src/session_phases/handshake_initiator.rs`,
+`src/session_phases/handshake_receiver.rs`,
+`src/session_phases/handshake.rs` (shared types),
+`src/channel_state/mod.rs` (`get_initial_signatures`,
 `verify_and_store_initial_peer_signatures`)
 
 ---
@@ -607,16 +607,16 @@ dedicated handler and validation tests.
 
 **Key code:**
 
-- `src/channel_handler/game_handler.rs` — `MyTurnResult::message_parser`,
+- `src/channel_state/game_handler.rs` — `MyTurnResult::message_parser`,
 `TheirTurnResult` (message field), `MessageHandler`
-- `src/potato_handler/mod.rs` — sends `PeerMessage::Message` on receive;
+- `src/session_phases/mod.rs` — sends `PeerMessage::Message` on receive;
 dispatches incoming messages via `received_message`
 - `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
 - `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
-- `src/test_support/calpoker.rs` — Rust-side calpoker registration/helpers
+- `src/test_support/calpoker_sim.rs` — Rust-side calpoker registration/helpers
 - `clsp/games/spacepoker/onchain/*.clsp`
 - `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
-- `src/test_support/spacepoker.rs` — Rust-side Space Poker helpers
+- `src/test_support/spacepoker_sim.rs` — Rust-side Space Poker helpers
 
 ### Krunk
 
@@ -711,26 +711,26 @@ general mechanism.
 - `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
 - `src/tests/krunk_handlers.rs` — handler tests
 - `src/tests/krunk_validation.rs` — on-chain validation tests
-- `src/test_support/krunk.rs` — Krunk test registration and helpers
+- `src/test_support/krunk_sim.rs` — Krunk test registration and helpers
 
 ---
 
 ## Handler Architecture
 
-The system uses a **handler chain** pattern to manage the channel lifecycle.
-All handlers implement the `PeerHandler` trait (defined in `src/peer_container.rs`),
+The system uses a **lifecycle phase** pattern to manage the channel session.
+All phases implement the `PeerLifecyclePhase` trait (defined in `src/game_session.rs`),
 which provides a uniform interface for receiving messages, responding to
-coin-watching events, and performing game actions. The `SynchronousGameCradle`
-holds a single `Box<dyn PeerHandler>` and routes all events through it.
+coin-watching events, and performing game actions. The `GameSession`
+holds a single `Box<dyn PeerLifecyclePhase>` and routes all events through it.
 
-When a handler's phase is complete, it produces a replacement handler via
-`take_replacement()`. The cradle detects this in `detect_phase_transition`
-and swaps in the new handler. This creates a linear progression through
+When a phase is complete, it produces the next phase via
+`take_next_phase()`. The session detects this in `detect_phase_transition`
+and swaps in the new phase. This creates a linear progression through
 the channel lifecycle:
 
 ```
 HandshakeInitiator ─┐
-                     ├─→ PotatoHandler ─→ SpendChannelCoinHandler ─→ OnChainGameHandler
+                     ├─→ OffChainPhase ─→ SpendChannelCoinPhase ─→ OnChainPhase
 HandshakeReceiver  ─┘
 ```
 
@@ -738,11 +738,11 @@ HandshakeReceiver  ─┘
 
 Two related but distinct concepts appear throughout the docs:
 
-- **Peer handlers** are concrete Rust types implementing `PeerHandler` (for
-example `PotatoHandler`, `SpendChannelCoinHandler`). They model
+- **Peer handlers** are concrete Rust types implementing `PeerLifecyclePhase` (for
+example `OffChainPhase`, `SpendChannelCoinPhase`). They model
 which component currently owns protocol logic.
 - **States** are notification-level enums exposed to the UI and tests:
-`ChannelState` and `GameStatusKind` (inside `GameNotification::GameStatus`).
+`ChannelStatus` and `GameStatusKind` (inside `GameNotification::GameStatus`).
 They model what phase/outcome the user should see.
 - **On-chain lifecycle states** are a protocol lens over coin progression.
 For channels, this is commonly reasoned about as
@@ -760,16 +760,16 @@ with same-level repeats for updates), even though they use different names.
 
 | Handler | File | Role |
 |---------|------|------|
-| `HandshakeInitiatorHandler` | `potato_handler/handshake_initiator.rs` | Initiator side of the handshake (sends A, C, E). Linear state machine; transitions to `PotatoHandler` when the channel coin appears on-chain. |
-| `HandshakeReceiverHandler` | `potato_handler/handshake_receiver.rs` | Receiver side of the handshake (sends B, D, F). Same transition trigger. |
-| `PotatoHandler` | `potato_handler/mod.rs` | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games. |
-| `SpendChannelCoinHandler` | `potato_handler/spend_channel_coin_handler.rs` | Watches the channel coin spend and handles both clean shutdown (change coin observation) and unroll paths. Handles preemption, forward-aligns game state, always transitions to `OnChainGameHandler`. |
-| `OnChainGameHandler` | `potato_handler/on_chain.rs` | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages. |
+| `HandshakeInitiatorPhase` | `session_phases/handshake_initiator.rs` | Initiator side of the handshake (sends A, C, E). Linear state machine; transitions to `OffChainPhase` when the channel coin appears on-chain. |
+| `HandshakeReceiverPhase` | `session_phases/handshake_receiver.rs` | Receiver side of the handshake (sends B, D, F). Same transition trigger. |
+| `OffChainPhase` | `session_phases/mod.rs` | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games. |
+| `SpendChannelCoinPhase` | `session_phases/spend_channel_coin_phase.rs` | Watches the channel coin spend and handles both clean shutdown (change coin observation) and unroll paths. Handles preemption, forward-aligns game state, always transitions to `OnChainPhase`. |
+| `OnChainPhase` | `session_phases/on_chain.rs` | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages. |
 
 Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle`,
-`emit_failure_cleanup`) live in `src/potato_handler/handler_base.rs`.
+`emit_failure_cleanup`) live in `src/session_phases/handler_base.rs`.
 
-**Key code:** `src/peer_container.rs` (`PeerHandler` trait, `detect_phase_transition`)
+**Key code:** `src/game_session.rs` (`PeerLifecyclePhase` trait, `detect_phase_transition`)
 
 ---
 
@@ -782,13 +782,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | **Types & Utilities**     | `src/common/`                                | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.           |
 | **Referee**               | `src/referee/`                               | Per-game state machine: moves, timeouts, slashes                             |
-| **Channel Handler**       | `src/channel_handler/`                       | Channel/unroll/game coin management, balance tracking                        |
-| **Handshake Handlers**    | `src/potato_handler/handshake_initiator.rs`, `handshake_receiver.rs` | Handshake state machines (A-F), one per side              |
-| **Potato Handler**        | `src/potato_handler/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
-| **Spend Channel Coin Handler** | `src/potato_handler/spend_channel_coin_handler.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainGameHandler |
-| **On-Chain Game Handler** | `src/potato_handler/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
-| **Handler Base**          | `src/potato_handler/handler_base.rs`         | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`   |
-| **Peer Container**        | `src/peer_container.rs`                      | `PeerHandler` trait, `GameCradle` trait, `SynchronousGameCradle`             |
+| **Channel State**         | `src/channel_state/`                       | Channel/unroll/game coin management, balance tracking                        |
+| **Handshake Handlers**    | `src/session_phases/handshake_initiator.rs`, `handshake_receiver.rs` | Handshake state machines (A-F), one per side              |
+| **Off-Chain Phase**       | `src/session_phases/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
+| **Spend Channel Coin Phase** | `src/session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainPhase |
+| **On-Chain Phase**        | `src/session_phases/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
+| **Handler Base**          | `src/session_phases/handler_base.rs`         | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`   |
+| **Game Session**          | `src/game_session.rs`                      | `PeerLifecyclePhase` trait, `GameSession` struct                          |
 | **Simulator**             | `src/simulator/`                             | Block-level simulation for integration tests                                 |
 
 
@@ -815,13 +815,13 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | File                                        | Purpose                                                  |
 | ------------------------------------------- | -------------------------------------------------------- |
-| `src/test_support/calpoker.rs`              | Calpoker test registration and helpers                   |
-| `src/test_support/spacepoker.rs`            | Space Poker test registration and helpers                |
-| `src/test_support/krunk.rs`                 | Krunk test registration and helpers                      |
+| `src/test_support/calpoker_sim.rs`              | Calpoker test registration and helpers                   |
+| `src/test_support/spacepoker_sim.rs`            | Space Poker test registration and helpers                |
+| `src/test_support/krunk_sim.rs`                 | Krunk test registration and helpers                      |
 | `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
-| `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
-| `src/test_support/peer/potato_handler.rs`   | Test peer helper                                         |
-| `src/test_support/game.rs`                  | `GameAction` enum and simulation loop driver             |
+| `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite           |
+| `src/test_support/peer/peer_harness.rs`   | Test peer helper                                         |
+| `src/test_support/sim_script.rs`                  | `SimScriptAction` enum and simulation loop driver        |
 | `tools/local-wasm-tests.sh`                 | Local JS/WASM integration test runner                    |
 
 
@@ -838,27 +838,28 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `SpendBundle`                   | (chia types)                                   | Collection of `CoinSpend`s forming an atomic transaction                                                     |
 | `RefereePuzzleArgs`             | `referee/types.rs`                             | All args curried into the referee puzzle                                                                     |
 | `Referee`                       | `referee/mod.rs`                               | Enum: `MyTurn` / `TheirTurn`                                                                                 |
-| `ChannelHandler`                | `channel_handler/mod.rs`                       | Manages channel state, unroll, live games                                                                    |
-| `PotatoHandler`                 | `potato_handler/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
-| `OnChainGameHandler`            | `potato_handler/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
-| `LiveGame`                      | `channel_handler/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
-| `ProposedGame`                  | `channel_handler/types/proposed_game.rs`       | One pending member of a factory-derived atomic group stored in `proposed_games` |
-| `UnrollCoin`                    | `channel_handler/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
-| `GameCradle`                    | `peer_container.rs`                            | Trait for synchronous game interaction (tests/UI)                                                            |
-| `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
-| `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptTimeout` |
-| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
-| `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
-| `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
-| `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, and `GameStatus { status: GameStatusKind, ... }` |
-| `Effect`                        | `potato_handler/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
-| `PeerHandler`                   | `peer_container.rs`                            | Trait implemented by all handlers — uniform interface for messages, coin events, game actions                |
-| `HandshakeInitiatorHandler`     | `potato_handler/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
-| `HandshakeReceiverHandler`      | `potato_handler/handshake_receiver.rs`         | Receiver handshake state machine (B → D → F → coin_created)                                                 |
-| `SpendChannelCoinHandler`       | `potato_handler/spend_channel_coin_handler.rs` | Watches channel coin spend; clean shutdown detection + unroll handling, creates `OnChainGameHandler`         |
-| `ChannelCoinSpendInfo`          | `channel_handler/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                  |
-| `PeerMessage`                   | `potato_handler/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeF`, `Batch`, `RequestPotato`, `Message`, etc.                     |
+| `ChannelState`                | `channel_state/mod.rs`                       | Manages channel state, unroll, live games                                                                    |
+| `OffChainPhase`                 | `session_phases/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
+| `OnChainPhase`            | `session_phases/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
+| `LiveGame`                      | `channel_state/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
+| `ProposedGame`                  | `channel_state/types/proposed_game.rs`       | One pending member of a factory-derived atomic group stored in `proposed_games` |
+| `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
+| `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
+| `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
+| `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `CachedSendMove`, `CachedAcceptSettlement`, `ProposalAccepted`     |
+| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
+| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
+| `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
+| `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
+| `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |
+| `GameNotification`              | `session_phases/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, gameplay `GameStatus { status: GameStatusKind, ... }`, and unified settlement `GameSettled { id, outcome, our_share, coin_id }` |
+| `Effect`                        | `session_phases/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
+| `PeerLifecyclePhase`                   | `game_session.rs`                              | Trait implemented by all lifecycle phases — uniform interface for messages, coin events, game actions        |
+| `HandshakeInitiatorPhase`     | `session_phases/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
+| `HandshakeReceiverPhase`      | `session_phases/handshake_receiver.rs`         | Receiver handshake state machine (B → D → F → coin_created)                                                 |
+| `SpendChannelCoinPhase`       | `session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; clean shutdown detection + unroll handling, creates `OnChainPhase`         |
+| `ChannelCoinSpendInfo`          | `channel_state/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                  |
+| `PeerMessage`                   | `session_phases/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeF`, `Batch`, `RequestPotato`, `Message`, etc.                     |
 
 ---
 
@@ -866,14 +867,14 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | Document | Covers |
 | --- | --- |
-| [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptTimeout lifecycle |
+| [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptSettlement lifecycle |
 | [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
 | [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |
 | [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!` |
-| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `GameAction` reference, trigger semantics, test-writing conventions |
+| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `SimScriptAction` reference, trigger semantics, test-writing conventions |
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |
-| [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, tracker relay, session persistence |
+| [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, hub relay, session persistence |
 | [`CLVM_DOS.md`](CLVM_DOS.md) | CLVM denial-of-service vectors: ladder bombs, execution cost, trust categories per call site, solution constraints |
 

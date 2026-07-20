@@ -7,7 +7,7 @@ see `OVERVIEW.md`. For on-chain dispute resolution, see `ON_CHAIN.md`.
 
 - [Game Proposals](#game-proposals)
 - [Off-Chain Game Flow](#off-chain-game-flow)
-- [AcceptTimeout Lifecycle](#accepttimeout-lifecycle)
+- [AcceptSettlement Lifecycle](#acceptsettlement-lifecycle)
 
 ---
 
@@ -166,7 +166,7 @@ a proposal and makes the first move. Internally this translates into two
 distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
 batch.
 
-**Key code:** `src/potato_handler/mod.rs` — `propose_games`,
+**Key code:** `src/session_phases/mod.rs` — `propose_games`,
 `accept_proposal`, `cancel_proposal`;
 `wasm/src/mod.rs` — `propose_games`, `accept_proposal_and_move`
 
@@ -190,9 +190,9 @@ A single game's lifecycle, independent of other concurrent games:
 3. Play     (BatchAction::Move, alternating turns)
    → each move updates the referee state and mover_share
 
-4. Finish   (BatchAction::AcceptTimeout)
-   → balances updated, game moves to pending_accept_timeouts
-   → WeTimedOut / OpponentTimedOut emitted once confirmed
+4. Finish   (BatchAction::AcceptSettlement)
+   → balances updated, game moves to pending_settlements
+   → GameSettled { outcome: accept_settlement, our_share } emitted once confirmed
 ```
 
 All of these actions are delivered via the
@@ -201,7 +201,7 @@ when the potato is held, potentially alongside actions for other games. Multiple
 games can be in flight simultaneously, and any potato pass may carry actions
 for several of them.
 
-The `ChannelHandler` tracks `live_games`, `pending_accept_timeouts`,
+The `ChannelState` tracks `live_games`, `pending_settlements`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the
 current `state_number`. Each batch increments the `state_number` once and
 produces a new signed unroll commitment.
@@ -219,62 +219,68 @@ declared for the *next* move.
 
 Both failures reject the batch (rollback and go-on-chain).
 
-See [AcceptTimeout Lifecycle](#accepttimeout-lifecycle) for details on what
-happens when accept_timeout hasn't been confirmed before going on-chain.
+See [AcceptSettlement Lifecycle](#acceptsettlement-lifecycle) for details on what
+happens when accept_settlement hasn't been confirmed before going on-chain.
 
 ---
 
-## AcceptTimeout Lifecycle
+## AcceptSettlement Lifecycle
 
-`AcceptTimeout` is the protocol action for accepting the current game result.
-Depending on context this is also described as folding or timing out: all three
-settle the current game according to the same `mover_share` value. The
-difference is how the settlement is reached (off-chain agreement, local
-fold/accept, or an on-chain timeout claim after the timelock).
+`AcceptSettlement` is the protocol action for voluntarily accepting the current
+`mover_share` split. Off-chain it is always intentional. Poker UIs may expose
+this as **Fold**, but Fold is a game-local UX label only — not a protocol or
+session status name. On-chain, the same intent is carried by a **timeout
+claim** spend after the timelock (see [ON_CHAIN.md](ON_CHAIN.md)); the
+mechanism is "timeout claim", the intent is settlement. Other on-chain settled
+outcomes (#1–#11 in the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux))
+also arrive as `GameSettled`, not as separate slash/timeout notification
+families.
 
-Calling `accept_timeout()` off-chain does **not** immediately finalize the
+Calling `accept_settlement()` off-chain does **not** immediately finalize the
 game. The full lifecycle is:
 
-### Off-Chain AcceptTimeout
+### Off-Chain AcceptSettlement
 
-1. `send_accept_timeout_no_finalize` moves the game from `live_games` to
-  `pending_accept_timeouts` in the `ChannelHandler` and updates balances.
-2. A `PotatoAcceptTimeout` entry is added to `cached_last_actions` storing the game ID
+1. `send_accept_settlement_no_finalize` moves the game from `live_games` to
+  `pending_settlements` in the `ChannelState` and updates balances.
+2. A `CachedAcceptSettlement` entry is added to `cached_redo_actions` storing the game ID
   and reward amounts.
-3. The accept-timeout data is bundled into the next potato pass (batch).
-4. When the potato comes back (acknowledgment), `drain_cached_accept_timeouts` processes
-  the `PotatoAcceptTimeout` entries in `cached_last_actions`, emitting `WeTimedOut` for
-   each accepted game. The opponent who receives the accept-timeout gets
-   `OpponentTimedOut` immediately upon processing the batch — the receiver
-   computes the reward amount locally via `get_our_current_share()` rather than
-   trusting the peer's claimed amount.
+3. The accept-settlement data is bundled into the next potato pass (batch).
+4. When the potato comes back (acknowledgment), `drain_cached_accept_settlements` processes
+  the `CachedAcceptSettlement` entries in `cached_redo_actions`, emitting
+  `GameSettled { outcome: accept_settlement, our_share }` for each accepted game.
+  The opponent who receives `BatchAction::AcceptSettlement` gets
+  `GameSettled { outcome: accept_settlement, our_share }` immediately upon
+  processing the batch — the receiver computes `our_share` locally via
+  `get_our_current_share()` rather than trusting the peer's claimed amount.
 
-Multiple game acceptances in a single batch each get their own `PotatoAcceptTimeout`
-entry, and all fire `WeTimedOut` when the potato returns.
+Multiple game acceptances in a single batch each get their own `CachedAcceptSettlement`
+entry, and all emit `GameSettled` when the potato returns.
 
 If the channel goes on-chain **before** the round-trip completes, the game
-is still in `pending_accept_timeouts`. The `set_state_for_coins` function
-searches both `live_games` and `pending_accept_timeouts` when matching game
+is still in `pending_settlements`. The `set_state_for_coins` function
+searches both `live_games` and `pending_settlements` when matching game
 coins, so accepted-but-unconfirmed games are correctly tracked on-chain.
 
-When preemption resolves to the post-AcceptTimeout state (the newer state
+When preemption resolves to the post-AcceptSettlement state (the newer state
 already incorporated the accept), no game coin is created — its value is folded
-into the reward coin. In this case `drain_preempt_resolved_accept_timeouts`
-checks `cached_last_actions` for `PotatoAcceptTimeout` entries whose game is
+into the reward coin. In this case `drain_preempt_resolved_accept_settlements`
+checks `cached_redo_actions` for `CachedAcceptSettlement` entries whose game is
 absent from the on-chain game set. If an entry is found, the potato never came
-back (otherwise `drain_cached_accept_timeouts` would have removed it), so
-`WeTimedOut` is emitted now. This avoids both missed notifications and
-duplicates: if the potato had returned, the entry would already be gone.
+back (otherwise `drain_cached_accept_settlements` would have removed it), so
+`GameSettled { outcome: accept_settlement, our_share }` is emitted now. This
+avoids both missed notifications and duplicates: if the potato had returned,
+the entry would already be gone.
 
-On clean shutdown, any remaining `PotatoAcceptTimeout` entries in `cached_last_actions`
-are drained, emitting `WeTimedOut` before the terminal `ChannelStatus`
+On clean shutdown, any remaining `CachedAcceptSettlement` entries in `cached_redo_actions`
+are drained, emitting `GameSettled` before the terminal `ChannelStatus`
 (`ResolvedClean`) notification.
 
-### On-Chain AcceptTimeout
+### On-Chain AcceptSettlement
 
-When a game is already on-chain and the player calls `AcceptTimeout(game_id)`:
+When a game is already on-chain and the player calls `AcceptSettlement(game_id)`:
 
-1. `OnChainGameHandler` asserts it is our turn, then sets `accepted = true`
+1. `OnChainPhase` asserts it is our turn, then sets `accepted = true`
   on the `OnChainGameState` entry. No transaction is submitted and no
    notification is emitted yet.
 2. The accepted game's timeout claim is pre-built and registered eagerly, and
@@ -285,53 +291,55 @@ When a game is already on-chain and the player calls `AcceptTimeout(game_id)`:
 3. When the game coin is spent on-chain, `handle_game_coin_spent` checks the
   `accepted` flag. For accepted games:
   - If the spend creates a **reward coin** (matching the player's reward
-  puzzle hash): `WeTimedOut` is emitted.
+  puzzle hash): `GameSettled` is emitted with `we_accepted` or `settled_cleanly`
+  depending on whether the game was already terminal.
   - If the spend creates another **game coin**, the accepted intent is carried
   forward and the new coin is tracked. This can happen when the chain coin is
   the version materialized by the unroll rather than the locally most advanced
   potato state; redo/forward-alignment must still finish before timeout
   finality.
-  - Other unrecognized spends are treated as game errors.
+  - Other unrecognized spends are treated as game errors (`GameStatus` with
+  `EndedError`).
 
-**Note:** Off-chain `accept_timeout` does not emit `WeTimedOut` at call time;
-it emits on later resolution (potato round-trip, observed on-chain timeout
-spend, or clean shutdown). On-chain `AcceptTimeout` is also deferred until the
-resolving spend is observed, but has a zero-share early-out path that can emit
-terminal timeout status immediately.
+**Note:** Off-chain `accept_settlement` does not emit `GameSettled` at call
+time; it emits on later resolution (potato round-trip, observed on-chain timeout
+spend, preempt-resolved accept, or clean shutdown). On-chain `AcceptSettlement`
+also defers until the resolving spend is observed, but has zero-share early-out
+paths that emit `GameSettled` immediately with a forfeit outcome (#3–#5).
 
 **Key code:**
 
-- `src/channel_handler/mod.rs` — `send_accept_timeout_no_finalize`,
-`pending_accept_timeouts`, `drain_cached_accept_timeouts`,
-`drain_preempt_resolved_accept_timeouts`
-- `src/potato_handler/on_chain.rs` — `GameAction::AcceptTimeout`,
+- `src/channel_state/mod.rs` — `send_accept_settlement_no_finalize`,
+`pending_settlements`, `drain_cached_accept_settlements`,
+`drain_preempt_resolved_accept_settlements`
+- `src/session_phases/on_chain.rs` — `GameAction::AcceptSettlement`,
 `handle_game_coin_spent`, `build_timeout_claim`
 - `src/transaction_manager.rs` — `TransactionManager` (eager claim submission)
 
-### Automatic AcceptTimeout
+### Automatic AcceptSettlement
 
 When a move arrives whose next handler/validator is nil (the game is over) and
-there are no slashing conditions, `PotatoHandler` automatically queues
-`GameAction::AcceptTimeout` for that game. The frontend does **not** need to
-call `acceptTimeout()` explicitly after a game ends.
+there are no slashing conditions, `OffChainPhase` automatically queues
+`GameAction::AcceptSettlement` for that game. The frontend does **not** need to
+call `acceptSettlement()` explicitly after a game ends.
 
-Detection uses `ChannelHandler::is_game_finished(game_id)`, which returns true
+Detection uses `ChannelState::is_game_finished(game_id)`, which returns true
 when `is_my_turn()` and `is_game_over()` (nil next handler on the `Referee`).
 
 This auto-queue happens in two places:
 
 1. **Off-chain:** In `process_received_batch`, after processing a
    `BatchAction::Move` that leaves the game finished
-   (`src/potato_handler/mod.rs`).
+   (`src/session_phases/mod.rs`).
 2. **On-chain:** In `handle_game_coin_spent`, when the expected spend arrives
    and the resulting game state is finished
-   (`src/potato_handler/on_chain.rs`).
+   (`src/session_phases/on_chain.rs`).
 
 The UX consequence is that the receiver of the final move sees
-`OpponentMoved` followed shortly by `WeTimedOut` — both are emitted in
-sequence without any user interaction required.
+`OpponentMoved` followed shortly by `GameSettled { outcome: accept_settlement, … }`
+— both are emitted in sequence without any user interaction required.
 
 Because the game is removed from `live_games` by the automatic accept, an
-explicit `AcceptTimeout` call on an already-finished game will fail (no
-matching live game). Test code that previously called `accept_timeout()`
+explicit `AcceptSettlement` call on an already-finished game will fail (no
+matching live game). Test code that previously called `accept_settlement()`
 after the last move no longer needs to do so.

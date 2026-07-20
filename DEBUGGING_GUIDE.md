@@ -153,7 +153,7 @@ their input data is the bug.
 ## Simulation Test Infrastructure
 
 Simulation tests exercise the full off-chain/on-chain game lifecycle by running
-two `SynchronousGameCradle` instances against a local `Simulator` blockchain.
+two `GameSession` instances against a local `Simulator` blockchain.
 For the complete `GameAction` catalog, explicit `GameID` rules, `ProposeTrigger`
 semantics, and test-writing reference, see `SIMULATOR_TESTING.md`.
 
@@ -170,7 +170,7 @@ against the event state in `LocalTestUIReceiver`:
 - `AcceptProposal` is two-phase: first it waits for the proposal to arrive,
   then it waits for `ProposalAccepted`, `InsufficientBalance`, or
   `ProposalCancelled` after `accept_proposal` has been called.
-- Global actions such as `GoOnChain`, `WaitBlocks`, `AcceptTimeout`, and
+- Global actions such as `GoOnChain`, `WaitBlocks`, `AcceptSettlement`, and
   `CleanShutdown` are unconditional once they become the next scripted action.
 
 The sim loop panics after 200 iterations with a diagnostic message including

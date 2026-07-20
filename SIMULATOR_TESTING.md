@@ -8,10 +8,10 @@ workflow guidance stays in `DEBUGGING_GUIDE.md`.
 
 | File | Role |
 |------|------|
-| `src/test_support/game.rs` | `GameAction`, `ProposeTrigger`, `ChannelHandlerGame`, and default test constants |
-| `src/simulator/tests/potato_handler_sim.rs` | Simulation loop, test runner helpers, and most integration scenarios |
-| `src/test_support/calpoker.rs` | Calpoker test helpers such as `prefix_test_moves` |
-| `src/test_support/spacepoker.rs` | Space Poker test helpers |
+| `src/test_support/sim_script.rs` | `SimScriptAction`, `ProposeTrigger`, `ChannelHandlerGame`, and default test constants |
+| `src/simulator/tests/session_phases_sim.rs` | Simulation loop, test runner helpers, and most integration scenarios |
+| `src/test_support/calpoker_sim.rs` | Calpoker test helpers such as `prefix_test_moves` |
+| `src/test_support/spacepoker_sim.rs` | Space Poker test helpers |
 | `src/test_support/debug_game.rs` | Debug game setup helpers for focused channel/on-chain tests |
 
 ## Debug Game
@@ -22,13 +22,13 @@ user-facing reference game. The game gives tests precise control over
 without the complexity of a full game protocol.
 
 `DebugGameTestMove::new(mover_share, slash)` creates a single-move game where
-Alice moves and Bob must accept timeout. The `mover_share` value is what Bob,
+Alice moves and Bob must accept settlement. The `mover_share` value is what Bob,
 the new mover after Alice's move, receives on timeout; Alice receives
 `amount - mover_share`.
 
 ## Explicit Game IDs
 
-`GameAction` variants reference games by explicit `GameID` values, not ordinal
+`SimScriptAction` variants reference games by explicit `GameID` values, not ordinal
 positions in a test script. `GameID` values are deterministic nonces assigned
 when proposing a game; each player's nonce counter increments independently.
 
@@ -36,8 +36,8 @@ Typical examples:
 
 - `Move(player, game_id, readable, was_received)` moves in the specified game.
 - `AcceptProposal(player, game_id)` accepts the proposal with that exact game ID.
-- `AcceptTimeout(player, game_id)` accepts the timeout/result for that exact game
-  ID.
+- `AcceptSettlement(player, game_id)` accepts the current game result for that exact game
+  ID (off-chain voluntary accept or on-chain timeout-claim intent).
 - `ProposeNewGame(player, trigger)` creates a proposal; the resulting `GameID`
   is determined by the proposer's nonce counter at proposal time.
 
@@ -50,9 +50,9 @@ Typical examples:
 | `Channel` | The proposing player has observed channel creation. |
 | `AfterGame(game_id)` | The given game ID has a terminal notification in either player's finished-game set. |
 
-## GameAction Reference
+## SimScriptAction Reference
 
-The full `sim-tests` enum lives in `src/test_support/game.rs`.
+The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 
 | Action | Effect |
 |--------|--------|
@@ -63,7 +63,7 @@ The full `sim-tests` enum lives in `src/test_support/game.rs`.
 | `Move(player, game_id, readable, was_received)` | Submit a normal move for the specified game. The final boolean records whether the move was received. |
 | `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path tests. |
 | `Cheat(player, game_id, mover_share)` | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout. |
-| `AcceptTimeout(player, game_id)` | Accept the current game result/timeout for the specified game. |
+| `AcceptSettlement(player, game_id)` | Accept the current game result for the specified game (off-chain or on-chain). |
 | `GoOnChain(player)` | Player initiates unilateral on-chain resolution. |
 | `WaitBlocks(n, players_bitmask)` | Farm `n` blocks. The bitmask controls whose coin reports are backlogged: 0 = nobody blocked, 1 = player 0, 2 = player 1, 3 = both. |
 | `CleanShutdown(player)` | Initiate cooperative channel shutdown. |
@@ -166,12 +166,12 @@ condition is satisfied.
 | `move_ready` | `game_accepted_ids` or `opponent_moved_in_game` contains the game ID for the moving player. | `Move`, `FakeMove` |
 | `accept_proposal_ready` | Phase 1: proposal received. Phase 2: accept resolved. | `AcceptProposal` |
 | `propose_ready` | `Channel` or `AfterGame(game_id)` trigger has fired. | `ProposeNewGame`, `ProposeNewGameTheirTurn` |
-| `global_move` | Always ready. | `GoOnChain`, `WaitBlocks`, `AcceptTimeout`, `CleanShutdown`, fault injection |
+| `global_move` | Always ready. | `GoOnChain`, `WaitBlocks`, `AcceptSettlement`, `CleanShutdown`, fault injection |
 | `can_move` | Set only after resync. | Resync path |
 
 `LocalTestUIReceiver` tracks the event state used by these triggers:
 `received_proposal_ids`, `game_accepted_ids`, `opponent_moved_in_game`,
-`game_finished_ids`, `accepted_proposal_ids`, and `channel_created`.
+`game_finished_ids` (populated when `GameSettled` arrives), `accepted_proposal_ids`, and `channel_created`.
 
 ## Two-Phase AcceptProposal
 
@@ -189,7 +189,7 @@ The sim loop handles this in two phases:
 
 ## Writing a Test
 
-1. Build a `Vec<GameAction>` using explicit `GameID` values for variants that
+1. Build a `Vec<SimScriptAction>` using explicit `GameID` values for variants that
    require them.
 2. Explicitly `ProposeNewGame` and `AcceptProposal` to start a game; the sim
    loop does not auto-propose or auto-accept.

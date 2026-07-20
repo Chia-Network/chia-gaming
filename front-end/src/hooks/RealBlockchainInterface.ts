@@ -8,7 +8,13 @@ import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { log } from '../services/log';
-import { coinIdFromBytes, normalizeHexString, toUint8, toHexString } from '../util';
+import {
+  coinIdFromBytes,
+  encodeU64AsClvmHex,
+  normalizeHexString,
+  toUint8,
+  toHexString,
+} from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
 import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
@@ -84,21 +90,6 @@ function clearCachedChangeAddresses(): void {
 
 function clearCachedRemoteWalletIds(): void {
   clearCachedWalletConnectKeys(REMOTE_WALLET_STORAGE_PREFIX);
-}
-
-function encodeU64AsClvmHex(val: bigint): string {
-  if (val === 0n) return '';
-  const bytes: number[] = [];
-  let h = val;
-  while (h > 0n) {
-    bytes.push(Number(h & 0xffn));
-    h >>= 8n;
-  }
-  bytes.reverse();
-  if (bytes[0] & 0x80) {
-    bytes.unshift(0);
-  }
-  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function decodeNonNegativeClvmIntHex(hex: string): bigint {
@@ -293,7 +284,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     fee: bigint,
     removals: CoinsetCoin[],
   ): Promise<TransactionRecord> {
-    const puzzleHash = this.blockchainAddressData.puzzleHash || '0'.repeat(64);
+    const puzzleHash = this.blockchainAddressData.puzzleHash;
+    if (!puzzleHash) {
+      throw new Error('buildTransactionRecord: blockchain address puzzle hash is not set');
+    }
     const toAddress = encodePuzzleHashToBech32m(puzzleHash);
 
     const nameBytes = new TextEncoder().encode(jsonStringify(spendBundle));
@@ -404,20 +398,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     try {
       const result = await rpc.selectCoins({ walletId: 1n, amount, allowUnsynced: true });
       if (!result?.coins?.length) return null;
-      console.log('[wc-blockchain] <<< selectCoins raw', result);
-      console.log('[wc-blockchain] <<< selectCoins raw(json)', jsonStringify(result));
       const selected = result.coins[0];
       const parentCoinInfo = normalizeHexString(selected.parentCoinInfo);
       const puzzleHash = normalizeHexString(selected.puzzleHash);
       const amountHex = encodeU64AsClvmHex(selected.amount);
       const coinString = `${parentCoinInfo}${puzzleHash}${amountHex}`;
-      console.log('[wc-blockchain] selectCoins choosing coin[0]', {
-        parentCoinInfo: selected.parentCoinInfo,
-        puzzleHash: selected.puzzleHash,
-        amount: selected.amount,
-        amountHex,
-        coinStringLength: coinString.length,
-      });
       log(
         `[wc-blockchain] selectCoins coin0 parent=${parentCoinInfo} ph=${puzzleHash} amount=${selected.amount} amountHex=${amountHex} coinStringLen=${coinString.length}`,
       );
@@ -493,12 +478,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         coinIds,
         allowUnsynced: true,
       };
-      console.log('[wc-blockchain] >>> createOfferForIds payload', payload);
-      console.log('[wc-blockchain] >>> createOfferForIds payload(json)', jsonStringify(payload));
       log(`[wc-blockchain] createOfferForIds payload: ${jsonStringify(payload)}`);
       const response = await rpc.createOfferForIds(payload);
-      console.log('[wc-blockchain] <<< createOfferForIds', response);
-      console.log('[wc-blockchain] <<< createOfferForIds (json)', jsonStringify(response));
       if ((response as any)?.error) {
         const errMsg = (response as any).error;
         log(`[wc-blockchain] createOfferForIds daemon error: ${errMsg}`);
@@ -607,7 +588,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       log(`[wc-blockchain] remote wallet restored from cache id=${cachedRemote}`);
       return;
     }
-    console.log('[wc-blockchain] ensuring remote wallet exists...');
+    log('[wc-blockchain] ensuring remote wallet exists...');
     this.remoteWalletEnsurePromise = this.fetchRemoteWallet(fp).finally(() => {
       this.remoteWalletEnsurePromise = null;
     });
@@ -621,14 +602,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (remote) {
         this.remoteWalletId = remote.id;
         saveCachedRemoteWalletId(fingerprint, remote.id);
-        console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
+        log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
         return;
       }
-      console.log('[wc-blockchain] no remote wallet found, creating...');
+      log('[wc-blockchain] no remote wallet found, creating...');
       const created = await rpc.createNewRemoteWallet({ allowUnsynced: true });
       this.remoteWalletId = created.walletId;
       saveCachedRemoteWalletId(fingerprint, created.walletId);
-      console.log(`[wc-blockchain] created remote wallet id=${created.walletId}`);
+      log(`[wc-blockchain] created remote wallet id=${created.walletId}`);
     } catch (e) {
       console.warn('[wc-blockchain] remote wallet setup failed, will retry', e);
       log(`[wc-blockchain] remote wallet setup failed: ${String(e)}`);

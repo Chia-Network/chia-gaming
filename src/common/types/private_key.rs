@@ -60,10 +60,11 @@ impl PrivateKey {
     }
 
     pub fn from_slice(slice: &[u8]) -> Result<PrivateKey, Error> {
-        let mut bytes: [u8; 32] = [0; 32];
-        for (i, b) in slice.iter().enumerate() {
-            bytes[i % 32] = *b;
+        if slice.len() != 32 {
+            return Err(Error::StrErr("bad private key length".to_string()));
         }
+        let mut bytes: [u8; 32] = [0; 32];
+        bytes.copy_from_slice(slice);
         PrivateKey::from_bytes(&bytes)
     }
 

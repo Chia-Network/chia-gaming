@@ -11,7 +11,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
 - [Atomic Proposal Factory Invariants](#atomic-proposal-factory-invariants)
-- [cached_last_actions and the Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)
+- [cached_redo_actions and the Redo Mechanism](#cached_redo_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
 - [Simulator Strictness](#simulator-strictness)
 - [Test Infrastructure](#test-infrastructure)
@@ -26,8 +26,8 @@ There are three distinct timeouts in the system:
 
 | Timeout           | Purpose                                                                                                                                                                                    | Typical test value |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The tracker lobby accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
-| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The tracker lobby accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
+| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The hub lobby accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
+| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The hub lobby accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
 | `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals may choose any positive value; the UX defaults to 15 blocks. | 15 blocks          |
 
 
@@ -46,7 +46,7 @@ mempool.
 The default 15-block unroll timeout gives honest users enough time to preempt
 stale unrolls without making mainnet dispute resolution overly slow. At mainnet
 block cadence it is roughly five minutes; in the simulator it is roughly 150
-seconds. The tracker lobby bounds channel and unroll timeout negotiation to
+seconds. The hub lobby bounds channel and unroll timeout negotiation to
 3-30 blocks so users can make small adjustments without accepting arbitrarily
 long or short dispute windows.
 
@@ -61,7 +61,7 @@ no maturity callback into the handlers — `coin_timeout_reached` was removed.
 is registered, the handler pre-builds the claim `SpendBundle` and attaches it to
 the registration. The plumbing carries it end to end:
 `Effect::RegisterCoin { spend: Option<SpendBundle>, .. }` →
-`CradleEvent::WatchCoin { spend, .. }` →
+`GameSessionEvent::WatchCoin { spend, .. }` →
 `TransactionManager::register_watch(.., spend)`. The manager also returns the
 watch registration to the host as a `watchCoins` polling delta. There are three
 eager-claim sites:
@@ -204,16 +204,16 @@ No further peer messages are sent or received by that peer. The other peer is
 **not notified directly** — it only discovers the on-chain transition when it
 sees the channel coin being spent on the blockchain.
 
-This is enforced in `SynchronousGameCradleState`:
+This is enforced in `GameSessionState`:
 
 - A `peer_disconnected: bool` flag is set to `true` at the start of
-`GameCradle::go_on_chain`, before any on-chain logic runs.
+`GameSession::go_on_chain`, before any on-chain logic runs.
 - The same flag is also set from channel status transitions in
 `emit_channel_status_if_changed` when state becomes `GoingOnChain`,
 `Unrolling`, or (`ResolvedUnrolled`/`ResolvedStale` while already on-chain).
 - `PacketSender::send_message` silently drops outbound messages when
 `peer_disconnected` is true.
-- `GameCradle::deliver_message` silently drops inbound messages when
+- `GameSession::deliver_message` silently drops inbound messages when
 `peer_disconnected` is true.
 
 After disconnection, all state updates come from coin-watching events. The
@@ -221,14 +221,14 @@ disconnected peer's own unroll transaction is detected via the same
 `handle_channel_coin_spent` path that handles opponent-initiated unrolls (see
 [Unified Path](ON_CHAIN.md#unified-path)).
 
-Historically, `ChannelHandler` had an `initiated_on_chain` field intended for
+Historically, `ChannelState` had an `initiated_on_chain` field intended for
 transition bookkeeping. In current code, the behavior above is enforced by
-peer disconnection and handler replacement (`PotatoHandler -> SpendChannelCoinHandler`)
+peer disconnection and handler replacement (`OffChainPhase -> SpendChannelCoinPhase`)
 rather than by checking `initiated_on_chain` at runtime.
 
-**Key code:** `src/peer_container.rs` — `go_on_chain`,
+**Key code:** `src/game_session.rs` — `go_on_chain`,
 `emit_channel_status_if_changed`, `send_message`, `deliver_message`;
-`src/potato_handler/mod.rs` — `go_on_chain`, `take_channel_spend_replacement`
+`src/session_phases/mod.rs` — `go_on_chain`, `take_channel_spend_next_phase`
 
 ### Peer Error Escalation
 
@@ -240,7 +240,7 @@ the channel lifecycle stage:
 
 **Before funding transaction is submitted** (early handshake — steps A through
 C/D): No money is on-chain. The handshake handler sets an internal `failed`
-flag, `channel_status_snapshot()` returns `ChannelState::Failed`, and the
+flag, `channel_status_snapshot()` returns `ChannelStatus::Failed`, and the
 session is terminally dead. No dispute is needed because no funds are at risk.
 
 **After funding transaction is submitted but before channel coin confirms**
@@ -252,17 +252,17 @@ inclusion. Two outcomes are possible:
    independently emits a `Failed` channel status. Funds return to the wallets.
 
 2. The channel coin **appears on-chain** despite the peer being hostile.
-   `coin_created` fires, the handshake handler transitions to `PotatoHandler`
+   `coin_created` fires, the handshake handler transitions to `OffChainPhase`
    via `take_replacement()`. After the swap, `process_effects` sees
    `peer_disconnected && handshake_finished() && !is_on_chain` and immediately
-   calls `go_on_chain(true)` on the new `PotatoHandler`, submitting the unroll
+   calls `go_on_chain(true)` on the new `OffChainPhase`, submitting the unroll
    transaction. From this point forward, the normal dispute resolution path
    applies.
 
-**After channel coin is confirmed** (active play in `PotatoHandler`): The
+**After channel coin is confirmed** (active play in `OffChainPhase`): The
 normal `go_on_chain` path runs immediately — cancel proposals, build the
 channel-to-unroll spend bundle, submit it, and transition through
-`SpendChannelCoinHandler` into `OnChainGameHandler`.
+`SpendChannelCoinPhase` into `OnChainPhase`.
 
 This means a hostile peer cannot cause silent data loss regardless of when the
 attack occurs. Pre-funding errors are cheap (just abort). Post-funding errors
@@ -279,7 +279,7 @@ Rather than implementing transactional rollback (expensive and masks the bug),
 the cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
 The JS-side game action methods (`proposeGame`, `acceptProposal`,
-`cancel_proposal`, `makeMove`, `acceptTimeout`, `cheat`) also catch WASM
+`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
 throws and surface them through the UI error dialog. This makes local bugs
 immediately visible and diagnosable without adding rollback complexity.
 
@@ -287,8 +287,8 @@ immediately visible and diagnosable without adding rollback complexity.
 
 ## Batch Rollback Scope
 
-When a `PeerMessage::Batch` is received, `pass_on_channel_handler_message`
-snapshots both `channel_handler` and `game_action_queue` before calling
+When a `PeerMessage::Batch` is received, `pass_on_channel_state_message`
+snapshots both `channel_state` and `game_action_queue` before calling
 `process_received_batch` and restores them on error. This makes the peer's batch
 actions atomic across the state that matters for later dispute recovery: if any
 action in the batch fails validation or signature verification fails, channel
@@ -301,9 +301,9 @@ that stale queue leaked into `go_on_chain`, the on-chain handler could attempt
 local responses that were only stale because the failed peer batch partially ran.
 The invariant is therefore:
 
-- **Peer batch failure is atomic.** No `ChannelHandler` mutations and no
+- **Peer batch failure is atomic.** No `ChannelState` mutations and no
   peer-induced `game_action_queue` changes survive a failed received batch.
-- **Bad peer data escalates.** Ordinary `PotatoHandler::received_message` errors
+- **Bad peer data escalates.** Ordinary `OffChainPhase::received_message` errors
   call `go_on_chain(..., true)` after rollback. That is the protocol response to
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
@@ -314,10 +314,10 @@ Fields updated after successful signature verification, such as `have_potato`
 and `last_channel_coin_spend_info`, are outside the rollback problem because
 they are only advanced after the received batch is valid.
 
-**Key code:** `src/potato_handler/mod.rs` — `pass_on_channel_handler_message`
+**Key code:** `src/session_phases/mod.rs` — `pass_on_channel_state_message`
 (snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
 `drain_queue_into_batch`; regression:
-`failed_final_move_bad_signature_does_not_queue_accept_timeout`
+`failed_final_move_bad_signature_does_not_queue_accept_settlement`
 
 ---
 
@@ -357,7 +357,7 @@ mutations survive.
 
 ---
 
-## cached_last_actions and the Redo Mechanism
+## cached_redo_actions and the Redo Mechanism
 
 ### Design Principle
 
@@ -368,45 +368,45 @@ This is the "redo" mechanism.
 
 ### Lifecycle
 
-`cached_last_actions` on the `ChannelHandler` is a
-`Vec<CachedPotatoRegenerateLastHop>` (defined in
-`src/channel_handler/types/potato.rs`) that stores data for unacknowledged
+`cached_redo_actions` on the `ChannelState` is a
+`Vec<CachedRedoActions>` (defined in
+`src/channel_state/types/potato.rs`) that stores data for unacknowledged
 outgoing actions. Because a single batch can contain multiple moves and game
 acceptances across different games, multiple entries may need to be redone
 on-chain.
 
 There are three kinds of cached entries:
 
-- `**PotatoMoveHappening`** — a move we sent but the opponent hasn't acknowledged.
+- `**CachedSendMove`** — a move we sent but the opponent hasn't acknowledged.
 Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
 and the post-move puzzle hash (`saved_post_move_last_ph`).
-- `**PotatoAcceptTimeout`** — a game acceptance we sent. Stores the game ID, puzzle
+- `**CachedAcceptSettlement`** — a game acceptance we sent. Stores the game ID, puzzle
 hash, live game state, and reward amounts. When the potato returns
-(acknowledgment), `drain_cached_accept_timeouts` emits `WeTimedOut` for each cached
-accept.
+(acknowledgment), `drain_cached_accept_settlements` emits `GameSettled` with
+`outcome: accept_settlement` for each cached accept.
 - `**ProposalAccepted**` — a proposal acceptance we sent. Stores the game ID.
 Used during stale unroll handling to distinguish in-flight proposal accepts
 (which get `EndedCancelled`) from fully established games (which get
 `GameError`).
 
 **Set** in `send_move_no_finalize` (moves) and
-`send_accept_timeout_no_finalize` (accept-timeouts).
+`send_accept_settlement_no_finalize` (accept settlements).
 
 **Cleared** (selectively) when we receive the potato back:
 
-- `PotatoMoveHappening` entries are cleared in `verify_received_batch_signatures`
+- `CachedSendMove` entries are cleared in `verify_received_batch_signatures`
 and `received_empty_potato` (the opponent's response acknowledges our moves).
 - `ProposalAccepted` entries are also cleared on potato receive.
-- `PotatoAcceptTimeout` entries are **retained** across those clears and only drained
-later by `drain_cached_accept_timeouts` during `update_channel_coin_after_receive` or
-clean shutdown, when `WeTimedOut` notifications are emitted.
+- `CachedAcceptSettlement` entries are **retained** across those clears and only drained
+later by `drain_cached_accept_settlements` during `update_channel_coin_after_receive` or
+clean shutdown, when `GameSettled` notifications are emitted.
 
 ### How Redo Works
 
 When game coins are created after an unroll, `set_state_for_coins` checks each
-coin's puzzle hash against all entries in `cached_last_actions`:
+coin's puzzle hash against all entries in `cached_redo_actions`:
 
-1. **Coin PH matches a `PotatoMoveHappening.match_puzzle_hash`**: The game coin is at
+1. **Coin PH matches a `CachedSendMove.match_puzzle_hash`**: The game coin is at
    the state our cached move operates on. A redo is needed to replay that move
    on-chain. Set `our_turn = true`.
 2. **Coin PH == `last_referee_puzzle_hash`**: The game coin is at the latest
@@ -417,7 +417,7 @@ coin's puzzle hash against all entries in `cached_last_actions`:
 `send_potato_move`, the `puzzle_hash_for_unroll` in the move result is the
 curried referee puzzle hash of the **pre-move** state (computed from
 `self.spend_this_coin()` before updating the referee). This value is stored as
-`match_puzzle_hash` in `cached_last_actions`. It corresponds to the puzzle
+`match_puzzle_hash` in `cached_redo_actions`. It corresponds to the puzzle
 hash the unroll coin would create for this game coin if the unroll resolved
 at the state *before* our move — which is exactly the puzzle hash that
 appears on-chain in both the non-stale redo case and in a stale unroll at
@@ -429,7 +429,7 @@ different games. Redo transactions are emitted in parallel during
 the handler's `pending_moves` map for each one.
 
 **In-flight proposal acceptances** (`ProposalAccepted` entries in
-`cached_last_actions`) don't trigger a redo — if the game coin never
+`cached_redo_actions`) don't trigger a redo — if the game coin never
 materialized on-chain, the game is cancelled (`EndedCancelled`).
 
 ### When Redo Happens (and When It Doesn't)
@@ -449,7 +449,7 @@ included in the unroll data)
 
 When `go_on_chain` is called, all incoming peer messages are black-holed (see
 [Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent actions
-(adding to `cached_last_actions`) but the peer's response — which would normally
+(adding to `cached_redo_actions`) but the peer's response — which would normally
 clear the entries — arrives *after* the disconnect, the entries remain.
 This is expected and correct: the stale cache causes `set_state_for_coins` to
 detect that redos or cancellations are needed, replaying our unacknowledged
@@ -459,7 +459,7 @@ moves and timeout claims on-chain.
 
 There are two sources of on-chain actions after `go_on_chain`:
 
-- **Redo actions** (from `cached_last_actions`): moves or accept-timeouts we
+- **Redo actions** (from `cached_redo_actions`): moves or accept settlements we
 already sent with the last potato but that weren't acknowledged before going
 on-chain. These apply to games where **it was our turn and we acted**.
 - **User-queued actions** (from `game_action_queue`): moves the user queued
@@ -490,14 +490,14 @@ step.
 
 ### How It Works
 
-When `cheat()` is called on a `GameCradle`:
+When `cheat()` is called on a `GameSession`:
 
 1. A `GameAction::Cheat(game_id, mover_share, entropy)` is queued internally.
 2. Like a normal `Move`, the `Cheat` action is deferred until it is the
   player's turn.
 3. When processed (off-chain in `drain_queue_into_batch` or on-chain in
   `do_on_chain_action`), the handler atomically:
-  - Enables cheating on the `ChannelHandler`'s referee for that game,
+  - Enables cheating on the `ChannelState`'s referee for that game,
   substituting `0x80` (nil) as the move bytes and the given `mover_share`
   (which becomes the victim's share on timeout).
   - Executes the move through the normal referee path. The referee bypasses
@@ -510,16 +510,16 @@ When `cheat()` is called on a `GameCradle`:
 
 | Scenario                        | Notification (cheater)                                       | Notification (victim)                                         |
 | ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
-| Opponent detects and slashes    | `OpponentSlashedUs`                                          | `WeSlashedOpponent`                                           |
-| Opponent fails to slash in time | `OpponentTimedOut` (cheater receives `amount - mover_share`) | `OpponentSuccessfullyCheated` (victim receives `mover_share`) |
+| Opponent detects and slashes    | `GameSettled { outcome: opponent_slashed_us, … }`             | `GameSettled { outcome: slashed_opponent, … }`                |
+| Opponent fails to slash in time | `GameSettled { outcome: opponent_timed_out, … }`             | `GameSettled { outcome: opponent_cheated, … }`                |
 
 
 **Key code:**
 
-- `src/peer_container.rs` — `SynchronousGameCradle::cheat`
-- `src/potato_handler/types.rs` — `GameAction::Cheat`
-- `src/potato_handler/mod.rs` — `cheat_game`, `drain_queue_into_batch` (Cheat arm)
-- `src/potato_handler/on_chain.rs` — `do_on_chain_action` (Cheat arm)
+- `src/game_session.rs` — `GameSession::cheat`
+- `src/session_phases/types.rs` — `GameAction::Cheat`
+- `src/session_phases/mod.rs` — `cheat_game`, `drain_queue_into_batch` (Cheat arm)
+- `src/session_phases/on_chain.rs` — `do_on_chain_action` (Cheat arm)
 - `wasm/src/mod.rs` — WASM `cheat` binding
 
 ---
@@ -579,20 +579,20 @@ The debug game (`b"debug"`) is a minimal game used for tests that need precise
 control over `mover_share`. It is registered in the Rust game table for test
 infrastructure only, not as a user-facing game. Its core handler/curry wiring
 lives in `src/test_support/debug_game.rs`, while `DebugGameTestMove::new(mover_share, slash)`
-is defined in `src/simulator/tests/potato_handler_sim.rs`.
+is defined in `src/simulator/tests/session_phases_sim.rs`.
 
 ### Simulation Test Actions
 
 Tests drive the simulation loop with a sequence of `GameAction` values defined
-in `src/test_support/game.rs`. The current action catalog, trigger semantics,
+in `src/test_support/sim_script.rs`. The current action catalog, trigger semantics,
 two-phase `AcceptProposal` behavior, and stall-detection notes live in
 `SIMULATOR_TESTING.md`.
 
 **Key code:**
 
 - `src/test_support/debug_game.rs` — `DebugGameHandler` and debug game registration
-- `src/simulator/tests/potato_handler_sim.rs` — `DebugGameTestMove` and integration scenarios
-- `src/test_support/game.rs` — `GameAction` enum (sim-tests variant)
+- `src/simulator/tests/session_phases_sim.rs` — `DebugGameTestMove` and integration scenarios
+- `src/test_support/sim_script.rs` — `GameAction` enum (sim-tests variant)
 - `SIMULATOR_TESTING.md` — simulator testing reference
 
 ---
