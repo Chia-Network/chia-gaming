@@ -143,10 +143,19 @@ app.use(
 );
 
 app.use((req, res, next) => {
-  res.set('Cache-Control',
-    req.path.startsWith('/app/')
-      ? 'public, max-age=31536000, immutable'
-      : 'no-store');
+  // Nonce /app/* URLs change every rebuild; only root shell/meta are stable.
+  const p = req.path;
+  let cc: string;
+  if (p.startsWith('/app/')) {
+    cc = 'public, max-age=31536000, immutable';
+  } else if (p === '/build-meta.json') {
+    cc = 'no-store';
+  } else if (p === '/' || p === '/index.html' || p.endsWith('.html')) {
+    cc = 'no-cache';
+  } else {
+    cc = 'public, max-age=86400';
+  }
+  res.set('Cache-Control', cc);
   next();
 });
 
