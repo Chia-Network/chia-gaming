@@ -893,6 +893,8 @@ const Shell = () => {
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
   const dashboardSessionModelRef = useRef<SessionModel | null>(null);
+  /** Bumped on cancel so in-flight startFreshSessionWithPeer aborts after awaits. */
+  const sessionStartEpochRef = useRef(0);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -978,7 +980,8 @@ const Shell = () => {
     setPeerLiveness(null);
   }, []);
 
-  const cancelAttemptedSession = useCallback(() => {
+  const cancelAttemptedSession = useCallback((options?: { error?: boolean }) => {
+    sessionStartEpochRef.current += 1;
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
     resetPeerRelayState();
@@ -1003,7 +1006,7 @@ const Shell = () => {
     setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
     setSessionPhase('none');
-    setSessionError(false);
+    setSessionError(!!options?.error);
     setSessionConfig(null);
     setPeerConn(null);
     dashboardSessionModelRef.current = null;
@@ -1017,6 +1020,7 @@ const Shell = () => {
   const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
     const conn = hubConnRef.current;
     if (!conn) return;
+    const epoch = sessionStartEpochRef.current;
 
     let myContribution: bigint;
     let theirContribution: bigint;
@@ -1063,6 +1067,10 @@ const Shell = () => {
       ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
     });
     await flushSessionSave();
+    if (epoch !== sessionStartEpochRef.current) {
+      log(`[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`);
+      return;
+    }
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
@@ -1296,12 +1304,14 @@ const Shell = () => {
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
+          // Hub advisory while we are already mid-matchmaking/session: ignore.
+          // Do not session_reject the peer — advisory is not a peer request.
           if (!isAvailableForNewSessionPrompt()) {
-            sendSessionReject(params.peer_id);
+            log(`[Shell] advisory_start ignored: unavailable peer=${params.peer_id} phase=${sessionPhaseRef.current}`);
             return;
           }
           if (!isValidTimeoutString(params.channel_timeout) || !isValidTimeoutString(params.unroll_timeout)) {
-            sendSessionReject(params.peer_id);
+            log(`[Shell] advisory_start ignored: invalid timeouts peer=${params.peer_id}`);
             return;
           }
           setPendingAdvisoryState(params);
@@ -1319,10 +1329,12 @@ const Shell = () => {
           if (msg.type === 'session_proposal') {
             const peerAlias = fromAlias || msg.from_alias || fromId;
             if (!isAvailableForNewSessionPrompt()) {
+              log(`[Shell] session_reject to=${fromId}: proposal while unavailable phase=${sessionPhaseRef.current}`);
               sendSessionReject(fromId);
               return;
             }
             if (!isValidTimeoutString(msg.channel_timeout) || !isValidTimeoutString(msg.unroll_timeout)) {
+              log(`[Shell] session_reject to=${fromId}: proposal invalid timeouts`);
               sendSessionReject(fromId);
               return;
             }
@@ -1342,10 +1354,11 @@ const Shell = () => {
             setActiveTab('game');
           } else if (msg.type === 'session_reject') {
             if (ps?.peerId === fromId) {
+              log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
               markPeerDead();
               const channelState = dashboardSessionModelRef.current?.channel.status.state;
               if (shouldCancelOnPeerUnreachable(sessionPhaseRef.current, channelState)) {
-                cancelAttemptedSession();
+                cancelAttemptedSession({ error: true });
               }
             }
           }
@@ -1653,6 +1666,7 @@ const Shell = () => {
   }, []);
 
   const cancelDashboardSession = useCallback((options?: { retainFinishedGuard?: boolean }) => {
+    sessionStartEpochRef.current += 1;
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
     // Terminal/clean finish must not send session_reject — that signal means

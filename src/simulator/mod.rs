@@ -840,21 +840,36 @@ impl Simulator {
             &change_amt,
         );
 
-        let conditions = (
-            (
-                CREATE_COIN,
-                (identity_target.clone(), (target_amt.clone(), ())),
-            ),
+        // Omit zero-value change CREATE_COIN (invalid / useless); used when burning
+        // an entire coin to a sink puzzle hash.
+        let conditions = if change_amt.to_u64() == 0 {
+            // Proper one-element condition list: ((CREATE_COIN ...) .)
             (
                 (
                     CREATE_COIN,
-                    (identity_source.puzzle_hash.clone(), (change_amt, ())),
+                    (identity_target.clone(), (target_amt.clone(), ())),
                 ),
                 (),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()?;
+            )
+                .to_clvm(allocator)
+                .into_gen()?
+        } else {
+            (
+                (
+                    CREATE_COIN,
+                    (identity_target.clone(), (target_amt.clone(), ())),
+                ),
+                (
+                    (
+                        CREATE_COIN,
+                        (identity_source.puzzle_hash.clone(), (change_amt, ())),
+                    ),
+                    (),
+                ),
+            )
+                .to_clvm(allocator)
+                .into_gen()?
+        };
         let quoted_conditions = conditions.to_quoted_program(allocator)?;
         let quoted_conditions_hash = quoted_conditions.sha256tree(allocator);
         let standard_solution = solution_for_conditions(allocator, conditions)?;
