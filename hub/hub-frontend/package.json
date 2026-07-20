@@ -2,7 +2,7 @@
   "name": "chia-gaming-hub-frontend",
   "version": "1.0.0",
   "license": "Apache-2.0",
-  "description": "Chia Gaming Hub Frontend (lobby UX)",
+  "description": "Chia Gaming Hub Frontend (hub UX)",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {

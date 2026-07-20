@@ -28,7 +28,7 @@ export class Hub {
     return existing;
   }
 
-  /** Returns false when the player is not in the lobby (busy deferred until join). */
+  /** Returns false when the player is not in the hub (busy deferred until join). */
   setPlayerStatus(playerId: string, status: PlayerStatus, opponentAlias?: string): boolean {
     const player = this.players[playerId];
     if (!player) return false;
