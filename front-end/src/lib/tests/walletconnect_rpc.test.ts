@@ -59,6 +59,28 @@ describe('WalletConnect RPC adapter', () => {
     await expect(rpc.getWalletBalance({ walletId: 1n })).resolves.toMatchObject({
       confirmedWalletBalance: 11n,
     });
+
+    expect(requestMock.mock.calls[0][0].request.params).toMatchObject({
+      walletId: 1n,
+      fingerprint: 123,
+    });
+  });
+
+  it('rewrites only negative request bigints to decimal strings for the WC wire', async () => {
+    requestMock.mockResolvedValueOnce({ success: true });
+
+    await rpc.createOfferForIds({
+      offer: { '1': 100n, '2': -50n },
+      fee: 1n,
+      driverDict: {},
+    });
+
+    expect(requestMock.mock.calls[0][0].request.params).toEqual({
+      offer: { '1': 100n, '2': '-50' },
+      fee: 1n,
+      driverDict: {},
+      fingerprint: 123,
+    });
   });
 
   it('rejects WalletConnect error payloads with method context', async () => {
