@@ -558,6 +558,53 @@ function SpacePokerHand({
   );
 }
 
+interface KrunkHandProps {
+  gameObject: SessionController;
+  currentHandGameIds: string[];
+  activeGameIds: string[];
+  iProposedHand: boolean;
+  gameplayEvent$: Observable<GameplayEvent>;
+  betSize: bigint;
+  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
+  appendGameLog: (line: string) => void;
+  myName?: string;
+  opponentName?: string;
+}
+
+function KrunkHand({
+  gameObject,
+  currentHandGameIds,
+  activeGameIds,
+  iProposedHand,
+  gameplayEvent$,
+  betSize,
+  onTurnChanged,
+  appendGameLog,
+  myName,
+  opponentName,
+}: KrunkHandProps) {
+  // Header (role + stake) is included in each block from formatKrunkHandLog.
+  const handleGameLog = useCallback((lines: string[]) => {
+    lines.forEach(l => appendGameLog(l));
+    appendGameLog('');
+  }, [appendGameLog]);
+
+  return (
+    <Krunk
+      gameObject={gameObject}
+      currentHandGameIds={currentHandGameIds}
+      activeGameIds={activeGameIds}
+      iProposedHand={iProposedHand}
+      gameplayEvent$={gameplayEvent$}
+      betSize={betSize}
+      onTurnChanged={onTurnChanged}
+      onGameLog={handleGameLog}
+      myName={myName}
+      opponentName={opponentName}
+    />
+  );
+}
+
 
 function ComposeProposalDialog({
   session,
@@ -964,7 +1011,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                   opponentName={params.opponentAlias}
                 />
               ) : gameSpecificView.gameType === 'krunk' ? (
-                <Krunk
+                <KrunkHand
                   key={session.handKey}
                   gameObject={session.sessionController}
                   currentHandGameIds={session.currentHandGameIds}
@@ -973,6 +1020,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                   gameplayEvent$={session.gameplayEvent$}
                   betSize={session.currentHandAmount}
                   onTurnChanged={session.onTurnChanged}
+                  appendGameLog={session.appendGameLog}
                   myName={params.myAlias}
                   opponentName={params.opponentAlias}
                 />

@@ -10,8 +10,10 @@ import {
   krunkWinMessage,
   KrunkHandler,
   KrunkGuess,
+  KrunkRole,
 } from '../hooks/useKrunkHand';
 import { GameplayEvent } from '../hooks/useGameSession';
+import { formatAmount } from '../util';
 
 export interface KrunkProps {
   gameObject: SessionController;
@@ -21,8 +23,30 @@ export interface KrunkProps {
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: bigint;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
+  onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
+}
+
+const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
+
+/** Session-history lines for one finished Krunk half (picker or guesser). */
+export function formatKrunkHandLog(
+  role: KrunkRole,
+  betSize: bigint,
+  guesses: KrunkGuess[],
+  revealedWord: string | null,
+): string[] {
+  const roleLabel = role === 'alice' ? 'picking' : 'guessing';
+  const lines = [`Krunk (${roleLabel}) ${formatAmount(betSize)}`];
+  for (const g of guesses) {
+    lines.push(g.clue.map(v => CLUE_TILE[v]).join('') + g.word);
+  }
+  const solved = guesses.some(g => g.clue.every(v => v === 2));
+  if (!solved && revealedWord) {
+    lines.push('⬛⬛⬛⬛⬛' + revealedWord);
+  }
+  return lines;
 }
 
 export function krunkGameSlots(
@@ -199,9 +223,10 @@ const Krunk: React.FC<KrunkProps> = ({
   activeGameIds,
   iProposedHand,
   gameplayEvent$,
-  betSize: _betSize,
+  betSize,
   onTurnChanged,
-  myName,
+  onGameLog,
+  myName: _myName,
   opponentName,
 }) => {
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
@@ -248,6 +273,48 @@ const Krunk: React.FC<KrunkProps> = ({
     onBobTurnChanged,
     bobActive,
   );
+
+  // Write each half to the session history panel when it finishes.
+  // The two games can complete at different times; log them separately.
+  const aliceLogFiredRef = useRef(false);
+  const bobLogFiredRef = useRef(false);
+  useEffect(() => {
+    if (aliceHand.gameState.handler !== KrunkHandler.Terminal || aliceLogFiredRef.current) {
+      return;
+    }
+    aliceLogFiredRef.current = true;
+    onGameLog(formatKrunkHandLog(
+      'alice',
+      betSize,
+      aliceHand.gameState.guesses,
+      aliceHand.gameState.revealedWord ?? aliceHand.gameState.secretWord,
+    ));
+  }, [
+    aliceHand.gameState.handler,
+    aliceHand.gameState.guesses,
+    aliceHand.gameState.revealedWord,
+    aliceHand.gameState.secretWord,
+    betSize,
+    onGameLog,
+  ]);
+  useEffect(() => {
+    if (bobHand.gameState.handler !== KrunkHandler.Terminal || bobLogFiredRef.current) {
+      return;
+    }
+    bobLogFiredRef.current = true;
+    onGameLog(formatKrunkHandLog(
+      'bob',
+      betSize,
+      bobHand.gameState.guesses,
+      bobHand.gameState.revealedWord,
+    ));
+  }, [
+    bobHand.gameState.handler,
+    bobHand.gameState.guesses,
+    bobHand.gameState.revealedWord,
+    betSize,
+    onGameLog,
+  ]);
 
   // Word picker gate: must commit secret word (alice side) before Bob input.
   const wordCommitted = aliceHand.gameState.handler !== KrunkHandler.WaitingCommit;

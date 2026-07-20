@@ -16,7 +16,7 @@ import {
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
-import { krunkGameSlots } from '../../components/Krunk';
+import { formatKrunkHandLog, krunkGameSlots } from '../../components/Krunk';
 
 describe('Krunk terms', () => {
   it('clears proposal terms, group links, and outgoing refs together', () => {
@@ -200,6 +200,71 @@ describe('Krunk first guess drafting', () => {
     expect(krunkWinMessage('999999')).toBe('You won 999999 mojo!');
     expect(krunkWinMessage('1000000')).toBe('You won 0.000001 chia!');
     expect(krunkWinMessage('1000000000000')).toBe('You won 1 chia!');
+  });
+
+  it('formats a solved guessing hand for session history', () => {
+    expect(formatKrunkHandLog(
+      'bob',
+      10_000_000_000n, // 0.01 XCH
+      [
+        { word: 'RATES', clue: [0, 0, 0, 0, 1] },
+        { word: 'SPOIL', clue: [1, 0, 1, 0, 0] },
+        { word: 'MOUSY', clue: [0, 2, 0, 2, 2] },
+        { word: 'BOSSY', clue: [2, 2, 2, 2, 2] },
+      ],
+      'BOSSY',
+    )).toEqual([
+      'Krunk (guessing) 0.01 XCH',
+      '⬛⬛⬛⬛🟧RATES',
+      '🟧⬛🟧⬛⬛SPOIL',
+      '⬛🟩⬛🟩🟩MOUSY',
+      '🟩🟩🟩🟩🟩BOSSY',
+    ]);
+  });
+
+  it('formats a missed picking hand with a gray reveal line', () => {
+    expect(formatKrunkHandLog(
+      'alice',
+      10_000_000_000n,
+      [
+        { word: 'RATES', clue: [1, 0, 0, 0, 0] },
+        { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
+        { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'CROWN', clue: [0, 2, 2, 2, 2] },
+      ],
+      'FROWN',
+    )).toEqual([
+      'Krunk (picking) 0.01 XCH',
+      '🟧⬛⬛⬛⬛RATES',
+      '⬛🟩🟩⬛🟩GROIN',
+      '⬛🟩🟩🟩🟩BROWN',
+      '⬛🟩🟩🟩🟩DROWN',
+      '⬛🟩🟩🟩🟩CROWN',
+      '⬛⬛⬛⬛⬛FROWN',
+    ]);
+  });
+
+  it('omits the reveal line when a guess is all green', () => {
+    expect(formatKrunkHandLog(
+      'bob',
+      10_000_000_000n,
+      [
+        { word: 'RATES', clue: [1, 0, 0, 0, 0] },
+        { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
+        { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'FROWN', clue: [2, 2, 2, 2, 2] },
+      ],
+      'FROWN',
+    )).toEqual([
+      'Krunk (guessing) 0.01 XCH',
+      '🟧⬛⬛⬛⬛RATES',
+      '⬛🟩🟩⬛🟩GROIN',
+      '⬛🟩🟩🟩🟩BROWN',
+      '⬛🟩🟩🟩🟩DROWN',
+      '🟩🟩🟩🟩🟩FROWN',
+    ]);
   });
 
   it('routes a typed move rejection with its game id, tag, and message', () => {
