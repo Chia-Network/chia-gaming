@@ -199,6 +199,7 @@ describe('RealBlockchainInterface', () => {
 
   it('retries remote-wallet setup after a transient getWallets failure', async () => {
     jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const address = encodePuzzleHashToBech32m('11'.repeat(32));
       mockGetNextAddress.mockResolvedValue(address);
@@ -218,6 +219,7 @@ describe('RealBlockchainInterface', () => {
       for (let i = 0; i < 10; i++) await Promise.resolve();
       expect(mockGetWallets).toHaveBeenCalledTimes(1);
       expect(events).toEqual([]);
+      expect(warnSpy).toHaveBeenCalled();
 
       // Retry tick starts getWallets #2; the following tick observes remoteWalletId.
       jest.advanceTimersByTime(500);
@@ -228,6 +230,7 @@ describe('RealBlockchainInterface', () => {
       for (let i = 0; i < 10; i++) await Promise.resolve();
       expect(events).toEqual([true]);
     } finally {
+      warnSpy.mockRestore();
       jest.useRealTimers();
     }
   });

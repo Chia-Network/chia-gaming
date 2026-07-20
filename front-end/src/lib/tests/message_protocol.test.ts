@@ -448,19 +448,24 @@ describe('durability failures', () => {
     const sub = blob.getObservable().subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     clearTestGlobal('indexedDB');
+    try {
+      blob.deliverMessage(1n, enc('trigger'));
+      blob.flushDeferredWork();
+      await expect(blob.flushPendingWork()).rejects.toThrow('IndexedDB is unavailable');
 
-    blob.deliverMessage(1n, enc('trigger'));
-    blob.flushDeferredWork();
-    await expect(blob.flushPendingWork()).rejects.toThrow('IndexedDB is unavailable');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('remain queued');
+      expect(sentMessages).toEqual([]);
+      expect(sentAcks).toEqual([]);
+      expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      setTestGlobal('indexedDB', testIndexedDb);
+    }
 
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain('remain queued');
-    expect(sentMessages).toEqual([]);
-    expect(sentAcks).toEqual([]);
-    expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
-
-    setTestGlobal('indexedDB', testIndexedDb);
     await blob.flushPendingSave();
     await blob.flushPendingWork();
 
