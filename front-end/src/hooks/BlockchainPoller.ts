@@ -216,11 +216,14 @@ export class BlockchainPoller {
     this.refreshCoinInterest();
   }
 
+  /**
+   * Stop game-session height/coin watching. Does not stop wallet balance
+   * interest — that is wallet-lifetime (`stopBalanceInterest` / deactivate).
+   */
   stop() {
     this.running = false;
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();
-    this.balancePollingScheduler.stop();
   }
 
   private collectGameSessionCoins(): Array<{ c: PollingGameSession; coins: CoinPollInterest[] }> {

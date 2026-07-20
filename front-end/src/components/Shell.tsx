@@ -1799,10 +1799,11 @@ const Shell = () => {
   }, []);
 
   const handleTerminal = useCallback(() => {
-    // Phase→resolved owns soft finish (preserves dashboard + sessionError).
-    // Terminal only stops balance polling once the cradle reports done.
-    stopBalancePolling();
-  }, [stopBalancePolling]);
+    // Session end tears down the cradle, not the wallet. Keep balance interest
+    // and nudge an immediate poll so settlement payouts show up promptly.
+    const bcType = blockchainTypeRef.current;
+    if (bcType) startBalancePolling(bcType);
+  }, [startBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
