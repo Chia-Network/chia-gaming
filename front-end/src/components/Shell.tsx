@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import FinishedSessionGameView from './FinishedSessionGameView';
+import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, HubLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
@@ -1708,14 +1709,18 @@ const Shell = () => {
   const finishResolvedSessionDisplay = useCallback((hasError: boolean) => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const model = dashboardSessionModelRef.current;
+    // Authoritative last hand — dashboard model can lag behind setHandState
+    // because controller writes do not always trigger a sessionModel push.
+    const liveHandState = sessionController?.handState ?? model?.game.handState ?? null;
     sessionFinishedCleanupRef.current = true;
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');
     setSessionError(hasError);
     hubConnRef.current?.setBusy(false, alias);
 
-    // Stop the live peer route and gameSession; do not send session_reject and do
-    // not wipe the dashboard model (that would flash "No Session").
+    // Stop the live peer route and WASM session without unmounting GameSession.
+    // Its existing game subtree transitions to frozen mode in place, preserving
+    // the terminal UI state produced by the game's Settled handler.
     resetPeerRelayState();
     destroySessionController();
 
@@ -1724,9 +1729,19 @@ const Shell = () => {
     // still auto-connecting the saved hub. Keep handState/terminal/aliases in
     // the save + sessionSaveRef so the Game tab can freeze the last hand.
     if (model) {
-      const status = model.channel.status;
+      const freezeModel: SessionModel = {
+        ...model,
+        game: {
+          ...model.game,
+          handState: liveHandState,
+        },
+      };
+      dashboardSessionModelRef.current = freezeModel;
+      setDashboardSessionModel(freezeModel);
+
+      const status = freezeModel.channel.status;
       const finishedPatch: Partial<SessionSave> = {
-        ...snapshotFromSessionModel(model),
+        ...snapshotFromSessionModel(freezeModel),
         serializedGameSession: undefined,
         gameSessionSchemaVersion: undefined,
         pairingToken: undefined,
@@ -1742,7 +1757,7 @@ const Shell = () => {
           game_allocated: status.gameAllocated,
           have_potato: status.havePotato,
         },
-        cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
+        cleanShutdownStarted: freezeModel.channel.cleanShutdownStarted || undefined,
         myAlias: sessionConfigRef.current?.myAlias
           ?? sessionSaveRef.current?.myAlias
           ?? alias,
@@ -1769,10 +1784,7 @@ const Shell = () => {
     markSavedSession();
 
     sessionSavePropRef.current = undefined;
-    sessionStartedRef.current = false;
     clearSessionTimers();
-    setSessionConfig(null);
-    setPeerConn(null);
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
@@ -2921,7 +2933,7 @@ const Shell = () => {
             ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
               <div className='relative w-full h-full'>
                 <FinishedSessionGameView
-                  model={dashboardSessionModel}
+                  model={sessionModelForReactProps(dashboardSessionModel)}
                   myName={sessionSaveRef.current?.myAlias ?? peekAlias()}
                   opponentName={sessionSaveRef.current?.opponentAlias}
                   iStarted={sessionSaveRef.current?.iStarted ?? false}

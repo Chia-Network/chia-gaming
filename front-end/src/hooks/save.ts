@@ -6,6 +6,7 @@ import {
   writeSessionRecord,
 } from '../lib/session/indexedDb';
 import { isDenseNumericByteObject } from '../lib/reactPropSafe';
+import type { SettlementOutcome } from '../lib/settlement';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -38,6 +39,7 @@ export interface CalpokerHandState {
   isPlayerTurn: boolean;
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+  settlementOutcome?: SettlementOutcome | null;
 }
 
 export interface PersistedGameState<T = unknown> {

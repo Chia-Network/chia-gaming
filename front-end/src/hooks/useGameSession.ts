@@ -637,7 +637,12 @@ export function useGameSession(
   const { iStarted, myContribution, theirContribution, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
-  const { sessionController: sc } = getOrCreateSessionController(
+  // A resolved session deliberately destroys the global WASM controller while
+  // this component stays mounted to preserve the final hand UI. Retain the
+  // controller this session mounted with instead of consulting the singleton
+  // again on the resolved render, which would create a replacement controller
+  // and remount the hand subtree.
+  const [sc] = useState(() => getOrCreateSessionController(
     blockchain,
     peerConn,
     registerMessageHandler,
@@ -652,7 +657,7 @@ export function useGameSession(
     Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
     Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
     onTerminal,
-  );
+  ).sessionController);
 
   if (params.myAlias) sc.myAlias = params.myAlias;
   if (params.opponentAlias) sc.opponentAlias = params.opponentAlias;
@@ -1415,6 +1420,29 @@ export function useGameSession(
       const settled = n.GameSettled as GameSettledPayload | undefined;
       if (!settled) return;
       const terminalId = String(settled.id);
+      // Notify the hand UX before awaiting coin-id resolution. A slow/failed
+      // coin lookup used to delay Settled until after the board had already
+      // been left mid-hand (timeout banner up, betting UI still active).
+      const earlyTerminal = terminalInfoFromGameSettled(settled, null);
+      setGameTerminal(earlyTerminal);
+      // Show each member of an atomic hand as terminal immediately. Keep its
+      // id active until coin-id resolution completes, so another Krunk hand
+      // remains live and the session cannot resolve prematurely.
+      updateGameInstance(terminalId, instance => ({
+        ...instance,
+        coin: { coinHex: null, turnState: 'ended' },
+        handStatus: 'ended',
+        terminal: earlyTerminal,
+      }));
+      const earlySettledEvent = settledEventForInfo(terminalId, earlyTerminal);
+      if (earlySettledEvent) {
+        gameplayEventSubject.next(earlySettledEvent);
+      } else if (earlyTerminal.type === 'game-error') {
+        gameplayEventSubject.next({
+          GameError: { gameId: terminalId, reason: earlyTerminal.label ?? 'settlement error' },
+        });
+      }
+
       const rewardCoinHex = await coinIdHex(settled.coin_id);
       const terminalInfo = terminalInfoFromGameSettled(settled, rewardCoinHex);
       setGameTerminal(terminalInfo);
@@ -1438,15 +1466,6 @@ export function useGameSession(
         setCachedPeerProposal(null);
         setReviewPeerProposal(null);
         clearTrackedProposals();
-      }
-
-      const settledEvent = settledEventForInfo(terminalId, terminalInfo);
-      if (settledEvent) {
-        gameplayEventSubject.next(settledEvent);
-      } else if (terminalInfo.type === 'game-error') {
-        gameplayEventSubject.next({
-          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error' },
-        });
       }
       return;
     } else if ('GameStatus' in n) {
@@ -1501,6 +1520,13 @@ export function useGameSession(
         return;
       }
 
+      // `readable` is the game move itself. Deliver it before unrelated
+      // session/dashboard work such as hashing the serialized coin, so games
+      // observe moves promptly and identically on either transport.
+      for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {
+        gameplayEventSubject.next(event);
+      }
+
       const coinHex = await coinIdHex(gs.coin_id);
       const statusId = String(gs.id);
       const finishing = isFinishingGameStatus(
@@ -1509,6 +1535,17 @@ export function useGameSession(
       );
       updateGameInstance(statusId, instance => {
         if (ignoreLocalTurnDuringOnChain) {
+          return coinHex
+            ? { ...instance, coin: { ...instance.coin, coinHex } }
+            : instance;
+        }
+        if (
+          (status === 'my-turn' || status === 'on-chain-my-turn')
+          && isActivelyPlayingOnChain(instance.coin.turnState)
+        ) {
+          // Once unrolling resolves, a delayed local "my-turn" status can
+          // arrive while our submitted on-chain move is still executing.
+          // Keep the per-hand banner aligned with the global banner.
           return coinHex
             ? { ...instance, coin: { ...instance.coin, coinHex } }
             : instance;
@@ -1609,9 +1646,6 @@ export function useGameSession(
         setHandStatus(coinHex ? 'slashing' : 'active');
       }
 
-      for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {
-        gameplayEventSubject.next(event);
-      }
     } else if ('InsufficientBalance' in n) {
       const ib = n.InsufficientBalance as Record<string, unknown> | undefined;
       const ibId = String(ib?.id ?? '');

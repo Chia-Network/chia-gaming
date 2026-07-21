@@ -31,7 +31,7 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
   return bitfield;
 }
 
-function calpokerStateFromPersisted(
+export function calpokerStateFromPersisted(
   persisted: PersistedGameState | null | undefined,
 ): CalpokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'calpoker') return undefined;
@@ -109,7 +109,9 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(null);
+  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
+    initialHandState?.settlementOutcome ?? null,
+  );
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -195,10 +197,10 @@ export function useCalpokerHand(
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            setSettlementOutcome(evt.Settled.outcome);
-          }
+          // Always record settlement labels (Timed Out / Forfeit), even when
+          // the hand already finished via reveal / autofire.
+          handFinishedRef.current = true;
+          setSettlementOutcome(evt.Settled.outcome);
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
@@ -271,15 +273,19 @@ export function useCalpokerHand(
   }, [isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
 
   useEffect(() => {
-    if (playerHand.length > 0) {
+    if (playerHand.length > 0 || settlementOutcome) {
       const existing = calpokerStateFromPersisted(gameObject.handState);
       gameObject.setHandState(persistedCalpokerState({
-        playerHand, opponentHand, moveNumber, isPlayerTurn,
+        playerHand: playerHand.length > 0 ? playerHand : (existing?.playerHand ?? []),
+        opponentHand: opponentHand.length > 0 ? opponentHand : (existing?.opponentHand ?? []),
+        moveNumber,
+        isPlayerTurn,
         cardSelections: cardSelectionsRef.current,
         displaySnapshot: existing?.displaySnapshot,
+        settlementOutcome,
       }));
     }
-  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, gameObject]);
+  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome, gameObject]);
 
   useEffect(() => {
     if (playerHand.length > 0) {

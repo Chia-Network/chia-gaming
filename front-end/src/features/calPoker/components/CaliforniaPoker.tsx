@@ -563,7 +563,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   useEffect(() => {
     if (initialSnapshot) {
       const snap = initialSnapshot;
-      const restoredGameState = moveNumber === '1' && !outcome
+      const restoredGameState = moveNumber === '1' && !outcome && settlementByUsFlag == null
         ? GAME_STATES.SELECTING
         : snap.gameState;
       setGameState(restoredGameState);
@@ -584,6 +584,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           rank: { name: '', score: 0, tiebreakers: [] },
         });
       }
+    } else if (playerHand.length > 0 || settlementByUsFlag != null) {
+      // Frozen / mid-hand timeout remount: keep dealt cards, do not re-deal
+      // into selecting UI (that path is for a fresh live hand only).
+      setGameState(
+        settlementByUsFlag != null || outcome
+          ? GAME_STATES.FINAL
+          : moveNumber === '1'
+            ? GAME_STATES.SELECTING
+            : GAME_STATES.AWAITING_SWAP,
+      );
     } else {
       dealCards();
     }
@@ -691,7 +701,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         </div>
 
         {/* Action bar — only during active gameplay */}
-        {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP) && !outcome && (
+        {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP)
+          && !outcome
+          && settlementByUsFlag == null && (
           <div className='flex-shrink-0 w-full h-12 relative flex items-center justify-center'>
             {gameState === GAME_STATES.SELECTING && moveNumber === '1' && (
               <GameBottomBar
@@ -700,7 +712,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 doHandleMakeMove={doHandleMakeMove}
               />
             )}
-            {gameState === GAME_STATES.AWAITING_SWAP && settlementByUsFlag == null && (
+            {gameState === GAME_STATES.AWAITING_SWAP && (
               <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
                 Waiting for opponent
               </div>

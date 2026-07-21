@@ -78,6 +78,7 @@ export interface UseSpacepokerHandResult {
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
   terminalState: SpTerminalState;
+  settlementOutcome: SettlementOutcome | null;
   lastRaise: bigint;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
@@ -104,6 +105,7 @@ export interface SpacepokerHandState {
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
   terminalState?: SpTerminalState;
+  settlementOutcome?: SettlementOutcome | null;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
   displayMode: SpacepokerDisplayMode;
@@ -141,10 +143,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function spacepokerStateFromPersisted(
+export function spacepokerStateFromPersisted(
   persisted: PersistedGameState | null | undefined,
-  _iStarted: boolean,
-  _fallbackUnitSize: bigint,
 ): SpacepokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'spacepoker') return undefined;
   if (persisted.version !== SPACEPOKER_PERSISTED_STATE_VERSION) return undefined;
@@ -169,13 +169,15 @@ export function useSpacepokerHand(
   unitSizeMojos: bigint | undefined,
   onTurnChanged: (isMyTurn: boolean) => void,
   initialPersistedState?: PersistedGameState,
+  /** Session-level settlement (live terminal or frozen remount). */
+  externalSettlement: SettlementOutcome | null = null,
 ): UseSpacepokerHandResult {
   const fallbackUnitSizeRaw = unitSizeMojos && unitSizeMojos > 0n ? unitSizeMojos : betSize / 10n;
   const fallbackUnitSize = fallbackUnitSizeRaw > 0n ? fallbackUnitSizeRaw : 1n;
   const fallbackDisplayMode = defaultDisplayModeForUnit(fallbackUnitSize);
   const initialHandState = useMemo(
-    () => spacepokerStateFromPersisted(initialPersistedState, _iStarted, fallbackUnitSize),
-    [initialPersistedState, _iStarted, fallbackUnitSize],
+    () => spacepokerStateFromPersisted(initialPersistedState),
+    [initialPersistedState],
   );
   const [betUnit, setBetUnit] = useState(initialHandState?.unitSizeMojos ?? fallbackUnitSize);
   const stackSize = betUnit > 0n ? betSize / betUnit : 0n;
@@ -209,6 +211,9 @@ export function useSpacepokerHand(
   const [handHistory, setHandHistory] = useState<SpHandEntry[]>(initialHandState?.handHistory ?? []);
   const [outcome, setOutcome] = useState<SpOutcome | null>(initialHandState?.outcome ?? null);
   const [terminalState, setTerminalState] = useState<SpTerminalState>(initialHandState?.terminalState ?? 'none');
+  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
+    initialHandState?.settlementOutcome ?? null,
+  );
   // Coin toss result: true = I open, false = opponent opens, null = not yet known
   const [coinTossIOpen, setCoinTossIOpen] = useState<boolean | null>(initialHandState?.coinTossIOpen ?? null);
   const [displayMode, setDisplayMode] = useState<SpacepokerDisplayMode>(initialHandState?.displayMode ?? fallbackDisplayMode);
@@ -223,6 +228,7 @@ export function useSpacepokerHand(
   const handFinishedRef = useRef(
     initialHandState?.gameState.handler === SpHandler.Showdown
       || initialHandState?.gameState.handler === SpHandler.Folded
+      || (initialHandState?.terminalState != null && initialHandState.terminalState !== 'none')
   );
   const coinTossIOpenRef = useRef(coinTossIOpen);
   const communityCardsRef = useRef(communityCards);
@@ -268,6 +274,7 @@ export function useSpacepokerHand(
       handHistory,
       outcome,
       terminalState,
+      settlementOutcome,
       coinTossIOpen,
       unitSizeMojos: betUnit,
       displayMode,
@@ -286,6 +293,7 @@ export function useSpacepokerHand(
     handHistory,
     outcome,
     terminalState,
+    settlementOutcome,
     coinTossIOpen,
     betUnit,
     displayMode,
@@ -321,6 +329,9 @@ export function useSpacepokerHand(
   }
 
   function applySettlement(outcome: SettlementOutcome) {
+    // Always keep the settlement label (Timed Out / Forfeit), even when the
+    // hand already reached Folded/Showdown via optimistic play or replay.
+    setSettlementOutcome(outcome);
     const cur = gsRef.current;
     if (cur.handler === SpHandler.Showdown || cur.handler === SpHandler.Folded) {
       return;
@@ -360,6 +371,15 @@ export function useSpacepokerHand(
     transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
   }
 
+  // Session terminal is the durable signal that the hand is over. Do not rely
+  // only on the ephemeral Settled gameplay event (can race coin-id await /
+  // remount and leave the board mid-hand while the banner already shows timeout).
+  useEffect(() => {
+    if (externalSettlement == null) return;
+    handFinishedRef.current = true;
+    applySettlement(externalSettlement);
+  }, [externalSettlement]);
+
   // ── OpponentMoved: the opponent made a move, it's now my turn ──
   // Dispatch based on the readable tag. The tag tells us what the
   // handler computed; it's the single source of truth for what happened.
@@ -368,10 +388,10 @@ export function useSpacepokerHand(
       next: (evt: GameplayEvent) => {
         if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            applySettlement(evt.Settled.outcome);
-          }
+          // Apply even when already finished so timeout/forfeit labels land
+          // after optimistic fold / on-chain replay reached a terminal handler.
+          handFinishedRef.current = true;
+          applySettlement(evt.Settled.outcome);
           return;
         }
         if (handFinishedRef.current) return;
@@ -760,6 +780,7 @@ export function useSpacepokerHand(
     handHistory,
     outcome,
     terminalState,
+    settlementOutcome,
     lastRaise,
     coinTossIOpen,
     unitSizeMojos: betUnit,

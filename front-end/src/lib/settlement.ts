@@ -131,12 +131,12 @@ export function calpokerSettlementVerb(outcome: SettlementOutcome): string {
 export function krunkSettlementStatus(
   outcome: SettlementOutcome,
   opponentLabel: string,
-): string {
+): string | null {
   switch (outcome) {
     case 'accept_settlement':
     case 'we_accepted':
     case 'settled_cleanly':
-      return 'Settled.';
+      return null;
     case 'opponent_timed_out':
       return `${opponentLabel} timed out.`;
     case 'forfeited_skipped_reveal':
@@ -146,7 +146,7 @@ export function krunkSettlementStatus(
     case 'attempt_to_move_failed':
       return 'Attempt to move failed.';
     case 'timed_out_waiting_for_our_move':
-      return 'We timed out.';
+      return 'You timed out.';
     case 'slashed_opponent':
       return `Slashed ${opponentLabel}.`;
     case 'opponent_slashed_us':

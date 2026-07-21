@@ -6,6 +6,7 @@ import {
   isKrunkDictionaryRejectionError,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
+  krunkStateFromPersisted,
   krunkTerminalStatus,
   krunkWinMessage,
   type KrunkGameState,
@@ -21,6 +22,38 @@ import {
 import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from '../../components/Krunk';
 
 describe('Krunk terms', () => {
+  it('accepts only the current persisted Krunk hand-state record', () => {
+    const game: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'bob',
+      guesses: [],
+      secretWord: null,
+      revealedWord: null,
+      outcome: null,
+      moverShare: '0',
+      settlementOutcome: 'timed_out_waiting_for_our_move',
+      error: null,
+    };
+    expect(krunkStateFromPersisted({
+      gameType: 'krunk',
+      version: 1n,
+      state: {
+        games: {
+          alice: { ...game, handler: BigInt(game.handler) },
+          bob: { ...game, handler: BigInt(game.handler), role: 'alice' },
+        },
+      },
+    })).toMatchObject({
+      games: { alice: { handler: KrunkHandler.Terminal } },
+    });
+    expect(krunkStateFromPersisted({
+      gameType: 'krunk',
+      version: 2n,
+      state: { games: { alice: { ...game, handler: BigInt(game.handler) } } },
+    })).toBeUndefined();
+  });
+
   it('clears proposal terms, group links, and outgoing refs together', () => {
     const terms = {
       gameType: 'krunk',
@@ -178,7 +211,7 @@ describe('Krunk first guess drafting', () => {
       error: null,
     };
 
-    expect(krunkTerminalStatus(timedOut, 'Peer')).toBe('We timed out.');
+    expect(krunkTerminalStatus(timedOut, 'Peer')).toBe('You timed out.');
     expect(krunkTerminalStatus({
       ...timedOut,
       role: 'alice',
@@ -191,7 +224,7 @@ describe('Krunk first guess drafting', () => {
     expect(krunkTerminalStatus({
       ...timedOut,
       settlementOutcome: 'settled_cleanly',
-    }, 'Peer')).toBe('Settled.');
+    }, 'Peer')).toBe('Out of guesses.');
   });
 
   it('leaves bob correct-guess copy to the win-amount UI', () => {

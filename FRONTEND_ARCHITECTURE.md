@@ -1221,13 +1221,42 @@ via the `gameplayEventSubject` RxJS stream:
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 - `MoveRejected` — a recoverable local move rejection with game id, tag, and
   message; game hooks roll back only their matching optimistic move
-- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; dual-delivered
-  to the session banner and the active game hook via `gameplayEvent$`
+- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; delivered
+  synchronously to the active game hook before asynchronous settlement
+  bookkeeping or teardown, and also reflected in the session banner
 - `GameError` — non-settlement terminals (`EndedCancelled`, `EndedError`,
   `InsufficientBalance`) and unknown settlement outcomes
 
 Legacy `GameStatus` slash/timeout `Ended*` kinds are no longer forwarded to
 gameplay hooks; settlements use `GameSettled` only.
+
+### Terminal game UX and resolved sessions
+
+`GameSettled` is the handoff from protocol state to game UX. The framework
+emits `Settled` while the live game component is still mounted; the game hook
+then owns the terminal transition. For example, Space Poker uses its
+optimistic-action snapshot to roll back a timeout discovered during on-chain
+replay, while each game decides its own terminal copy and badges.
+
+The live `GameSession` tree stays mounted through resolution. Once the game
+hook has handled `Settled`, `GameHandHost` swaps to a frozen controller and an
+empty event stream in place: controls are disabled, but the same React game
+component and its local terminal view state remain visible. Shell then tears
+down the live WASM/session resources without remounting the hand UI.
+
+Each game contract is:
+
+1. Handle `Settled` in the live hook and transition to a non-interactive
+   terminal view.
+2. Persist complete terminal `handState`, including any game-specific visual
+   state needed after reload.
+
+`FinishedSessionGameView` is only reload recovery, when no live component tree
+exists to preserve. It restores validated persisted terminal `handState` using
+the same `GameHandHost` registry. Keep `handState` on the controller (or
+non-enumerable on the model) — never as an enumerable React prop. React's
+prop/error describe path `JSON.stringify`s arrays and throws on nested
+`bigint` card ids, which locks the UI.
 
 ## Single-Hand Enforcement
 
@@ -1305,6 +1334,8 @@ not to limit concurrency.
 |------|---------|
 | `front-end/src/components/Shell.tsx` | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs |
 | `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
+| `front-end/src/components/GameHandHost.tsx` | Stable game registry; freezes the existing hand UI in place after terminal handling |
+| `front-end/src/components/FinishedSessionGameView.tsx` | Reload recovery for a resolved session without a live game tree |
 | `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
 | `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
 | `front-end/src/hooks/SessionController.ts` | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence |

@@ -12,6 +12,7 @@ import {
 } from '../hooks/useSpacepokerHand';
 import { GameplayEvent } from '../hooks/useGameSession';
 import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
+import { calpokerTimeoutBadge, type SettlementOutcome } from '../lib/settlement';
 import { formatAmount } from '../util';
 
 const RANK_LABELS: Record<number, string> = {
@@ -336,7 +337,7 @@ function CardColumn({
   );
 }
 
-type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | null;
+type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | 'timeout' | 'forfeit' | null;
 
 function HoleCardsGroup({
   boosted,
@@ -363,7 +364,17 @@ function HoleCardsGroup({
               : 'bg-canvas-solid text-canvas-on-canvas'
           }`}
         >
-          {banner === 'win' ? 'Winner!' : banner === 'tie' ? 'Tie' : banner === 'concede' ? 'Concede' : 'Fold'}
+          {banner === 'win'
+            ? 'Winner!'
+            : banner === 'tie'
+              ? 'Tie'
+              : banner === 'concede'
+                ? 'Concede'
+                : banner === 'timeout'
+                  ? 'Timed Out'
+                  : banner === 'forfeit'
+                    ? 'Forfeit'
+                    : 'Fold'}
         </span>
       )}
     </div>
@@ -518,6 +529,8 @@ export interface SpacePokerProps {
   onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
+  /** Frozen remount: session terminal when handState omitted the label. */
+  settlementOutcome?: SettlementOutcome | null;
 }
 
 export default function SpacePoker({
@@ -531,6 +544,7 @@ export default function SpacePoker({
   onGameLog,
   myName,
   opponentName,
+  settlementOutcome: settlementOutcomeOverride = null,
 }: SpacePokerProps) {
   const betSizeValue = BigInt(betSize);
   const unitSizeMojosValue = unitSizeMojos ? BigInt(unitSizeMojos) : undefined;
@@ -543,6 +557,7 @@ export default function SpacePoker({
     unitSizeMojosValue,
     onTurnChanged,
     gameObject.handState ?? undefined,
+    settlementOutcomeOverride,
   );
   const { handler, myTurn, N } = sp.gameState;
 
@@ -646,9 +661,16 @@ export default function SpacePoker({
           : '';
 
   // Calpoker-style pill banners shown immediately to the right of each player's
-  // hole cards.
+  // hole cards. Timeout/forfeit settlements prefer Timed Out / Forfeit over Fold.
   let playerBanner: HoleCardsBannerKind = null;
   let oppBanner: HoleCardsBannerKind = null;
+  const settlementOutcome = settlementOutcomeOverride ?? sp.settlementOutcome;
+  const oursTimeoutBadge = settlementOutcome
+    ? calpokerTimeoutBadge(settlementOutcome, 'ours')
+    : null;
+  const theirsTimeoutBadge = settlementOutcome
+    ? calpokerTimeoutBadge(settlementOutcome, 'theirs')
+    : null;
   if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
     if (showdownOutcome.result > 0n) {
       playerBanner = 'win';
@@ -658,6 +680,12 @@ export default function SpacePoker({
       playerBanner = 'tie';
       oppBanner = 'tie';
     }
+  } else if (oursTimeoutBadge === 'timeout' || oursTimeoutBadge === 'forfeit') {
+    playerBanner = oursTimeoutBadge;
+    if (theirsTimeoutBadge === 'winner') oppBanner = 'win';
+  } else if (theirsTimeoutBadge === 'timeout' || theirsTimeoutBadge === 'forfeit') {
+    oppBanner = theirsTimeoutBadge;
+    if (oursTimeoutBadge === 'winner') playerBanner = 'win';
   } else if (sp.terminalState === 'conceded-by-you') {
     playerBanner = 'concede';
   } else if (sp.terminalState === 'conceded-by-opponent') {

@@ -14,6 +14,7 @@ import {
   KrunkRole,
 } from '../hooks/useKrunkHand';
 import { GameplayEvent } from '../hooks/useGameSession';
+import type { SettlementOutcome } from '../lib/settlement';
 import { formatAmount } from '../util';
 
 export interface KrunkProps {
@@ -27,6 +28,8 @@ export interface KrunkProps {
   onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
+  frozen?: boolean;
+  gameSettlementOutcomes?: Record<string, SettlementOutcome | null>;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -397,6 +400,8 @@ const Krunk: React.FC<KrunkProps> = ({
   onGameLog,
   myName: _myName,
   opponentName,
+  frozen = false,
+  gameSettlementOutcomes = {},
 }) => {
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
@@ -436,7 +441,7 @@ const Krunk: React.FC<KrunkProps> = ({
     false,
     gameplayEvent$,
     onAliceTurnChanged,
-    aliceInHand,
+    aliceInHand && !frozen,
   );
 
   const bobHand = useKrunkHand(
@@ -445,7 +450,7 @@ const Krunk: React.FC<KrunkProps> = ({
     true,
     gameplayEvent$,
     onBobTurnChanged,
-    bobInHand,
+    bobInHand && !frozen,
   );
 
   // Write each half to the session history panel when it finishes.
@@ -499,8 +504,10 @@ const Krunk: React.FC<KrunkProps> = ({
   // Track the index of the most recently resolved guess for animation.
   // Detect new clues synchronously to avoid a flash frame, but persist
   // the value in state so it survives re-renders while the animation plays.
-  const prevResolvedCountRef = useRef(0);
   const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
+  // A frozen/recovered board already contains historical clues. Start its
+  // counter at the persisted count so mounting it never replays those flips.
+  const prevResolvedCountRef = useRef(frozen ? resolvedCount : 0);
   // Dictionary rejection rolls back the sent guess in gameState; hide any
   // still-queued rows in the same render (don't wait for the clear effect).
   const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error)
@@ -511,7 +518,7 @@ const Krunk: React.FC<KrunkProps> = ({
     displayQueue,
   );
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
-  if (resolvedCount > prevResolvedCountRef.current) {
+  if (!frozen && resolvedCount > prevResolvedCountRef.current) {
     prevResolvedCountRef.current = resolvedCount;
     setAnimateIndex(resolvedCount - 1);
   }
@@ -519,7 +526,8 @@ const Krunk: React.FC<KrunkProps> = ({
   const bobRevealedWord = bobHand.gameState.revealedWord;
   const bobSolved = bobHand.gameState.guesses.some(g => g.clue.every(v => v === 2));
   const bobMissed = bobRevealedWord != null && !bobSolved;
-  const animateBobReveal = bobMissed
+  const animateBobReveal = !frozen
+    && bobMissed
     && animateIndex === bobHand.gameState.guesses.length - 1;
   // Wait for the final guess row to finish flipping before mounting the
   // answer row, so its flip starts only after that animation ends.
@@ -628,11 +636,24 @@ const Krunk: React.FC<KrunkProps> = ({
   }, [keyboardMode, commitWord, submitGuess]);
 
   const themLabel = opponentName ?? 'Opponent';
+  const terminalStateFor = (gameId: string, state: typeof bobHand.gameState) => {
+    const settlementOutcome = gameSettlementOutcomes[gameId] ?? state.settlementOutcome;
+    return settlementOutcome == null
+      ? state
+      : { ...state, handler: KrunkHandler.Terminal, settlementOutcome };
+  };
+  const bobTerminalState = terminalStateFor(bobId, bobHand.gameState);
+  const aliceTerminalState = terminalStateFor(aliceId, aliceHand.gameState);
+  const bobTerminal = krunkTerminalStatus(bobTerminalState, themLabel);
+  const aliceTerminal = krunkTerminalStatus(aliceTerminalState, themLabel);
 
   const bobWon =
-    bobHand.gameState.handler === KrunkHandler.Terminal
-    && bobHand.gameState.outcome === 'win'
-    && bobHand.gameState.settlementOutcome === null;
+    bobTerminalState.handler === KrunkHandler.Terminal
+    && bobTerminalState.outcome === 'win'
+    && bobTerminalState.settlementOutcome === null;
+  const bobResult = bobWon && bobTerminalState.moverShare != null
+    ? krunkWinMessage(bobTerminalState.moverShare)
+    : bobTerminal;
 
   const statusNotice = useMemo((): { text: string; kind: 'error' | 'win' | 'info' } | null => {
     if (aliceHand.gameState.error) {
@@ -641,13 +662,6 @@ const Krunk: React.FC<KrunkProps> = ({
     if (bobHand.gameState.error) {
       return { text: bobHand.gameState.error, kind: 'error' };
     }
-    if (bobWon && bobHand.gameState.moverShare != null) {
-      return { text: krunkWinMessage(bobHand.gameState.moverShare), kind: 'win' };
-    }
-    const bobTerminal = krunkTerminalStatus(bobHand.gameState, themLabel);
-    if (bobTerminal !== null) return { text: bobTerminal, kind: 'info' };
-    const aliceTerminal = krunkTerminalStatus(aliceHand.gameState, themLabel);
-    if (aliceTerminal !== null) return { text: aliceTerminal, kind: 'info' };
     if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
     if (displayQueue.length > 0) {
       return {
@@ -670,7 +684,6 @@ const Krunk: React.FC<KrunkProps> = ({
   }, [
     aliceHand.gameState,
     bobHand.gameState,
-    bobWon,
     wordCommitted,
     displayQueue.length,
     themLabel,
@@ -748,7 +761,14 @@ const Krunk: React.FC<KrunkProps> = ({
           />
           {bobMissed && bobRevealReady && bobRevealedWord ? (
             <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
-          ) : null}
+          ) : (
+            <div className='flex gap-1 mt-2'>
+              {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
+            </div>
+          )}
+          <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>
+            {bobResult ?? ''}
+          </p>
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}
@@ -767,6 +787,9 @@ const Krunk: React.FC<KrunkProps> = ({
           ) : aliceHand.gameState.secretWord ? (
             <TargetRow word={aliceHand.gameState.secretWord} />
           ) : null}
+          <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>
+            {aliceTerminal ?? ''}
+          </p>
         </div>
       </div>
 
@@ -785,19 +808,17 @@ const Krunk: React.FC<KrunkProps> = ({
         >
           {actionLabel}
         </button>
-        {statusNotice && (
-          <p
-            className={`text-center text-lg mt-1 ${
-              statusNotice.kind === 'error'
-                ? 'text-red-600'
-                : statusNotice.kind === 'win'
-                  ? 'text-2xl font-bold text-canvas-text-contrast'
-                  : 'text-canvas-text-contrast'
-            }`}
-          >
-            {statusNotice.text}
-          </p>
-        )}
+        <p
+          className={`min-h-7 text-center text-lg mt-1 ${
+            statusNotice?.kind === 'error'
+              ? 'text-red-600'
+              : statusNotice?.kind === 'win'
+                ? 'text-2xl font-bold text-canvas-text-contrast'
+                : 'text-canvas-text-contrast'
+          }`}
+        >
+          {statusNotice?.text ?? ''}
+        </p>
       </div>
     </div>
   );
