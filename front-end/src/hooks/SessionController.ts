@@ -463,16 +463,24 @@ export class SessionController implements PollingGameSession {
         return;
       }
 
-      let result: WasmResult | undefined;
+      let result: WasmResult;
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
         console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         const localSpendBundle = this.wc?.convert_offer_to_coinset_org(bundle);
         await blockchain.rpc.rememberLocalRemovals?.(localSpendBundle);
-        result = this.cradle?.provide_offer_bech32(bundle);
+        if (!this.cradle) {
+          log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
+          return;
+        }
+        result = this.cradle.provide_offer_bech32(bundle);
       } else {
         await blockchain.rpc.rememberLocalRemovals?.(bundle);
+        if (!this.cradle) {
+          log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
+          return;
+        }
         const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
-        result = this.cradle?.provide_coin_spend_bundle(bundleJson);
+        result = this.cradle.provide_coin_spend_bundle(bundleJson);
       }
       this.processResult(result);
     } catch (e) {
