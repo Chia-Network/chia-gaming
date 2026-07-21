@@ -319,18 +319,25 @@ Set `--self` to the hub's public URL. The same `--dir`, `--self`,
 different origins. The lobby loads inside an iframe from the hub's
 origin; same-origin would break the security boundary.
 - **Asset co-location.** WASM files and `.hex` chialisp files must be
-under the same `basePath` as `index.js`. The WASM module fetches `.hex`
-files via relative HTTP paths at runtime.
+under the same `basePath` as `index.js`. The player app prefetches the
+WASM module and game/factory `.hex` (and krunk `.dat`) presets at page
+load — not when a session is accepted — via relative paths under
+`basePath`.
 - `**--self` must match the public URL.** The hub uses it to derive
 WebSocket URLs. Mismatches cause connection failures.
-- **Caching rules.** Configure your production web server (nginx, Caddy,
-CloudFront, etc.) with these headers. The dev servers
-(`static-server.js` and the hub service) already apply
-them automatically.
-  - `index.html` and `build-meta.json`: `**Cache-Control: no-store`** (must
-  always be fresh so the app picks up new nonces).
+- **Caching rules.** Only root URLs (`index.html`, `build-meta.json`,
+favicon, etc.) stay stable across rebuilds; each deploy mints a new
+`/app/<nonce>/` tree. Configure your production web server (nginx,
+Caddy, CloudFront, etc.) with these headers. The dev servers
+(`static-server.js` and the hub service) already apply them
+automatically.
+  - `build-meta.json`: `**Cache-Control: no-store**` (must always be
+  fresh so the app picks up new nonces).
+  - `index.html`: `**Cache-Control: no-cache**` (revalidate; entry shell
+  must pick up the new `basePath`).
+  - Other root static (e.g. favicon): `**Cache-Control: public, max-age=86400**`.
   - Everything under `/app/`: `**Cache-Control: public, max-age=31536000, immutable**`
-  (content-addressed by nonce, never changes).
+  (content-addressed by nonce within a deploy; repeat visits hit cache).
 - **No simulator.** In production there is no simulator. Players connect
 their Chia wallet via WalletConnect and play against real XCH.
 - **CI artifacts.** The

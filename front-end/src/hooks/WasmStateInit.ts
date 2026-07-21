@@ -5,11 +5,40 @@ import {
   RngId,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
-import { SessionController } from './SessionController';
+import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 
 var chia_gaming_init: WasmInitFn | undefined = undefined;
 var cg: WasmConnection | undefined = undefined;
 var logInitialized = false;
+
+/** Manual mirror of native startup loads (game_collection + channel/referee). Not auto-traced. */
+export const PRESET_FILES = [
+  'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
+  'clsp/referee/onchain/referee.hex',
+  'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
+  'clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex',
+  'clsp/games/krunk/krunk_include_krunk_factory.hex',
+  'clsp/games/krunk/krunk_signed_dict_tree.dat',
+];
+
+const WASM_URL = 'chia_gaming_wasm_bg.wasm';
+
+export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
+  const url = resolveDeployAssetUrl(fetchUrl);
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    await recoverFromMissingDeployAsset(
+      'fetchPreset',
+      url,
+      resp.status,
+      resp.statusText,
+    );
+  }
+  return new Uint8Array(await resp.arrayBuffer());
+}
+
+let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
+let loadPromise: Promise<WasmConnection> | null = null;
 
 if (typeof window !== 'undefined') {
   window.loadWasm = (init: WasmInitFn, wasmConn: WasmConnection) => {
@@ -27,103 +56,105 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   readyToInit.subscribe(subscriber);
 });
 
-
-
-//    gameStateInit.foo().then()
-export async function storeInitArgs(
+export function storeInitArgs(
   chia_gaming_init_ready: WasmInitFn,
   cg_ready: WasmConnection,
 ) {
-  // Store information we can't get until the window initializes us with valid data
   chia_gaming_init = chia_gaming_init_ready;
   cg = cg_ready;
   readyToInit.next(true);
+  // Kick download/compile as soon as the glue is wired (page load), not on Accept.
+  void ensureWasmLoaded();
 }
 
-const WASM_URL = 'chia_gaming_wasm_bg.wasm';
+async function runWasmLoad(): Promise<WasmConnection> {
+  if (!chia_gaming_init || !cg) {
+    throw new Error('wasm init args not set');
+  }
+  const initFn = chia_gaming_init;
+  const wasmConn = cg;
+
+  const presetFetches = Promise.all(
+    PRESET_FILES.map(async (name) => ({
+      name,
+      content: await presetFetcher(name),
+    })),
+  );
+
+  const [, presets] = await Promise.all([
+    initFn({ module_or_path: WASM_URL }),
+    presetFetches,
+  ]);
+
+  if (!logInitialized) {
+    logInitialized = true;
+    wasmConn.init((msg: string) => console.warn('wasm', msg));
+  }
+
+  for (const { name, content } of presets) {
+    wasmConn.cache_file(name, content);
+  }
+
+  return wasmConn;
+}
+
+/**
+ * Idempotent while in flight or after success: reuses the same promise.
+ * On failure, clears so a later getWasmConnection / Accept can retry.
+ * Requires storeInitArgs to have run (or waits for it).
+ */
+export function ensureWasmLoaded(): Promise<WasmConnection> {
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      try {
+        if (!chia_gaming_init || !cg) {
+          await new Promise<void>((resolve, reject) => {
+            const sub = waitForReadyToInit.subscribe({
+              next: () => {
+                sub.unsubscribe();
+                resolve();
+              },
+              error: (e) => {
+                sub.unsubscribe();
+                reject(e);
+              },
+            });
+          });
+        }
+        return await runWasmLoad();
+      } catch (err) {
+        loadPromise = null;
+        throw err;
+      }
+    })();
+  }
+  return loadPromise;
+}
+
+/** Test helper: clear module load state between cases. */
+export function _resetWasmLoadForTests(): void {
+  loadPromise = null;
+  logInitialized = false;
+  chia_gaming_init = undefined;
+  cg = undefined;
+  presetFetcher = fetchDeployPreset;
+}
 
 export class WasmStateInit {
   wasmConnection: WasmConnection | undefined;
   fetchPreset: (key: string) => Promise<Uint8Array>;
-  deferredWasmConnection: Subject<WasmConnection>;
 
   constructor(
     fetchPreset: (key: string) => Promise<Uint8Array>,
   ) {
     this.fetchPreset = fetchPreset;
-    this.deferredWasmConnection = new Subject<WasmConnection>();
-  }
-
-  async internalLoadWasm(
-    chia_gaming_init: WasmInitFn,
-    cg: WasmConnection,
-  ): Promise<WasmConnection> {
-    await chia_gaming_init({ module_or_path: WASM_URL });
-    if (!logInitialized) {
-      logInitialized = true;
-      cg.init((msg: string) => console.warn('wasm', msg));
-    }
-    const presetFiles = [
-      //'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex', -- now loaded by crates.io::chia_puzzles
-      'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
-      'clsp/referee/onchain/referee.hex',
-      'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
-      'clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex',
-      'clsp/games/krunk/krunk_include_krunk_factory.hex',
-      'clsp/games/krunk/krunk_signed_dict_tree.dat',
-    ];
-    this.wasmConnection = cg;
-    await this.loadPresets(presetFiles);
-
-    this.deferredWasmConnection.next(cg);
-    this.deferredWasmConnection.complete();
-    return cg;
+    presetFetcher = fetchPreset;
   }
 
   getWasmConnection(): Promise<WasmConnection> {
-    waitForReadyToInit.subscribe({
-      next: () => {
-        if (!chia_gaming_init || !cg) throw new Error('wasm init args not set');
-        this.internalLoadWasm(chia_gaming_init, cg);
-      },
-    });
-
-    return new Promise<WasmConnection>((resolve, reject) => {
-      let wcSub = this.deferredWasmConnection.subscribe({
-        next: (wasmConnection) => {
-          resolve(wasmConnection);
-          wcSub.unsubscribe();
-        },
-      });
-    });
-  }
-
-  loadPresets(presetFiles: string[]) {
-    const presetFetches = presetFiles.map((partialUrl) => {
-      return this.fetchPreset(partialUrl).then((bytes) => {
-        return {
-          name: partialUrl,
-          content: bytes,
-        };
-      });
-    });
-    return Promise.all(presetFetches).then((presets) => {
-      presets.forEach((nameAndContent) => {
-        if (!this.wasmConnection) {
-          throw new Error('this.wasmConnection undefined in loadPresets');
-        }
-        this.wasmConnection?.cache_file(
-          nameAndContent.name,
-          nameAndContent.content,
-        );
-      });
-
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded preset files'],
-        },
-      };
+    return ensureWasmLoaded().then((wasmConn) => {
+      this.wasmConnection = wasmConn;
+      return wasmConn;
     });
   }
 
@@ -134,10 +165,6 @@ export class WasmStateInit {
     }
     return undefined;
   }
-
-  // deserializeRng(serializedGame: any) {
-  //   return this.wasmConnection?.deserialize_rng(serializedGame);
-  // }
 
   getChiaIdentity(rngSeed: string) {
     // return this.wasmConnection?.chia_identity(rngSeed);
