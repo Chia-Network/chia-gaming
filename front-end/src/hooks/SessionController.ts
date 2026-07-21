@@ -839,6 +839,16 @@ export class SessionController implements PollingGameSession {
   }
 
   resendUnacked() {
+    // Hub reconnect / peer keepalive: also retry acks and outbound that failed
+    // while the WS was closed (those sit in pending* with needsImmediateDurability,
+    // not in unackedMessages).
+    if (
+      this.needsImmediateDurability
+      || this.pendingAcks.length > 0
+      || this.pendingOutboundSends.length > 0
+    ) {
+      this.scheduleDurabilityFlush();
+    }
     if (this.unackedMessages.length === 0) return;
     const now = Date.now();
     if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return;

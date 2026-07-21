@@ -1446,6 +1446,8 @@ const Shell = () => {
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
+          // Retry outbound/acks that failed while the hub WS was down.
+          sessionController?.resendUnacked();
         },
         onHubActivity: () => {
           lastHubActivityRef.current = Date.now();
