@@ -39,6 +39,17 @@ use clvm_traits::Atom;
 use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;
 
+/// Live sim UTXOs must parse. Unknown/insufficient selection returns null
+/// elsewhere; a present coin that fails `to_parts` is corrupt state.
+fn require_coin_parts(coin: &CoinString) -> Result<(CoinID, PuzzleHash, Amount), Error> {
+    coin.to_parts().ok_or_else(|| {
+        Error::StrErr(format!(
+            "malformed coin string (to_parts failed): {}",
+            hex::encode(coin.to_bytes())
+        ))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
@@ -206,9 +217,8 @@ impl GameRunner {
         let mut result_balance: u64 = 0;
         if let Some(pk) = identity {
             for coin in self.simulator.get_my_coins(&pk.puzzle_hash)?.iter() {
-                if let Some((_, _, amt)) = coin.to_parts() {
-                    result_balance += amt.to_u64();
-                }
+                let (_, _, amt) = require_coin_parts(coin)?;
+                result_balance += amt.to_u64();
             }
         }
         Ok(result_balance.to_string())
@@ -272,27 +282,26 @@ impl GameRunner {
         if let Some(desired) = target_balance {
             if let Some(identity) = self.lookup_identity(&public_key).cloned() {
                 let coins = self.simulator.get_my_coins(&identity.puzzle_hash)?;
-                let total: u64 = coins
-                    .iter()
-                    .filter_map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()))
-                    .sum();
+                let mut total: u64 = 0;
+                for c in coins.iter() {
+                    total += require_coin_parts(c)?.2.to_u64();
+                }
                 if total > desired {
                     for c in coins.iter() {
-                        if let Some((_, _, amt)) = c.to_parts() {
-                            if amt.to_u64() > desired {
-                                self.simulator.transfer_coin_amount(
-                                    &mut self.allocator,
-                                    &identity.puzzle_hash,
-                                    &identity,
-                                    c,
-                                    Amount::new(desired),
-                                )?;
-                                self.farm_and_chase()?;
-                                sim_log(&format!(
-                                    "register: trimmed balance name={name} from={total} to={desired}"
-                                ));
-                                break;
-                            }
+                        let (_, _, amt) = require_coin_parts(c)?;
+                        if amt.to_u64() > desired {
+                            self.simulator.transfer_coin_amount(
+                                &mut self.allocator,
+                                &identity.puzzle_hash,
+                                &identity,
+                                c,
+                                Amount::new(desired),
+                            )?;
+                            self.farm_and_chase()?;
+                            sim_log(&format!(
+                                "register: trimmed balance name={name} from={total} to={desired}"
+                            ));
+                            break;
                         }
                     }
                 }
@@ -311,19 +320,18 @@ impl GameRunner {
             let coins0 = self.simulator.get_my_coins(&identity.puzzle_hash)?;
             let coin_amt = Amount::new(amt);
             for c in coins0.iter() {
-                if let Some((_, _ph, amt)) = c.to_parts() {
-                    if amt >= coin_amt {
-                        let (parent_coin_0, _rest_0) = self.simulator.transfer_coin_amount(
-                            &mut self.allocator,
-                            &target_ph,
-                            &identity,
-                            c,
-                            coin_amt.clone(),
-                        )?;
-                        let parent_coin_bytes = parent_coin_0.to_bytes();
-                        self.farm_and_chase()?;
-                        return Ok(format!("\"{}\"\n", hex::encode(parent_coin_bytes)));
-                    }
+                let (_, _ph, c_amt) = require_coin_parts(c)?;
+                if c_amt >= coin_amt {
+                    let (parent_coin_0, _rest_0) = self.simulator.transfer_coin_amount(
+                        &mut self.allocator,
+                        &target_ph,
+                        &identity,
+                        c,
+                        coin_amt.clone(),
+                    )?;
+                    let parent_coin_bytes = parent_coin_0.to_bytes();
+                    self.farm_and_chase()?;
+                    return Ok(format!("\"{}\"\n", hex::encode(parent_coin_bytes)));
                 }
             }
         }
@@ -335,16 +343,14 @@ impl GameRunner {
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
             let mut candidates = self.simulator.get_my_coins(&identity.puzzle_hash)?;
-            candidates.retain(|c| {
-                c.to_parts()
-                    .map(|(_, _, amt)| amt.to_u64() >= amount)
-                    .unwrap_or(false)
-            });
-            if let Some(selected) = candidates.into_iter().min_by_key(|c| {
-                c.to_parts()
-                    .map(|(_, _, amt)| amt.to_u64())
-                    .unwrap_or(u64::MAX)
-            }) {
+            let mut eligible = Vec::new();
+            for c in candidates.drain(..) {
+                let (_, _, amt) = require_coin_parts(&c)?;
+                if amt.to_u64() >= amount {
+                    eligible.push((amt.to_u64(), c));
+                }
+            }
+            if let Some((_, selected)) = eligible.into_iter().min_by_key(|(amt, _)| *amt) {
                 return Ok(format!("\"{}\"\n", hex::encode(selected.to_bytes())));
             }
         }
@@ -370,35 +376,33 @@ impl GameRunner {
             .ok_or_else(|| Error::StrErr("offer does not request any spend amount".to_string()))?;
 
         let mut candidates = self.simulator.get_my_coins(&identity.puzzle_hash)?;
-        candidates.retain(|c| {
-            c.to_parts()
-                .map(|(_, _, amt)| amt.to_u64() >= requested_amount)
-                .unwrap_or(false)
-        });
+        let mut eligible = Vec::new();
+        for c in candidates.drain(..) {
+            let (_, _, amt) = require_coin_parts(&c)?;
+            if amt.to_u64() >= requested_amount {
+                eligible.push((amt.to_u64(), c));
+            }
+        }
 
         let selected_coin = if let Some(first_coin_id) = req.coin_ids.first() {
             let expected_bytes = check_for_hex(first_coin_id)?;
             let expected_id = CoinID::new(Hash::from_slice(&expected_bytes)?);
-            candidates
+            eligible
                 .into_iter()
+                .map(|(_, c)| c)
                 .find(|coin| coin.to_coin_id() == expected_id)
                 .ok_or_else(|| Error::StrErr("requested coin id not found".to_string()))?
         } else {
-            candidates
+            eligible
                 .into_iter()
-                .min_by_key(|c| {
-                    c.to_parts()
-                        .map(|(_, _, amt)| amt.to_u64())
-                        .unwrap_or(u64::MAX)
-                })
+                .min_by_key(|(amt, _)| *amt)
+                .map(|(_, c)| c)
                 .ok_or_else(|| {
                     Error::StrErr("no spendable coin for requested amount".to_string())
                 })?
         };
 
-        let (_, _, coin_amount) = selected_coin
-            .to_parts()
-            .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
+        let (_, _, coin_amount) = require_coin_parts(&selected_coin)?;
 
         // Build conditions that mimic a real wallet's createOfferForIds: the
         // spend is balanced because the requested amount goes to a settlement
@@ -533,11 +537,8 @@ impl GameRunner {
             .map(|e| format!("{e}"))
             .unwrap_or_else(|| "null".to_string());
         if result.code != 1 && !result.diagnostic.is_empty() {
-            Ok(format!(
-                "[{},{e_res},{}]\n",
-                result.code,
-                serde_json::to_string(&result.diagnostic).unwrap_or_default()
-            ))
+            let diagnostic_json = serde_json::to_string(&result.diagnostic).into_gen()?;
+            Ok(format!("[{},{e_res},{diagnostic_json}]\n", result.code))
         } else {
             Ok(format!("[{},{e_res}]\n", result.code))
         }
@@ -701,20 +702,27 @@ fn make_block_event_json_for_client(
     game_runner: &GameRunner,
     height: u64,
     registered_coins: &HashSet<CoinID>,
-) -> String {
+) -> Result<String, Error> {
     let records = game_runner.registered_coin_records(registered_coins);
     let evt = WsBlockEvent {
         event: "block",
         peak: height,
         records,
     };
-    serde_json::to_string(&evt).unwrap_or_default()
+    serde_json::to_string(&evt).into_gen()
 }
 
 /// Parse a GameRunner method result (which is a JSON-encoded string body)
 /// into a serde_json::Value so it can be embedded directly in the response.
-fn parse_result_body(body: &str) -> Value {
-    serde_json::from_str(body.trim()).unwrap_or(Value::String(body.trim().to_string()))
+fn parse_result_body(body: &str) -> Result<Value, Error> {
+    serde_json::from_str(body.trim())
+        .map_err(|e| Error::StrErr(format!("method result body is not JSON: {e}")))
+}
+
+fn serialize_ws_response(resp: &WsResponse) -> String {
+    serde_json::to_string(resp).unwrap_or_else(|e| {
+        panic!("WsResponse serialization failed: {e}");
+    })
 }
 
 struct DispatchResult {
@@ -773,7 +781,7 @@ fn dispatch_ws_request(
                 error: Some(format!("invalid request JSON: {e}")),
             };
             return DispatchResult {
-                response: serde_json::to_string(&resp).unwrap_or_default(),
+                response: serialize_ws_response(&resp),
                 extra_messages: vec![],
             };
         }
@@ -859,23 +867,44 @@ fn dispatch_ws_request(
     };
 
     let height_after = game_runner.simulator.get_current_height() as u64;
-    if height_after > height_before {
+    let block_events = (|| -> Result<Vec<String>, Error> {
+        if height_after <= height_before {
+            return Ok(Vec::new());
+        }
+        let mut events = Vec::new();
         for h in (height_before + 1)..=height_after {
-            extra_messages.push(make_block_event_json_for_client(
+            events.push(make_block_event_json_for_client(
                 game_runner,
                 h,
                 registered_coins,
-            ));
+            )?);
         }
-    }
+        Ok(events)
+    })();
 
-    let resp = match result {
-        Ok(body) => WsResponse {
-            id: req.id,
-            result: Some(parse_result_body(&body)),
-            error: None,
+    let resp = match (result, block_events) {
+        (Ok(body), Ok(events)) => match parse_result_body(&body) {
+            Ok(parsed) => {
+                extra_messages = events;
+                WsResponse {
+                    id: req.id,
+                    result: Some(parsed),
+                    error: None,
+                }
+            }
+            Err(e) => {
+                sim_log(&format!(
+                    "rpc_error method={} id={} err={e:?}",
+                    req.method, req.id
+                ));
+                WsResponse {
+                    id: req.id,
+                    result: None,
+                    error: Some(format!("{e:?}")),
+                }
+            }
         },
-        Err(e) => {
+        (Err(e), _) | (_, Err(e)) => {
             sim_log(&format!(
                 "rpc_error method={} id={} err={e:?}",
                 req.method, req.id
@@ -889,7 +918,7 @@ fn dispatch_ws_request(
     };
 
     DispatchResult {
-        response: serde_json::to_string(&resp).unwrap_or_default(),
+        response: serialize_ws_response(&resp),
         extra_messages,
     }
 }
@@ -1157,7 +1186,7 @@ fn run_game_actor(
                 let result = game_runner
                     .farm_and_chase()
                     .map_err(|e| format!("{e:?}"))
-                    .map(|new_height| {
+                    .and_then(|new_height| {
                         height.store(new_height as usize, Ordering::Relaxed);
                         sim_log(&format!(
                             "block_farmed: height={new_height} clients={}",
@@ -1169,7 +1198,8 @@ fn run_game_actor(
                                 &game_runner,
                                 new_height,
                                 &client.registered_coins,
-                            );
+                            )
+                            .map_err(|e| format!("{e:?}"))?;
                             if queue_actor_messages(connection_id, client, vec![message]).is_err() {
                                 slow_clients.push(connection_id);
                             }
@@ -1177,6 +1207,7 @@ fn run_game_actor(
                         for connection_id in slow_clients {
                             clients.remove(&connection_id);
                         }
+                        Ok(())
                     });
                 let _ = reply.send(result);
             }

@@ -561,6 +561,7 @@ there is a bug.
 | **Already spent**               | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
 | **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
 | **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
+| **Missing validated spend**     | `validated.spends` has no entry for an input spend index. Accepting would skip CREATE_COIN / relative-lock bookkeeping.        |
 
 
 **Conflicting mempool spends are the one exception to "this can only be a bug."**

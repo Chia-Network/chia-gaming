@@ -213,12 +213,16 @@ export function useLobbySocket(
             setSavedAlias(msg.alias);
             break;
           case 'lobby_update':
+            if (!Array.isArray(msg.players)) {
+              console.error('[lobby] lobby_update missing players array', msg);
+              break;
+            }
             lobbyHsLog('lobby_update_recv', {
               conn_id: connIdRef.current,
               session_id: sessionId,
-              players: (msg.players ?? []).length,
+              players: msg.players.length,
             });
-            setPlayers(msg.players ?? []);
+            setPlayers(msg.players);
             setLobbyUpdateReceived(true);
             break;
           case 'challenge_received':
