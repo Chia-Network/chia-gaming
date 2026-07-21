@@ -546,19 +546,22 @@ const Krunk: React.FC<KrunkProps> = ({
     return () => clearTimeout(t);
   }, [bobMissed, animateBobReveal]);
 
-  const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
+  const bobGameOver =
+    bobHand.gameState.handler === KrunkHandler.Terminal
+    || gameSettlementOutcomes[bobId] != null;
   const filledGuessCount = bobHand.gameState.guesses.length + displayQueue.length;
   const isBobGuessPhase =
+    !bobGameOver &&
     bobInHand &&
     wordCommitted &&
     bobHand.gameState.role === 'bob' &&
     bobHand.gameState.handler === KrunkHandler.BobGuess;
-  const canDraftGuess = bobInHand && canDraftKrunkGuess(
+  const canDraftGuess = !bobGameOver && bobInHand && canDraftKrunkGuess(
     wordCommitted,
     bobHand.gameState.handler,
     filledGuessCount,
   );
-  const canQueueGuess = bobInHand && canQueueKrunkGuess(
+  const canQueueGuess = !bobGameOver && bobInHand && canQueueKrunkGuess(
     wordCommitted,
     bobHand.gameState.handler,
     filledGuessCount,
@@ -609,6 +612,7 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const submitGuess = useCallback(() => {
     if (guessDraft.length !== 5) return;
+    if (bobGameOver) return;
     // Always allow queueing when not in a live send phase (waiting on
     // commit or clue). Send immediately only when it is our guess turn
     // and the queue is empty.
@@ -627,6 +631,7 @@ const Krunk: React.FC<KrunkProps> = ({
     canQueueGuess,
     guessQueue.length,
     filledGuessCount,
+    bobGameOver,
     bobHand.submitGuess,
   ]);
 
@@ -646,6 +651,9 @@ const Krunk: React.FC<KrunkProps> = ({
   const aliceTerminalState = terminalStateFor(aliceId, aliceHand.gameState);
   const bobTerminal = krunkTerminalStatus(bobTerminalState, themLabel);
   const aliceTerminal = krunkTerminalStatus(aliceTerminalState, themLabel);
+  const hasTerminalResult =
+    bobTerminalState.handler === KrunkHandler.Terminal
+    || aliceTerminalState.handler === KrunkHandler.Terminal;
 
   const bobWon =
     bobTerminalState.handler === KrunkHandler.Terminal
@@ -662,6 +670,7 @@ const Krunk: React.FC<KrunkProps> = ({
     if (bobHand.gameState.error) {
       return { text: bobHand.gameState.error, kind: 'error' };
     }
+    if (hasTerminalResult) return null;
     if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
     if (displayQueue.length > 0) {
       return {
@@ -684,6 +693,7 @@ const Krunk: React.FC<KrunkProps> = ({
   }, [
     aliceHand.gameState,
     bobHand.gameState,
+    hasTerminalResult,
     wordCommitted,
     displayQueue.length,
     themLabel,

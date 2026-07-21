@@ -8,6 +8,7 @@ import type { SessionController } from '../hooks/SessionController';
 import type { GameplayEvent } from '../hooks/useGameSession';
 import type { SettlementOutcome } from '../lib/settlement';
 import { gameDisplayName } from '../lib/gameRegistry';
+import { stringifyCalpokerSnapshot } from '../lib/session/finishedSessionDisplay';
 import type { HandTermsModel } from '../lib/session/model';
 import type { CalpokerOutcome } from '../types/ChiaGaming';
 import type {
@@ -48,19 +49,6 @@ export interface GameHandHostProps {
   onTurnChanged?: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog?: (line: string) => void;
   handKey?: number;
-}
-
-function stringifyCalpokerSnapshot(
-  snapshot: CalpokerDisplaySnapshot | undefined,
-): CalpokerDisplaySnapshotView | undefined {
-  if (!snapshot) return undefined;
-  return {
-    ...snapshot,
-    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(String),
-    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(String),
-    playerHaloCardIds: snapshot.playerHaloCardIds.map(String),
-    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(String),
-  };
 }
 
 function parseCalpokerSnapshotView(snapshot: CalpokerDisplaySnapshotView): CalpokerDisplaySnapshot {
@@ -405,12 +393,15 @@ export default function GameHandHost({
     );
   })();
 
-  if (mode === 'frozen') {
-    return (
-      <div className='relative h-full w-full min-h-0 pointer-events-none' aria-disabled='true'>
-        {content}
-      </div>
-    );
-  }
-  return content;
+  // Keep this element stable through live → frozen. Changing only its
+  // interaction attributes preserves the mounted game subtree and its UI
+  // state, whereas adding a wrapper only for frozen mode remounts it.
+  return (
+    <div
+      className={`relative h-full w-full min-h-0${mode === 'frozen' ? ' pointer-events-none' : ''}`}
+      aria-disabled={mode === 'frozen' || undefined}
+    >
+      {content}
+    </div>
+  );
 }
