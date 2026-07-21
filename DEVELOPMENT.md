@@ -191,8 +191,8 @@ Binary at `target/debug/chia-gaming-sim`. Listens on port 5800, serving
 ## Staging (Asset Layout)
 
 Both apps use a nonce-based directory layout for cache-busting. The nonce is
-a millisecond timestamp. `run-local-demo.sh` assembles these as symlink
-trees; for production, copy the files instead.
+a millisecond timestamp. `run-local-demo.sh` assembles these by copying
+built assets into `app/NONCE/` (same layout production tarballs use).
 
 ### Player app
 
