@@ -20,7 +20,7 @@ export interface ChallengeReceived {
 }
 
 type InboundMessage =
-  | { type: 'lobby_update'; players: Player[] }
+  | { type: 'hub_update'; players: Player[] }
   | { type: 'joined'; id: string; alias: string }
   | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; challenger_amount: string; target_amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
@@ -28,11 +28,11 @@ type InboundMessage =
   | { type: 'keepalive' }
   | { type: 'error'; error?: string };
 
-let nextLobbyConnId = 1;
+let nextHubConnId = 1;
 
-export function lobbyHsLog(event: string, fields?: Record<string, unknown>) {
+export function hubHsLog(event: string, fields?: Record<string, unknown>) {
   const parts = [
-    '[lobby-hs]',
+    '[hub-hs]',
     `ev=${event}`,
     `iso=${new Date().toISOString()}`,
     `mono_ms=${(typeof performance !== 'undefined' ? performance.now() : 0).toFixed(1)}`,
@@ -48,20 +48,20 @@ export function lobbyHsLog(event: string, fields?: Record<string, unknown>) {
 function toWsUrl(input: string): string {
   const url = new URL(input);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/ws/lobby';
+  url.pathname = '/ws/hub';
   url.search = '';
   url.hash = '';
   return url.toString();
 }
 
-export function useLobbySocket(
-  lobbyUrl: string,
+export function useHubSocket(
+  hubUrl: string,
   uniqueId: string,
   sessionId: string,
 ) {
-  const connIdRef = useRef<number>(nextLobbyConnId++);
+  const connIdRef = useRef<number>(nextHubConnId++);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [lobbyUpdateReceived, setLobbyUpdateReceived] = useState(false);
+  const [hubUpdateReceived, setHubUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -87,7 +87,7 @@ export function useLobbySocket(
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       if (queueIfClosed) {
         pendingOutboundRef.current.push(payload);
-        lobbyHsLog('outbound_buffered', {
+        hubHsLog('outbound_buffered', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           type: String(payload.type ?? 'unknown'),
@@ -96,7 +96,7 @@ export function useLobbySocket(
       }
       return false;
     }
-    lobbyHsLog('outbound_sent', {
+    hubHsLog('outbound_sent', {
       conn_id: connIdRef.current,
       session_id: sessionId,
       type: String(payload.type ?? 'unknown'),
@@ -108,8 +108,8 @@ export function useLobbySocket(
   useEffect(() => {
     if (!uniqueId) return;
 
-    const wsUrl = toWsUrl(lobbyUrl);
-    lobbyHsLog('connection_init', {
+    const wsUrl = toWsUrl(hubUrl);
+    hubHsLog('connection_init', {
       conn_id: connIdRef.current,
       session_id: sessionId,
       unique_id: uniqueId,
@@ -127,7 +127,7 @@ export function useLobbySocket(
 
     const connect = () => {
       if (closingRef.current) return;
-      lobbyHsLog('connect_start', {
+      hubHsLog('connect_start', {
         conn_id: connIdRef.current,
         session_id: sessionId,
         ws_url: wsUrl,
@@ -138,7 +138,7 @@ export function useLobbySocket(
 
       const connectTimeout = window.setTimeout(() => {
         if (ws.readyState !== WebSocket.CONNECTING) return;
-        lobbyHsLog('ws_connect_timeout', {
+        hubHsLog('ws_connect_timeout', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           elapsed_ms: Date.now() - connectStartedAt,
@@ -152,7 +152,7 @@ export function useLobbySocket(
         pendingWsRef.current = null;
         wsRef.current = ws;
         reconnectAttemptRef.current = 0;
-        lobbyHsLog('ws_open', {
+        hubHsLog('ws_open', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           ready_state: ws.readyState,
@@ -161,7 +161,7 @@ export function useLobbySocket(
         setIsConnected(true);
         setHasConnected(true);
         ws.send(JSON.stringify({ type: 'get_alias', session_id: sessionId }));
-        lobbyHsLog('get_alias_send', {
+        hubHsLog('get_alias_send', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           unique_id: uniqueIdRef.current,
@@ -172,7 +172,7 @@ export function useLobbySocket(
             session_id: sessionId,
             alias: joinedAliasRef.current,
           };
-          lobbyHsLog('join_resend_on_open', {
+          hubHsLog('join_resend_on_open', {
             conn_id: connIdRef.current,
             session_id: sessionId,
             alias_len: joinedAliasRef.current.length,
@@ -181,7 +181,7 @@ export function useLobbySocket(
         }
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
-          lobbyHsLog('flush_buffered_outbound', {
+          hubHsLog('flush_buffered_outbound', {
             conn_id: connIdRef.current,
             session_id: sessionId,
             count: queued.length,
@@ -212,18 +212,18 @@ export function useLobbySocket(
             setPublicId(msg.id);
             setSavedAlias(msg.alias);
             break;
-          case 'lobby_update':
+          case 'hub_update':
             if (!Array.isArray(msg.players)) {
-              console.error('[lobby] lobby_update missing players array', msg);
+              console.error('[hub] hub_update missing players array', msg);
               break;
             }
-            lobbyHsLog('lobby_update_recv', {
+            hubHsLog('hub_update_recv', {
               conn_id: connIdRef.current,
               session_id: sessionId,
               players: msg.players.length,
             });
             setPlayers(msg.players);
-            setLobbyUpdateReceived(true);
+            setHubUpdateReceived(true);
             break;
           case 'challenge_received':
             setPendingChallenge(msg);
@@ -235,7 +235,7 @@ export function useLobbySocket(
             );
             break;
           case 'alias_result':
-            lobbyHsLog('alias_result_recv', {
+            hubHsLog('alias_result_recv', {
               conn_id: connIdRef.current,
               session_id: sessionId,
               has_alias: msg.alias !== null,
@@ -244,7 +244,7 @@ export function useLobbySocket(
             setAliasLoaded(true);
             break;
           case 'error':
-            if (msg.error) console.warn('[lobby] hub error:', msg.error);
+            if (msg.error) console.warn('[hub] hub error:', msg.error);
             break;
           case 'keepalive':
             break;
@@ -261,7 +261,7 @@ export function useLobbySocket(
         }
         const isCurrentWs = wsRef.current === ws || pendingWsRef.current === ws;
         if (!isCurrentWs) return;
-        lobbyHsLog('ws_close', {
+        hubHsLog('ws_close', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           code: event.code,
@@ -283,14 +283,14 @@ export function useLobbySocket(
         ];
         const delay = Math.round(base * (0.75 + Math.random() * 0.5));
         reconnectAttemptRef.current++;
-        lobbyHsLog('reconnect_timer_set', {
+        hubHsLog('reconnect_timer_set', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           delay_ms: delay,
           attempt: reconnectAttemptRef.current,
         });
         reconnectTimerRef.current = window.setTimeout(() => {
-          lobbyHsLog('reconnect_timer_fire', {
+          hubHsLog('reconnect_timer_fire', {
             conn_id: connIdRef.current,
             session_id: sessionId,
           });
@@ -302,7 +302,7 @@ export function useLobbySocket(
         clearTimeout(connectTimeout);
         const isCurrentWs = wsRef.current === ws || pendingWsRef.current === ws;
         if (!isCurrentWs) return;
-        lobbyHsLog('ws_error', {
+        hubHsLog('ws_error', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           connect_elapsed_ms: Date.now() - connectStartedAt,
@@ -322,7 +322,7 @@ export function useLobbySocket(
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
       closingRef.current = true;
-      lobbyHsLog('connection_cleanup', {
+      hubHsLog('connection_cleanup', {
         conn_id: connIdRef.current,
         session_id: sessionId,
       });
@@ -342,14 +342,14 @@ export function useLobbySocket(
       pendingWsRef.current = null;
       pendingOutboundRef.current = [];
     };
-  }, [uniqueId, lobbyUrl, sessionId, send]);
+  }, [uniqueId, hubUrl, sessionId, send]);
 
-  const joinLobby = useCallback(
+  const joinHub = useCallback(
     (alias: string) => {
       const trimmed = alias.trim();
       if (!trimmed) return;
       joinedAliasRef.current = trimmed;
-      lobbyHsLog('join_call', {
+      hubHsLog('join_call', {
         conn_id: connIdRef.current,
         session_id: sessionId,
         alias_len: trimmed.length,
@@ -413,7 +413,7 @@ export function useLobbySocket(
     setChallengeSent(false);
   }, [send]);
 
-  const setLobbyAlias = useCallback(
+  const setHubAlias = useCallback(
     async (id: string, newAlias: string) => {
       const trimmed = newAlias.trim();
       if (id === publicId && trimmed) {
@@ -429,7 +429,7 @@ export function useLobbySocket(
   return {
     players,
     publicId,
-    lobbyUpdateReceived,
+    hubUpdateReceived,
     pendingChallenge,
     challengeSent,
     isConnected,
@@ -437,12 +437,12 @@ export function useLobbySocket(
     reconnectBlocked,
     savedAlias,
     aliasLoaded,
-    joinLobby,
+    joinHub,
     setAlias,
     sendChallenge,
     acceptChallenge,
     declineChallenge,
     cancelChallenge,
-    setLobbyAlias,
+    setHubAlias,
   };
 }

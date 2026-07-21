@@ -24,7 +24,7 @@ export interface HubConnectionCallbacks {
   onDeliveryFailure: (to: string) => void;
   onRegistered: (player_id: string) => void;
   onClosed: () => void;
-  onLobbyAttention: () => void;
+  onHubAttention: () => void;
   onHubDisconnected: () => void;
   onHubReconnected: () => void;
   onHubActivity: () => void;
@@ -35,7 +35,7 @@ type HubEnvelope =
   | { type: 'advisory_start'; peer_id: string; peer_alias: string; my_amount: string; their_amount: string; channel_timeout?: string; unroll_timeout?: string }
   | { type: 'registered'; player_id: string }
   | { type: 'delivery_failure'; to: string }
-  | { type: 'lobby_attention' }
+  | { type: 'hub_attention' }
   | { type: 'closed' }
   | { type: 'keepalive' }
   | { type: 'error'; error?: string };
@@ -83,7 +83,7 @@ function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
       return { type, player_id: requireText(decoded, 'player_id') };
     case 'delivery_failure':
       return { type, to: requireText(decoded, 'to') };
-    case 'lobby_attention':
+    case 'hub_attention':
     case 'closed':
     case 'keepalive':
       return { type };
@@ -317,8 +317,8 @@ export class HubConnection {
         log(`[hub] delivery_failure to=${msg.to}`);
         this.callbacks.onDeliveryFailure(msg.to);
         break;
-      case 'lobby_attention':
-        this.callbacks.onLobbyAttention();
+      case 'hub_attention':
+        this.callbacks.onHubAttention();
         break;
       case 'closed':
         this.closePending = false;

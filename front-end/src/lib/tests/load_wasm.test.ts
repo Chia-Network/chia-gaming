@@ -15,6 +15,7 @@ import { Subscription } from 'rxjs';
 import {
   WasmStateInit,
   storeInitArgs,
+  _resetWasmLoadForTests,
 } from '../../hooks/WasmStateInit';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
@@ -162,6 +163,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   resetSaveState();
+  _resetWasmLoadForTests();
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
     request.onsuccess = () => resolve();

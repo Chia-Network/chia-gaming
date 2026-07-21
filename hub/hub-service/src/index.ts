@@ -34,7 +34,7 @@ function parseArgs() {
 const args = parseArgs();
 const verbose = Boolean(args.verbose);
 
-type LobbyInboundMessage =
+type HubInboundMessage =
   | { type: 'join'; id?: string; alias?: string; session_id?: string }
   | { type: 'leave'; id?: string }
   | { type: 'challenge'; from_id?: string; target_id: string; challenger_amount: string; target_amount: string; channel_timeout?: string; unroll_timeout?: string }
@@ -53,7 +53,7 @@ type GameInboundMessage =
   | { type: 'set_busy'; session_id: string; busy: boolean; alias?: string }
   | { type: 'keepalive' };
 
-interface LobbyConnMeta {
+interface HubConnMeta {
   playerId: string;
   sessionId: string;
 }
@@ -64,16 +64,16 @@ interface GameConnMeta {
   busy?: boolean;
 }
 
-const LOBBY_DISCONNECT_GRACE_MS = 3000;
+const HUB_DISCONNECT_GRACE_MS = 3000;
 const CONNECTION_TTL_MS = 60_000;
-const lobbyWsServer = new WebSocketServer({ noServer: true });
+const hubWsServer = new WebSocketServer({ noServer: true });
 const gameWsServer = new WebSocketServer({ noServer: true });
 
 httpServer.on('upgrade', (req, socket, head) => {
   const pathname = new URL(req.url!, `http://${req.headers.host}`).pathname;
-  if (pathname === '/ws/lobby') {
-    lobbyWsServer.handleUpgrade(req, socket, head, (ws) => {
-      lobbyWsServer.emit('connection', ws, req);
+  if (pathname === '/ws/hub') {
+    hubWsServer.handleUpgrade(req, socket, head, (ws) => {
+      hubWsServer.emit('connection', ws, req);
     });
   } else if (pathname === '/ws/game') {
     gameWsServer.handleUpgrade(req, socket, head, (ws) => {
@@ -84,12 +84,12 @@ httpServer.on('upgrade', (req, socket, head) => {
   }
 });
 
-const lobbyConnections = new Map<string, WebSocket>();
+const hubConnections = new Map<string, WebSocket>();
 const gameConnections = new Map<string, WebSocket>();
-const wsLobbyMeta = new WeakMap<WebSocket, LobbyConnMeta>();
+const wsHubMeta = new WeakMap<WebSocket, HubConnMeta>();
 const wsGameMeta = new WeakMap<WebSocket, GameConnMeta>();
 
-const pendingLobbyLeaves = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingHubLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionToPlayer = new Map<string, string>();
 const playerToSession = new Map<string, string>();
 const knownAliases = new Map<string, string>();
@@ -128,7 +128,7 @@ function ensureSession(sessionId: string): string {
   const existing = sessionToPlayer.get(sessionId);
   if (existing) return existing;
   // Mapping is intentionally retained for the hub process lifetime —
-  // disconnect / leaveLobby must not mint a new public id for the same secret.
+  // disconnect / leaveHub must not mint a new public id for the same secret.
   const playerId = randomPublicId();
   sessionToPlayer.set(sessionId, playerId);
   playerToSession.set(playerId, sessionId);
@@ -144,10 +144,19 @@ app.use(
 );
 
 app.use((req, res, next) => {
-  res.set('Cache-Control',
-    req.path.startsWith('/app/')
-      ? 'public, max-age=31536000, immutable'
-      : 'no-store');
+  // Nonce /app/* URLs change every rebuild; only root shell/meta are stable.
+  const p = req.path;
+  let cc: string;
+  if (p.startsWith('/app/')) {
+    cc = 'public, max-age=31536000, immutable';
+  } else if (p === '/build-meta.json') {
+    cc = 'no-store';
+  } else if (p === '/' || p === '/index.html' || p.endsWith('.html')) {
+    cc = 'no-cache';
+  } else {
+    cc = 'public, max-age=86400';
+  }
+  res.set('Cache-Control', cc);
   next();
 });
 
@@ -198,13 +207,13 @@ function sendGameWs(ws: WebSocket, type: string, payload: unknown): void {
   logHubVerbose('send_game_ws_ok', { ws_id: wsId(ws), type });
 }
 
-function sendLobbyEvent(playerId: string, type: string, payload: unknown): void {
-  const ws = lobbyConnections.get(playerId);
+function sendHubEvent(playerId: string, type: string, payload: unknown): void {
+  const ws = hubConnections.get(playerId);
   if (!ws) {
-    logHub('send_lobby_event_drop_missing_ws', { player_id: playerId, type });
+    logHub('send_hub_event_drop_missing_ws', { player_id: playerId, type });
     return;
   }
-  logHubVerbose('send_lobby_event', { player_id: playerId, ws_id: wsId(ws), type });
+  logHubVerbose('send_hub_event', { player_id: playerId, ws_id: wsId(ws), type });
   sendWs(ws, type, payload);
 }
 
@@ -217,9 +226,9 @@ function aliasForPlayer(playerId: string): string {
 
 function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
   if (!alias) return;
-  // Lobby set_alias / join / change_alias own the display name. Game-channel
+  // Hub set_alias / join / change_alias own the display name. Game-channel
   // identify/set_busy may carry a generated prefs fallback (Player_*) and must
-  // not clobber a name the user already chose in the lobby.
+  // not clobber a name the user already chose in the hub.
   if (knownAliases.has(sessionId)) return;
   knownAliases.set(sessionId, alias);
   const player = hub.players[playerId];
@@ -232,7 +241,7 @@ function replayPendingChallengesToPlayer(playerId: string): void {
   for (const challenge of hub.challenges.values()) {
     if (challenge.target_id !== playerId) continue;
     const fromAlias = aliasForPlayer(challenge.from_id);
-    sendLobbyEvent(playerId, 'challenge_received', {
+    sendHubEvent(playerId, 'challenge_received', {
       challenge_id: challenge.id,
       from_id: challenge.from_id,
       from_alias: fromAlias,
@@ -268,24 +277,24 @@ function sendGameBinary(playerId: string, data: Buffer): boolean {
   return true;
 }
 
-function broadcastLobbyUpdate(): void {
+function broadcastHubUpdate(): void {
   const players = hub.getPlayers();
-  for (const [playerId] of lobbyConnections) {
-    sendLobbyEvent(playerId, 'lobby_update', { players });
+  for (const [playerId] of hubConnections) {
+    sendHubEvent(playerId, 'hub_update', { players });
   }
 }
 
-function cancelPendingLobbyLeave(playerId: string): void {
-  const timer = pendingLobbyLeaves.get(playerId);
+function cancelPendingHubLeave(playerId: string): void {
+  const timer = pendingHubLeaves.get(playerId);
   if (timer) {
     clearTimeout(timer);
-    pendingLobbyLeaves.delete(playerId);
+    pendingHubLeaves.delete(playerId);
   }
 }
 
-function leaveLobby(playerId: string): boolean {
+function leaveHub(playerId: string): boolean {
   if (hub.removePlayer(playerId)) {
-    broadcastLobbyUpdate();
+    broadcastHubUpdate();
     return true;
   }
   return false;
@@ -308,14 +317,14 @@ function cancelPlayerChallenges(playerId: string): void {
   for (const { id, challenge } of toCancel) {
     const otherId = challenge.from_id === playerId ? challenge.target_id : challenge.from_id;
     hub.removeChallenge(id);
-    sendLobbyEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
+    sendHubEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
     logHub('challenge_cancelled_on_sweep', { challenge_id: id, swept_player: playerId, notified_player: otherId });
   }
 }
 
 function applyPlayerBusy(playerId: string, busy: boolean): void {
   const status = busy ? 'busy' : 'waiting';
-  // Not in lobby yet: busy is held on game meta and applied on join.
+  // Not in hub yet: busy is held on game meta and applied on join.
   if (!hub.setPlayerStatus(playerId, status)) {
     return;
   }
@@ -324,11 +333,11 @@ function applyPlayerBusy(playerId: string, busy: boolean): void {
   }
 }
 
-// --- Lobby channel handlers ---
+// --- Hub channel handlers ---
 
-function onLobbyJoin(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'join' }>): void {
+function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join' }>): void {
   const { alias, session_id } = msg;
-  logHub('lobby_join', { ws_id: wsId(ws), session_id: session_id ?? null, alias: alias ?? null });
+  logHub('hub_join', { ws_id: wsId(ws), session_id: session_id ?? null, alias: alias ?? null });
   if (!session_id) {
     sendWs(ws, 'error', { error: 'Missing hub session.' });
     return;
@@ -342,13 +351,13 @@ function onLobbyJoin(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'j
     return;
   }
 
-  wsLobbyMeta.set(ws, { playerId, sessionId: session_id });
-  cancelPendingLobbyLeave(playerId);
-  const previous = lobbyConnections.get(playerId);
+  wsHubMeta.set(ws, { playerId, sessionId: session_id });
+  cancelPendingHubLeave(playerId);
+  const previous = hubConnections.get(playerId);
   if (previous && previous !== ws) {
     try { previous.close(4001, 'replaced_by_new_connection'); } catch {}
   }
-  lobbyConnections.set(playerId, ws);
+  hubConnections.set(playerId, ws);
 
   if (!hub.players[playerId]) {
     hub.addPlayer({
@@ -361,7 +370,7 @@ function onLobbyJoin(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'j
   }
   knownAliases.set(session_id, resolvedAlias);
   sendWs(ws, 'joined', { id: playerId, alias: resolvedAlias });
-  broadcastLobbyUpdate();
+  broadcastHubUpdate();
   replayPendingChallengesToPlayer(playerId);
 
   // If the game channel was already identified, apply busy status
@@ -371,21 +380,21 @@ function onLobbyJoin(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'j
     if (meta) meta.playerId = playerId;
     if (meta?.busy !== undefined) {
       applyPlayerBusy(playerId, meta.busy);
-      broadcastLobbyUpdate();
+      broadcastHubUpdate();
     }
   }
 }
 
-function onLobbyLeave(ws: WebSocket, _msg: Extract<LobbyInboundMessage, { type: 'leave' }>): void {
-  const playerId = getLobbySenderId(ws);
+function onHubLeave(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'leave' }>): void {
+  const playerId = getHubSenderId(ws);
   if (!playerId) return;
-  logHub('lobby_leave', { player_id: playerId });
-  cancelPendingLobbyLeave(playerId);
-  leaveLobby(playerId);
+  logHub('hub_leave', { player_id: playerId });
+  cancelPendingHubLeave(playerId);
+  leaveHub(playerId);
 }
 
-function getLobbySenderId(ws: WebSocket): string | undefined {
-  return wsLobbyMeta.get(ws)?.playerId;
+function getHubSenderId(ws: WebSocket): string | undefined {
+  return wsHubMeta.get(ws)?.playerId;
 }
 
 const MAX_AMOUNT_MOJOS = 1_000_000_000_000_000_000n; // 1,000,000 XCH — sanity cap, not a business limit
@@ -408,8 +417,8 @@ function validateTimeout(raw: string | undefined, label: string): string | null 
   return null;
 }
 
-function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge' }>): void {
-  const senderId = getLobbySenderId(ws);
+function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'challenge' }>): void {
+  const senderId = getHubSenderId(ws);
   const { target_id, challenger_amount, target_amount } = msg;
   logHub('challenge_received', {
     ws_id: wsId(ws),
@@ -421,7 +430,7 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   const fromPlayer = senderId ? hub.players[senderId] : undefined;
   if (!fromPlayer) {
     logHub('challenge_drop_unknown_sender', { sender_id: senderId ?? null, target_id });
-    sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin lobby and retry.' });
+    sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin hub and retry.' });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
@@ -500,7 +509,7 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     msg.unroll_timeout,
   );
 
-  sendLobbyEvent(target_id, 'challenge_received', {
+  sendHubEvent(target_id, 'challenge_received', {
     challenge_id: challenge.id,
     from_id: fromPlayer.id,
     from_alias: fromPlayer.alias,
@@ -509,11 +518,11 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     channel_timeout: challenge.channel_timeout,
     unroll_timeout: challenge.unroll_timeout,
   });
-  sendGameEvent(target_id, 'lobby_attention', {});
+  sendGameEvent(target_id, 'hub_attention', {});
 }
 
-function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge_accept' }>): void {
-  const accepter_id = getLobbySenderId(ws);
+function onChallengeAccept(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'challenge_accept' }>): void {
+  const accepter_id = getHubSenderId(ws);
   const { challenge_id } = msg;
   const challenge = hub.getChallenge(challenge_id);
   if (!challenge || !accepter_id || accepter_id !== challenge.target_id) {
@@ -538,7 +547,7 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     hub.removeChallenge(challenge_id);
     sendWs(ws, 'error', { error: 'One or both players are no longer available.' });
     sendWs(ws, 'challenge_resolved', { challenge_id, accepted: false });
-    sendLobbyEvent(challenge.from_id, 'challenge_resolved', { challenge_id, accepted: false });
+    sendHubEvent(challenge.from_id, 'challenge_resolved', { challenge_id, accepted: false });
     return;
   }
   if (!hasActiveGameConnection(challenge.from_id) || !hasActiveGameConnection(accepter_id)) {
@@ -551,8 +560,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
     const errorMsg = 'Game connection not available for both players.';
     sendWs(ws, 'error', { error: errorMsg });
     sendWs(ws, 'challenge_resolved', { challenge_id, accepted: false });
-    sendLobbyEvent(challenge.from_id, 'error', { error: errorMsg });
-    sendLobbyEvent(challenge.from_id, 'challenge_resolved', { challenge_id, accepted: false });
+    sendHubEvent(challenge.from_id, 'error', { error: errorMsg });
+    sendHubEvent(challenge.from_id, 'challenge_resolved', { challenge_id, accepted: false });
     return;
   }
 
@@ -561,7 +570,7 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
   // challenge records it knows are now stale.
   cancelPlayerChallenges(challenge.target_id);
   cancelPlayerChallenges(challenge.from_id);
-  broadcastLobbyUpdate();
+  broadcastHubUpdate();
   logHub('challenge_accepted_advisory', {
     challenge_id,
     initiator_id: challenge.from_id,
@@ -572,8 +581,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
 
   const challengerAlias = hub.players[challenge.from_id]?.alias ?? challenge.from_id;
 
-  // Notify both lobby sides that the challenge was accepted.
-  sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
+  // Notify both hub sides that the challenge was accepted.
+  sendHubEvent(challenge.from_id, 'challenge_resolved', {
     challenge_id,
     accepted: true,
   });
@@ -595,8 +604,8 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
   sendGameEvent(challenge.target_id, 'advisory_start', advisoryPayload);
 }
 
-function onChallengeDecline(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge_decline' }>): void {
-  const playerId = getLobbySenderId(ws);
+function onChallengeDecline(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'challenge_decline' }>): void {
+  const playerId = getHubSenderId(ws);
   const challenge = hub.getChallenge(msg.challenge_id);
   if (!challenge || !playerId || challenge.target_id !== playerId) {
     logHub('challenge_decline_drop_missing', { challenge_id: msg.challenge_id });
@@ -608,7 +617,7 @@ function onChallengeDecline(ws: WebSocket, msg: Extract<LobbyInboundMessage, { t
     target_id: challenge.target_id,
   });
   hub.removeChallenge(msg.challenge_id);
-  sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
+  sendHubEvent(challenge.from_id, 'challenge_resolved', {
     challenge_id: msg.challenge_id,
     accepted: false,
   });
@@ -618,8 +627,8 @@ function onChallengeDecline(ws: WebSocket, msg: Extract<LobbyInboundMessage, { t
   });
 }
 
-function onChallengeCancel(ws: WebSocket, _msg: Extract<LobbyInboundMessage, { type: 'challenge_cancel' }>): void {
-  const senderId = getLobbySenderId(ws);
+function onChallengeCancel(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'challenge_cancel' }>): void {
+  const senderId = getHubSenderId(ws);
   if (!senderId) return;
   const toCancel: Array<{ id: string; challenge: Challenge }> = [];
   for (const [id, challenge] of hub.challenges) {
@@ -631,13 +640,13 @@ function onChallengeCancel(ws: WebSocket, _msg: Extract<LobbyInboundMessage, { t
   for (const { id, challenge } of toCancel) {
     logHub('challenge_cancelled', { challenge_id: id, challenger_id: senderId, target_id: challenge.target_id });
     hub.removeChallenge(id);
-    sendLobbyEvent(challenge.target_id, 'challenge_resolved', { challenge_id: id, accepted: false });
+    sendHubEvent(challenge.target_id, 'challenge_resolved', { challenge_id: id, accepted: false });
   }
   sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
 }
 
-function onChangeAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'change_alias' }>): void {
-  const meta = wsLobbyMeta.get(ws);
+function onChangeAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'change_alias' }>): void {
+  const meta = wsHubMeta.get(ws);
   if (!meta) return;
   const playerId = meta.playerId;
   logHub('alias_change', { ws_id: wsId(ws), player_id: playerId, new_alias: msg.newAlias });
@@ -645,19 +654,19 @@ function onChangeAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 
   const player = hub.players[playerId];
   if (player) {
     player.alias = msg.newAlias;
-    broadcastLobbyUpdate();
+    broadcastHubUpdate();
   }
 }
 
-function onGetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'get_alias' }>): void {
+function onGetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'get_alias' }>): void {
   const sessionId = msg.session_id;
   const alias = sessionId ? knownAliases.get(sessionId) ?? null : null;
   logHubVerbose('get_alias', { ws_id: wsId(ws), session_id: sessionId ?? null, found: alias !== null });
   sendWs(ws, 'alias_result', { alias });
 }
 
-function onSetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'set_alias' }>): void {
-  const sessionId = msg.session_id ?? wsLobbyMeta.get(ws)?.sessionId;
+function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_alias' }>): void {
+  const sessionId = msg.session_id ?? wsHubMeta.get(ws)?.sessionId;
   if (!sessionId) return;
   const playerId = sessionToPlayer.get(sessionId);
   logHub('set_alias', { ws_id: wsId(ws), session_id: sessionId, player_id: playerId ?? null, alias: msg.alias });
@@ -665,7 +674,7 @@ function onSetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'se
   const player = playerId ? hub.players[playerId] : undefined;
   if (player) {
     player.alias = msg.alias;
-    broadcastLobbyUpdate();
+    broadcastHubUpdate();
   }
   sendWs(ws, 'alias_result', { alias: msg.alias });
 }
@@ -688,10 +697,10 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   gameConnections.set(msg.session_id, ws);
   rememberGameAlias(msg.session_id, playerId, msg.alias);
 
-  // Apply busy status if lobby player exists
+  // Apply busy status if hub player exists
   if (msg.busy !== undefined && hub.players[playerId]) {
     applyPlayerBusy(playerId, msg.busy);
-    broadcastLobbyUpdate();
+    broadcastHubUpdate();
   }
 
   sendGameWs(ws, 'registered', { player_id: playerId });
@@ -797,14 +806,14 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
   meta.busy = msg.busy;
   logHub('set_busy', { player_id: playerId, busy: msg.busy });
   applyPlayerBusy(playerId, msg.busy);
-  broadcastLobbyUpdate();
+  broadcastHubUpdate();
 }
 
 // --- Message parsing ---
 
-function parseLobbyInbound(raw: string): LobbyInboundMessage | null {
+function parseHubInbound(raw: string): HubInboundMessage | null {
   try {
-    const parsed = JSON.parse(raw) as LobbyInboundMessage;
+    const parsed = JSON.parse(raw) as HubInboundMessage;
     if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) return null;
     return parsed;
   } catch {
@@ -867,7 +876,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
   }
 }
 
-function setupLobbyKeepalive(ws: WebSocket): void {
+function setupHubKeepalive(ws: WebSocket): void {
   const kaTimer = setInterval(() => {
     if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({ type: 'keepalive' }));
@@ -893,30 +902,30 @@ function clearKeepalive(ws: WebSocket): void {
   }
 }
 
-// --- Lobby WebSocket server ---
+// --- Hub WebSocket server ---
 
-lobbyWsServer.on('connection', (ws) => {
+hubWsServer.on('connection', (ws) => {
   const currentWsId = wsId(ws);
   wsLastActivity.set(ws, Date.now());
-  logHub('lobby_ws_connected', { ws_id: currentWsId });
-  setupLobbyKeepalive(ws);
+  logHub('hub_ws_connected', { ws_id: currentWsId });
+  setupHubKeepalive(ws);
 
   ws.on('message', (message) => {
     wsLastActivity.set(ws, Date.now());
     const text = typeof message === 'string' ? message : message.toString();
-    const parsed = parseLobbyInbound(text);
+    const parsed = parseHubInbound(text);
     if (!parsed) {
-      logHub('lobby_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
+      logHub('hub_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
       return;
     }
-    logHubVerbose('lobby_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
+    logHubVerbose('hub_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
 
     switch (parsed.type) {
       case 'join':
-        onLobbyJoin(ws, parsed);
+        onHubJoin(ws, parsed);
         break;
       case 'leave':
-        onLobbyLeave(ws, parsed);
+        onHubLeave(ws, parsed);
         break;
       case 'challenge':
         onChallenge(ws, parsed);
@@ -947,27 +956,27 @@ lobbyWsServer.on('connection', (ws) => {
   });
 
   ws.on('error', (err) => {
-    logHub('lobby_ws_error', { ws_id: currentWsId, error: err.message });
+    logHub('hub_ws_error', { ws_id: currentWsId, error: err.message });
   });
 
   ws.on('close', (code, reason) => {
     clearKeepalive(ws);
-    logHub('lobby_ws_closed', { ws_id: currentWsId, code, reason: reason.toString() });
-    const lobbyMeta = wsLobbyMeta.get(ws);
-    if (lobbyMeta) {
-      const playerId = lobbyMeta.playerId;
-      if (lobbyConnections.get(playerId) === ws) {
-        lobbyConnections.delete(playerId);
+    logHub('hub_ws_closed', { ws_id: currentWsId, code, reason: reason.toString() });
+    const hubMeta = wsHubMeta.get(ws);
+    if (hubMeta) {
+      const playerId = hubMeta.playerId;
+      if (hubConnections.get(playerId) === ws) {
+        hubConnections.delete(playerId);
       }
-      cancelPendingLobbyLeave(playerId);
+      cancelPendingHubLeave(playerId);
       const timer = setTimeout(() => {
-        pendingLobbyLeaves.delete(playerId);
-        if (!lobbyConnections.has(playerId)) {
-          logHub('lobby_grace_timeout_leave', { player_id: playerId });
-          leaveLobby(playerId);
+        pendingHubLeaves.delete(playerId);
+        if (!hubConnections.has(playerId)) {
+          logHub('hub_grace_timeout_leave', { player_id: playerId });
+          leaveHub(playerId);
         }
-      }, LOBBY_DISCONNECT_GRACE_MS);
-      pendingLobbyLeaves.set(playerId, timer);
+      }, HUB_DISCONNECT_GRACE_MS);
+      pendingHubLeaves.set(playerId, timer);
     }
   });
 });
@@ -1058,23 +1067,23 @@ gameWsServer.on('connection', (ws) => {
 
 // --- Sweep / liveness ---
 
-function sweepLobbyConnections(now: number): boolean {
+function sweepHubConnections(now: number): boolean {
   let changed = false;
   const expired: string[] = [];
-  for (const [playerId, ws] of lobbyConnections) {
+  for (const [playerId, ws] of hubConnections) {
     const lastSeen = wsLastActivity.get(ws) ?? 0;
     if (now - lastSeen > CONNECTION_TTL_MS) {
       expired.push(playerId);
     }
   }
   for (const playerId of expired) {
-    const ws = lobbyConnections.get(playerId);
+    const ws = hubConnections.get(playerId);
     if (ws) {
-      logHub('lobby_sweep_expired', { player_id: playerId, ws_id: wsId(ws) });
+      logHub('hub_sweep_expired', { player_id: playerId, ws_id: wsId(ws) });
       try { ws.close(4002, 'idle_timeout'); } catch {}
     }
-    lobbyConnections.delete(playerId);
-    cancelPendingLobbyLeave(playerId);
+    hubConnections.delete(playerId);
+    cancelPendingHubLeave(playerId);
     cancelPlayerChallenges(playerId);
     if (hub.removePlayer(playerId)) {
       changed = true;
@@ -1105,17 +1114,17 @@ function sweepGameConnections(now: number): void {
 
 const sweepTimer = setInterval(() => {
   const now = Date.now();
-  const lobbyChanged = sweepLobbyConnections(now);
+  const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
-  if (lobbyChanged) {
-    broadcastLobbyUpdate();
+  if (hubChanged) {
+    broadcastHubUpdate();
   }
   logHubVerbose('state_snapshot', {
     players: Object.keys(hub.players).length,
     challenges: hub.challenges.size,
-    lobby_connections: lobbyConnections.size,
+    hub_connections: hubConnections.size,
     game_connections: gameConnections.size,
-    pending_lobby_leaves: pendingLobbyLeaves.size,
+    pending_hub_leaves: pendingHubLeaves.size,
     session_to_player: sessionToPlayer.size,
     player_to_session: playerToSession.size,
   });
@@ -1135,13 +1144,13 @@ function shutdown(signal: string): void {
   console.log(`Received ${signal}; shutting down`);
   clearInterval(sweepTimer);
 
-  for (const ws of [...lobbyWsServer.clients, ...gameWsServer.clients]) {
+  for (const ws of [...hubWsServer.clients, ...gameWsServer.clients]) {
     try { ws.close(1001, 'server_shutdown'); } catch {}
   }
 
   let pendingClosures = 3;
   const deadline = setTimeout(() => {
-    for (const ws of [...lobbyWsServer.clients, ...gameWsServer.clients]) {
+    for (const ws of [...hubWsServer.clients, ...gameWsServer.clients]) {
       try { ws.terminate(); } catch {}
     }
     httpServer.closeAllConnections?.();
@@ -1158,7 +1167,7 @@ function shutdown(signal: string): void {
     }
   };
 
-  lobbyWsServer.close(closed);
+  hubWsServer.close(closed);
   gameWsServer.close(closed);
   httpServer.close(closed);
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLobbySocket, ChallengeReceived, lobbyHsLog } from './useLobbySocket';
+import { useHubSocket, ChallengeReceived, hubHsLog } from './useHubSocket';
 import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';
@@ -38,13 +38,13 @@ function formatAmount(mojoStr: string): string {
   return `${whole.toLocaleString()}.${fracStr} XCH`;
 }
 
-/** Keep the parent Shell prefs alias in sync with the lobby display name. */
+/** Keep the parent Shell prefs alias in sync with the hub display name. */
 function notifyParentAlias(alias: string): void {
   if (window.parent === window) return;
-  window.parent.postMessage({ type: 'lobby-alias', alias }, '*');
+  window.parent.postMessage({ type: 'hub-alias', alias }, '*');
 }
 
-const LobbyScreen = () => {
+const HubScreen = () => {
   const params = getSearchParams();
   const uniqueId = params.uniqueId || '';
   const sessionId = params.session || '';
@@ -55,7 +55,7 @@ const LobbyScreen = () => {
 
   const {
     players,
-    lobbyUpdateReceived,
+    hubUpdateReceived,
     pendingChallenge,
     challengeSent,
     isConnected,
@@ -63,15 +63,15 @@ const LobbyScreen = () => {
     reconnectBlocked,
     savedAlias,
     aliasLoaded,
-    joinLobby,
+    joinHub,
     setAlias,
     sendChallenge,
     acceptChallenge,
     declineChallenge,
     cancelChallenge,
-    setLobbyAlias,
+    setHubAlias,
     publicId,
-  } = useLobbySocket(
+  } = useHubSocket(
     window.location.origin,
     uniqueId,
     sessionId,
@@ -81,7 +81,7 @@ const LobbyScreen = () => {
   useEffect(() => {
     if (!aliasLoaded || autoJoinedRef.current) return;
     if (savedAlias) {
-      lobbyHsLog('alias_autojoin', {
+      hubHsLog('alias_autojoin', {
         session_id: sessionId,
         unique_id: uniqueId,
         alias_len: savedAlias.length,
@@ -90,19 +90,19 @@ const LobbyScreen = () => {
       setMyAlias(savedAlias);
       setAliasConfirmed(true);
       notifyParentAlias(savedAlias);
-      joinLobby(savedAlias);
+      joinHub(savedAlias);
     } else {
-      lobbyHsLog('alias_missing_waiting_for_user', {
+      hubHsLog('alias_missing_waiting_for_user', {
         session_id: sessionId,
         unique_id: uniqueId,
       });
     }
-  }, [aliasLoaded, savedAlias, joinLobby]);
+  }, [aliasLoaded, savedAlias, joinHub]);
 
   function confirmAlias() {
     const trimmed = myAlias.trim();
     if (!trimmed) return;
-    lobbyHsLog('alias_confirm', {
+    hubHsLog('alias_confirm', {
       session_id: sessionId,
       unique_id: uniqueId,
       alias_len: trimmed.length,
@@ -111,7 +111,7 @@ const LobbyScreen = () => {
     setMyAlias(trimmed);
     setAliasConfirmed(true);
     notifyParentAlias(trimmed);
-    joinLobby(trimmed);
+    joinHub(trimmed);
   }
 
   function commitEdit(e: any) {
@@ -119,7 +119,7 @@ const LobbyScreen = () => {
     setEditingAlias(false);
     setMyAlias(value);
     notifyParentAlias(value.trim());
-    setLobbyAlias(publicId ?? '', value);
+    setHubAlias(publicId ?? '', value);
   }
 
   useEffect(() => {
@@ -127,7 +127,7 @@ const LobbyScreen = () => {
     const { channel_timeout, unroll_timeout, challenger_amount, target_amount } = pendingChallenge;
     if (!isTimeoutInRange(channel_timeout) || !isTimeoutInRange(unroll_timeout)) {
       console.warn(
-        `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
+        `[hub] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
         `timeouts out of range (channel=${channel_timeout}, unroll=${unroll_timeout}, ` +
         `allowed=${MIN_TIMEOUT_BLOCKS}–${MAX_TIMEOUT_BLOCKS})`,
       );
@@ -136,7 +136,7 @@ const LobbyScreen = () => {
     }
     if (!isAmountValid(challenger_amount) || !isAmountValid(target_amount)) {
       console.warn(
-        `[lobby] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
+        `[hub] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
         `invalid amounts (challenger=${challenger_amount}, target=${target_amount})`,
       );
       declineChallenge(pendingChallenge.challenge_id);
@@ -402,7 +402,7 @@ const LobbyScreen = () => {
             className="mx-auto mb-2"
             style={{ fontSize: 48, color: 'var(--color-canvas-solid)' }}
           />
-          {lobbyUpdateReceived ? (
+          {hubUpdateReceived ? (
             <>
               <h6 className="text-lg font-medium text-canvas-text-contrast">
                 No Other Players Connected
@@ -504,4 +504,4 @@ function IncomingChallengeDialog({
   );
 }
 
-export default LobbyScreen;
+export default HubScreen;

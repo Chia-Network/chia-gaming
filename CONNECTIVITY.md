@@ -47,11 +47,11 @@ WalletConnect is an external protocol. The player app can adapt around its
 quirks at the edges (for example BigInt serialization handling), but it does
 not control WalletConnect's wire format. This is different from the peer/hub
 protocol, which is project-owned: the game WebSocket control envelopes and
-peer app messages use bencodex, while the lobby iframe WebSocket remains JSON.
+peer app messages use bencodex, while the hub iframe WebSocket remains JSON.
 
 ### Hub
 
-A hub is a specific server. The lobby is its matchmaking HTML UX (player list and challenges); the game relay is a separate channel on the same server.
+A hub is a specific server. The hub is its matchmaking HTML UX (player list and challenges); the game relay is a separate channel on the same server.
 Hub A and Hub B are distinct entities — different lobbies, different
 pairings, different relay channels. The player connects to zero or one hub
 at a time.
@@ -141,7 +141,7 @@ After collapsing ephemeral states, the system has **7 resting states**:
 | 1 | up | up | none | Idle on a hub. Can accept challenges. |
 | 2 | up | up | off-chain | Playing a game through the relay. |
 | 3 | up | up | on-chain | Resolving on-chain, peer still connected. |
-| 4 | up | down | none | On a hub, no match. Waiting in lobby. |
+| 4 | up | down | none | On a hub, no match. Waiting in hub. |
 | 5 | up | down | on-chain | Resolving on-chain, peer gone. Hub available for future matchmaking. |
 | 6 | down | down | none | Disconnected from everything. Can reconnect. |
 | 7 | down | down | on-chain | Resolving on-chain, no hub. Grinding through blockchain. |
@@ -191,7 +191,7 @@ Specific rules:
 |--------|----------|---------|-------------|
 | Disconnect | Always | If peer up: "This will end your peer connection." If session off-chain: "This will force your game on-chain." | Peer dies (cascade). |
 | Reconnect (same hub) | Always | None | Hub re-identifies. Resends un-acked messages if session active. |
-| Connect to new hub | Always | None | New lobby. If session is active, join as unavailable. |
+| Connect to new hub | Always | None | New hub. If session is active, join as unavailable. |
 
 ### Peer
 
@@ -260,7 +260,7 @@ any pending hand obligations have finished:
 5. That finished snapshot is persisted with the boot Resume/Start Over marker
    (live cradle/pairing cleared). Reload must show Resume/Start Over — not
    silently auto-connect the hub with an empty game tab.
-6. Shell tells the hub/lobby that the player is not busy.
+6. Shell tells the hub/hub that the player is not busy.
 7. The player can accept new challenges. This is intentional: terminal sessions
    no longer impose a protocol obligation, so the UI should encourage continued
    play instead of making the user manually clear the finished game.
@@ -285,7 +285,7 @@ The player app tells the hub whether it is busy over the
 **game channel WebSocket** (`HubConnection` → `/ws/game`). The hub
 is not trusted either (it's third-party code anyone can run), but the
 WebSocket is a TCP connection with known coherent semantics — clear ordering,
-connection state, and a single stream. The lobby iframe's `postMessage`
+connection state, and a single stream. The hub iframe's `postMessage`
 boundary is a broadcast mechanism with no delivery guarantees, no ordering,
 and a much harder surface to guard against. Busy signaling goes over
 the WebSocket because it's the more defensible transport, not because the
@@ -312,7 +312,7 @@ Clients do not negotiate dual-initiator races (no same-peer yield / steal).
 Raw `ChannelStatus` is more detailed than this
 (`Handshaking`, funding/offer states, `Active`, shutdown states, on-chain
 transition states, resolved channel states, `Failed`, etc.) and must not be
-treated as the lobby availability state directly. The broader session phase
+treated as the hub availability state directly. The broader session phase
 folds in pending hand state: a raw channel status can be resolved while the
 session remains `on-chain` because a hand is still being settled.
 
@@ -328,8 +328,8 @@ hub has correct status immediately after a game channel opens, reconnects,
 or restores. This avoids a brief `waiting` flicker for unresolved restored
 sessions.
 
-The hub updates the player's lobby status to `'busy'` or `'playing'` while
-busy, or `'waiting'` when not busy, and broadcasts a lobby update. When a player
+The hub updates the player's hub status to `'busy'` or `'playing'` while
+busy, or `'waiting'` when not busy, and broadcasts a hub update. When a player
 becomes busy, the hub cancels all pending challenges involving that player.
 Challenges to/from non-waiting players are rejected.
 
@@ -338,21 +338,21 @@ any pending hands having finished), the player app sends `set_busy` with
 `busy: false`. The hub sets the player back to `'waiting'` and broadcasts
 the update.
 
-The lobby iframe receives the updated `Player.status` via the normal
-`lobby_update` broadcast and renders busy players as unavailable. No
+The hub iframe receives the updated `Player.status` via the normal
+`hub_update` broadcast and renders busy players as unavailable. No
 iframe-side protocol changes are needed — it is read-only for this signal.
 
 ### Proposal Handoff
 
 The hub does not create a session. It can only advise and relay:
 
-1. A lobby user creates a challenge with per-player buy-in contributions and
+1. A hub user creates a challenge with per-player buy-in contributions and
    optional channel/unroll timeouts. The hub validates the challenge at the
-   lobby boundary: amounts must be positive integers and timeout block counts
+   hub boundary: amounts must be positive integers and timeout block counts
    must be in the 3-30 range. There is no upper limit on amounts. Invalid
-   challenges are rejected before the target lobby sees them; valid challenges
-   are stored and sent as `challenge_received` to the target lobby iframe.
-2. If the target accepts in the lobby, the hub removes that challenge,
+   challenges are rejected before the target hub sees them; valid challenges
+   are stored and sent as `challenge_received` to the target hub iframe.
+2. If the target accepts in the hub, the hub removes that challenge,
    cancels stale challenge records involving either player, and sends
    `advisory_start` to the target player's game channel only. The target is
    now the proposed channel initiator for that challenge. (A separate reverse
@@ -446,8 +446,8 @@ The hub does not create a session. It can only advise and relay:
   if the existing relay is still visible.
 
 - **Hub-side `set_busy` handler**: The hub server accepts bencodex
-  `set_busy` messages on the game channel. It updates the player's lobby
-  status to `'playing'`, `'busy'`, or `'waiting'` and broadcasts a lobby update.
+  `set_busy` messages on the game channel. It updates the player's hub
+  status to `'playing'`, `'busy'`, or `'waiting'` and broadcasts a hub update.
   When busy becomes true, pending challenges involving that player are cancelled;
   challenges to/from non-waiting players are rejected. (`hub-service/src/index.ts`)
 

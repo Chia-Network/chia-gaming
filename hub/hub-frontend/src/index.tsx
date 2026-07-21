@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 
-import LobbyScreen from './lobby';
+import HubScreen from './hub';
 
 window.addEventListener('message', (ev) => {
   if (ev.data?.type === 'theme-sync') {
@@ -16,5 +16,5 @@ const container = document.getElementById('root');
 const root = createRoot(container!);
 
 root.render(
-  <LobbyScreen />,
+  <HubScreen />,
 );
