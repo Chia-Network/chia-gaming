@@ -85,8 +85,15 @@ fi
 echo "=== Running hub-service tests ==="
 (cd "$REPO_ROOT/hub/hub-service" && pnpm run test)
 
-# Kill any stale simulator on our port before starting a fresh one
-lsof -ti:5800 -sTCP:LISTEN | xargs kill 2>/dev/null || true
+# Use a per-run port so a browser connected to the development simulator cannot
+# reconnect to the test simulator and submit transactions from unrelated state.
+SIM_PORT="${CHIA_GAMING_SIM_PORT:-$((20000 + $$ % 20000))}"
+export CHIA_GAMING_SIM_LISTEN_ADDR="[::]:$SIM_PORT"
+export CHIA_GAMING_SIM_URL="http://127.0.0.1:$SIM_PORT"
+export CHIA_GAMING_SIM_WS_URL="ws://127.0.0.1:$SIM_PORT/ws"
+
+# Kill any stale simulator on our selected port before starting a fresh one.
+lsof -ti:"$SIM_PORT" -sTCP:LISTEN | xargs kill 2>/dev/null || true
 sleep 0.5
 
 echo "=== Starting simulator ==="
@@ -96,14 +103,14 @@ SIM_PID=$!
 
 echo "=== Waiting for simulator ==="
 for i in $(seq 1 10); do
-    if curl -s -X POST http://localhost:5800/health >/dev/null 2>&1; then
+    if curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
         echo "Simulator ready"
         break
     fi
     sleep 1
 done
 
-if ! curl -s -X POST http://localhost:5800/health >/dev/null 2>&1; then
+if ! curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
     echo "Simulator failed to start"
     exit 1
 fi

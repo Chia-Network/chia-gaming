@@ -155,7 +155,7 @@ pub enum GameNotification {
 
     ProposalMade {
         id: GameID,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Full ordered member list; always non-empty (singleton ⇒ `[id]`).
         group_ids: Vec<GameID>,
         my_contribution: Amount,
         their_contribution: Amount,

@@ -832,7 +832,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         mgr.flush_and_collect(&mut allocator).expect("flush");
 
         // Submit the creating tx the manager captured; confirm child at block 2.
-        let subs = mgr.drain_submissions();
+        let subs = mgr.drain_submissions().unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(
             s.push_transactions(&mut allocator, &tx_spends(&subs[0]))
@@ -848,7 +848,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         mgr.flush_and_collect(&mut allocator).expect("flush");
         assert_eq!(mgr.watched_coin(&child).unwrap().birthday, Some(2));
         assert!(
-            mgr.drain_submissions().is_empty(),
+            mgr.drain_submissions().unwrap().is_empty(),
             "no resubmission while confirmed"
         );
 
@@ -863,7 +863,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
 
         // The manager re-queued the creating tx; resubmit it and recover.
-        let resubs = mgr.drain_submissions();
+        let resubs = mgr.drain_submissions().unwrap();
         assert_eq!(resubs.len(), 1, "creating tx resubmitted");
         assert_eq!(
             s.push_transactions(&mut allocator, &tx_spends(&resubs[0]))

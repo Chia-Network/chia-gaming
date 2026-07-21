@@ -455,7 +455,7 @@ mod gaming_wasm {
         let result = with_game(cid, move |session: &mut JsGameSession| {
             Ok(session
                 .manager
-                .drain_submissions()
+                .drain_submissions()?
                 .iter()
                 .map(spend_bundle_to_js)
                 .collect::<Vec<_>>())

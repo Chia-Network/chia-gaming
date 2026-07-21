@@ -223,9 +223,9 @@ function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
 }
 
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
-  sendMessage: () => {},
-  sendAck: () => {},
-  sendKeepalive: () => {},
+  sendMessage: () => false,
+  sendAck: () => false,
+  sendKeepalive: () => false,
   hostLog: () => {},
   close: () => {},
 };
@@ -1447,6 +1447,8 @@ const Shell = () => {
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
+          // Retry outbound/acks that failed while the hub WS was down.
+          sessionController?.resendUnacked();
         },
         onHubActivity: () => {
           lastHubActivityRef.current = Date.now();

@@ -7,9 +7,11 @@ function mockHubConnection(): HubConnection & { sentPeerMessages: Array<{ target
     sentAppMessages: [] as Array<{ targetId: string; data: unknown }>,
     sendToPeer(targetId: string, payload: Uint8Array) {
       conn.sentPeerMessages.push({ targetId, payload });
+      return true;
     },
     sendPeerAppMessage(targetId: string, data: unknown) {
       conn.sentAppMessages.push({ targetId, data });
+      return true;
     },
   } as unknown as HubConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> };
   return conn;
@@ -215,6 +217,27 @@ describe('PeerSession', () => {
       const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xAA]);
       const result = ps.deliverRawPeerMessage('peer1', payload);
       expect(result).toBe(false);
+    });
+
+    it('rejects unknown tags without counting peer activity', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      expect(ps.liveness).toBeNull();
+
+      const result = ps.deliverRawPeerMessage('peer1', new Uint8Array([0x99]));
+      expect(result).toBe(false);
+      expect(ps.liveness).toBeNull();
+      expect(ps.lastActivity).toBe(0);
+    });
+
+    it('rejects short msg/ack frames without counting peer activity', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+
+      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x01, 0x00]))).toBe(false);
+      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x02, 0x00, 0x00]))).toBe(false);
+      expect(ps.liveness).toBeNull();
+      expect(ps.lastActivity).toBe(0);
     });
   });
 

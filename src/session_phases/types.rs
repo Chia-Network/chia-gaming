@@ -40,8 +40,8 @@ pub struct WireGameSpec {
 pub struct WireProposalGroup {
     pub start: GameProposal,
     pub members: Vec<WireGameSpec>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group_id: Option<GameID>,
+    /// Always the first member's game id (including singleton groups).
+    pub group_id: GameID,
 }
 
 pub trait ToLocalUI {

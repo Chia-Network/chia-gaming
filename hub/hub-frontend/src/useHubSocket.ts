@@ -213,12 +213,16 @@ export function useHubSocket(
             setSavedAlias(msg.alias);
             break;
           case 'hub_update':
+            if (!Array.isArray(msg.players)) {
+              console.error('[hub] hub_update missing players array', msg);
+              break;
+            }
             hubHsLog('hub_update_recv', {
               conn_id: connIdRef.current,
               session_id: sessionId,
-              players: (msg.players ?? []).length,
+              players: msg.players.length,
             });
-            setPlayers(msg.players ?? []);
+            setPlayers(msg.players);
             setHubUpdateReceived(true);
             break;
           case 'challenge_received':
