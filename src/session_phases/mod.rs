@@ -821,14 +821,17 @@ impl OffChainPhase {
                                 .to_string(),
                         )
                     })?;
-                let expected_conds =
-                    proper_list(env.allocator.allocator_ref(), expected_conditions, true)
-                        .ok_or_else(|| {
-                            Error::StrErr(
-                                "clean shutdown conditions: expected conditions are not a proper list"
-                                    .to_string(),
-                            )
-                        })?;
+                let expected_conds = proper_list(
+                    env.allocator.allocator_ref(),
+                    expected_conditions,
+                    true,
+                )
+                .ok_or_else(|| {
+                    Error::StrErr(
+                        "clean shutdown conditions: expected conditions are not a proper list"
+                            .to_string(),
+                    )
+                })?;
                 if peer_conds.len() != expected_conds.len() {
                     return Err(Error::StrErr(
                         "clean shutdown conditions: wrong number of conditions".to_string(),
@@ -1862,24 +1865,22 @@ mod atomic_group_tests {
     #[test]
     fn atomic_group_structure_rejects_malformed_membership() {
         assert!(validate_wire_group_structure(&group(vec![], GameID(0)), 1).is_err());
-        assert!(validate_wire_group_structure(
-            &group(vec![member(1), member(1)], GameID(1)),
-            2
-        )
-        .is_err());
         assert!(
-            validate_wire_group_structure(&group(vec![member(1), member(3)], GameID(3)), 2).is_err()
+            validate_wire_group_structure(&group(vec![member(1), member(1)], GameID(1)), 2)
+                .is_err()
         );
-        assert!(validate_wire_group_structure(
-            &group(vec![member(3), member(1)], GameID(1)),
-            2
-        )
-        .is_err());
-        assert!(validate_wire_group_structure(
-            &group(vec![member(1), member(3)], GameID(1)),
-            1
-        )
-        .is_err());
+        assert!(
+            validate_wire_group_structure(&group(vec![member(1), member(3)], GameID(3)), 2)
+                .is_err()
+        );
+        assert!(
+            validate_wire_group_structure(&group(vec![member(3), member(1)], GameID(1)), 2)
+                .is_err()
+        );
+        assert!(
+            validate_wire_group_structure(&group(vec![member(1), member(3)], GameID(1)), 1)
+                .is_err()
+        );
         // Singleton must still use first-member group_id (not a different id).
         assert!(validate_wire_group_structure(&group(vec![member(1)], GameID(99)), 1).is_err());
     }

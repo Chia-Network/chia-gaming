@@ -429,9 +429,7 @@ impl SpendChannelCoinPhase {
     /// to represent a failed channel.
     fn transition_to_failed_terminal(&mut self) -> Result<(), Error> {
         let ch = self.base.channel_state.as_mut().ok_or_else(|| {
-            Error::StrErr(
-                "transition_to_failed_terminal: channel_state required".to_string(),
-            )
+            Error::StrErr("transition_to_failed_terminal: channel_state required".to_string())
         })?;
         let on_chain = OnChainPhase::new_terminal(
             ch,
@@ -448,9 +446,7 @@ impl SpendChannelCoinPhase {
     /// to represent a completed channel (clean shutdown or no-game unroll).
     fn transition_to_completed_terminal(&mut self, resolved_clean: bool) -> Result<(), Error> {
         let ch = self.base.channel_state.as_mut().ok_or_else(|| {
-            Error::StrErr(
-                "transition_to_completed_terminal: channel_state required".to_string(),
-            )
+            Error::StrErr("transition_to_completed_terminal: channel_state required".to_string())
         })?;
         let on_chain = OnChainPhase::new_terminal(
             ch,
@@ -887,9 +883,7 @@ impl SpendChannelCoinPhase {
         // exists for this game id (not a puzzle-hash soft-match that can disagree).
         let replaying_ids: HashSet<GameID> = {
             let player_ch = self.base.channel_state()?;
-            game_map
-                .iter()
-                .filter_map(|(_, state)| {
+            game_map.values().filter_map(|state| {
                     if state.our_turn && player_ch.has_cached_move_for_game(&state.game_id) {
                         Some(state.game_id)
                     } else {

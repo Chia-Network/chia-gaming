@@ -73,12 +73,14 @@ fn expected_output_coins(bundle: &SpendBundle) -> Result<Vec<CoinString>, Error>
     for spend in &bundle.spends {
         let puzzle = spend.bundle.puzzle.to_program();
         let solution = spend.bundle.solution.p();
-        let conditions = CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution)
-            .map_err(|e| {
-                Error::StrErr(format!(
-                    "expected_output_coins: our submitted spend failed to parse: {e:?}"
-                ))
-            })?;
+        let conditions =
+            CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution).map_err(
+                |e| {
+                    Error::StrErr(format!(
+                        "expected_output_coins: our submitted spend failed to parse: {e:?}"
+                    ))
+                },
+            )?;
         let parent = spend.coin.to_coin_id();
         out.extend(conditions.into_iter().filter_map(|cond| {
             if let CoinCondition::CreateCoin(ph, amount) = cond {
@@ -360,7 +362,7 @@ impl<C> TransactionManager<C> {
             }
         }
         let out = std::mem::take(&mut self.pending_submissions);
-        for ((bundle, expiry), outputs) in out.iter().zip(new_outputs.into_iter()) {
+        for ((bundle, expiry), outputs) in out.iter().zip(new_outputs) {
             let spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
             // Don't double-track the same creating transaction across resubmits;

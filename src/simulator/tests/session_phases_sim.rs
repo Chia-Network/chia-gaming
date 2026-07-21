@@ -1497,7 +1497,8 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 // Drain transactions the manager captured during this player's
                 // block processing and submit them to the simulator's mempool.
-                submissions_to_push.extend(cradles[i].drain_submissions().expect("drain_submissions"));
+                submissions_to_push
+                    .extend(cradles[i].drain_submissions().expect("drain_submissions"));
                 for tx in submissions_to_push.iter() {
                     if nerf_transactions_for & (1 << i) != 0 {
                         nerfed_tx_backlog.push(tx.clone());
