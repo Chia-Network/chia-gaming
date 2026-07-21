@@ -119,7 +119,7 @@ export function useCalpokerHand(
   const moveNumberRef = useRef<bigint>(initialHandState?.moveNumber ?? 0n);
   const gameObjectRef = useRef(gameObject);
   const gameIdRef = useRef(gameId);
-  const handFinishedRef = useRef(false);
+  const handFinishedRef = useRef(initialHandState?.settlementOutcome != null);
   const outcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const pendingPlayRef = useRef(false);
   const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);

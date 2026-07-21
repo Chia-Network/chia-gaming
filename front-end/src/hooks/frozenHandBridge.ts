@@ -19,6 +19,9 @@ export function createFrozenHandBridge(
     setHandState(next: PersistedGameState | null) {
       handState = next;
     },
+    isChannelReady() {
+      return false;
+    },
     makeMove(_gameId: string, _move: unknown) {
       // Frozen: ignore autofire / stray UI actions.
     },

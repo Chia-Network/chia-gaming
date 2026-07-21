@@ -609,6 +609,7 @@ export function useSpacepokerHand(
   // outstanding raise and we have no remaining raise capacity.
   // End: auto-play reveal or game-level accept.
   useEffect(() => {
+    if (handFinishedRef.current) return;
     const { handler, myTurn, N } = gs;
     if (!myTurn) return;
     const go = gameObjectRef.current;
