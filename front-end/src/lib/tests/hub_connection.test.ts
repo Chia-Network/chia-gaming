@@ -322,6 +322,18 @@ describe('binary message relay', () => {
 // ---------------------------------------------------------------------------
 
 describe('outbound message format', () => {
+  it('sendToPeer returns false when ws is not open', async () => {
+    const cb = makeCallbacks();
+    const conn = makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    const ws = MockWebSocket.instance!;
+    ws.readyState = MockWebSocket.CONNECTING;
+
+    const payload = new TextEncoder().encode('payload');
+    expect(conn.sendToPeer('p_target', payload)).toBe(false);
+    expect(ws.sentBinary).toHaveLength(0);
+  });
+
   it('sendToPeer posts addressed binary frame', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
@@ -330,7 +342,7 @@ describe('outbound message format', () => {
     ws.sentBinary = [];
 
     const payload = new TextEncoder().encode('payload');
-    conn.sendToPeer('p_target', payload);
+    expect(conn.sendToPeer('p_target', payload)).toBe(true);
     expect(ws.sentBinary).toHaveLength(1);
 
     const frame = ws.sentBinary[0];

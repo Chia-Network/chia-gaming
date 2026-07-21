@@ -222,9 +222,9 @@ function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
 }
 
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
-  sendMessage: () => {},
-  sendAck: () => {},
-  sendKeepalive: () => {},
+  sendMessage: () => false,
+  sendAck: () => false,
+  sendKeepalive: () => false,
   hostLog: () => {},
   close: () => {},
 };

@@ -157,10 +157,14 @@ export class HubConnection {
     return url.toString();
   }
 
-  private sendWs(payload: Record<string, unknown>): void {
+  private sendWs(payload: Record<string, unknown>): boolean {
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log(`[hub] sendWs dropped (ws not open) type=${String(payload.type ?? '?')}`);
+      return false;
+    }
     ws.send(encodeBencodex(definedBencodexFields(payload as Record<string, BencodexValue | undefined>)));
+    return true;
   }
 
   private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
@@ -334,9 +338,12 @@ export class HubConnection {
    * Send a binary payload to a specific peer through the hub pipe.
    * Wire format: [4-byte target_id_len BE][target_id UTF-8][payload]
    */
-  sendToPeer(targetId: string, payload: Uint8Array): void {
+  sendToPeer(targetId: string, payload: Uint8Array): boolean {
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log(`[hub] sendToPeer dropped (ws not open) to=${targetId} len=${payload.byteLength}`);
+      return false;
+    }
     const targetBuf = new TextEncoder().encode(targetId);
     const frame = new Uint8Array(4 + targetBuf.byteLength + payload.byteLength);
     const view = new DataView(frame.buffer);
@@ -345,14 +352,15 @@ export class HubConnection {
     frame.set(payload, 4 + targetBuf.byteLength);
     ws.send(frame);
     log(`[hub] send to=${targetId} len=${payload.byteLength}`);
+    return true;
   }
 
   /**
    * Send a bencodex app message to a specific peer through the hub pipe.
    */
-  sendPeerAppMessage(targetId: string, data: PeerAppMessage): void {
+  sendPeerAppMessage(targetId: string, data: PeerAppMessage): boolean {
     const payload = encodeBencodex(definedBencodexFields(data as Record<string, BencodexValue | undefined>));
-    this.sendToPeer(targetId, payload);
+    return this.sendToPeer(targetId, payload);
   }
 
   getPlayerId(): string | null {

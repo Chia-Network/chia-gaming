@@ -77,12 +77,14 @@ export function settledEventForInfo(
   gameId: string,
   info: GameTerminalInfo,
 ): GameplayEvent | null {
-  if (info.type !== 'settled' || info.outcome == null) return null;
+  if (info.type !== 'settled' || info.outcome == null || info.myReward == null) {
+    return null;
+  }
   return {
     Settled: {
       gameId,
       outcome: info.outcome,
-      ourShare: info.myReward ?? '0',
+      ourShare: info.myReward,
     },
   };
 }
@@ -117,13 +119,23 @@ export function terminalInfoFromGameSettled(
   payload: GameSettledPayload,
   rewardCoinHex: string | null,
 ): GameTerminalInfo {
+  const myReward = parseSettlementShare(payload.our_share);
+  if (myReward == null) {
+    return {
+      type: 'game-error',
+      outcome: null,
+      label: 'Settlement missing our_share',
+      myReward: null,
+      rewardCoinHex,
+    };
+  }
   const outcome = isSettlementOutcome(payload.outcome) ? payload.outcome : null;
   if (outcome == null) {
     return {
       type: 'game-error',
       outcome: null,
       label: `Unknown settlement: ${String(payload.outcome)}`,
-      myReward: parseSettlementShare(payload.our_share),
+      myReward,
       rewardCoinHex,
     };
   }
@@ -131,7 +143,7 @@ export function terminalInfoFromGameSettled(
     type: 'settled',
     outcome,
     label: settlementLabel(outcome),
-    myReward: parseSettlementShare(payload.our_share),
+    myReward,
     rewardCoinHex,
   };
 }
@@ -1153,10 +1165,24 @@ export function useGameSession(
           && dismissedChannelStatusRef.current !== cs.state) {
         pushChannel({ kind: 'channel-state', title: 'Error', message: info.advisory ?? '', payload: info });
       }
-      if (cs.state === 'Active' && info.gameAllocated === '0') {
-        const ours = BigInt(info.ourBalance ?? '0');
-        const theirs = BigInt(info.theirBalance ?? '0');
-        if (ours <= 0n || theirs <= 0n) {
+      // Session-over / auto-cleanShutdown only when balances are known and no
+      // games are active. Missing/unparseable balances must not invent zeros.
+      if (
+        cs.state === 'Active'
+        && info.gameAllocated === '0'
+        && gameIdsRef.current.length === 0
+        && info.ourBalance != null
+        && info.theirBalance != null
+      ) {
+        let ours: bigint | undefined;
+        let theirs: bigint | undefined;
+        try {
+          ours = BigInt(info.ourBalance);
+          theirs = BigInt(info.theirBalance);
+        } catch {
+          // Unparseable balances: do not invent zeros or shut down.
+        }
+        if (ours !== undefined && theirs !== undefined && (ours <= 0n || theirs <= 0n)) {
           const msg = theirs <= 0n
             ? 'Session over — you won everything!'
             : 'Session over — you lost everything.';

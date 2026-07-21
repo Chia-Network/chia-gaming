@@ -376,7 +376,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getBalance(): Promise<bigint> {
     const result = await rpc.getWalletBalance({ walletId: 1n });
-    return (result as any)?.confirmedWalletBalance ?? 0n;
+    const balance = (result as { confirmedWalletBalance?: bigint | null } | null)
+      ?.confirmedWalletBalance;
+    if (balance === undefined || balance === null) {
+      throw new Error('getWalletBalance response missing confirmedWalletBalance');
+    }
+    return balance;
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
@@ -416,8 +421,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getHeightInfo(): Promise<bigint> {
     const resp = await rpc.getHeightInfo({ usePeakHeight: true });
-    const chosen = resp.height ?? 0n;
-    return chosen;
+    if (resp.height === undefined || resp.height === null) {
+      throw new Error('getHeightInfo response missing height');
+    }
+    // Height 0 is legitimate while the wallet is still syncing.
+    return resp.height;
   }
 
   async createOfferForIds(

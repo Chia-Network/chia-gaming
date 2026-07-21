@@ -95,8 +95,8 @@ export class SessionController implements PollingGameSession {
   theirContribution: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
-  sendMessage: (msgno: bigint, msg: Uint8Array) => void;
-  sendAck: (ackMsgno: bigint) => void;
+  sendMessage: (msgno: bigint, msg: Uint8Array) => boolean;
+  sendAck: (ackMsgno: bigint) => boolean;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
@@ -380,7 +380,8 @@ export class SessionController implements PollingGameSession {
 
   activateSpend() {
     if (!this.wc) { throw new Error("this.wc is falsey") }
-    const result = this.cradle?.start_handshake();
+    if (!this.cradle) { throw new Error('activateSpend called without cradle') }
+    const result = this.cradle.start_handshake();
     this.processResult(result);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
@@ -417,7 +418,10 @@ export class SessionController implements PollingGameSession {
       const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
       this.lastLauncherCoinId = launcherCoinId;
       log(`[wasm] provide_launcher_coin id=${launcherCoinId}`);
-      const result = this.cradle?.provide_launcher_coin(launcherCoinHex);
+      if (!this.cradle) {
+        throw new Error('provide_launcher_coin called without cradle');
+      }
+      const result = this.cradle.provide_launcher_coin(launcherCoinHex);
       this.processResult(result);
     } catch (e) {
       this.launcherProvided = false;
@@ -425,8 +429,9 @@ export class SessionController implements PollingGameSession {
       const msg = extractErrorMessage(e);
       log(`[wasm] handleNeedLauncherCoin error: ${msg}`);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
-      const failResult = this.cradle?.wallet_callback_failed(msg);
-      this.processResult(failResult);
+      if (this.cradle) {
+        this.processResult(this.cradle.wallet_callback_failed(msg));
+      }
     }
   }
 
@@ -456,12 +461,13 @@ export class SessionController implements PollingGameSession {
         const msg = 'Wallet createOfferForIds failed (returned null)';
         log(`[wasm] ${msg}`);
         this.rxjsEmitter?.next({ type: 'error', error: msg });
-        const failResult = this.cradle?.wallet_callback_failed(msg);
-        this.processResult(failResult);
+        if (this.cradle) {
+          this.processResult(this.cradle.wallet_callback_failed(msg));
+        }
         return;
       }
 
-      let result;
+      let result: WasmResult | undefined;
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
         console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         const localSpendBundle = this.wc?.convert_offer_to_coinset_org(bundle);
@@ -481,8 +487,9 @@ export class SessionController implements PollingGameSession {
         msg = 'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
       }
       this.rxjsEmitter?.next({ type: 'error', error: msg });
-      const failResult = this.cradle?.wallet_callback_failed(msg);
-      this.processResult(failResult);
+      if (this.cradle) {
+        this.processResult(this.cradle.wallet_callback_failed(msg));
+      }
     }
   }
 
@@ -566,7 +573,9 @@ export class SessionController implements PollingGameSession {
   }
 
   processResult(result: WasmResult | undefined): void {
-    if (!result) return;
+    if (result === undefined) {
+      throw new Error('cradle returned no WasmResult');
+    }
 
     const blockchain = this.blockchain;
     for (const coin of result.watchCoins || []) {
@@ -711,6 +720,11 @@ export class SessionController implements PollingGameSession {
       this.trackEffect(this.handleNeedLauncherCoin());
     } else if ('NeedCoinSpend' in event) {
       this.trackEffect(this.handleNeedCoinSpend(event.NeedCoinSpend));
+    } else if ('OutboundTransaction' in event) {
+      throw new Error('unexpected OutboundTransaction GameSessionEvent (use drain_submissions)');
+    } else {
+      const keys = Object.keys(event as object);
+      throw new Error(`unknown GameSessionEvent: ${keys.join(',') || '(empty)'}`);
     }
   }
 
@@ -826,7 +840,10 @@ export class SessionController implements PollingGameSession {
     if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return;
     this.lastUnackedResendAt = now;
     for (const { msgno, msg } of this.unackedMessages) {
-      this.sendMessage(msgno, msg);
+      if (!this.sendMessage(msgno, msg)) {
+        log(`[wasm] resendUnacked: hub send failed for msgno=${msgno}`);
+        break;
+      }
     }
   }
 
@@ -866,8 +883,11 @@ export class SessionController implements PollingGameSession {
 
   private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
     log(`[wasm] coin states height=${peak} coins=${records.length}`);
+    if (!this.cradle) {
+      throw new Error('deliverCoinStates called without cradle');
+    }
     try {
-      const result = this.cradle?.report_coin_states(peak, records);
+      const result = this.cradle.report_coin_states(peak, records);
       this.processResult(result);
     } catch (e) {
       diagStack('report_coin_states failed', e);
@@ -976,27 +996,54 @@ export class SessionController implements PollingGameSession {
 
       const outbound = this.pendingOutboundSends.splice(0, outboundCount);
       const acks = this.pendingAcks.splice(0, ackCount);
-      for (const { msgno, msg } of outbound) {
-        this.sendMessage(msgno, msg);
+      const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
+      const failedAcks: bigint[] = [];
+      for (const item of outbound) {
+        if (!this.sendMessage(item.msgno, item.msg)) {
+          failedOutbound.push(item);
+        }
       }
       for (const ack of acks) {
-        this.sendAck(ack);
+        if (!this.sendAck(ack)) {
+          failedAcks.push(ack);
+        }
       }
-      this.needsImmediateDurability =
-        this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
-      if (this.needsImmediateDurability) {
-        this.scheduleDurabilityFlush();
+      if (failedOutbound.length > 0 || failedAcks.length > 0) {
+        log(`[wasm] hub send failed after durability: outbound=${failedOutbound.length} acks=${failedAcks.length}; left queued`);
+        this.pendingOutboundSends = [...failedOutbound, ...this.pendingOutboundSends];
+        this.pendingAcks = [...failedAcks, ...this.pendingAcks];
+        // Leave needsImmediateDurability set but do not reschedule: WS is likely
+        // closed; retry on the next natural flush trigger.
+        this.needsImmediateDurability = true;
+      } else {
+        this.needsImmediateDurability =
+          this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
+        if (this.needsImmediateDurability) {
+          this.scheduleDurabilityFlush();
+        }
       }
       return;
     }
 
     const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
     const acks = this.pendingAcks.splice(0, this.pendingAcks.length);
-    for (const { msgno, msg } of outbound) {
-      this.sendMessage(msgno, msg);
+    const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
+    const failedAcks: bigint[] = [];
+    for (const item of outbound) {
+      if (!this.sendMessage(item.msgno, item.msg)) {
+        failedOutbound.push(item);
+      }
     }
     for (const ack of acks) {
-      this.sendAck(ack);
+      if (!this.sendAck(ack)) {
+        failedAcks.push(ack);
+      }
+    }
+    if (failedOutbound.length > 0 || failedAcks.length > 0) {
+      log(`[wasm] hub send failed: outbound=${failedOutbound.length} acks=${failedAcks.length}; left queued`);
+      this.pendingOutboundSends = [...failedOutbound, ...this.pendingOutboundSends];
+      this.pendingAcks = [...failedAcks, ...this.pendingAcks];
+      this.needsImmediateDurability = true;
     }
   }
 

@@ -737,6 +737,14 @@ passed to `GameSession` for in-game display. Separately, Shell has a cascade
 rule: if the peer is marked lost while the session is still off-chain, it calls
 `goOnChain()` on the WASM cradle.
 
+Inbound peer frames are validated before counting as activity: only tags
+`0x01` (msg, len ≥ 5), `0x02` (ack, len ≥ 5), and `0x03` (keepalive) update
+liveness; unknown or short frames return `false` and do not throw into Shell.
+Outbound hub sends (`sendToPeer` / presence `sendWs`) return `boolean` — `false`
+when the WebSocket is not OPEN — so SessionController can leave durable outbound
+queued rather than treating a dropped send as success. There is no offline send
+queue beyond that re-queue-on-failure behavior.
+
 **Hub indicator** (`HubLiveness`) combines WebSocket connectivity with
 keepalive freshness into four states:
 
