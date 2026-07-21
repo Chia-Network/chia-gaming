@@ -916,8 +916,12 @@ pub(crate) struct ServiceConfig {
 
 impl Default for ServiceConfig {
     fn default() -> Self {
+        let listen_addr = std::env::var("CHIA_GAMING_SIM_LISTEN_ADDR")
+            .unwrap_or_else(|_| "[::]:5800".to_string())
+            .parse()
+            .expect("invalid CHIA_GAMING_SIM_LISTEN_ADDR");
         Self {
-            listen_addr: "[::]:5800".parse().unwrap(),
+            listen_addr,
             block_interval: DEFAULT_BLOCK_INTERVAL,
             outbound_capacity: DEFAULT_OUTBOUND_CAPACITY,
             ready: None,

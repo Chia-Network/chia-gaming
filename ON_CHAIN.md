@@ -498,11 +498,14 @@ The zero-reward early-out fires at five distinct points.
 **At unroll completion** (scanned in `finish_on_chain_transition` right after
 `set_state_for_coins` populates the `game_map`):
 
-1. **Pending redo with zero reward.**  A move was sent off-chain but the
-  potato hadn't come back.  The unroll lands at the pre-move state and a redo
-   is queued.  If the post-redo `our_current_share` would be zero, the redo is
-   skipped and `GameSettled { outcome: forfeited_skipped_reveal, our_share: 0 }`
-   fires.  Checked via `is_redo_zero_reward()`.
+1. **Pending redo with zero reward (intentional).**  A move or accept was
+  prepared off-chain but the potato hadn't come back.  The unroll lands at the
+   pre-move state and a redo would otherwise be queued.  If the post-move
+   `our_current_share` would be zero, replaying on-chain is not worth fees —
+   the redo is skipped and `GameSettled { outcome: forfeited_skipped_reveal, our_share: 0 }`
+   fires.  This is correct product behavior, not an error path.  Checked via
+   `is_redo_zero_reward()` (see also `has_cached_move_for_game` for whether a
+   non-zero-reward redo will actually be spent).
 2. **Pending AcceptSettlement with zero share.**  An `AcceptSettlement` was called
   off-chain but the potato round-trip hadn't completed.  The coin matches via
    `pending_settlements` with `timeout_claim_armed = true`.  If our share is zero,

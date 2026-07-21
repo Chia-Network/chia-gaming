@@ -874,7 +874,7 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         start_info: &Rc<GameStartInfo>,
-        group_id: Option<GameID>,
+        group_id: GameID,
     ) -> Result<(), Error> {
         let new_game_nonce = start_info.game_id.0;
 
@@ -918,7 +918,7 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<StateUpdateSignatures, Error> {
-        self.send_propose_game(env, start_info, None)?;
+        self.send_propose_game(env, start_info, start_info.game_id)?;
         self.update_cached_unroll_state(env)
     }
 
@@ -927,7 +927,7 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         start_info: &Rc<GameStartInfo>,
-        group_id: Option<GameID>,
+        group_id: GameID,
     ) -> Result<(), Error> {
         let new_game_nonce = start_info.game_id.0;
         let expected_parity = self.their_next_nonce % 2;
@@ -1132,28 +1132,25 @@ impl ChannelState {
     }
 
     /// Return all GameIDs that share a group_id with the given game.
-    /// If the game has no group_id, returns just the game itself.
-    pub fn group_member_ids(&self, game_id: &GameID) -> Vec<GameID> {
-        let group = self
+    /// Every proposal is a group (singletons have `group_id == game_id`).
+    pub fn group_member_ids(&self, game_id: &GameID) -> Result<Vec<GameID>, Error> {
+        let gid = self
             .proposed_games
             .iter()
             .find(|p| p.game_id == *game_id)
-            .and_then(|p| p.group_id);
-        match group {
-            Some(gid) => self
-                .proposed_games
-                .iter()
-                .filter(|p| p.group_id == Some(gid))
-                .map(|p| p.game_id)
-                .collect(),
-            None => {
-                if self.is_game_proposed(game_id) {
-                    vec![*game_id]
-                } else {
-                    vec![]
-                }
-            }
-        }
+            .map(|p| p.group_id)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "group_member_ids: no proposal with id {:?}",
+                    game_id
+                ))
+            })?;
+        Ok(self
+            .proposed_games
+            .iter()
+            .filter(|p| p.group_id == gid)
+            .map(|p| p.game_id)
+            .collect())
     }
 
     pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {
@@ -2078,25 +2075,41 @@ impl ChannelState {
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
 
-    /// Simple forward-only redo check.  `set_state_for_coins` already matched
-    /// the game coin to the live game by amount.  We just check if the cached
+    /// Whether a CachedSendMove exists for this game id (same criterion as
+    /// [`take_cached_move_for_game`]). Used for Replaying status before the
+    /// cache entry is taken.
+    pub fn has_cached_move_for_game(&self, game_id: &GameID) -> bool {
+        self.cached_redo_actions.iter().any(
+            |entry| matches!(entry, CachedRedoActions::CachedSendMove(d) if d.game_id == *game_id),
+        )
+    }
+
     /// Check whether a pending redo move for this coin would result in zero
     /// reward for us (post-redo our_current_share == 0).  Used by the
     /// zero-reward early-out scan at unroll time.
-    pub fn is_redo_zero_reward(&self, coin: &CoinString, game_id: &GameID) -> bool {
+    ///
+    /// Legitimate product behavior: a pending off-chain move/accept can be
+    /// skipped on-chain when the post-move share is 0. See ON_CHAIN.md
+    /// ("Zero-reward skip at unroll").
+    pub fn is_redo_zero_reward(&self, coin: &CoinString, game_id: &GameID) -> Result<bool, Error> {
+        let coin_ph = coin
+            .to_parts()
+            .map(|(_, ph, _)| ph)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "is_redo_zero_reward: unparseable coin for game {:?}",
+                    game_id
+                ))
+            })?;
         let has_redo = self.cached_redo_actions.iter().any(|entry| {
             if let CachedRedoActions::CachedSendMove(move_data) = entry {
-                move_data.game_id == *game_id
-                    && coin
-                        .to_parts()
-                        .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
-                        .unwrap_or(false)
+                move_data.game_id == *game_id && coin_ph == move_data.match_puzzle_hash
             } else {
                 false
             }
         });
         if !has_redo {
-            return false;
+            return Ok(false);
         }
         // After the redo, our share is determined by the saved post-move
         // referee.  If the referee is not cached (serialization round-trip),
@@ -2105,29 +2118,32 @@ impl ChannelState {
             if let CachedRedoActions::CachedSendMove(move_data) = entry {
                 if move_data.game_id == *game_id {
                     if let Some(ref saved_ref) = move_data.saved_post_move_referee {
-                        return saved_ref
-                            .get_our_current_share()
-                            .map(|share| share == Amount::default())
-                            .unwrap_or(false);
+                        let share = saved_ref.get_our_current_share()?;
+                        return Ok(share == Amount::default());
                     }
                 }
             }
         }
-        false
+        Ok(false)
     }
 
-    pub fn has_redo_for_game_coin(&self, coin: &CoinString, game_id: &GameID) -> bool {
-        self.cached_redo_actions.iter().any(|entry| {
+    pub fn has_redo_for_game_coin(&self, coin: &CoinString, game_id: &GameID) -> Result<bool, Error> {
+        let coin_ph = coin
+            .to_parts()
+            .map(|(_, ph, _)| ph)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "has_redo_for_game_coin: unparseable coin for game {:?}",
+                    game_id
+                ))
+            })?;
+        Ok(self.cached_redo_actions.iter().any(|entry| {
             if let CachedRedoActions::CachedSendMove(move_data) = entry {
-                move_data.game_id == *game_id
-                    && coin
-                        .to_parts()
-                        .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
-                        .unwrap_or(false)
+                move_data.game_id == *game_id && coin_ph == move_data.match_puzzle_hash
             } else {
                 false
             }
-        })
+        }))
     }
 
     pub fn build_game_timeout_claim_spend(
@@ -2150,7 +2166,10 @@ impl ChannelState {
             self.pending_settlements.remove(idx);
             Ok(tx)
         } else {
-            Ok(None)
+            Err(Error::StrErr(format!(
+                "build_game_timeout_claim_spend: no live or pending game {:?}",
+                game_id
+            )))
         }
     }
 

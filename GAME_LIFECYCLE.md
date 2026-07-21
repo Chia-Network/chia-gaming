@@ -138,8 +138,8 @@ all sender contributions and all receiver contributions. Both aggregate totals
 must fit the corresponding out-of-game balances before IDs are allocated or
 any proposal is queued. The group is then represented by one
 `BatchAction::ProposeGroup` containing the shared request and the ordered member
-metadata. Multi-game groups use the first ordered ID as `group_id`; singleton
-groups do not need one.
+metadata. Every group (including size 1) sets `group_id` to the first ordered
+member ID.
 
 **Receiver derivation:** The receiver runs the same factory and compares the
 entire ordered wire group with its local result. It does not parse one member
@@ -155,9 +155,9 @@ violation that rejects the batch. Thus proposal creation, acceptance, and
 cancellation are all-or-none at group scope.
 
 **Notification:** The receiver gets exactly one `ProposalMade` for the group.
-Its `id` is the first game ID, and `group_ids` contains all member IDs in
-factory order for multi-game groups (empty for a singleton). Contributions in
-the notification are aggregate totals from the receiver's local perspective.
+Its `id` is the first game ID, and `group_ids` is the full ordered member list
+(singleton ⇒ `[id]`). Contributions in the notification are aggregate totals
+from the receiver's local perspective.
 
 ### WASM Accept-and-Move Convenience
 

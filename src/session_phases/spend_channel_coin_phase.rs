@@ -819,7 +819,7 @@ impl SpendChannelCoinPhase {
                         .map(|s| s == Amount::default())
                         .unwrap_or(false)
                 } else {
-                    player_ch.is_redo_zero_reward(coin, &state.game_id)
+                    player_ch.is_redo_zero_reward(coin, &state.game_id)?
                 };
                 if dominated {
                     zero_reward_games.push((
@@ -854,12 +854,14 @@ impl SpendChannelCoinPhase {
             return Ok(effects);
         }
 
+        // Match take_cached_move_for_game: Replaying iff a cached send-move
+        // exists for this game id (not a puzzle-hash soft-match that can disagree).
         let replaying_ids: HashSet<GameID> = {
             let player_ch = self.base.channel_state()?;
             game_map
                 .iter()
-                .filter_map(|(coin, state)| {
-                    if state.our_turn && player_ch.has_redo_for_game_coin(coin, &state.game_id) {
+                .filter_map(|(_, state)| {
+                    if state.our_turn && player_ch.has_cached_move_for_game(&state.game_id) {
                         Some(state.game_id)
                     } else {
                         None

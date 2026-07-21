@@ -535,7 +535,8 @@ function parseIncomingProposal(value: unknown): BetweenHandProposal | null {
   const terms = parseTermsFromNotificationValue(value, gameType);
   if (!terms || (typeof idRaw !== 'bigint' && typeof idRaw !== 'number' && typeof idRaw !== 'string')) return null;
   const rawGroupIds = obj.group_ids;
-  const groupIds = Array.isArray(rawGroupIds) ? rawGroupIds.map(String) : [];
+  if (!Array.isArray(rawGroupIds) || rawGroupIds.length === 0) return null;
+  const groupIds = rawGroupIds.map(String);
   return {
     id: String(idRaw),
     groupIds,
@@ -828,7 +829,7 @@ export function useGameSession(
       restoredModel?.betweenHand.reviewPeerProposal,
     ]) {
       if (!proposal) continue;
-      const ids = proposal.groupIds.length > 0 ? proposal.groupIds : [proposal.id];
+      const ids = proposal.groupIds;
       for (const id of ids) groups[id] = ids;
     }
     return groups;
@@ -1201,9 +1202,7 @@ export function useGameSession(
         triggerGoOnChain();
         return;
       }
-      const incomingGroupIds = incoming.groupIds.length > 0
-        ? incoming.groupIds
-        : [incoming.id];
+      const incomingGroupIds = incoming.groupIds;
       for (const id of incomingGroupIds) {
         proposalTermsByIdRef.current[id] = incoming.terms;
         proposalGroupIdsByIdRef.current[id] = incomingGroupIds;

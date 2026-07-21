@@ -432,8 +432,8 @@ full mid-game session state:
 | `betweenHandComposeGameType` | `string?` | Proposed game type in compose overlay. |
 | `betweenHandLastTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Last agreed hand terms. |
 | `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
-| `betweenHandCachedPeerProposal` | `{ id, groupIds?, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. |
-| `betweenHandReviewPeerProposal` | `{ id, groupIds?, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. |
+| `betweenHandCachedPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. `groupIds` is always non-empty. |
+| `betweenHandReviewPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. `groupIds` is always non-empty. |
 | `outgoingProposalTerms` | `Record<string, …>?` | Locally originated proposal terms keyed by proposal id. |
 | `waitingStateEnteredAt` | `bigint?` | Epoch ms when the channel entered an abandon-eligible waiting state. |
 | `cleanShutdownGraceStartedAt` | `bigint?` | Epoch ms when the clean-shutdown grace timer started. |
@@ -1182,7 +1182,8 @@ These drive game proposal and acceptance flow. They are consumed by
 `handleNotification` and never forwarded to the game UI:
 
 - `ProposalMade` — one notification per factory group; carries the first ID and
-  ordered `group_ids` for multi-game groups, and triggers group auto-accept
+  always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
+  group auto-accept
 
 ### Gameplay events (forwarded to game UI via observable)
 

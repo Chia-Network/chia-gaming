@@ -182,11 +182,12 @@ fn validate_wire_group_structure(
             "proposal group contains duplicate game ids".to_string(),
         ));
     }
-    let expected_group_id = if ids.len() > 1 { Some(ids[0]) } else { None };
-    if wire.group_id != expected_group_id {
-        return Err(Error::StrErr(
-            "proposal group has non-canonical group id".to_string(),
-        ));
+    // Canonical rule: group_id is always the first member (including singletons).
+    if wire.group_id != ids[0] {
+        return Err(Error::StrErr(format!(
+            "proposal group_id {:?} does not match first member {:?}",
+            wire.group_id, ids[0]
+        )));
     }
     Ok(ids)
 }
@@ -624,7 +625,7 @@ impl OffChainPhase {
                     })
                     .collect();
                 for id in &ids {
-                    let members = ch.group_member_ids(id);
+                    let members = ch.group_member_ids(id)?;
                     if members.len() > 1 {
                         for member in &members {
                             if !ids.contains(member) {
@@ -686,11 +687,7 @@ impl OffChainPhase {
                             });
                         let ivp_hash = first.initial_validation_program.hash().clone();
                         let initial_state = first.initial_state.clone();
-                        let group_ids = if games.len() > 1 {
-                            games.iter().map(|g| g.game_id).collect()
-                        } else {
-                            vec![]
-                        };
+                        let group_ids: Vec<GameID> = games.iter().map(|g| g.game_id).collect();
                         effects.push(Effect::Notify(GameNotification::ProposalMade {
                             id: game_id,
                             group_ids,
@@ -1044,7 +1041,10 @@ impl OffChainPhase {
                     {
                         let ch = self.channel_state_mut()?;
                         let Some(proposal) = ch.find_proposal(&game_id) else {
-                            continue;
+                            return Err(Error::StrErr(format!(
+                                "queued accept for missing proposal {:?}",
+                                game_id
+                            )));
                         };
                         if ch.is_our_nonce_parity(&game_id) {
                             return Err(Error::StrErr("cannot accept own proposal".to_string()));
@@ -1080,7 +1080,10 @@ impl OffChainPhase {
                     {
                         let ch = self.channel_state_mut()?;
                         if !ch.is_game_proposed(&game_id) {
-                            continue;
+                            return Err(Error::StrErr(format!(
+                                "queued cancel for missing proposal {:?}",
+                                game_id
+                            )));
                         }
                         ch.send_cancel_proposal(&game_id)?;
                     }
@@ -1094,7 +1097,10 @@ impl OffChainPhase {
                     {
                         let ch = self.channel_state_mut()?;
                         if !ch.is_game_proposed(&game_id) {
-                            continue;
+                            return Err(Error::StrErr(format!(
+                                "queued silent cancel for missing proposal {:?}",
+                                game_id
+                            )));
                         }
                         ch.send_cancel_proposal(&game_id)?;
                     }
@@ -1472,6 +1478,11 @@ impl FromLocalUI for OffChainPhase {
         }
 
         let factory_games = self.factory_games(env, start)?;
+        if factory_games.is_empty() {
+            return Err(Error::StrErr(
+                "propose_games: factory returned empty proposal group".to_string(),
+            ));
+        }
 
         let mut all_ids = Vec::with_capacity(factory_games.len());
         for _ in &factory_games {
@@ -1481,11 +1492,7 @@ impl FromLocalUI for OffChainPhase {
             };
             all_ids.push(game_id);
         }
-        let group_id = if all_ids.len() > 1 {
-            Some(all_ids[0])
-        } else {
-            None
-        };
+        let group_id = all_ids[0];
         let my_games: Vec<Rc<GameStartInfo>> = factory_games
             .iter()
             .zip(&all_ids)
@@ -1528,7 +1535,7 @@ impl FromLocalUI for OffChainPhase {
     ) -> Result<Vec<Effect>, Error> {
         let group_ids = {
             let ch = self.channel_state()?;
-            ch.group_member_ids(game_id)
+            ch.group_member_ids(game_id)?
         };
         let (our_short, their_short) = {
             let ch = self.channel_state()?;
@@ -1588,7 +1595,7 @@ impl FromLocalUI for OffChainPhase {
     ) -> Result<Vec<Effect>, Error> {
         let group_ids = {
             let ch = self.channel_state()?;
-            ch.group_member_ids(game_id)
+            ch.group_member_ids(game_id)?
         };
         let mut all_effects = Vec::new();
         for gid in group_ids {
@@ -1829,7 +1836,7 @@ mod atomic_group_tests {
         }
     }
 
-    fn group(members: Vec<WireGameSpec>, group_id: Option<GameID>) -> WireProposalGroup {
+    fn group(members: Vec<WireGameSpec>, group_id: GameID) -> WireProposalGroup {
         WireProposalGroup {
             start: GameProposal {
                 game_type: GameType(b"test".to_vec()),
@@ -1843,35 +1850,37 @@ mod atomic_group_tests {
 
     #[test]
     fn atomic_group_structure_rejects_malformed_membership() {
-        assert!(validate_wire_group_structure(&group(vec![], None), 1).is_err());
+        assert!(validate_wire_group_structure(&group(vec![], GameID(0)), 1).is_err());
         assert!(validate_wire_group_structure(
-            &group(vec![member(1), member(1)], Some(GameID(1))),
+            &group(vec![member(1), member(1)], GameID(1)),
             2
         )
         .is_err());
         assert!(
-            validate_wire_group_structure(&group(vec![member(1), member(3)], None), 2).is_err()
+            validate_wire_group_structure(&group(vec![member(1), member(3)], GameID(3)), 2).is_err()
         );
         assert!(validate_wire_group_structure(
-            &group(vec![member(3), member(1)], Some(GameID(1))),
+            &group(vec![member(3), member(1)], GameID(1)),
             2
         )
         .is_err());
         assert!(validate_wire_group_structure(
-            &group(vec![member(1), member(3)], Some(GameID(1))),
+            &group(vec![member(1), member(3)], GameID(1)),
             1
         )
         .is_err());
+        // Singleton must still use first-member group_id (not a different id).
+        assert!(validate_wire_group_structure(&group(vec![member(1)], GameID(99)), 1).is_err());
     }
 
     #[test]
     fn atomic_group_structure_accepts_canonical_single_and_multi_member_groups() {
         assert_eq!(
-            validate_wire_group_structure(&group(vec![member(1)], None), 1).unwrap(),
+            validate_wire_group_structure(&group(vec![member(1)], GameID(1)), 1).unwrap(),
             vec![GameID(1)]
         );
         assert_eq!(
-            validate_wire_group_structure(&group(vec![member(1), member(3)], Some(GameID(1))), 2)
+            validate_wire_group_structure(&group(vec![member(1), member(3)], GameID(1)), 2)
                 .unwrap(),
             vec![GameID(1), GameID(3)]
         );

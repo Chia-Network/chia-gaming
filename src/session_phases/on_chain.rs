@@ -551,7 +551,10 @@ impl OnChainPhase {
         {
             self.pending_settlements[idx].get_transaction_for_timeout(env.allocator, coin)?
         } else {
-            return Ok(None);
+            return Err(Error::StrErr(format!(
+                "build_timeout_claim: no live or pending game {:?}",
+                game_id
+            )));
         };
 
         let tx = match tx {
