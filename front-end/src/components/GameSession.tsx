@@ -18,6 +18,11 @@ import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
+  channelStateNeedsGameTabAttention,
+  gameplayEventNeedsGameTabAttention,
+  peerProposalIdNeedsGameTabAttention,
+} from '../lib/gameTabAttention';
+import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   selectComposeAmountAfterGameTypeChoice,
   selectHideGameInterfaceForBetweenHandDialog,
@@ -862,7 +867,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   useEffect(() => {
     if (!onGameActivity) return;
     const sub = session.gameplayEvent$.subscribe((evt) => {
-      if ('OpponentMoved' in evt || 'ProposalAccepted' in evt) {
+      if (gameplayEventNeedsGameTabAttention(evt)) {
         onGameActivity();
       }
     });
@@ -878,6 +883,46 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     prevChannelQueueLen.current = session.channelQueue.length;
     if (grew) onGameActivity?.();
   }, [session.gameQueue.length, session.channelQueue.length, onGameActivity]);
+
+  // Rising edge: peer hand proposal enters review (skip restore/hydration).
+  const prevBetweenHandMode = useRef(session.betweenHandMode);
+  useEffect(() => {
+    const prev = prevBetweenHandMode.current;
+    prevBetweenHandMode.current = session.betweenHandMode;
+    if (
+      session.betweenHandMode === 'review-incoming-proposal'
+      && prev !== 'review-incoming-proposal'
+    ) {
+      onGameActivity?.();
+    }
+  }, [session.betweenHandMode, onGameActivity]);
+
+  // Rising edge: proposal cached in decision mode, or replaced while reviewing.
+  // Combined id so promoting cache → review does not double-fire.
+  const attentionProposalId =
+    session.reviewPeerProposal?.id ?? session.cachedPeerProposal?.id ?? null;
+  const prevAttentionProposalId = useRef(attentionProposalId);
+  useEffect(() => {
+    const prev = prevAttentionProposalId.current;
+    prevAttentionProposalId.current = attentionProposalId;
+    if (peerProposalIdNeedsGameTabAttention(prev, attentionProposalId)) {
+      onGameActivity?.();
+    }
+  }, [attentionProposalId, onGameActivity]);
+
+  // Rising edge: clean shutdown / going on-chain begins (skip restore and
+  // transitions between already-attention channel states).
+  const prevChannelAttention = useRef(
+    channelStateNeedsGameTabAttention(session.channelStatus.state),
+  );
+  useEffect(() => {
+    const next = channelStateNeedsGameTabAttention(session.channelStatus.state);
+    const prev = prevChannelAttention.current;
+    prevChannelAttention.current = next;
+    if (next && !prev) {
+      onGameActivity?.();
+    }
+  }, [session.channelStatus.state, onGameActivity]);
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
