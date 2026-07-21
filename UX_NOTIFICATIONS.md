@@ -59,8 +59,8 @@ Those are conceptual progression models; the concrete emitted values are still
 
 ## WASM Event FIFO and Async Drain
 
-Every communication produced by the Rust cradle starts as a `GameSessionEvent` in
-the cradle's FIFO event queue. The `TransactionManager` drains that queue and
+Every communication produced by the Rust game session starts as a `GameSessionEvent` in
+the game session's FIFO event queue. The `TransactionManager` drains that queue and
 intercepts blockchain bookkeeping events before they reach JavaScript:
 `OutboundTransaction` entries are captured for `drain_submissions()`, and
 `WatchCoin` entries update the manager's watched-coin set and are returned as
@@ -71,7 +71,7 @@ logs, receive errors, and puzzle/solution requests — are returned to JS as
 
 Flow:
 
-1. Rust handlers push all `GameSessionEvent`s onto the cradle queue.
+1. Rust handlers push all `GameSessionEvent`s onto the game-session queue.
 2. `TransactionManager::flush_and_collect` drains that queue, intercepting
    `OutboundTransaction` and `WatchCoin` while preserving order for the events
    still delivered to JS.

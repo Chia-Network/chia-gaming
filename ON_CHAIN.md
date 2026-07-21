@@ -351,7 +351,7 @@ signatures collected at that time. The durable minimum per hash is the state
 number, committed conditions hash, and timeout conditions. Historical full
 signatures and preemption conditions are unnecessary because preemption always
 uses the latest full record. The browser preserves this compact map inside the
-raw binary cradle stored in IndexedDB.
+raw binary game session stored in IndexedDB.
 
 The latest received unroll state number comes from
 `self.latest_received_unroll.as_ref().map(|t| t.coin.state_number)`, and

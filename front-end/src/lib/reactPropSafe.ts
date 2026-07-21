@@ -17,7 +17,7 @@ export function isDenseNumericByteObject(value: object): boolean {
   const record = value as Record<string, unknown>;
   if (!Object.prototype.hasOwnProperty.call(record, '0')) return false;
   if (typeof record['0'] !== 'number') return false;
-  // Real cradles are far larger than this; small numeric-key maps stay cloneable.
+  // Real game sessions are far larger than this; small numeric-key maps stay cloneable.
   for (const idx of ['256', '1024', '4096'] as const) {
     if (!Object.prototype.hasOwnProperty.call(record, idx)) return false;
     const byte = record[idx];

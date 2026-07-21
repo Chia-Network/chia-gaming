@@ -236,7 +236,7 @@ When a session transitions to on-chain:
 - **Game messages** (`OutboundMessage` from WASM, `deliverMessage` inbound):
   **stop**. Don't send new game messages to the peer. Ignore incoming game
   messages from the peer (ack them to prevent retransmit, but don't deliver
-  to the WASM cradle).
+  to the WASM game session).
 - **Acks for already-delivered messages**: still processed (they concern the
   past).
 - **Keepalives**: harmless but no longer meaningful for game liveness.
@@ -249,7 +249,7 @@ any pending hand obligations have finished:
 
 1. The session is done.
 2. Shell is notified (via callback from `useGameSession`).
-3. Live protocol interaction stops: the WASM cradle is no longer used for new
+3. Live protocol interaction stops: the WASM game session is no longer used for new
    game actions, the `PeerSession` is destroyed (making it inert), keepalives
    stop, `sessionStartedRef` is reset, and the finished session is treated as a
    read-only display.
@@ -258,7 +258,7 @@ any pending hand obligations have finished:
    must not wipe to "No Session" on clean/terminal finish. A new match replaces
    this display; there is no manual "Close Session" button.
 5. That finished snapshot is persisted with the boot Resume/Start Over marker
-   (live cradle/pairing cleared). Reload must show Resume/Start Over — not
+   (live game session/pairing cleared). Reload must show Resume/Start Over — not
    silently auto-connect the hub with an empty game tab.
 6. Shell tells the hub/hub that the player is not busy.
 7. The player can accept new challenges. This is intentional: terminal sessions
@@ -394,7 +394,7 @@ The hub does not create a session. It can only advise and relay:
   explicit go-on-chain or FOAD signals. Hub liveness with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: `SessionSave` in IndexedDB (raw cradle /
+- **Session persistence**: `SessionSave` in IndexedDB (raw game-session /
   unacked bytes via structured clone) plus small preferences and the
   resumable-session boot marker in localStorage
   (`front-end/src/hooks/save.ts`).
@@ -432,7 +432,7 @@ The hub does not create a session. It can only advise and relay:
 
 - **Game message filtering on-chain**: `SessionController` has an `onChain`
   flag. When set, `deliverMessage()` acks but does not deliver inbound game
-  messages to the WASM cradle, and `dispatchEvent()` suppresses outbound
+  messages to the WASM game session, and `dispatchEvent()` suppresses outbound
   `OutboundMessage` events.
 
 - **Hub busy signaling**: `HubConnection.setBusy()`

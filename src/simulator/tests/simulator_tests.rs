@@ -817,9 +817,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             spends: vec![tx.clone()],
         };
 
-        // The cradle wants to watch the child and submit the creating tx.
-        let mut cradle = ScriptedGameSession::default();
-        cradle.queue(vec![
+        // The session wants to watch the child and submit the creating tx.
+        let mut session = ScriptedGameSession::default();
+        session.queue(vec![
             GameSessionEvent::WatchCoin {
                 coin_name: child.to_coin_id(),
                 coin_string: child.clone(),
@@ -828,7 +828,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
             GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);
-        let mut mgr = TransactionManager::new(cradle);
+        let mut mgr = TransactionManager::new(session);
         mgr.flush_and_collect(&mut allocator).expect("flush");
 
         // Submit the creating tx the manager captured; confirm child at block 2.

@@ -766,7 +766,7 @@ describe('session model selectors', () => {
       version: 8n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
-      gameSessionSchemaVersion: 1n,
+      gameSessionSchemaVersion: 2n,
       channelReady: true,
       activeGameIds: [],
       channelStatus: {

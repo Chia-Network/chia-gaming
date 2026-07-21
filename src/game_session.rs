@@ -1446,7 +1446,7 @@ impl GameSession {
         Ok(())
     }
 
-    /// Tell the game cradle that a new block arrived, giving a watch report.
+    /// Tell the game session that a new block arrived, giving a watch report.
     pub fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -1542,7 +1542,7 @@ impl GameSession {
 #[cfg(test)]
 impl GameSession {
     /// Get the on-chain game coin for a game (test harness only). Downcasts to
-    /// OnChainPhase when the cradle is in on-chain phase.
+    /// OnChainPhase when the session is in on-chain phase.
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
         use crate::session_phases::on_chain::OnChainPhase;
         if let Some(och) = self.peer.as_any().downcast_ref::<OnChainPhase>() {
@@ -1645,7 +1645,7 @@ mod sequencing_tests {
     }
 
     /// A channel coin first observed already-spent is reported in BOTH
-    /// `created_watched` and `deleted_watched`.  The cradle processes the created
+    /// `created_watched` and `deleted_watched`.  The session processes the created
     /// phase, applies the handler transition, then processes the spent phase.
     /// This guarantees the spend reaches the post-transition handler rather than
     /// the handshake handler that ignores it.  See

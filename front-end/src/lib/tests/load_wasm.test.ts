@@ -152,7 +152,7 @@ function onProcessExit(code: number): void {
 beforeAll(() => {
   // Truncate any stale file from a previous run so the cat shows only this run.
   try { fs.writeFileSync(DIAG_FILE, `DIAG_LOADWASM diag file start ${new Date().toISOString()}\n`); } catch { /* ignore */ }
-  // Route the cradle/poller/blockchain diagnostics (which go through the shared
+  // Route the game session/poller/blockchain diagnostics (which go through the shared
   // log module's diagStack/diagNote) into the same durable file.
   setDiagSink(diagFileWrite);
   setTestGlobal('localStorage', makeStorage());
@@ -192,7 +192,7 @@ afterAll(async () => {
 });
 
 const activeSubscriptions: Subscription[] = [];
-const activeCradles: SessionControllerAdapter[] = [];
+const activeGameSessions: SessionControllerAdapter[] = [];
 let testPoller: BlockchainPoller | null = null;
 
 function addActiveSubscription(sub: Subscription): Subscription {
@@ -200,17 +200,17 @@ function addActiveSubscription(sub: Subscription): Subscription {
   return sub;
 }
 
-function addActiveCradle(cradle: SessionControllerAdapter): SessionControllerAdapter {
-  activeCradles.push(cradle);
-  return cradle;
+function addActiveGameSession(gameSession: SessionControllerAdapter): SessionControllerAdapter {
+  activeGameSessions.push(gameSession);
+  return gameSession;
 }
 
 async function cleanupActiveResources() {
   while (activeSubscriptions.length > 0) {
     activeSubscriptions.pop()?.unsubscribe();
   }
-  while (activeCradles.length > 0) {
-    activeCradles.pop()?.shutdown();
+  while (activeGameSessions.length > 0) {
+    activeGameSessions.pop()?.shutdown();
   }
   testPoller?.stop();
   testPoller = null;
@@ -288,22 +288,22 @@ class SessionControllerAdapter {
   }
 }
 
-function all_handshaked(cradles: Array<SessionControllerAdapter>) {
+function all_handshaked(gameSessions: Array<SessionControllerAdapter>) {
   for (let c = 0; c < 2; c++) {
-    if (!cradles[c].handshaked()) {
+    if (!gameSessions[c].handshaked()) {
       return false;
     }
   }
   return true;
 }
 
-function debugCradleState(cradle: SessionControllerAdapter): string {
-  const blob = cradle.blob as any;
+function debugGameSessionState(gameSession: SessionControllerAdapter): string {
+  const blob = gameSession.blob as any;
   if (!blob) return 'no-blob';
   return [
-    `ready=${cradle.handshaked()}`,
-    `active=${cradle.observedActiveStatus()}`,
-    `outbound=${cradle.waiting_messages.length}`,
+    `ready=${gameSession.handshaked()}`,
+    `active=${gameSession.observedActiveStatus()}`,
+    `outbound=${gameSession.waiting_messages.length}`,
     `system=${blob.systemState?.()}`,
     `queue=${blob.eventQueue?.length}`,
     `drain=${blob.drainScheduled}`,
@@ -312,23 +312,23 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
   ].join('/');
 }
 
-async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
-  await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+async function flushWrapperDrain(gameSessions: Array<SessionControllerAdapter>): Promise<void> {
+  await Promise.all(gameSessions.map((gameSession) => gameSession.blob?.flushPendingWork() ?? Promise.resolve()));
 }
 
-function assertCradleRoundTrip(
+function assertGameSessionRoundTrip(
   stage: string,
   controller: SessionController,
 ): Uint8Array {
   const wasmFields = controller.getWasmFields();
   const serialized = wasmFields?.serializedGameSession;
-  assert.ok(serialized instanceof Uint8Array, `${stage}: expected serialized cradle bytes`);
+  assert.ok(serialized instanceof Uint8Array, `${stage}: expected serialized game session bytes`);
   assert.equal(
     wasmFields?.gameSessionSchemaVersion,
     BigInt(WholeWasmObject.game_session_serialization_schema()),
-    `${stage}: expected current cradle schema`,
+    `${stage}: expected current game session schema`,
   );
-  assert.ok(serialized.byteLength > 0, `${stage}: expected non-empty serialized cradle`);
+  assert.ok(serialized.byteLength > 0, `${stage}: expected non-empty serialized game session`);
   // Fingerprint immediately: if serialize_game_session returned a WASM-memory view,
   // later WASM activity would mutate these bytes in place.
   const ownedFingerprint = Uint8Array.from(serialized);
@@ -344,17 +344,17 @@ function assertCradleRoundTrip(
     assert.deepEqual(
       serialized,
       ownedFingerprint,
-      `${stage}: serialized cradle bytes mutated after further WASM use ` +
+      `${stage}: serialized game session bytes mutated after further WASM use ` +
       `(byteLength=${serialized.byteLength} byteOffset=${serialized.byteOffset})`,
     );
     assert.deepEqual(
       reserialized,
       serialized,
-      `${stage}: restored cradle should reserialize identically`,
+      `${stage}: restored game session should reserialize identically`,
     );
   } catch (e) {
     throw new Error(
-      `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
+      `${stage}: ${serialized.byteLength} byte gameSession failed immediate restore; ` +
       `protocol=${state}\n${describeThrown(e)}`,
     );
   }
@@ -371,20 +371,20 @@ async function pollOnce(poller: BlockchainPoller): Promise<void> {
 
 async function action_with_messages(
   poller: BlockchainPoller,
-  cradle1: SessionControllerAdapter,
-  cradle2: SessionControllerAdapter,
+  gameSession1: SessionControllerAdapter,
+  gameSession2: SessionControllerAdapter,
 ) {
-  let cradles = [cradle1, cradle2];
+  let gameSessions = [gameSession1, gameSession2];
   let subscriptions: Subscription[] = [];
 
-  // The poller drives each cradle's coin polling directly via report_coin_states.
-  cradles.forEach((c) => {
+  // The poller drives each gameSession's coin polling directly via report_coin_states.
+  gameSessions.forEach((c) => {
     if (c.blob) poller.attachGameSession(c.blob);
   });
 
-  let evt_results: Array<boolean> = cradles.map((c) => c.observedActiveStatus());
-  cradles.forEach((cradle, index) => {
-    subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
+  let evt_results: Array<boolean> = gameSessions.map((c) => c.observedActiveStatus());
+  gameSessions.forEach((gameSession, index) => {
+    subscriptions.push(addActiveSubscription(gameSession.getObservable().subscribe({
       next: (evt: WasmEvent) => {
         if (evt.type === 'notification' && evt.data) {
           const tag = typeof evt.data === 'object' ? Object.keys(evt.data)[0] : null;
@@ -401,46 +401,46 @@ async function action_with_messages(
   try {
     let iterations = 0;
     const startedAt = Date.now();
-    while (!all_handshaked(cradles)) {
+    while (!all_handshaked(gameSessions)) {
       iterations++;
       let deliveredOutbound = false;
       for (let c = 0; c < 2; c++) {
-        let outbound = cradles[c].outbound_messages();
+        let outbound = gameSessions[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
           deliveredOutbound = true;
-          cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
+          gameSessions[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
         }
       }
-      await flushWrapperDrain(cradles);
-      if (!deliveredOutbound && !all_handshaked(cradles)) {
+      await flushWrapperDrain(gameSessions);
+      if (!deliveredOutbound && !all_handshaked(gameSessions)) {
         await pollOnce(poller);
-        await flushWrapperDrain(cradles);
+        await flushWrapperDrain(gameSessions);
       }
-      if (!deliveredOutbound && !all_handshaked(cradles)) {
+      if (!deliveredOutbound && !all_handshaked(gameSessions)) {
         await fakeBlockchainInfo.waitForNextBlock();
         await pollOnce(poller);
-        await flushWrapperDrain(cradles);
+        await flushWrapperDrain(gameSessions);
       }
-      evt_results = evt_results.map((seen, index) => seen || cradles[index].observedActiveStatus());
+      evt_results = evt_results.map((seen, index) => seen || gameSessions[index].observedActiveStatus());
       if (Date.now() - startedAt > 30_000) {
         throw new Error(
           `handshake loop timed out after ${iterations} iterations` +
           ` connected=${fakeBlockchainInfo.isConnected()}` +
-          ` ready=${cradles.map((c) => c.handshaked()).join(',')}` +
-          ` active=${cradles.map((c) => c.observedActiveStatus()).join(',')}` +
-          ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}` +
-          ` states=${cradles.map(debugCradleState).join(' | ')}`,
+          ` ready=${gameSessions.map((c) => c.handshaked()).join(',')}` +
+          ` active=${gameSessions.map((c) => c.observedActiveStatus()).join(',')}` +
+          ` outbound=${gameSessions.map((c) => c.waiting_messages.length).join(',')}` +
+          ` states=${gameSessions.map(debugGameSessionState).join(' | ')}`,
         );
       }
     }
 
-    // If any evt_results are false, that means we did not get a setState msg from that cradle
+    // If any evt_results are false, that means we did not get a setState msg from that gameSession
     if (!evt_results.every((x) => x)) {
-      throw new Error(`we expected running state in both cradles, got active=${evt_results.join(',')} ready=${cradles.map((c) => c.handshaked()).join(',')}`);
+      throw new Error(`we expected running state in both gameSessions, got active=${evt_results.join(',')} ready=${gameSessions.map((c) => c.handshaked()).join(',')}`);
     }
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
-    cradles.forEach((c) => {
+    gameSessions.forEach((c) => {
       if (c.blob) poller.detachGameSession(c.blob);
     });
   }
@@ -492,7 +492,7 @@ async function isSimulatorAvailable(): Promise<boolean> {
 }
 
 it(
-  'persists and reloads a live intermediate handshake cradle',
+  'persists and reloads a live intermediate handshake gameSession',
   async () => {
     lateRejection = null;
     const offConnectionLog = fakeBlockchainInfo.onConnectionChange((connected) => {
@@ -520,11 +520,11 @@ it(
       testLog(`after poller start connected=${fakeBlockchainInfo.isConnected()}`);
       const poller = testPoller;
 
-      const cradle1 = addActiveCradle(new SessionControllerAdapter());
-      const cradle2 = addActiveCradle(new SessionControllerAdapter());
+      const gameSession1 = addActiveGameSession(new SessionControllerAdapter());
+      const gameSession2 = addActiveGameSession(new SessionControllerAdapter());
       let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
-          cradle1.add_outbound_message(msgno, message);
+          gameSession1.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
         sendKeepalive: () => {},
@@ -543,19 +543,19 @@ it(
       wasm_blob1.onSaveNeeded = () => {
         const fields = wasm_blob1.getWasmFields();
         if (!fields) {
-          return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+          return Promise.reject(new Error('Cannot persist session: WASM game session serialization failed'));
         }
         return saveSession({
           ...fields,
           pairingToken: 'reload-regression-p1',
         });
       };
-      cradle1.set_blob(wasm_blob1);
-      testLog('after cradle1 init');
+      gameSession1.set_blob(wasm_blob1);
+      testLog('after gameSession1 init');
 
       let peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
-          cradle2.add_outbound_message(msgno, message);
+          gameSession2.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
         sendKeepalive: () => {},
@@ -573,59 +573,59 @@ it(
       wasm_blob2.onSaveNeeded = () => {
         const fields = wasm_blob2.getWasmFields();
         if (!fields) {
-          return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+          return Promise.reject(new Error('Cannot persist session: WASM game session serialization failed'));
         }
         return saveSession({
           ...fields,
           pairingToken: 'reload-regression-p2',
         });
       };
-      cradle2.set_blob(wasm_blob2);
-      testLog('after cradle2 init');
+      gameSession2.set_blob(wasm_blob2);
+      testLog('after gameSession2 init');
 
-      await flushWrapperDrain([cradle1, cradle2]);
-      assertCradleRoundTrip('initiator-sent-a', wasm_blob1);
-      assertCradleRoundTrip('receiver-waiting-for-a', wasm_blob2);
+      await flushWrapperDrain([gameSession1, gameSession2]);
+      assertGameSessionRoundTrip('initiator-sent-a', wasm_blob1);
+      assertGameSessionRoundTrip('receiver-waiting-for-a', wasm_blob2);
 
-      const sentA = cradle1.outbound_messages();
+      const sentA = gameSession1.outbound_messages();
       assert.equal(sentA.length, 1, 'initiator should have one HandshakeA message');
 
-      cradle2.deliver_message(sentA[0].msgno, sentA[0].msg);
-      assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
-      await flushWrapperDrain([cradle2]);
-      const sentB = cradle2.outbound_messages();
+      gameSession2.deliver_message(sentA[0].msgno, sentA[0].msg);
+      assertGameSessionRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
+      await flushWrapperDrain([gameSession2]);
+      const sentB = gameSession2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
-      cradle1.deliver_message(sentB[0].msgno, sentB[0].msg);
-      assertCradleRoundTrip('initiator-processed-b-needs-launcher', wasm_blob1);
-      await flushWrapperDrain([cradle1]);
-      assertCradleRoundTrip('initiator-provided-launcher-sent-c', wasm_blob1);
-      const sentC = cradle1.outbound_messages();
+      gameSession1.deliver_message(sentB[0].msgno, sentB[0].msg);
+      assertGameSessionRoundTrip('initiator-processed-b-needs-launcher', wasm_blob1);
+      await flushWrapperDrain([gameSession1]);
+      assertGameSessionRoundTrip('initiator-provided-launcher-sent-c', wasm_blob1);
+      const sentC = gameSession1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
-      cradle2.deliver_message(sentC[0].msgno, sentC[0].msg);
-      assertCradleRoundTrip('receiver-processed-c-sent-d', wasm_blob2);
-      await flushWrapperDrain([cradle2]);
-      const sentD = cradle2.outbound_messages();
+      gameSession2.deliver_message(sentC[0].msgno, sentC[0].msg);
+      assertGameSessionRoundTrip('receiver-processed-c-sent-d', wasm_blob2);
+      await flushWrapperDrain([gameSession2]);
+      const sentD = gameSession2.outbound_messages();
       assert.equal(sentD.length, 1, 'receiver should have one HandshakeD message');
 
-      cradle1.deliver_message(sentD[0].msgno, sentD[0].msg);
-      assertCradleRoundTrip('initiator-processed-d-waiting-for-height', wasm_blob1);
+      gameSession1.deliver_message(sentD[0].msgno, sentD[0].msg);
+      assertGameSessionRoundTrip('initiator-processed-d-waiting-for-height', wasm_blob1);
       await fakeBlockchainInfo.waitForNextBlock();
       await pollOnce(poller);
-      assertCradleRoundTrip('initiator-height-observed-needs-coin-spend', wasm_blob1);
-      await flushWrapperDrain([cradle1]);
-      assertCradleRoundTrip('initiator-wallet-offer-complete-sent-e', wasm_blob1);
-      const sentE = cradle1.outbound_messages();
+      assertGameSessionRoundTrip('initiator-height-observed-needs-coin-spend', wasm_blob1);
+      await flushWrapperDrain([gameSession1]);
+      assertGameSessionRoundTrip('initiator-wallet-offer-complete-sent-e', wasm_blob1);
+      const sentE = gameSession1.outbound_messages();
       assert.equal(sentE.length, 1, 'initiator should have one HandshakeE message');
 
-      cradle2.deliver_message(sentE[0].msgno, sentE[0].msg);
-      const makingOfferAcceptanceBytes = assertCradleRoundTrip(
+      gameSession2.deliver_message(sentE[0].msgno, sentE[0].msg);
+      const makingOfferAcceptanceBytes = assertGameSessionRoundTrip(
         'receiver-processed-e-making-offer-acceptance',
         wasm_blob2,
       );
       // Stop live durability saves before the explicit snapshot so a late
-      // onSaveNeeded cannot overwrite the cradle under test.
+      // onSaveNeeded cannot overwrite the game session under test.
       wasm_blob1.onSaveNeeded = () => Promise.resolve();
       wasm_blob2.onSaveNeeded = () => Promise.resolve();
       void saveSession({
@@ -659,15 +659,15 @@ it(
       );
       assert.equal(typeof restoredId, 'number');
 
-      await flushWrapperDrain([cradle2]);
-      assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
+      await flushWrapperDrain([gameSession2]);
+      assertGameSessionRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
       testLog(
         `reload regression makingOfferAcceptance=${makingOfferAcceptanceBytes.byteLength}` +
         ` restored=${reloaded.serializedGameSession.byteLength}`,
       );
 
       testLog('before action_with_messages');
-      await action_with_messages(poller, cradle1, cradle2);
+      await action_with_messages(poller, gameSession1, gameSession2);
       testLog('after action_with_messages');
     } catch (e) {
       const desc = describeThrown(e);

@@ -285,20 +285,20 @@ mod sim_tests {
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|_, cradles| {
-                    for cradle in cradles {
-                        let has_unspent_timeout_claim = cradle
+                Some(&|_, sessions| {
+                    for session in sessions {
+                        let has_unspent_timeout_claim = session
                             .snapshot_watched_coins()
                             .iter()
-                            .filter_map(|coin| cradle.watched_coin(coin))
+                            .filter_map(|coin| session.watched_coin(coin))
                             .any(|watched| {
                                 watched.birthday.is_some()
                                     && watched.spent_confirmed_at.is_none()
                                     && watched.timeout_spend.is_some()
                             });
-                        if cradle.channel_status_terminal() && has_unspent_timeout_claim {
+                        if session.channel_status_terminal() && has_unspent_timeout_claim {
                             assert!(
-                                !cradle.is_fully_resolved(),
+                                !session.is_fully_resolved(),
                                 "terminal channel must keep polling while a timeout claim is pending"
                             );
                         }

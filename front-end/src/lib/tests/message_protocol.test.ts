@@ -73,7 +73,7 @@ function testSpendBundle(coinHex: string): SpendBundle {
   };
 }
 
-function makeMockCradle(
+function makeMockGameSession(
   onDeliver: (msg: Uint8Array) => WasmResult | undefined = () => ({ events: [] }),
 ): ChiaGame {
   return {
@@ -85,7 +85,7 @@ function makeMockCradle(
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
-    cradle: 0,
+    gameSession: 0,
   } as unknown as ChiaGame;
 }
 
@@ -104,7 +104,7 @@ function makePeerConn(
 
 interface TestHarness {
   blob: SessionController;
-  cradle: ChiaGame;
+  gameSession: ChiaGame;
   sentMessages: Array<{ msgno: number; msg: Uint8Array }>;
   sentAcks: number[];
 }
@@ -125,27 +125,27 @@ function createReadyBlob(
     100n,
     makePeerConn(sentMessages, sentAcks),
   );
-  const cradle = makeMockCradle(onDeliver);
+  const gameSession = makeMockGameSession(onDeliver);
 
   blob.loadWasm(mockWasmConnection);
-  blob.setGameSession(cradle);
+  blob.setGameSession(gameSession);
   blob.kickSystem(2);
   blob.reportCoinStates(1n, []);
   blob.onSaveNeeded = () => saveSession({
     blockchainType: 'simulator',
-    serializedGameSession: cradle.serialize(),
-    gameSessionSchemaVersion: 1n,
+    serializedGameSession: gameSession.serialize(),
+    gameSessionSchemaVersion: 2n,
     messageNumber: blob.messageNumber,
     remoteNumber: blob.remoteNumber,
     unackedMessages: blob.unackedMessages,
   });
 
-  (cradle.deliver_message as jest.Mock).mockClear();
-  (cradle.report_coin_states as jest.Mock).mockClear();
+  (gameSession.deliver_message as jest.Mock).mockClear();
+  (gameSession.report_coin_states as jest.Mock).mockClear();
   sentMessages.length = 0;
   sentAcks.length = 0;
 
-  return { blob, cradle, sentMessages, sentAcks };
+  return { blob, gameSession, sentMessages, sentAcks };
 }
 
 /** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
@@ -161,20 +161,20 @@ function createUnreadyBlob(
     100n,
     makePeerConn(sentMessages, sentAcks),
   );
-  const cradle = makeMockCradle(onDeliver);
+  const gameSession = makeMockGameSession(onDeliver);
 
   blob.loadWasm(mockWasmConnection);
-  blob.setGameSession(cradle);
+  blob.setGameSession(gameSession);
   blob.onSaveNeeded = () => saveSession({
     blockchainType: 'simulator',
-    serializedGameSession: cradle.serialize(),
-    gameSessionSchemaVersion: 1n,
+    serializedGameSession: gameSession.serialize(),
+    gameSessionSchemaVersion: 2n,
     messageNumber: blob.messageNumber,
     remoteNumber: blob.remoteNumber,
     unackedMessages: blob.unackedMessages,
   });
 
-  return { blob, cradle, sentMessages, sentAcks };
+  return { blob, gameSession, sentMessages, sentAcks };
 }
 
 let activeBlob: SessionController | null = null;
@@ -223,7 +223,7 @@ async function flushPromiseJobs(): Promise<void> {
 
 describe('in-order delivery', () => {
   it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
-    const { blob, cradle, sentAcks } = createReadyBlob();
+    const { blob, gameSession, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
     blob.deliverMessage(1n, enc('a'));
@@ -235,9 +235,9 @@ describe('in-order delivery', () => {
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2, 3]);
     expect((await peekSession())?.remoteNumber).toBe(3n);
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
+    expect(gameSession.deliver_message).toHaveBeenCalledTimes(3);
     expect(
-      (cradle.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0]),
+      (gameSession.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0]),
     ).toEqual([enc('a'), enc('b'), enc('c')]);
   });
 });
@@ -263,13 +263,13 @@ describe('lifecycle flush', () => {
 
 describe('duplicate detection', () => {
   it('delivers once but ACKs twice after pending durability flush', async () => {
-    const { blob, cradle, sentAcks } = createReadyBlob();
+    const { blob, gameSession, sentAcks } = createReadyBlob();
     activeBlob = blob;
 
     blob.deliverMessage(1n, enc('a'));
     blob.deliverMessage(1n, enc('a'));
 
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
+    expect(gameSession.deliver_message).toHaveBeenCalledTimes(1);
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 1]);
   });
@@ -317,7 +317,7 @@ describe('keepalive retransmission', () => {
 });
 
 describe('out-of-order delivery with reorder queue', () => {
-  it('delivers 3, 1, 2 → cradle sees a, b, c in order', async () => {
+  it('delivers 3, 1, 2 → gameSession sees a, b, c in order', async () => {
     const delivered: Uint8Array[] = [];
     const { blob, sentAcks } = createReadyBlob((msg) => {
       delivered.push(msg);
@@ -338,16 +338,16 @@ describe('out-of-order delivery with reorder queue', () => {
 
 describe('buffering before system ready, then spill', () => {
   it('buffers messages and delivers when system reaches qe=7', async () => {
-    const { blob, cradle, sentAcks } = createUnreadyBlob();
+    const { blob, gameSession, sentAcks } = createUnreadyBlob();
     activeBlob = blob;
 
     blob.deliverMessage(1n, enc('a'));
     blob.deliverMessage(2n, enc('b'));
-    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(gameSession.deliver_message).not.toHaveBeenCalled();
 
     blob.kickSystem(2);
 
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
+    expect(gameSession.deliver_message).toHaveBeenCalledTimes(2);
     expect(blob.remoteNumber).toBe(2n);
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2]);
@@ -477,23 +477,23 @@ describe('durability failures', () => {
   it('requires onSaveNeeded to update cached synchronously before returning', async () => {
     const { loadState } = await import('../../hooks/save');
     const outbound = enc('outbound');
-    const { blob, cradle, sentMessages } = createReadyBlob(() => ({
+    const { blob, gameSession, sentMessages } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
     }));
     activeBlob = blob;
 
-    const cradleBytes = new Uint8Array([7, 7, 7, 7]);
-    (cradle.serialize as jest.Mock).mockReturnValue(cradleBytes);
+    const gameSessionBytes = new Uint8Array([7, 7, 7, 7]);
+    (gameSession.serialize as jest.Mock).mockReturnValue(gameSessionBytes);
     let saveReturned = false;
     blob.onSaveNeeded = () => {
       const pending = saveSession({
-        serializedGameSession: cradle.serialize(),
-        gameSessionSchemaVersion: 1n,
-        pairingToken: 'sync-cradle',
+        serializedGameSession: gameSession.serialize(),
+        gameSessionSchemaVersion: 2n,
+        pairingToken: 'sync-gameSession',
       });
-      // Cached must already contain the cradle before the returned Promise
+      // Cached must already contain the game session before the returned Promise
       // settles — durability flushes immediately after starting onSaveNeeded.
-      expect(loadState().serializedGameSession).toEqual(cradleBytes);
+      expect(loadState().serializedGameSession).toEqual(gameSessionBytes);
       saveReturned = true;
       return pending;
     };
@@ -502,24 +502,24 @@ describe('durability failures', () => {
     await blob.flushPendingWork();
 
     expect(saveReturned).toBe(true);
-    expect((await peekSession())?.serializedGameSession).toEqual(cradleBytes);
+    expect((await peekSession())?.serializedGameSession).toEqual(gameSessionBytes);
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
   });
 
-  it('blocks delivery and preserves the durable record when cradle serialization fails', async () => {
+  it('blocks delivery and preserves the durable record when gameSession serialization fails', async () => {
     const outbound = enc('outbound');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
+    const { blob, gameSession, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
     }));
     activeBlob = blob;
     void saveSession({
       serializedGameSession: new Uint8Array([9, 9, 9]),
-      gameSessionSchemaVersion: 1n,
+      gameSessionSchemaVersion: 2n,
       pairingToken: 'previous-durable-record',
     });
     await flushSessionSave();
-    (cradle.serialize as jest.Mock).mockImplementation(() => {
-      throw new Error('malformed cradle serialization');
+    (gameSession.serialize as jest.Mock).mockImplementation(() => {
+      throw new Error('malformed game session serialization');
     });
     blob.onSaveNeeded = () => {
       // Serialize failures throw from getWasmFields; null means not ready yet.
@@ -531,7 +531,7 @@ describe('durability failures', () => {
     blob.deliverMessage(1n, enc('trigger'));
     await expect(blob.flushPendingWork())
       .rejects
-      .toThrow('malformed cradle serialization');
+      .toThrow('malformed game session serialization');
 
     expect(sentMessages).toEqual([]);
     expect(sentAcks).toEqual([]);
@@ -572,13 +572,13 @@ describe('restore ordering', () => {
     );
     activeBlob = blob;
 
-    const cradle = makeMockCradle();
+    const gameSession = makeMockGameSession();
     const restoreWasmConnection = {
-      game_session_serialization_schema: () => 1,
+      game_session_serialization_schema: () => 2,
     } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
-      deserializeGame: jest.fn(() => cradle),
+      deserializeGame: jest.fn(() => gameSession),
     } as unknown as WasmStateInit;
 
     blob.kickSystem(2);
@@ -594,7 +594,7 @@ describe('restore ordering', () => {
           version: 8n,
           playerId: 'p1',
           serializedGameSession: new Uint8Array([1, 2, 3]),
-          gameSessionSchemaVersion: 1n,
+          gameSessionSchemaVersion: 2n,
           messageNumber: 5n,
           remoteNumber: 1n,
           channelReady: false,
@@ -610,10 +610,10 @@ describe('restore ordering', () => {
     );
     unsubscribe();
 
-    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(gameSession.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
-    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
+    expect(gameSession.resubmit_submitted).not.toHaveBeenCalled();
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);
     expect(blob.wasmNotificationHistory).toEqual(['notification']);
@@ -683,7 +683,7 @@ describe('restore ordering', () => {
   });
 });
 
-describe('cradle serialization schema restore guard', () => {
+describe('gameSession serialization schema restore guard', () => {
   function makeRestoreHarness(deserializeGame: () => ChiaGame): {
     blob: SessionController;
     wasmStateInit: WasmStateInit;
@@ -700,7 +700,7 @@ describe('cradle serialization schema restore guard', () => {
     const deserializeMock = jest.fn(deserializeGame);
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => ({
-        game_session_serialization_schema: () => 1,
+        game_session_serialization_schema: () => 2,
       } as unknown as WasmConnection)),
       deserializeGame: deserializeMock,
     } as unknown as WasmStateInit;
@@ -709,15 +709,15 @@ describe('cradle serialization schema restore guard', () => {
 
   it.each([
     ['missing', undefined],
-    ['mismatched', 2n],
-  ])('rejects and deletes a record with a %s cradle schema', async (_label, gameSessionSchemaVersion) => {
+    ['mismatched', 1n],
+  ])('rejects and deletes a record with a %s game session schema', async (_label, gameSessionSchemaVersion) => {
     void saveSession({
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion,
       pairingToken: 'restore-schema-test',
     });
     await flushSessionSave();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockGameSession);
     const save = (await peekSession())!;
 
     await expect(restoreSession(blob, save, wasmStateInit))
@@ -732,7 +732,7 @@ describe('cradle serialization schema restore guard', () => {
   it('does not delete same-schema records that fail deserialization', async () => {
     void saveSession({
       serializedGameSession: new Uint8Array([1, 2, 3]),
-      gameSessionSchemaVersion: 1n,
+      gameSessionSchemaVersion: 2n,
       pairingToken: 'restore-corruption-test',
       messageNumber: 1n,
       remoteNumber: 0n,
@@ -743,44 +743,44 @@ describe('cradle serialization schema restore guard', () => {
     });
     await flushSessionSave();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
-      throw new Error('corrupt current-schema cradle');
+      throw new Error('corrupt current-schema game session');
     });
     const save = (await peekSession())!;
 
     await expect(restoreSession(blob, save, wasmStateInit))
       .rejects
-      .toThrow('corrupt current-schema cradle');
+      .toThrow('corrupt current-schema game session');
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);
     expect((await peekSession())?.serializedGameSession).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
 
-describe('cleanShutdown calls shut_down on cradle', () => {
-  it('calls shut_down on cradle', () => {
+describe('cleanShutdown calls shut_down on gameSession', () => {
+  it('calls shut_down on gameSession', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
 
-    const cradle = {
-      ...makeMockCradle(),
+    const gameSession = {
+      ...makeMockGameSession(),
       shut_down: jest.fn(() => ({ events: [] } as WasmResult)),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
+    blob.setGameSession(gameSession);
     blob.kickSystem(2);
     blob.reportCoinStates(1n, []);
 
     blob.cleanShutdown();
 
-    expect((cradle as any).shut_down).toHaveBeenCalled();
+    expect((gameSession as any).shut_down).toHaveBeenCalled();
   });
 });
 
 describe('transaction submission', () => {
-  it('applies watchCoins deltas without resampling the cradle snapshot', async () => {
+  it('applies watchCoins deltas without resampling the game session snapshot', async () => {
     const queriedNames: string[][] = [];
     const blockchain = new BlockchainPoller(new Proxy(
       {
@@ -801,12 +801,12 @@ describe('transaction submission', () => {
     const sentAcks: number[] = [];
     const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
-    const cradle = makeMockCradle();
+    const gameSession = makeMockGameSession();
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
+    blob.setGameSession(gameSession);
     blob.attachBlockchain(blockchain);
-    (cradle.snapshot_watched_coins as jest.Mock).mockClear();
+    (gameSession.snapshot_watched_coins as jest.Mock).mockClear();
 
     blob.processResult({
       events: [],
@@ -814,12 +814,12 @@ describe('transaction submission', () => {
     });
     await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
-    expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
+    expect(gameSession.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
     blob.detachBlockchain(blockchain);
   });
 
-  it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
+  it('refreshes watched coins when a hydrated gameSession receives a later blockchain attach', async () => {
     const queriedNames: string[][] = [];
     const blockchain = new BlockchainPoller(new Proxy(
       {
@@ -840,23 +840,23 @@ describe('transaction submission', () => {
     const sentAcks: number[] = [];
     const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
-    const cradle = {
-      ...makeMockCradle(),
+    const gameSession = {
+      ...makeMockGameSession(),
       snapshot_watched_coins: jest.fn(() => [{ coin_name: 'bb', coin_string: 'coin-b' }]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
+    blob.setGameSession(gameSession);
     expect(queriedNames).toEqual([]);
 
     blob.attachBlockchain(blockchain);
     await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
+    expect(gameSession.snapshot_watched_coins).toHaveBeenCalledTimes(1);
     expect(queriedNames).toEqual([['bb']]);
 
     blob.attachBlockchain(blockchain);
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
+    expect(gameSession.snapshot_watched_coins).toHaveBeenCalledTimes(2);
     blob.detachBlockchain(blockchain);
   });
 
@@ -873,24 +873,24 @@ describe('transaction submission', () => {
     const sentAcks: number[] = [];
     const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
-    const cradle = {
-      ...makeMockCradle(),
+    const gameSession = {
+      ...makeMockGameSession(),
       snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
       drain_submissions: jest.fn(() => [testSpendBundle('05')]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
+    blob.setGameSession(gameSession);
     blob.processResult({ events: [] });
 
-    expect(cradle.drain_submissions).not.toHaveBeenCalled();
+    expect(gameSession.drain_submissions).not.toHaveBeenCalled();
     expect(spend).not.toHaveBeenCalled();
 
     blob.attachBlockchain(blockchain);
     await transactionSubmitQueue(blob);
 
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-    expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
+    expect(gameSession.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(gameSession.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
   });
@@ -910,13 +910,13 @@ describe('transaction submission', () => {
     const sentAcks: number[] = [];
     const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
-    const cradle = {
-      ...makeMockCradle(),
+    const gameSession = {
+      ...makeMockGameSession(),
       drain_submissions: jest.fn(() => [testSpendBundle('01'), testSpendBundle('02')]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
+    blob.setGameSession(gameSession);
     blob.processResult({ events: [] });
 
     await flushPromiseJobs();
@@ -950,13 +950,13 @@ describe('transaction submission', () => {
     blob.getObservable().subscribe((evt) => {
       if (evt.type === 'error') errors.push(evt.error);
     });
-    const cradle = {
-      ...makeMockCradle(),
+    const gameSession = {
+      ...makeMockGameSession(),
       drain_submissions: jest.fn(() => [testSpendBundle('03'), testSpendBundle('04')]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
+    blob.setGameSession(gameSession);
     blob.processResult({ events: [] });
 
     await transactionSubmitQueue(blob);

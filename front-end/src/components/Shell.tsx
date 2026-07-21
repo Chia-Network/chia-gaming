@@ -126,7 +126,7 @@ function diagnosticLogFromSave(save: SessionSave): string[] | undefined {
 
 /**
  * Build a React-safe SessionSave without deep-walking binary fields.
- * Spreading/cloning a degraded cradle (`{0:n,1:n,...}`) OOMs the tab.
+ * Spreading/cloning a degraded gameSession (`{0:n,1:n,...}`) OOMs the tab.
  */
 function sessionSaveForReactProps(save: SessionSave | null): SessionSave | undefined {
   if (!save) return undefined;
@@ -658,7 +658,7 @@ const Shell = () => {
 
       if (shouldOfferResumeOrStartOver()) {
         // Hydrate IndexedDB into the in-memory cache immediately so incidental
-        // saveSession patches (logs, alerts) cannot clobber the durable cradle
+        // saveSession patches (logs, alerts) cannot clobber the durable game session
         // while the dialog is open (or while auto-resume runs).
         await hydrateSessionCacheFromDisk();
         if (cancelled) return;
@@ -1048,7 +1048,7 @@ const Shell = () => {
     }
     const channelTimeout = parseOptionalBigInt(request.channel_timeout);
     const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
-    // Persist the full pre-cradle handshake *and flush* before GameSession mounts
+    // Persist the full pre-game-session handshake *and flush* before GameSession mounts
     // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
     // the same pairing/amounts/peer ids and a stable hub session_id.
     await saveSession({
@@ -1386,7 +1386,7 @@ const Shell = () => {
           setHubLiveness('connected');
           const save = sessionSaveRef.current;
           const prevMine = save?.myHubPlayerId ?? loadState().myHubPlayerId;
-          // Pre-cradle routing is by peer player_id. If *we* remapped (hub
+          // Pre-game-session routing is by peer player_id. If *we* remapped (hub
           // restart or session_id churn), abort rather than handshaking at a
           // stale sessionPeerId. First-ever register (no prior id) is fine.
           if (
@@ -1400,11 +1400,11 @@ const Shell = () => {
             )
           ) {
             console.warn(
-              '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+              '[Shell] hub player_id remapped during pre-game-session handshake (%s → %s); rematch required',
               prevMine,
               playerId,
             );
-            log(`[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`);
+            log(`[hub] player_id remapped during pre-game-session handshake (${prevMine} → ${playerId}); rematch required`);
             saveSession({ myHubPlayerId: playerId });
             cancelAttemptedSession();
             return;
@@ -1455,8 +1455,8 @@ const Shell = () => {
           const save = sessionSaveRef.current;
           const restoring = !!sessionConfigRef.current?.restoring;
           const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
-          // A leftover cradle must not keep us busy after the session resolved
-          // (wallet/handshake failures often leave Failed + persisted cradle).
+          // A leftover gameSession must not keep us busy after the session resolved
+          // (wallet/handshake failures often leave Failed + persisted gameSession).
           const busy = shouldReportHubBusy(phase)
             || (restoring && !terminalSave && !!(save?.serializedGameSession || save?.pairingToken));
           return {
@@ -1499,7 +1499,7 @@ const Shell = () => {
   }, [peerLiveness, sessionPhase, connectToHub]);
 
   // Auto-connect to saved hub once this tab owns the app lease. Also while
-  // autoResuming (blank UI) so cradle restore can reconcile before first paint.
+  // autoResuming (blank UI) so gameSession restore can reconcile before first paint.
   useEffect(() => {
     if (bootState.kind !== 'ready' && bootState.kind !== 'autoResuming') {
       hubConnRef.current?.disconnect();
@@ -1526,7 +1526,7 @@ const Shell = () => {
     deactivate();
     const poller = activate(iface, pollMs);
     // Pre-game wallet connection: force Resume/Start Over on reload even
-    // before a cradle exists. Preference writes must not clear this marker.
+    // before a game session exists. Preference writes must not clear this marker.
     markSavedSession();
     saveSession({ blockchainType: bcType });
     activeBlockchainRef.current = iface;
@@ -1711,7 +1711,7 @@ const Shell = () => {
     setSessionError(hasError);
     hubConnRef.current?.setBusy(false, alias);
 
-    // Stop the live peer route and cradle; do not send session_reject and do
+    // Stop the live peer route and gameSession; do not send session_reject and do
     // not wipe the dashboard model (that would flash "No Session").
     resetPeerRelayState();
     destroySessionController();
@@ -1799,7 +1799,7 @@ const Shell = () => {
   }, []);
 
   const handleTerminal = useCallback(() => {
-    // Session end tears down the cradle, not the wallet. Keep balance interest
+    // Session end tears down the game session, not the wallet. Keep balance interest
     // and nudge an immediate poll so settlement payouts show up promptly.
     const bcType = blockchainTypeRef.current;
     if (bcType) startBalancePolling(bcType);
@@ -1873,7 +1873,7 @@ const Shell = () => {
     setSessionError(false);
 
     sessionSaveRef.current = save;
-    // Cradle-less pairingToken saves are a pre-handshake checkpoint: mount
+    // Game-session-less pairingToken saves are a pre-handshake checkpoint: mount
     // GameSession without sessionSave so getOrCreate runs newSession, not restore.
     sessionSavePropRef.current = save.serializedGameSession
       ? sessionSaveForReactProps(save)
@@ -2169,7 +2169,7 @@ const Shell = () => {
     // Pre-game wallet disconnect: drop the boot marker so reload does not
     // force Resume just for a prior blockchainType. Mid-session / resumable
     // state must keep the marker — otherwise boot skips Resume while the
-    // cradle remains in IDB and can be clobbered by incidental saves.
+    // gameSession remains in IDB and can be clobbered by incidental saves.
     const hasResumableSession =
       sessionPhaseRef.current !== 'none'
       || !!(sessionSaveRef.current?.serializedGameSession || sessionSaveRef.current?.pairingToken)

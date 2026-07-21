@@ -78,7 +78,7 @@ export interface SessionSave {
   gameSessionSchemaVersion?: bigint;
   pairingToken?: string;
   sessionPeerId?: string;
-  /** Last player_id from hub `registered`. Remap during pre-cradle resume means rematch. */
+  /** Last player_id from hub `registered`. Remap during pre-game-session resume means rematch. */
   myHubPlayerId?: string;
   gameSessionId?: string;
   messageNumber?: bigint;
@@ -88,7 +88,7 @@ export interface SessionSave {
   myContribution?: string;
   theirContribution?: string;
   perGameAmount?: string;
-  /** Blocks; persisted so a deploy-stale reload can resume pre-cradle handshake. */
+  /** Blocks; persisted so a deploy-stale reload can resume pre-game-session handshake. */
   channelTimeout?: string;
   unrollTimeout?: string;
   unackedMessages?: Array<{ msgno: bigint; msg: Uint8Array }>;
@@ -368,7 +368,7 @@ export function hasSavedSessionMarker(): boolean {
 
 /**
  * True when prefs remember a wallet choice and/or hub, or WC left storage.
- * Independent of whether a game session / cradle exists.
+ * Independent of whether a game session / gameSession exists.
  */
 export function hasConnectionPreferences(
   state: SessionSave = loadPreferences(),
@@ -383,7 +383,7 @@ export function hasConnectionPreferences(
 /**
  * True when boot should offer Resume / Start Over.
  * Connection prefs count even with no game session; the session marker
- * covers durable cradles / prior explicit save intent.
+ * covers durable game sessions / prior explicit save intent.
  */
 export function shouldOfferResumeOrStartOver(
   state: SessionSave = loadPreferences(),
@@ -542,7 +542,7 @@ function isTerminalFinishedChannel(state: string | null | undefined): boolean {
 
 /**
  * True when disk state should keep the boot Resume/Start Over marker.
- * Includes finished/terminal channel snapshots (no live cradle) so a clean
+ * Includes finished/terminal channel snapshots (no live game session) so a clean
  * shutdown does not silently boot into leftover hub prefs with no dialog.
  */
 function isResumable(state: SessionSave): boolean {
@@ -706,10 +706,10 @@ export function loadState(): SessionSave {
  * Ensure in-memory `cached` includes any resumable IndexedDB record before
  * mutating/persisting. Boot can show the resume dialog from the sync marker
  * without reading IndexedDB; without this, preference-only patches (logs,
- * alerts, etc.) would overwrite the durable cradle with a non-resumable
+ * alerts, etc.) would overwrite the durable game session with a non-resumable
  * record and make Resume report "saved session unavailable".
  *
- * If memory is already resumable, leave it alone — a newer in-memory cradle
+ * If memory is already resumable, leave it alone — a newer in-memory gameSession
  * must not be replaced by a stale IndexedDB snapshot on flush.
  *
  * Also restores hub identity (sessionId / playerId) from disk when
@@ -718,10 +718,10 @@ export function loadState(): SessionSave {
  */
 export async function hydrateSessionCacheFromDisk(): Promise<void> {
   // Memory already holding durable game state must win over IndexedDB. Do not
-  // require sessionId here: handshake saves often persist a cradle before any
+  // require sessionId here: handshake saves often persist a game session before any
   // hub identity exists. The old `&& cached.sessionId` guard fell through
   // in that case, re-read the older disk snapshot, and clobbered the newer
-  // in-memory cradle on every flush — freezing the first persisted size.
+  // in-memory gameSession on every flush — freezing the first persisted size.
   if (cached && isResumable(cached)) {
     identityDiskChecked = true;
     return;
@@ -891,7 +891,7 @@ function hasWalletConnectStorage(): boolean {
 
 /**
  * Returns the current state if there's anything worth resuming — a
- * serialized cradle, pairing token, finished/terminal channel snapshot,
+ * serialized gameSession, pairing token, finished/terminal channel snapshot,
  * remembered wallet and/or hub choice, or leftover WalletConnect storage.
  */
 export async function peekSession(): Promise<SessionSave | null> {
@@ -913,7 +913,7 @@ export async function peekSession(): Promise<SessionSave | null> {
   if (record) {
     const preferences = loadPreferences();
     // Never let a disk record clobber stable local identity. Hub player_id
-    // is keyed by session_id; reminting on reload breaks pre-cradle routing.
+    // is keyed by session_id; reminting on reload breaks pre-game-session routing.
     cached = {
       ...preferences,
       ...record,
@@ -978,9 +978,9 @@ export function clearSession(): Promise<void> {
 }
 
 /**
- * Drop durable cradle/game state only after we know a new session can start
+ * Drop durable game session/game state only after we know a new session can start
  * (e.g. deploy assets loaded). Keeps connection prefs, history/logs, and any
- * pre-cradle handshake fields (pairingToken, amounts, peer ids, timeouts).
+ * pre-game-session handshake fields (pairingToken, amounts, peer ids, timeouts).
  */
 export async function clearGameSessionPreservingHistory(): Promise<void> {
   const prev = loadState();

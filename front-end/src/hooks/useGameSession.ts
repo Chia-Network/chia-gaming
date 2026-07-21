@@ -931,7 +931,7 @@ export function useGameSession(
     if (!go) return Promise.resolve();
     const wasm = go.getWasmFields();
     if (!wasm) {
-      // Cradle not loaded yet (common during async restore). Opportunistic
+      // Game session not loaded yet (common during async restore). Opportunistic
       // React-driven persists should no-op; real serialize failures throw
       // from getWasmFields and still reject this Promise.
       return Promise.resolve();
@@ -1719,7 +1719,7 @@ export function useGameSession(
     };
   }, [sc, handleNotification, pushChannel]);
 
-  // Drive the cradle's coin polling: the poller asks the cradle which coins to
+  // Drive the game session's coin polling: the poller asks the game session which coins to
   // watch and feeds raw chain state back via report_coin_states.
   useEffect(() => {
     if (!sc || !blockchain) return;

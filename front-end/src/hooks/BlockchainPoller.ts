@@ -14,10 +14,10 @@ export const BALANCE_POLL_INTERVAL_MS = 60000;
 export const COIN_EVICTION_CONFIRMATION_DEPTH = 32n;
 
 /**
- * A cradle that the poller drives with raw chain state.  The transaction
- * manager inside the WASM cradle owns the durable watched-coin set and computes
+ * A game session that the poller drives with raw chain state.  The transaction
+ * manager inside the WASM game session owns the durable watched-coin set and computes
  * the created/deleted diff. The poller snapshots that semantic interest set
- * when the cradle attaches, then owns the repeated raw chain queries and runtime
+ * when the game session attaches, then owns the repeated raw chain queries and runtime
  * watch deltas.
  */
 export type CoinPollInterest = { coin_name: string; coin_string: string };
@@ -165,30 +165,30 @@ export class BlockchainPoller {
     });
   }
 
-  attachGameSession(cradle: PollingGameSession) {
-    this.sessions.add(cradle);
-    this.snapshotGameSessionCoinInterest(cradle);
+  attachGameSession(gameSession: PollingGameSession) {
+    this.sessions.add(gameSession);
+    this.snapshotGameSessionCoinInterest(gameSession);
   }
 
-  detachGameSession(cradle: PollingGameSession) {
-    this.sessions.delete(cradle);
-    this.sessionCoins.delete(cradle);
+  detachGameSession(gameSession: PollingGameSession) {
+    this.sessions.delete(gameSession);
+    this.sessionCoins.delete(gameSession);
     this.refreshCoinInterest();
   }
 
-  snapshotGameSessionCoinInterest(cradle: PollingGameSession): void {
-    if (!this.sessions.has(cradle)) return;
-    this.sessionCoins.set(cradle, cradle.snapshotWatchedCoins());
+  snapshotGameSessionCoinInterest(gameSession: PollingGameSession): void {
+    if (!this.sessions.has(gameSession)) return;
+    this.sessionCoins.set(gameSession, gameSession.snapshotWatchedCoins());
     this.refreshCoinInterest();
   }
 
-  watchCoin(cradle: PollingGameSession, coin: CoinPollInterest): void {
-    if (!this.sessions.has(cradle)) return;
+  watchCoin(gameSession: PollingGameSession, coin: CoinPollInterest): void {
+    if (!this.sessions.has(gameSession)) return;
     const byName = new Map(
-      (this.sessionCoins.get(cradle) ?? []).map((existing) => [existing.coin_name, existing]),
+      (this.sessionCoins.get(gameSession) ?? []).map((existing) => [existing.coin_name, existing]),
     );
     byName.set(coin.coin_name, coin);
-    this.sessionCoins.set(cradle, [...byName.values()]);
+    this.sessionCoins.set(gameSession, [...byName.values()]);
     this.refreshCoinInterest();
   }
 
@@ -276,7 +276,7 @@ export class BlockchainPoller {
       this.peak = height;
 
       // Deliver the height tick immediately, before the (potentially slow) coin
-      // record lookup. A cradle's new_block only needs the height, so cradles
+      // record lookup. A game session's new_block only needs the height, so game sessions
       // whose watched coins aren't on chain yet can advance right away.
       for (const { c } of this.collectGameSessionCoins()) {
         c.reportNewBlock(height);
@@ -315,7 +315,7 @@ export class BlockchainPoller {
       const records = namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
       const recordByName = await this.recordMap(records);
       if (recordByName) {
-        const reportedNames = this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
+        const reportedNames = this.reportToGameSessions(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
         this.evictBuriedSpentCoins(recordByName, reportedNames);
       }
       this.consecutiveFailures = 0;
@@ -341,9 +341,9 @@ export class BlockchainPoller {
       }
     }
     if (evictedNames.size === 0) return;
-    for (const [cradle, coins] of this.sessionCoins) {
+    for (const [gameSession, coins] of this.sessionCoins) {
       this.sessionCoins.set(
-        cradle,
+        gameSession,
         coins.filter(({ coin_name }) => !evictedNames.has(coin_name)),
       );
     }
@@ -377,10 +377,10 @@ export class BlockchainPoller {
     return hasUnmappedRecord ? null : recordByName;
   }
 
-  // Hand each cradle its coin-state snapshot for `height`, applying the
+  // Hand each game session its coin-state snapshot for `height`, applying the
   // partial-snapshot guards that keep transient RPC misses from looking like
   // deletions to the transaction manager.
-  private reportToCradles(
+  private reportToGameSessions(
     perSession: Array<{ c: PollingGameSession; coins: CoinPollInterest[] }>,
     recordByName: Map<string, CoinRecord>,
     height: bigint,
@@ -397,7 +397,7 @@ export class BlockchainPoller {
       if (coins.length === 0) {
         continue;
       }
-      // Never hand the manager a partial snapshot.  If any of this cradle's
+      // Never hand the manager a partial snapshot.  If any of this gameSession's
       // coins is still pending registration (so we couldn't query it), a coin
       // the manager already knows is live would be absent from the snapshot and
       // read as a deletion -- for a restored manager that looks like mass

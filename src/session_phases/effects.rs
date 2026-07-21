@@ -357,10 +357,10 @@ pub fn apply_effects(
                 system.send_message(&PeerMessage::HandshakeF(payload))?;
             }
             Effect::NeedLauncherCoinId => {
-                // Handled by the cradle/WASM layer, not by the trait system.
+                // Handled by the session/WASM layer, not by the trait system.
             }
             Effect::NeedCoinSpend(_) => {
-                // Handled by the cradle/WASM layer, not by the trait system.
+                // Handled by the session/WASM layer, not by the trait system.
             }
             Effect::PeerBatch {
                 actions,

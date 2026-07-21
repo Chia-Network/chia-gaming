@@ -75,8 +75,8 @@ export async function configSessionController(
   let address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
   const theirContribution = sc.theirContribution;
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
-  sc.setGameSession(cradle);
+  let { game: gameSession, puzzleHash } = wasmStateInit.createGame(rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
+  sc.setGameSession(gameSession);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
   sc.activateSpend();
@@ -102,14 +102,14 @@ export async function restoreSession(
     await clearSession();
     markSavedSession();
     throw new Error(
-      `Unsupported saved game format: cradle schema ${savedSchema}; current schema is ${currentSchema}`,
+      `Unsupported saved game format: game session schema ${savedSchema}; current schema is ${currentSchema}`,
     );
   }
 
-  const cradleBytes = save.serializedGameSession instanceof Uint8Array
+  const gameSessionBytes = save.serializedGameSession instanceof Uint8Array
     ? save.serializedGameSession
     : (() => { throw new Error('restoreSession serializedGameSession must be a Uint8Array'); })();
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
+  const gameSession = wasmStateInit.deserializeGame(wasmConnection, gameSessionBytes);
 
   sc.messageNumber = requireBigIntCounter(save.messageNumber, 'messageNumber');
   sc.remoteNumber = requireBigIntCounter(save.remoteNumber, 'remoteNumber');
@@ -142,7 +142,7 @@ export async function restoreSession(
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
   sc.markRestored();
-  sc.setGameSession(cradle);
+  sc.setGameSession(gameSession);
 
   log('[restore] session restored');
 }
@@ -208,8 +208,8 @@ export function getOrCreateSessionController(
 
   sessionController.kickSystem(2);
 
-  // Only cradle restores go through restoreSession. pairingToken-only saves are
-  // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
+  // Only gameSession restores go through restoreSession. pairingToken-only saves are
+  // a pre-game-session handshake checkpoint (e.g. deploy-stale reload mid-accept).
   if (sessionSave?.serializedGameSession) {
     const restoringObject = sessionController;
     const doRestore = async () => {

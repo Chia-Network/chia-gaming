@@ -1017,13 +1017,13 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
-type ManagedSyncCradle = TransactionManager<GameSession>;
+type ManagedSyncSession = TransactionManager<GameSession>;
 
-type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(usize, &[ManagedSyncCradle]) -> bool>;
+type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(usize, &[ManagedSyncSession]) -> bool>;
 
 pub struct GameRunOutcome {
     pub identities: [ChiaIdentity; 2],
-    pub cradles: [ManagedSyncCradle; 2],
+    pub sessions: [ManagedSyncSession; 2],
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
     pub logs: [Vec<String>; 2],
@@ -1172,7 +1172,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     simulator.farm_block(&neutral_identity.puzzle_hash);
 
-    let cradle1 = GameSession::new_with_keys(
+    let session1 = GameSession::new_with_keys(
         GameSessionConfig {
             game_types: game_type_map.clone(),
             have_potato: true,
@@ -1185,7 +1185,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         },
         private_keys[0].clone(),
     );
-    let cradle2 = GameSession::new_with_keys(
+    let session2 = GameSession::new_with_keys(
         GameSessionConfig {
             game_types: game_type_map.clone(),
             have_potato: false,
@@ -1198,9 +1198,9 @@ fn run_game_container_with_action_list_with_success_predicate(
         },
         private_keys[1].clone(),
     );
-    let mut cradles = [
-        TransactionManager::new(cradle1),
-        TransactionManager::new(cradle2),
+    let mut sessions = [
+        TransactionManager::new(session1),
+        TransactionManager::new(session2),
     ];
     let mut handshake_done = false;
     let mut can_move = false;
@@ -1218,9 +1218,9 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
     let mut tamper_next_batch_signature = [false, false];
 
-    // Give coins to the cradles.
-    cradles[0].set_funding_coin(allocator, parent_coin_0)?;
-    cradles[1].set_funding_coin(allocator, parent_coin_1)?;
+    // Give coins to the sessions.
+    sessions[0].set_funding_coin(allocator, parent_coin_0)?;
+    sessions[1].set_funding_coin(allocator, parent_coin_1)?;
 
     let global_move = |moves: &[SimScriptAction], move_number: usize| {
         move_number < moves.len()
@@ -1269,8 +1269,8 @@ fn run_game_container_with_action_list_with_success_predicate(
         num_steps += 1;
 
         let handshake_flags = [
-            cradles[0].handshake_finished(),
-            cradles[1].handshake_finished(),
+            sessions[0].handshake_finished(),
+            sessions[1].handshake_finished(),
         ];
         let channel_created_flags = [local_uis[0].channel_created, local_uis[1].channel_created];
         assert!(
@@ -1296,10 +1296,10 @@ fn run_game_container_with_action_list_with_success_predicate(
         let forced_destroyed: HashSet<CoinString> = force_destroyed_coins.drain(..).collect();
 
         if let Some(p) = &pred {
-            if p(move_number, &cradles) {
+            if p(move_number, &sessions) {
                 return Ok(GameRunOutcome {
                     identities: [identities[0].clone(), identities[1].clone()],
-                    cradles,
+                    sessions,
                     local_uis,
                     simulator,
                     logs,
@@ -1308,9 +1308,9 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
-            if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
+            if local_uis[i].go_on_chain && sessions[i].is_on_chain() {
                 local_uis[i].go_on_chain = false;
-            } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
+            } else if local_uis[i].go_on_chain && sessions[i].handshake_finished() {
                 if !has_explicit_go_on_chain && !local_uis[i].got_error {
                     panic!(
                         "unexpected off-chain->on-chain transition in non-on-chain test: player={i} move_number={move_number} got_error={} next_action={:?}",
@@ -1320,7 +1320,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
-                cradles[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
+                sessions[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
             }
 
             // Feed the full live coin set so the manager reproduces the
@@ -1335,7 +1335,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 report_backlogs[i].push((current_height, records));
             } else {
                 let t_nb = std::time::Instant::now();
-                cradles[i].report_coin_states(allocator, current_height as u64, &records)?;
+                sessions[i].report_coin_states(allocator, current_height as u64, &records)?;
                 if timing_enabled {
                     let nb_elapsed = t_nb.elapsed();
                     if nb_elapsed.as_millis() > 10 {
@@ -1345,7 +1345,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let result = cradles[i].flush_and_collect(allocator)?;
+                let result = sessions[i].flush_and_collect(allocator)?;
 
                 // Collect coin solution requests, launcher/coin-spend
                 // requests from this flush and all subsequent flushes they
@@ -1396,7 +1396,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 if nerf_messages_for & (1 << i) != 0 {
                                     continue;
                                 }
-                                if cradles[i].is_peer_disconnected() {
+                                if sessions[i].is_peer_disconnected() {
                                     continue;
                                 }
                                 let delivered_msg = if tamper_next_batch_signature[i] {
@@ -1423,7 +1423,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     msg.clone()
                                 };
                                 let t_msg = std::time::Instant::now();
-                                cradles[i ^ 1].deliver_message(&delivered_msg)?;
+                                sessions[i ^ 1].deliver_message(&delivered_msg)?;
                                 if timing_enabled {
                                     let msg_elapsed = t_msg.elapsed();
                                     if msg_elapsed.as_millis() > 10 {
@@ -1466,7 +1466,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
 
                     if i == 0 && need_launcher {
-                        cradles[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
+                        sessions[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
                     }
 
                     if let Some(req) = coin_spend_req {
@@ -1476,28 +1476,28 @@ fn run_game_container_with_action_list_with_success_predicate(
                             &identities[i],
                             &req,
                         )?;
-                        cradles[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
+                        sessions[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
                     }
 
                     for coin in coin_requests.iter() {
                         let ps_res = simulator
                             .get_puzzle_and_solution(&coin.to_coin_id())
                             .expect("should work");
-                        for (_ci, cradle) in cradles.iter_mut().enumerate() {
-                            cradle.report_puzzle_and_solution(
+                        for (_ci, session) in sessions.iter_mut().enumerate() {
+                            session.report_puzzle_and_solution(
                                 allocator,
                                 coin,
                                 ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
                             )?;
                         }
                     }
-                    let follow_up = cradles[i].flush_and_collect(allocator)?;
+                    let follow_up = sessions[i].flush_and_collect(allocator)?;
                     pending_events = follow_up.events;
                 }
 
                 // Drain transactions the manager captured during this player's
                 // block processing and submit them to the simulator's mempool.
-                submissions_to_push.extend(cradles[i].drain_submissions());
+                submissions_to_push.extend(sessions[i].drain_submissions());
                 for tx in submissions_to_push.iter() {
                     if nerf_transactions_for & (1 << i) != 0 {
                         nerfed_tx_backlog.push(tx.clone());
@@ -1539,7 +1539,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
         step_start = std::time::Instant::now();
 
-        let should_end = cradles.iter().enumerate().all(|(i, c)| {
+        let should_end = sessions.iter().enumerate().all(|(i, c)| {
             c.channel_status_terminal()
                 && local_uis[i].all_accepted_games_have_terminal_notification()
         }) && ending.is_none();
@@ -1551,7 +1551,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             *ending -= 1;
         }
 
-        if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
+        if !handshake_done && sessions.iter().all(|c| c.handshake_finished()) {
             if start_step == 0 {
                 start_step += 1;
                 continue;
@@ -1564,7 +1564,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             #[allow(clippy::needless_range_loop)]
             for i in 0..=1 {
                 for (backlog_height, backlog_records) in report_backlogs[i].iter() {
-                    cradles[i].report_coin_states(
+                    sessions[i].report_coin_states(
                         allocator,
                         *backlog_height as u64,
                         backlog_records,
@@ -1595,7 +1595,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                         let entropy = rng.random();
                         let t_mv = std::time::Instant::now();
-                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
+                        sessions[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                         if timing_enabled {
                             let mv_elapsed = t_mv.elapsed();
                             eprintln!("  step {num_steps}: p{who} make_move(move_number={move_number}) {mv_elapsed:.2?}");
@@ -1636,7 +1636,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        let new_ids = cradles[*who].propose_games(
+                        let new_ids = sessions[*who].propose_games(
                             allocator,
                             &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
@@ -1649,7 +1649,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             .extend(new_ids.iter().cloned());
                     }
                     SimScriptAction::ProposeKrunkGroup(who, _trigger) => {
-                        let new_ids = cradles[*who].propose_games(
+                        let new_ids = sessions[*who].propose_games(
                             allocator,
                             &[GameProposal {
                                 game_type: GameType(b"krunk".to_vec()),
@@ -1666,7 +1666,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             gid_diag(&test_name, action_idx, "AcceptProposal", gid, gid);
                         }
                         if !local_uis[*who].accepted_proposal_ids.contains(gid) {
-                            cradles[*who].accept_proposal(allocator, gid)?;
+                            sessions[*who].accept_proposal(allocator, gid)?;
                             local_uis[*who].accepted_proposal_ids.push(*gid);
                             move_number -= 1;
                         }
@@ -1675,20 +1675,20 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "CancelProposal", gid, gid);
                         }
-                        cradles[*who].cancel_proposal(allocator, gid)?;
+                        sessions[*who].cancel_proposal(allocator, gid)?;
                     }
                     SimScriptAction::GoOnChain(who) => {
                         assert!(
-                            !cradles[*who].channel_status_terminal(),
+                            !sessions[*who].channel_status_terminal(),
                             "SimScriptAction::GoOnChain({who}) but channel is already terminal: move_number={move_number} notifications={:?}",
                             local_uis[*who].notifications
                         );
-                        if cradles[*who].is_on_chain() {
+                        if sessions[*who].is_on_chain() {
                             panic!(
                                 "SimScriptAction::GoOnChain({who}) but player is already on chain: move_number={move_number}",
                             );
                         }
-                        if !cradles[*who].handshake_finished() {
+                        if !sessions[*who].handshake_finished() {
                             move_number -= 1;
                             continue;
                         }
@@ -1699,15 +1699,15 @@ fn run_game_container_with_action_list_with_success_predicate(
                             gid_diag(&test_name, action_idx, "FakeMove", gid, gid);
                         }
                         let entropy = rng.random();
-                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
+                        sessions[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                         // Flush pending actions into the events queue
                         // (without draining) so replace_last_message can
                         // find the outbound batch.
-                        cradles[*who].flush_pending(allocator)?;
+                        sessions[*who].flush_pending(allocator)?;
                         local_uis[*who].game_accepted_ids.remove(gid);
                         local_uis[*who].opponent_moved_in_game.remove(gid);
 
-                        cradles[*who].replace_last_message(|msg_envelope| {
+                        sessions[*who].replace_last_message(|msg_envelope| {
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 let mut found = false;
@@ -1741,7 +1741,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                         tamper_next_batch_signature[*who] = true;
                         let entropy = rng.random();
-                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
+                        sessions[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                         local_uis[*who].game_accepted_ids.remove(gid);
                         local_uis[*who].opponent_moved_in_game.remove(gid);
                     }
@@ -1749,13 +1749,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Cheat", gid, gid);
                         }
-                        cradles[*who].cheat(allocator, gid, cheat_share.clone())?;
+                        sessions[*who].cheat(allocator, gid, cheat_share.clone())?;
                     }
                     SimScriptAction::ForceDestroyCoin(who, gid) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, gid);
                         }
-                        if let Some(game_coin) = cradles[*who].get_game_coin(gid) {
+                        if let Some(game_coin) = sessions[*who].get_game_coin(gid) {
                             force_destroyed_coins.push(game_coin);
                         } else {
                             move_number -= 1;
@@ -1794,7 +1794,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             #[allow(clippy::needless_range_loop)]
                             for i in 0..=1 {
                                 for (backlog_height, backlog_records) in report_backlogs[i].iter() {
-                                    cradles[i].report_coin_states(
+                                    sessions[i].report_coin_states(
                                         allocator,
                                         *backlog_height as u64,
                                         backlog_records,
@@ -1819,42 +1819,42 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "AcceptSettlement", gid, gid);
                         }
-                        cradles[*who].accept_settlement(allocator, gid)?;
+                        sessions[*who].accept_settlement(allocator, gid)?;
                     }
                     SimScriptAction::Timeout(_who) => {
                         panic!("Timeout action is not supported in sim tests; use AcceptSettlement(player, game_id)");
                     }
                     SimScriptAction::CleanShutdown(who) => {
                         assert!(
-                            !cradles[*who].is_on_chain(),
+                            !sessions[*who].is_on_chain(),
                             "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
                         );
-                        if !cradles[*who].handshake_finished() {
+                        if !sessions[*who].handshake_finished() {
                             move_number -= 1;
                             continue;
                         }
-                        cradles[*who].shut_down(allocator)?;
+                        sessions[*who].shut_down(allocator)?;
                     }
                     SimScriptAction::CorruptStateNumber(who, new_sn) => {
-                        cradles[*who].corrupt_state_for_testing(*new_sn)?;
+                        sessions[*who].corrupt_state_for_testing(*new_sn)?;
                     }
                     SimScriptAction::ForceUnroll(who) => {
-                        let spend = cradles[*who].force_unroll_spend(allocator)?;
+                        let spend = sessions[*who].force_unroll_spend(allocator)?;
                         simulator.push_transactions(allocator, &spend.spends)?;
                     }
                     SimScriptAction::SaveUnrollSnapshot(who) => {
-                        cradles[*who].save_unroll_snapshot();
+                        sessions[*who].save_unroll_snapshot();
                     }
                     SimScriptAction::ForceStaleUnroll(who) => {
-                        let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
+                        let spend = sessions[*who].force_stale_unroll_spend(allocator)?;
                         let _included_result =
                             simulator.push_transactions(allocator, &spend.spends)?;
                     }
                     SimScriptAction::InjectRawMessage(who, data) => {
-                        cradles[*who].deliver_message(data)?;
+                        sessions[*who].deliver_message(data)?;
                     }
                     SimScriptAction::SelfAcceptProposal(who, gid) => {
-                        cradles[*who].self_accept_proposal(allocator, gid)?;
+                        sessions[*who].self_accept_proposal(allocator, gid)?;
                     }
                     SimScriptAction::WrongParityProposal(who) => {
                         let parameters = if game_type == b"calpoker" {
@@ -1870,7 +1870,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        cradles[*who].propose_games(
+                        sessions[*who].propose_games(
                             allocator,
                             &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
@@ -1878,8 +1878,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 parameters,
                             }],
                         )?;
-                        cradles[*who].flush_pending(allocator)?;
-                        cradles[*who].replace_last_message(|msg_envelope| {
+                        sessions[*who].flush_pending(allocator)?;
+                        sessions[*who].replace_last_message(|msg_envelope| {
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 for action in new_actions.iter_mut() {
@@ -1913,7 +1913,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        cradles[*who].propose_games(
+                        sessions[*who].propose_games(
                             allocator,
                             &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
@@ -1921,8 +1921,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 parameters,
                             }],
                         )?;
-                        cradles[*who].flush_pending(allocator)?;
-                        cradles[*who].replace_last_message(|msg_envelope| {
+                        sessions[*who].flush_pending(allocator)?;
+                        sessions[*who].replace_last_message(|msg_envelope| {
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 for action in new_actions.iter_mut() {
@@ -1956,7 +1956,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         } else {
                             extras.clone()
                         };
-                        cradles[*who].propose_games(
+                        sessions[*who].propose_games(
                             allocator,
                             &[GameProposal {
                                 game_type: GameType(game_type.to_vec()),
@@ -1964,8 +1964,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 parameters,
                             }],
                         )?;
-                        cradles[*who].flush_pending(allocator)?;
-                        cradles[*who].replace_last_message(|msg_envelope| {
+                        sessions[*who].flush_pending(allocator)?;
+                        sessions[*who].replace_last_message(|msg_envelope| {
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 for action in new_actions.iter_mut() {
@@ -2292,7 +2292,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     Ok(GameRunOutcome {
         identities: [identities[0].clone(), identities[1].clone()],
-        cradles,
+        sessions,
         local_uis,
         simulator,
         logs,
@@ -2717,11 +2717,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|move_number, cradles| {
-                let proposer = cradles[0]
+            Some(&|move_number, sessions| {
+                let proposer = sessions[0]
                     .proposal_contributions_for_testing()
                     .unwrap_or_default();
-                let receiver = cradles[1]
+                let receiver = sessions[1]
                     .proposal_contributions_for_testing()
                     .unwrap_or_default();
 
@@ -2750,9 +2750,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         )
         .expect("grouped Krunk acceptance should succeed");
 
-        for (player, cradle) in outcome.cradles.iter().enumerate() {
+        for (player, session) in outcome.sessions.iter().enumerate() {
             assert_eq!(
-                cradle
+                session
                     .allocated_balances_for_testing()
                     .expect("accepted games should remain off chain"),
                 (Amount::new(100), Amount::new(100)),
@@ -2860,7 +2860,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 b"calpoker",
                 &Program::from_hex("80").unwrap(),
                 &moves,
-                Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                Some(&|_, sessions| sessions[0].is_on_chain() && sessions[1].is_on_chain()),
                 None,
             )
             .expect("should finish");
@@ -2869,11 +2869,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player 0 should have been forced on chain by the fake move error"
             );
             assert!(
-                outcome.cradles[0].is_on_chain(),
+                outcome.sessions[0].is_on_chain(),
                 "player 0 should be on chain"
             );
             assert!(
-                outcome.cradles[1].is_on_chain(),
+                outcome.sessions[1].is_on_chain(),
                 "player 1 should have followed on chain after detecting the channel coin spend"
             );
 
@@ -3024,9 +3024,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {i} should reach ResolvedClean"
             );
             assert!(
-                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
+                outcome.sessions[i].snapshot_watched_coins().len() <= 1,
                 "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
-                outcome.cradles[i].snapshot_watched_coins(),
+                outcome.sessions[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
@@ -3060,9 +3060,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {i} should reach ResolvedClean"
             );
             assert!(
-                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
+                outcome.sessions[i].snapshot_watched_coins().len() <= 1,
                 "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
-                outcome.cradles[i].snapshot_watched_coins(),
+                outcome.sessions[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
@@ -3900,7 +3900,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             game_type,
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+            Some(&|_, sessions| sessions[0].handshake_finished() && sessions[1].handshake_finished()),
             None,
         )
         .expect("should finish");
@@ -3915,7 +3915,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params1 =
             Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
-        let result1 = outcome.cradles[0].propose_games(
+        let result1 = outcome.sessions[0].propose_games(
             &mut allocator,
             &[GameProposal {
                 game_type: GameType(game_type.to_vec()),
@@ -3935,7 +3935,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params2 =
             Program::from_nodeptr(&mut allocator, params2_node).expect("debug parameters");
-        let result2 = outcome.cradles[1].propose_games(
+        let result2 = outcome.sessions[1].propose_games(
             &mut allocator,
             &[GameProposal {
                 game_type: GameType(game_type.to_vec()),
@@ -3946,13 +3946,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         for _i in 0..100 {
             for c in 0..2 {
-                let result = outcome.cradles[c]
+                let result = outcome.sessions[c]
                     .flush_and_collect(&mut allocator)
                     .unwrap();
                 for event in result.events.iter() {
                     match event {
                         GameSessionEvent::OutboundMessage(msg) => {
-                            outcome.cradles[c ^ 1].deliver_message(msg).unwrap();
+                            outcome.sessions[c ^ 1].deliver_message(msg).unwrap();
                         }
                         GameSessionEvent::Notification(n) => {
                             outcome.local_uis[c].notification(n).unwrap();
@@ -5622,15 +5622,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_, cradles| {
-                cradles[0].is_on_chain() && (cradles[1].is_on_chain() || cradles[1].is_failed())
+            Some(&|_, sessions| {
+                sessions[0].is_on_chain() && (sessions[1].is_on_chain() || sessions[1].is_failed())
             }),
             None,
         )
         .expect("should finish");
 
         assert!(
-            outcome.cradles[1].is_failed(),
+            outcome.sessions[1].is_failed(),
             "player 1 should be in Failed state"
         );
         let p1_notifs = &outcome.local_uis[1].notifications;
@@ -5716,15 +5716,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_, cradles| {
-                cradles[0].is_on_chain() && (cradles[1].is_on_chain() || cradles[1].is_failed())
+            Some(&|_, sessions| {
+                sessions[0].is_on_chain() && (sessions[1].is_on_chain() || sessions[1].is_failed())
             }),
             None,
         )
         .expect("should finish");
 
         assert!(
-            outcome.cradles[1].is_failed(),
+            outcome.sessions[1].is_failed(),
             "player 1 should be in Failed state"
         );
         let p1_notifs = &outcome.local_uis[1].notifications;
@@ -6412,15 +6412,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             b"debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| {
-                cradles[0].is_on_chain() || cradles[0].is_failed()
+            Some(&|_, sessions| {
+                sessions[0].is_on_chain() || sessions[0].is_failed()
             }),
             Some(200),
         )
         .expect("should finish");
 
         assert!(
-            !outcome.cradles[0].is_failed(),
+            !outcome.sessions[0].is_failed(),
             "player 0 should NOT be in Failed state"
         );
 
@@ -6497,15 +6497,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             b"debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| {
-                cradles[0].is_on_chain() || cradles[0].is_failed()
+            Some(&|_, sessions| {
+                sessions[0].is_on_chain() || sessions[0].is_failed()
             }),
             Some(200),
         )
         .expect("should finish");
 
         assert!(
-            !outcome.cradles[0].is_failed(),
+            !outcome.sessions[0].is_failed(),
             "player 0 should NOT be in Failed state"
         );
 
@@ -6595,13 +6595,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             b"debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
+            Some(&|_, sessions| sessions[0].is_on_chain() || sessions[0].is_failed()),
             Some(200),
         )
         .expect("should finish");
 
         assert!(
-            !outcome.cradles[0].is_failed(),
+            !outcome.sessions[0].is_failed(),
             "player 0 should NOT be in Failed state"
         );
 
@@ -6686,15 +6686,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             b"debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| {
-                cradles[0].is_on_chain() || cradles[0].is_failed()
+            Some(&|_, sessions| {
+                sessions[0].is_on_chain() || sessions[0].is_failed()
             }),
             Some(300),
         )
         .expect("should finish");
 
         assert!(
-            !outcome.cradles[0].is_failed(),
+            !outcome.sessions[0].is_failed(),
             "player 0 should NOT be in Failed state"
         );
 
@@ -7215,7 +7215,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_move_number, _cradles| false),
+            Some(&|_move_number, _sessions| false),
             None,
         )
         .expect("should finish");
@@ -7248,8 +7248,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|_, cradles| {
-                    cradles[0].handshake_finished() && cradles[1].handshake_finished()
+                Some(&|_, sessions| {
+                    sessions[0].handshake_finished() && sessions[1].handshake_finished()
                 }),
                 None,
             )
@@ -7289,8 +7289,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|_, cradles| {
-                    cradles[0].handshake_finished() && cradles[1].handshake_finished()
+                Some(&|_, sessions| {
+                    sessions[0].handshake_finished() && sessions[1].handshake_finished()
                 }),
                 None,
             )
@@ -7338,18 +7338,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
+            Some(&|_, sessions| sessions[0].is_on_chain() || sessions[0].is_failed()),
             None,
         )
         .expect("should finish");
 
         assert!(
-            outcome.cradles[0].is_on_chain(),
+            outcome.sessions[0].is_on_chain(),
             "invalid handshake-era future batch should escalate on-chain, got notifications: {:?}",
             outcome.local_uis[0].notifications
         );
         assert!(
-            !outcome.cradles[0].is_failed(),
+            !outcome.sessions[0].is_failed(),
             "invalid handshake-era future batch should not stop at ChannelStatus::Failed"
         );
     }));
@@ -7366,13 +7366,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_, cradles| cradles[1].is_on_chain() || cradles[1].is_failed()),
+            Some(&|_, sessions| sessions[1].is_on_chain() || sessions[1].is_failed()),
             None,
         )
         .expect("should finish");
 
         assert!(
-            outcome.cradles[1].is_on_chain() || outcome.cradles[1].is_failed(),
+            outcome.sessions[1].is_on_chain() || outcome.sessions[1].is_failed(),
             "player 1 should go on-chain or fail after receiving wrong-parity proposal"
         );
     }));
@@ -7391,13 +7391,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let outcome = run_spacepoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+                Some(&|_, sessions| sessions[1].is_peer_disconnected()),
                 None,
             )
             .expect("should finish");
 
             assert!(
-            outcome.cradles[1].is_peer_disconnected(),
+            outcome.sessions[1].is_peer_disconnected(),
             "player 1 should disconnect after receiving invalid Space Poker proposal parameters"
         );
         },
@@ -7415,13 +7415,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+            Some(&|_, sessions| sessions[1].is_peer_disconnected()),
             None,
         )
         .expect("should finish");
 
         assert!(
-            outcome.cradles[1].is_peer_disconnected(),
+            outcome.sessions[1].is_peer_disconnected(),
             "player 1 should disconnect after receiving zero proposal timeout"
         );
     }));
@@ -7439,13 +7439,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
-            Some(&|_, cradles| cradles[1].is_on_chain() || cradles[1].is_failed()),
+            Some(&|_, sessions| sessions[1].is_on_chain() || sessions[1].is_failed()),
             None,
         )
         .expect("should finish");
 
         assert!(
-            outcome.cradles[1].is_on_chain() || outcome.cradles[1].is_failed(),
+            outcome.sessions[1].is_on_chain() || outcome.sessions[1].is_failed(),
             "player 1 should go on-chain or fail after peer self-accepted"
         );
     }));

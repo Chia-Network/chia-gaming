@@ -233,7 +233,7 @@ rather than by checking `initiated_on_chain` at runtime.
 ### Peer Error Escalation
 
 Any error processing a peer message — during handshake or active play — is
-treated as a protocol violation. The cradle sets `peer_disconnected = true`,
+treated as a protocol violation. The game session sets `peer_disconnected = true`,
 emits a `ReceiveError` event for diagnostic purposes, and calls
 `go_on_chain(true)` on the active handler. The specific behavior depends on
 the channel lifecycle stage:
@@ -276,7 +276,7 @@ drained by `flush_pending_actions`. Unlike peer errors, local action failures
 indicate programming bugs — the queue was populated by our own UI/logic.
 
 Rather than implementing transactional rollback (expensive and masks the bug),
-the cradle catches `flush_pending_actions` errors and emits them as
+the game session catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
 The JS-side game action methods (`proposeGame`, `acceptProposal`,
 `cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM

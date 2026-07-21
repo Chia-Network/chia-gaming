@@ -717,7 +717,7 @@ function onGameSend(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'sen
 
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
     // Includes unknown peer ids and known peers with no live game socket.
-    // Pre-cradle clients cancel; live sessions treat this as peer hard-disconnect.
+    // Pre-game-session clients cancel; live sessions treat this as peer hard-disconnect.
     logHub('game_send_delivery_failure', {
       from: meta.playerId,
       to: targetId,
