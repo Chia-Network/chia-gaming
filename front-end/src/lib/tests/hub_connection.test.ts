@@ -146,7 +146,7 @@ function makeCallbacks(presence?: { busy: boolean; alias?: string }): HubConnect
     onPeerAppMessage: jest.fn(),
     onDeliveryFailure: jest.fn(),
     onRegistered: jest.fn(),
-    onLobbyAttention: jest.fn(),
+    onHubAttention: jest.fn(),
     onHubDisconnected: jest.fn(() => { hubDisconnectCount++; }),
     onHubReconnected: jest.fn(),
     onHubActivity: jest.fn(),
