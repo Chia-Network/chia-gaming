@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Outbound network access only: WalletConnect relay and the user-chosen
+       tracker. The app neither listens for connections nor needs camera,
+       microphone, or other privacy-sensitive resources. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!-- Required for the JIT used by V8 / WebAssembly under hardened runtime.
+       (Electron 12+ uses MAP_JIT, so allow-unsigned-executable-memory is
+       intentionally NOT included; Electron's docs advise against it.) -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Hardened runtime otherwise refuses to load the Electron Framework and
+       helper dylibs unless every image shares the main executable's Team ID.
+       Without this the app dies at launch in dyld ("mapping process and
+       mapped file (non-platform) have different Team IDs"). Part of
+       electron-builder's default entitlements, which this file replaces. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

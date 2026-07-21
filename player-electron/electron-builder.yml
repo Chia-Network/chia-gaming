@@ -1,0 +1,49 @@
+appId: org.chia.gaming.player
+productName: Chia Gaming
+
+directories:
+  buildResources: resources
+  output: dist
+
+# Strip macOS com.apple.provenance xattrs before codesign (see hook comment).
+afterPack: ./hooks/afterPack.cjs
+
+# Only the main-process code, the preload, and the staged static bundle ship
+# inside the asar. node_modules (electron itself) is provided by the runtime.
+files:
+  - "src/**"
+  - "app/**"
+  - "package.json"
+
+# Unpack the static assets so the app:// handler (resolveAppRoot in
+# src/assets.cjs) can read .wasm/.hex from real disk. APP_ROOT must point at
+# app.asar.unpacked/app — fs does not auto-redirect reads from inside the asar.
+asarUnpack:
+  - "app/**"
+
+mac:
+  category: public.app-category.games
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  # Notarization is a release-time concern; configure NOTARIZE / Apple ID
+  # credentials in CI before enabling.
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  category: Game
+  target:
+    - AppImage
+    - deb

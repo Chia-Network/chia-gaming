@@ -5,6 +5,7 @@ import { Subject } from 'rxjs';
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
 import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
 import { log } from '../services/log';
+import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -147,6 +148,7 @@ class WalletState {
   }
 
   private async doInit(): Promise<void> {
+    const metadata = walletConnectDappMetadata();
     this.observable.next({ stateName: 'initializing', initializing: true });
     log('WalletConnect initializing...');
 
@@ -155,12 +157,7 @@ class WalletState {
         logger: 'error',
         projectId: PROJECT_ID,
         relayUrl: RELAY_URL,
-        metadata: {
-          name: 'Chia Gaming',
-          description: 'Chia Gaming Platform',
-          url: window.location.origin,
-          icons: [`${window.location.origin}/logo.png`],
-        },
+        metadata,
       });
 
       this.client = signClient;

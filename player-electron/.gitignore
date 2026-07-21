@@ -1,0 +1,12 @@
+# dependencies
+/node_modules
+
+# build-time staged player-app bundle (copied from front-end staging)
+/app
+
+# electron-builder output
+/dist
+
+# misc
+.DS_Store
+npm-debug.log*

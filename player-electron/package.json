@@ -1,0 +1,26 @@
+{
+  "name": "chia-gaming-player-electron",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Chia Gaming player app packaged as a standalone Electron application",
+  "homepage": "https://github.com/Chia-Network/chia-gaming",
+  "author": {
+    "name": "Matt Howard",
+    "email": "matt@chia.net"
+  },
+
+  "main": "src/main.cjs",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --config electron-builder.yml",
+    "dist:mac": "electron-builder --config electron-builder.yml --mac",
+    "dist:win": "electron-builder --config electron-builder.yml --win",
+    "dist:linux": "electron-builder --config electron-builder.yml --linux"
+  },
+  "devDependencies": {
+    "dmg-builder": "26.8.1",
+    "electron": "42.3.3",
+    "electron-builder": "26.8.1"
+  }
+}
