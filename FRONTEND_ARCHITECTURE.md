@@ -1217,7 +1217,11 @@ via the `gameplayEventSubject` RxJS stream:
 - `ProposalAccepted` — a new game is starting (also clears stale
   `proposal-rejected` entries from the game queue)
 - `OpponentMoved` — the opponent made a move (with readable data and
-  `moverShare`, our share after that move / on timeout from it)
+  `moverShare`, our share after that move / on timeout from it). It is emitted
+  synchronously when the `GameStatus` arrives, before asynchronous
+  session/dashboard work such as hashing a coin ID. Game hooks must observe
+  the same semantic move event whether the move was delivered off-chain or
+  discovered on-chain.
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 - `MoveRejected` — a recoverable local move rejection with game id, tag, and
   message; game hooks roll back only their matching optimistic move
@@ -1241,8 +1245,10 @@ replay, while each game decides its own terminal copy and badges.
 The live `GameSession` tree stays mounted through resolution. Once the game
 hook has handled `Settled`, `GameHandHost` swaps to a frozen controller and an
 empty event stream in place: controls are disabled, but the same React game
-component and its local terminal view state remain visible. Shell then tears
-down the live WASM/session resources without remounting the hand UI.
+component and its local terminal view state remain visible. Its wrapper element
+is stable in both live and frozen modes; changing only interaction attributes
+must not remount the game subtree. Shell then tears down the live WASM/session
+resources without remounting the hand UI.
 
 Each game contract is:
 
@@ -1251,12 +1257,32 @@ Each game contract is:
 2. Persist complete terminal `handState`, including any game-specific visual
    state needed after reload.
 
+After teardown, a `SessionController` is non-serializable. This prevents late
+React effects or save callbacks from writing stale live WASM bytes back into
+the finished-session snapshot, which must reload into frozen recovery rather
+than the live resume flow.
+
 `FinishedSessionGameView` is only reload recovery, when no live component tree
 exists to preserve. It restores validated persisted terminal `handState` using
 the same `GameHandHost` registry. Keep `handState` on the controller (or
 non-enumerable on the model) — never as an enumerable React prop. React's
 prop/error describe path `JSON.stringify`s arrays and throws on nested
 `bigint` card ids, which locks the UI.
+
+#### Atomic game terminal UX
+
+Krunk is one logical hand with two independently settling game IDs. Terminal
+state is therefore per game ID, not just the session-level last terminal:
+
+- each Krunk board uses its own terminal outcome for result copy and input
+  disabling;
+- a timed-out guesser board immediately disables drafting, queued guesses, and
+  submission even if the hook has not yet rendered its local `Settled` event;
+- terminal results belong under their corresponding boards. The keyboard area
+  is reserved for input/error/waiting guidance and must not claim that an
+  opponent owes a move after either game has ended;
+- the answer row is reserved from the start, so a final revealed word fills an
+  existing space instead of shifting the board.
 
 ## Single-Hand Enforcement
 

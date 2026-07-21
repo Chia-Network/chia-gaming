@@ -553,7 +553,17 @@ Settlement label helpers live in `front-end/src/lib/settlement.ts`
 
 Non-terminal move/status notifications are remapped by
 `gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
-above (including `moverShare` on `OpponentMoved`).
+above (including `moverShare` on `OpponentMoved`). The semantic game event is
+emitted immediately, before asynchronous dashboard bookkeeping such as hashing
+the notification's coin ID. This keeps all game hooks transport-agnostic:
+on-chain replay must not delay a clue, card update, or other game move until
+after unrelated session UI work completes.
+
+`Settled` is likewise delivered to the matching live game hook before
+asynchronous settlement bookkeeping and session teardown. For atomic game
+groups such as Krunk, every member receives and retains its own terminal
+outcome; the session-level terminal label is only a summary and must not
+replace per-game result UI.
 
 **Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalInfoFromGameSettled`,
 `settledEventForInfo`, `gameplayEventsForGameStatus`),
