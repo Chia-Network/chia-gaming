@@ -1173,6 +1173,8 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     gameTerminalLabel: model.game.terminal.label,
     gameTerminalReward: model.game.terminal.myReward,
     gameTerminalRewardCoin: model.game.terminal.rewardCoinHex,
+    activeGameType: model.game.activeGameType,
+    handState: model.game.handState ?? undefined,
     myRunningBalance: model.myRunningBalance !== 0n ? model.myRunningBalance.toString() : undefined,
     channelNotifQueue: model.channel.queue.length > 0
       ? model.channel.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))

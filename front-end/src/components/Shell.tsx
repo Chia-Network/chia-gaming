@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
+import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, HubLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
@@ -1718,10 +1719,11 @@ const Shell = () => {
 
     // Clear only live protocol fields. clearSession() would drop the boot
     // marker and finished channel snapshot — then reload skips Resume while
-    // still auto-connecting the saved hub.
+    // still auto-connecting the saved hub. Keep handState/terminal/aliases in
+    // the save + sessionSaveRef so the Game tab can freeze the last hand.
     if (model) {
       const status = model.channel.status;
-      void saveSession({
+      const finishedPatch: Partial<SessionSave> = {
         ...snapshotFromSessionModel(model),
         serializedGameSession: undefined,
         gameSessionSchemaVersion: undefined,
@@ -1739,7 +1741,19 @@ const Shell = () => {
           have_potato: status.havePotato,
         },
         cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
-      });
+        myAlias: sessionConfigRef.current?.myAlias
+          ?? sessionSaveRef.current?.myAlias
+          ?? alias,
+        opponentAlias: sessionConfigRef.current?.opponentAlias
+          ?? sessionSaveRef.current?.opponentAlias,
+        iStarted: sessionConfigRef.current?.iStarted
+          ?? sessionSaveRef.current?.iStarted,
+      };
+      void saveSession(finishedPatch);
+      sessionSaveRef.current = {
+        ...(sessionSaveRef.current ?? loadState()),
+        ...finishedPatch,
+      };
     } else {
       void saveSession({
         serializedGameSession: undefined,
@@ -1748,10 +1762,10 @@ const Shell = () => {
         sessionPeerId: undefined,
         gameSessionId: undefined,
       });
+      sessionSaveRef.current = null;
     }
     markSavedSession();
 
-    sessionSaveRef.current = null;
     sessionSavePropRef.current = undefined;
     sessionStartedRef.current = false;
     clearSessionTimers();
@@ -2902,12 +2916,20 @@ const Shell = () => {
               <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
                 Restoring session...
               </div>
+            ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
+              <div className='relative w-full h-full'>
+                <FinishedSessionGameView
+                  model={dashboardSessionModel}
+                  myName={sessionSaveRef.current?.myAlias ?? peekAlias()}
+                  opponentName={sessionSaveRef.current?.opponentAlias}
+                  iStarted={sessionSaveRef.current?.iStarted ?? false}
+                />
+                {sessionConsentOverlay}
+              </div>
             ) : (
               <div className='relative w-full h-full'>
                 <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-                  {sessionPhase === 'resolved' && dashboardSessionModel
-                    ? 'Session finished'
-                    : 'No active game session'}
+                  No active game session
                 </div>
                 {sessionConsentOverlay}
               </div>
