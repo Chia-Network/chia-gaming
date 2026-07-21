@@ -837,7 +837,7 @@ impl SpendChannelCoinPhase {
                             missing_games.push((coin.clone(), state.game_id));
                         }
                     }
-                } else if player_ch.is_redo_zero_reward(coin, &state.game_id)? {
+                } else if player_ch.is_redo_zero_reward(&state.game_id)? {
                     zero_reward_games.push((
                         coin.clone(),
                         state.game_id,

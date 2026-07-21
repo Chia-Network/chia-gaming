@@ -2084,31 +2084,19 @@ impl ChannelState {
         )
     }
 
-    /// Check whether a pending redo move for this coin would result in zero
+    /// Check whether a pending redo move for this game would result in zero
     /// reward for us (post-redo our_current_share == 0).  Used by the
     /// zero-reward early-out scan at unroll time.
+    ///
+    /// Uses the same game-id criterion as [`has_cached_move_for_game`] /
+    /// [`take_cached_move_for_game`] so a zero-share redo is skipped whenever
+    /// we would otherwise replay it.
     ///
     /// Legitimate product behavior: a pending off-chain move/accept can be
     /// skipped on-chain when the post-move share is 0. See ON_CHAIN.md
     /// ("Zero-reward skip at unroll").
-    pub fn is_redo_zero_reward(&self, coin: &CoinString, game_id: &GameID) -> Result<bool, Error> {
-        let coin_ph = coin
-            .to_parts()
-            .map(|(_, ph, _)| ph)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "is_redo_zero_reward: unparseable coin for game {:?}",
-                    game_id
-                ))
-            })?;
-        let has_redo = self.cached_redo_actions.iter().any(|entry| {
-            if let CachedRedoActions::CachedSendMove(move_data) = entry {
-                move_data.game_id == *game_id && coin_ph == move_data.match_puzzle_hash
-            } else {
-                false
-            }
-        });
-        if !has_redo {
+    pub fn is_redo_zero_reward(&self, game_id: &GameID) -> Result<bool, Error> {
+        if !self.has_cached_move_for_game(game_id) {
             return Ok(false);
         }
         // After the redo, our share is determined by the saved post-move
@@ -2125,25 +2113,6 @@ impl ChannelState {
             }
         }
         Ok(false)
-    }
-
-    pub fn has_redo_for_game_coin(&self, coin: &CoinString, game_id: &GameID) -> Result<bool, Error> {
-        let coin_ph = coin
-            .to_parts()
-            .map(|(_, ph, _)| ph)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "has_redo_for_game_coin: unparseable coin for game {:?}",
-                    game_id
-                ))
-            })?;
-        Ok(self.cached_redo_actions.iter().any(|entry| {
-            if let CachedRedoActions::CachedSendMove(move_data) = entry {
-                move_data.game_id == *game_id && coin_ph == move_data.match_puzzle_hash
-            } else {
-                false
-            }
-        }))
     }
 
     pub fn build_game_timeout_claim_spend(
