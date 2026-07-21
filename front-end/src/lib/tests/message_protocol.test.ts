@@ -32,7 +32,7 @@ const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 const mockWasmConnection = new Proxy({} as WasmConnection, {
   get: (_target, property) => property === 'game_session_serialization_schema'
-    ? () => 1
+    ? () => 2
     : () => undefined,
 });
 
