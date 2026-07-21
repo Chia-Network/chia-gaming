@@ -107,6 +107,7 @@ function HandDisplay(props: HandDisplayProps) {
     timeoutBadge,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
+  const [cardRightEdgeOffset, setCardRightEdgeOffset] = useState<number | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
@@ -249,6 +250,7 @@ function HandDisplay(props: HandDisplayProps) {
           const offset = cardRightEdge - containerCenter - indicatorWidth / 2;
 
           setWinnerIndicatorOffset(offset);
+          setCardRightEdgeOffset(cardRightEdge - containerCenter);
         }
       }
       measureSlotCenters();
@@ -696,14 +698,15 @@ function HandDisplay(props: HandDisplayProps) {
             Winner!
           </div>
         )}
-        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && (
+        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && cardRightEdgeOffset !== null && (
           <div
             className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
-              // The hand container is the card area's full width. Anchoring to
-              // its right edge does not require the delayed DOM measurement
-              // that made the first timeout paint appear in the center.
-              right: 0,
+              // Align to the final card rather than the full-width hand
+              // container. Wait for the measurement above so it never first
+              // paints in the center before snapping into place.
+              left: '50%',
+              transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
             }}
           >
             {timeoutBadge === 'forfeit' ? 'Forfeit' : 'Timed Out'}

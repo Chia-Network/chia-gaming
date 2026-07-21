@@ -111,6 +111,7 @@ export class SessionController implements PollingGameSession {
   iStarted: boolean;
   storedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
+  private disposed = false;
   onChain: boolean;
   reloading: boolean;
   qualifyingEvents: number;
@@ -243,6 +244,10 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    // A cleaned-up controller may remain referenced by the frozen UI tree.
+    // It must never serialize back into SessionSave and revive a live session
+    // after the Shell has written its finished-session snapshot.
+    this.disposed = true;
     this.cleanShutdownCalled = true;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
@@ -1063,7 +1068,7 @@ const result = this.gameSession.report_coin_states(peak, records);
     // Null means the game session is not loaded yet (e.g. mid-restore). Serialize
     // failures must throw so callers like durability flush do not treat a
     // failed snapshot as a successful no-op.
-    if (!this.gameSession || !this.wc) return null;
+    if (this.disposed || !this.gameSession || !this.wc) return null;
     const serializedGameSession = this.gameSession.serialize();
     return {
       serializedGameSession,
