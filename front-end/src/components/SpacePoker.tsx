@@ -360,7 +360,7 @@ function HoleCardsGroup({
           className={`absolute left-full top-1/2 -translate-y-1/2 ${boosted ? 'ml-6' : 'ml-2'} whitespace-nowrap rounded-full px-4 py-2 text-base font-bold shadow-lg ${
             banner === 'win'
               ? 'bg-primary-solid text-primary-on-primary'
-              : 'bg-canvas-solid text-canvas-on-solid'
+              : 'bg-canvas-solid text-canvas-on-canvas'
           }`}
         >
           {banner === 'win' ? 'Winner!' : banner === 'tie' ? 'Tie' : banner === 'concede' ? 'Concede' : 'Fold'}

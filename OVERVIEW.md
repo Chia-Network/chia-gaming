@@ -644,7 +644,7 @@ Payouts are expressed as multiples of `base_unit = game_pot / 100`:
 
 #### Dictionary enforcement
 
-Both players must play words from a fixed dictionary (`krunkwords.txt`, 4775
+Both players must play words from a fixed dictionary (`krunkwords.txt`, 5089
 five-letter words). The dictionary is enforced via **BLS signatures over gap
 ranges**: the sorted dictionary has gaps between consecutive words (byte ranges
 where no valid word exists). Each gap is signed with a BLS key, and the

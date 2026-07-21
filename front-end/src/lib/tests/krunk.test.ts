@@ -2,6 +2,8 @@ import {
   KrunkHandler,
   applyKrunkMoveRejected,
   canDraftKrunkGuess,
+  canQueueKrunkGuess,
+  isKrunkDictionaryRejectionError,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
   krunkTerminalStatus,
@@ -16,7 +18,7 @@ import {
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
-import { krunkGameSlots } from '../../components/Krunk';
+import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from '../../components/Krunk';
 
 describe('Krunk terms', () => {
   it('clears proposal terms, group links, and outgoing refs together', () => {
@@ -80,26 +82,45 @@ describe('Krunk first guess drafting', () => {
 
   it('allows drafting after our word commit while their commit is pending', () => {
     expect(canDraftKrunkGuess(true, KrunkHandler.BobWaiting, 0)).toBe(true);
+    expect(canQueueKrunkGuess(true, KrunkHandler.BobWaiting, 0)).toBe(true);
     expect(canDraftKrunkGuess(false, KrunkHandler.BobWaiting, 0)).toBe(false);
-    expect(canDraftKrunkGuess(true, KrunkHandler.BobWaiting, 1)).toBe(false);
-    expect(canDraftKrunkGuess(true, KrunkHandler.BobGuess, 0)).toBe(false);
+    expect(canQueueKrunkGuess(false, KrunkHandler.BobWaiting, 0)).toBe(false);
   });
 
-  it('queues an early first guess and sends it once the guess phase starts', () => {
+  it('allows drafting and queuing more guesses while waiting on a clue', () => {
+    expect(canDraftKrunkGuess(true, KrunkHandler.BobWaiting, 1)).toBe(true);
+    expect(canQueueKrunkGuess(true, KrunkHandler.BobWaiting, 1)).toBe(true);
+    expect(canDraftKrunkGuess(true, KrunkHandler.BobGuess, 1)).toBe(true);
+    expect(canQueueKrunkGuess(true, KrunkHandler.BobGuess, 1)).toBe(false);
+    expect(canDraftKrunkGuess(true, KrunkHandler.BobWaiting, 5)).toBe(false);
+    expect(canQueueKrunkGuess(true, KrunkHandler.BobWaiting, 5)).toBe(false);
+  });
+
+  it('queues early guesses and sends once the guess phase starts', () => {
     expect(krunkGuessSubmissionMode(false, true)).toBe('queue');
     expect(krunkGuessSubmissionMode(true, false)).toBe('send');
     expect(krunkGuessSubmissionMode(false, false)).toBeNull();
   });
 
-  it('shows one pending row for a queued first guess only until real guesses exist', () => {
-    expect(krunkGuessesWithQueued([], 'CRANE')).toEqual([
+  it('appends queued guesses as pending rows after committed guesses', () => {
+    expect(krunkGuessesWithQueued([], ['CRANE'])).toEqual([
       { word: 'CRANE', clue: [-1, -1, -1, -1, -1] },
     ]);
+    expect(krunkGuessesWithQueued(
+      [{ word: 'CRANE', clue: [0, 0, 0, 0, 1] }],
+      ['SLATE', 'AUDIO'],
+    )).toEqual([
+      { word: 'CRANE', clue: [0, 0, 0, 0, 1] },
+      { word: 'SLATE', clue: [-1, -1, -1, -1, -1] },
+      { word: 'AUDIO', clue: [-1, -1, -1, -1, -1] },
+    ]);
+    expect(krunkGuessesWithQueued([], [])).toEqual([]);
+  });
 
-    const pending = [{ word: 'CRANE', clue: [-1, -1, -1, -1, -1] as const }];
-    expect(krunkGuessesWithQueued(pending, 'CRANE')).toBe(pending);
-    expect(krunkGuessesWithQueued(pending, null)).toBe(pending);
-    expect(krunkGuessesWithQueued([], null)).toEqual([]);
+  it('treats dictionary rejection errors as a signal to drop later queued guesses', () => {
+    expect(isKrunkDictionaryRejectionError('XXXXX is not in the dictionary.')).toBe(true);
+    expect(isKrunkDictionaryRejectionError('network failed')).toBe(false);
+    expect(isKrunkDictionaryRejectionError(null)).toBe(false);
   });
 
   it('rolls back optimistic dictionary-rejected commits and guesses', () => {
@@ -192,7 +213,7 @@ describe('Krunk first guess drafting', () => {
       outcome: 'lose',
       moverShare: null,
       revealedWord: 'CRANE',
-    }, 'Peer')).toBe('Out of guesses. Word was CRANE.');
+    }, 'Peer')).toBe('Out of guesses.');
   });
 
   it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {
@@ -200,6 +221,85 @@ describe('Krunk first guess drafting', () => {
     expect(krunkWinMessage('999999')).toBe('You won 999999 mojo!');
     expect(krunkWinMessage('1000000')).toBe('You won 0.000001 chia!');
     expect(krunkWinMessage('1000000000000')).toBe('You won 1 chia!');
+  });
+
+  it('aggregates keyboard letter statuses with NYT green-over-amber priority', () => {
+    expect(krunkLetterStatuses([
+      { word: 'CRANE', clue: [0, 0, 0, 0, 1] }, // E present
+      { word: 'EAGER', clue: [2, 0, 0, 0, 0] }, // E correct
+    ])).toEqual({
+      C: 'absent',
+      R: 'absent',
+      A: 'absent',
+      N: 'absent',
+      E: 'correct',
+      G: 'absent',
+    });
+  });
+
+  it('formats a solved guessing hand for session history', () => {
+    expect(formatKrunkHandLog(
+      'bob',
+      10_000_000_000n, // 0.01 XCH
+      [
+        { word: 'RATES', clue: [0, 0, 0, 0, 1] },
+        { word: 'SPOIL', clue: [1, 0, 1, 0, 0] },
+        { word: 'MOUSY', clue: [0, 2, 0, 2, 2] },
+        { word: 'BOSSY', clue: [2, 2, 2, 2, 2] },
+      ],
+      'BOSSY',
+    )).toEqual([
+      'Krunk (guessing) 0.01 XCH',
+      '⬛⬛⬛⬛🟧RATES',
+      '🟧⬛🟧⬛⬛SPOIL',
+      '⬛🟩⬛🟩🟩MOUSY',
+      '🟩🟩🟩🟩🟩BOSSY',
+    ]);
+  });
+
+  it('formats a missed picking hand with a gray reveal line', () => {
+    expect(formatKrunkHandLog(
+      'alice',
+      10_000_000_000n,
+      [
+        { word: 'RATES', clue: [1, 0, 0, 0, 0] },
+        { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
+        { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'CROWN', clue: [0, 2, 2, 2, 2] },
+      ],
+      'FROWN',
+    )).toEqual([
+      'Krunk (picking) 0.01 XCH',
+      '🟧⬛⬛⬛⬛RATES',
+      '⬛🟩🟩⬛🟩GROIN',
+      '⬛🟩🟩🟩🟩BROWN',
+      '⬛🟩🟩🟩🟩DROWN',
+      '⬛🟩🟩🟩🟩CROWN',
+      '⬛⬛⬛⬛⬛FROWN',
+    ]);
+  });
+
+  it('omits the reveal line when a guess is all green', () => {
+    expect(formatKrunkHandLog(
+      'bob',
+      10_000_000_000n,
+      [
+        { word: 'RATES', clue: [1, 0, 0, 0, 0] },
+        { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
+        { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
+        { word: 'FROWN', clue: [2, 2, 2, 2, 2] },
+      ],
+      'FROWN',
+    )).toEqual([
+      'Krunk (guessing) 0.01 XCH',
+      '🟧⬛⬛⬛⬛RATES',
+      '⬛🟩🟩⬛🟩GROIN',
+      '⬛🟩🟩🟩🟩BROWN',
+      '⬛🟩🟩🟩🟩DROWN',
+      '🟩🟩🟩🟩🟩FROWN',
+    ]);
   });
 
   it('routes a typed move rejection with its game id, tag, and message', () => {
