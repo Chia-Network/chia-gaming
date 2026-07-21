@@ -121,6 +121,17 @@ When a challenge is accepted, the hub removes that challenge, cancels stale
 pending challenges involving either player, and sends an **advisory_start**
 message to the accepter's game channel only. That advisory is not authority to
 start a session by itself; it asks the accepter's player app whether to initiate.
+Two independent challenge accepts (while both players are still free) can each
+produce an `advisory_start`; the hub does not negotiate a single initiator.
+Local availability is authoritative for what happens next:
+
+- While mid-matchmaking or mid-session (`isAvailableForNewSessionPrompt()` is
+  false): further `advisory_start` messages are **ignored** (no consent UI, no
+  `session_reject` to the peer — advisory is hub-originated, not a peer request).
+  Inbound `session_proposal` messages are **rejected** with `session_reject`.
+- Clients do not special-case same-peer dual-initiator races (no yield / steal /
+  auto-join). Mutual rejects cancel both attempts cleanly.
+
 The player app self-declares whether it is `busy` over the game channel. Busy
 means the app has an active session (the user explicitly accepted a session
 start). The `HubConnection` uses a `getPresence` callback — provided by
@@ -131,8 +142,8 @@ which invents and persists a `Player_*` fallback that can overwrite the
 hub-side lobby name. Explicit `setBusy(true)` is called only when
 the user accepts a session (not when a consent dialog is merely displayed), and
 `setBusy(false)` fires on the session controller's terminal event or when the
-user explicitly ends/cancels a session. Showing a session-consent dialog does not set busy;
-concurrent proposals are silently declined by `isAvailableForNewSessionPrompt()`.
+user explicitly ends/cancels a session. Showing a session-consent dialog does not
+set busy; local availability still gates inbound advisories/proposals as above.
 When the app later reports that it is not busy, the hub sets the player back
 to `'waiting'`.
 
@@ -176,19 +187,24 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
 5. When a challenge is accepted in the lobby, the hub sends `advisory_start`
    to the accepter's game channel only. The app first checks its local
    availability. If it is already in a session, restoring, handshaking, or
-   showing another consent prompt, it declines by sending `session_reject` to
-   the peer through the pipe.
+   showing another consent prompt, it **ignores** the advisory (no
+   `session_reject`).
 6. If the accepter consents, that app becomes the channel initiator. It marks
    itself busy, generates a random hex `game_session_id`, sends a bencodex
    `session_proposal` app message (including the `game_session_id`) to the peer,
    starts the WASM session as initiator, and then sends the binary handshake
-   frames through the same addressed pipe.
-7. The peer receives the `session_proposal`, stores the `game_session_id` in its
-   PeerSession, reserves that peer id so early handshake bytes can buffer, marks
-   itself busy while the prompt is open, and shows its own consent prompt. If
-   unavailable or declined, it sends `session_reject` and discards any buffered
-   handshake bytes. If accepted, it starts the WASM session as receiver and
-   drains the buffered handshake bytes.
+   frames through the same addressed pipe. Starting persists session state
+   asynchronously; a later `session_reject` (or local cancel) must abort that
+   in-flight start so it cannot resurrect an orphan handshake.
+7. The peer receives the `session_proposal`, checks local availability, stores
+   the `game_session_id` in its PeerSession, reserves that peer id so early
+   handshake bytes can buffer, and shows its own consent prompt. If unavailable
+   or declined, it sends `session_reject` and discards any buffered handshake
+   bytes. Receiving `session_reject` during pre-active matchmaking cancels the
+   attempt (including any in-flight async start) and surfaces cancelled/error —
+   it must not leave an orphan handshake. If accepted, the peer marks itself
+   busy, starts the WASM session as receiver, and drains the buffered handshake
+   bytes.
 8. Both players exchange binary game frames through the addressed hub pipe.
    The reliability layer (msgno/ack/keepalive) is encoded inside the binary
    payload, peer-to-peer — the hub never interprets it.

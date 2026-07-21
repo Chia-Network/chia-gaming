@@ -300,9 +300,16 @@ while a previous result remains visible until a new session replaces it.
 
 The app is available for a new session when the broader session phase is `none`
 or `resolved` and there is no consent prompt, reserved peer id, buffered
-handshake, or live message handler. A consent prompt is a temporary unavailable
-state: while it is open, the app sends `set_busy: true` and declines any other
-incoming advisory/proposal. Raw `ChannelStatus` is more detailed than this
+handshake, or live message handler (`isAvailableForNewSessionPrompt()`). A
+consent prompt is a temporary unavailable state for inbound matchmaking even
+though it does not by itself set hub `busy`. While unavailable:
+
+- further `advisory_start` messages are **ignored** (hub-originated; do not
+  `session_reject` the peer);
+- inbound `session_proposal` messages are **rejected** with `session_reject`.
+
+Clients do not negotiate dual-initiator races (no same-peer yield / steal).
+Raw `ChannelStatus` is more detailed than this
 (`Handshaking`, funding/offer states, `Active`, shutdown states, on-chain
 transition states, resolved channel states, `Failed`, etc.) and must not be
 treated as the lobby availability state directly. The broader session phase
@@ -313,7 +320,9 @@ session remains `on-chain` because a hand is still being settled.
 
 Logical bencodex dictionary: `{ type: "set_busy", session_id: "...", busy: true }`.
 
-Sent whenever the broader session phase or consent-prompt availability changes.
+Sent when the user accepts a session start, when restore reconnection reports
+an unresolved session, and when the broader session phase ends or the user
+cancels.
 The same `busy` bit is also included in the initial `identify` message so the
 hub has correct status immediately after a game channel opens, reconnects,
 or restores. This avoids a brief `waiting` flicker for unresolved restored
@@ -345,20 +354,27 @@ The hub does not create a session. It can only advise and relay:
    are stored and sent as `challenge_received` to the target lobby iframe.
 2. If the target accepts in the lobby, the hub removes that challenge,
    cancels stale challenge records involving either player, and sends
-   `advisory_start` to the target player's game channel. The target is now the
-   proposed channel initiator.
+   `advisory_start` to the target player's game channel only. The target is
+   now the proposed channel initiator for that challenge. (A separate reverse
+   challenge accepted while both players are still free can produce a second
+   `advisory_start` on the other side; the hub does not pick a single winner.)
 3. The target player's app checks local availability. If it is in a live
    session, on-chain resolution, restore/handshake, or another consent prompt,
-   it declines by sending `session_reject` to the peer through the relay.
+   it **ignores** the advisory (no `session_reject`).
 4. If the target consents, it marks itself busy, generates a random hex
    `game_session_id`, sends a bencodex `session_proposal` app message (including
    the `game_session_id`) to the challenger through the addressed relay, starts
-   WASM as initiator, and sends binary handshake frames.
+   WASM as initiator, and sends binary handshake frames. Persist of that start
+   is async; `session_reject` / local cancel must abort any in-flight start so
+   it cannot resurrect an orphan handshake.
 5. The challenger app checks local availability before showing the proposal
    prompt. While the prompt is open it reserves that peer id so early
-   `HandshakeA` bytes can buffer, and it marks itself busy. If unavailable or
-   declined, it sends `session_reject` and discards buffered handshake bytes. If
-   accepted, it starts WASM as receiver and drains the buffer.
+   `HandshakeA` bytes can buffer. If unavailable or declined, it sends
+   `session_reject` and discards buffered handshake bytes. Receiving
+   `session_reject` during pre-active matchmaking cancels the attempt
+   (including in-flight async start) and surfaces cancelled/error. If
+   accepted, it marks itself busy, starts WASM as receiver, and drains the
+   buffer.
 
 ---
 
@@ -502,8 +518,10 @@ Clean shutdown does **not** mark the peer dead on its own. Keepalives and the
 small allowlist of shutdown-related peer messages continue until local
 shutdown completes. Successful/terminal session exit does not send
 `session_reject` (that signal means decline/abort). If a `session_reject`
-does arrive, it is still honored as an abort. When the channel reaches a
-terminal state the session exits and the dot goes gray.
+does arrive during pre-active matchmaking, it is honored as an abort: cancel
+the attempt (including any in-flight async session start), surface
+cancelled/error, and do not leave an orphan handshake. When the channel
+reaches a terminal state the session exits and the dot goes gray.
 
 ### Game tab error conditions (red dot)
 

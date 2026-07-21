@@ -323,6 +323,35 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it('keeps balance interest alive across game-session stop()', async () => {
+    jest.useFakeTimers();
+    const balances: bigint[] = [];
+    const rpc = new Proxy(
+      {
+        getBalance: jest.fn()
+          .mockResolvedValueOnce(10n)
+          .mockResolvedValueOnce(20n),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ??
+          (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.start();
+    poller.startBalanceInterest(1000, { onBalance: (value) => balances.push(value) });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(balances).toEqual([10n]);
+
+    // SessionController calls stop() on cradle terminal — wallet balance must continue.
+    poller.stop();
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(balances).toEqual([10n, 20n]);
+    jest.useRealTimers();
+  });
+
   it('clears registered coin cache when the adapter registration scope changes', async () => {
     let scope = '99';
     const registered: string[][] = [];

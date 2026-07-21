@@ -8,6 +8,7 @@ export function activate(
   pollIntervalMs: number,
 ): BlockchainPoller {
   if (active) {
+    active.stopBalanceInterest();
     active.stop();
   }
   active = new BlockchainPoller(blockchain, pollIntervalMs);
@@ -17,6 +18,7 @@ export function activate(
 
 export function deactivate(): void {
   if (active) {
+    active.stopBalanceInterest();
     active.stop();
     active = null;
   }

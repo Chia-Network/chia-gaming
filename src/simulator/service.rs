@@ -160,7 +160,8 @@ impl GameRunner {
             self.identities.len()
         ));
         let coinset_adapter = FullCoinSetAdapter::default();
-        let simulator = Simulator::new_strict();
+        // Non-strict: demo/service soft-rejects like a real chain (tests use new_strict).
+        let simulator = Simulator::new(false);
         self.detach_simulator(simulator, coinset_adapter);
         Ok("1\n".to_string())
     }
@@ -277,24 +278,44 @@ impl GameRunner {
                     .filter_map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()))
                     .sum();
                 if total > desired {
+                    // Burn excess to the zero puzzle hash so only `desired` remains
+                    // spendable under this wallet.  Must process every coin: register
+                    // farms both pool and farmer rewards.
+                    let burn_ph = PuzzleHash::from_bytes([0u8; 32]);
+                    let mut keep_left = desired;
                     for c in coins.iter() {
-                        if let Some((_, _, amt)) = c.to_parts() {
-                            if amt.to_u64() > desired {
-                                self.simulator.transfer_coin_amount(
-                                    &mut self.allocator,
-                                    &identity.puzzle_hash,
-                                    &identity,
-                                    c,
-                                    Amount::new(desired),
-                                )?;
-                                self.farm_and_chase()?;
-                                sim_log(&format!(
-                                    "register: trimmed balance name={name} from={total} to={desired}"
-                                ));
-                                break;
-                            }
+                        let Some((_, _, amt)) = c.to_parts() else {
+                            continue;
+                        };
+                        let amt = amt.to_u64();
+                        if keep_left == 0 {
+                            // Burn the entire leftover coin.
+                            self.simulator.transfer_coin_amount(
+                                &mut self.allocator,
+                                &burn_ph,
+                                &identity,
+                                c,
+                                Amount::new(amt),
+                            )?;
+                        } else if amt <= keep_left {
+                            keep_left -= amt;
+                        } else {
+                            // Keep `keep_left` as change; burn the excess.
+                            let excess = amt - keep_left;
+                            self.simulator.transfer_coin_amount(
+                                &mut self.allocator,
+                                &burn_ph,
+                                &identity,
+                                c,
+                                Amount::new(excess),
+                            )?;
+                            keep_left = 0;
                         }
                     }
+                    self.farm_and_chase()?;
+                    sim_log(&format!(
+                        "register: trimmed balance name={name} from={total} to={desired} (burned excess)"
+                    ));
                 }
             }
         }
@@ -1075,7 +1096,8 @@ fn run_game_actor(
     height: Arc<AtomicUsize>,
     ready: std_mpsc::SyncSender<Result<(), String>>,
 ) {
-    let simulator = Simulator::new_strict();
+    // Non-strict: demo/service soft-rejects like a real chain (tests use new_strict).
+    let simulator = Simulator::new(false);
     let coinset_adapter = FullCoinSetAdapter::default();
     let mut game_runner = match GameRunner::new(simulator, coinset_adapter) {
         Ok(runner) => runner,
@@ -2135,6 +2157,55 @@ mod regression_tests {
         assert_eq!(registered_event["records"].as_array().unwrap().len(), 1);
         assert_eq!(unregistered_event["event"], "block");
         assert!(unregistered_event["records"].as_array().unwrap().is_empty());
+
+        harness.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn regression_register_burns_excess_to_honor_target_balance() {
+        let harness = ServiceHarness::start().await;
+        let url = format!("ws://{}/ws", harness.listen_addr);
+        let (mut client, _) = connect_async(&url).await.unwrap();
+
+        send_request(
+            &mut client,
+            serde_json::json!({
+                "id": 1,
+                "method": "register",
+                "params": {"name": "burn-trim-wallet", "balance": 1_000_000u64}
+            }),
+        )
+        .await;
+        let register_response = receive_response(&mut client, 1).await;
+        assert!(register_response["error"].is_null(), "{register_response}");
+        let puzzle_hash = register_response["result"]
+            .as_str()
+            .expect("register did not return a puzzle hash")
+            .to_string();
+
+        send_request(
+            &mut client,
+            serde_json::json!({
+                "id": 2,
+                "method": "get_balance",
+                "params": {"user": puzzle_hash}
+            }),
+        )
+        .await;
+        let balance_response = receive_response(&mut client, 2).await;
+        assert!(balance_response["error"].is_null(), "{balance_response}");
+        let balance = balance_response["result"]
+            .as_u64()
+            .or_else(|| {
+                balance_response["result"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok())
+            })
+            .expect("get_balance did not return a number");
+        assert_eq!(
+            balance, 1_000_000,
+            "register should burn farmed excess so only the requested balance remains"
+        );
 
         harness.shutdown().await;
     }
