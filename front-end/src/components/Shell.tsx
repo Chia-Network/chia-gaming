@@ -1852,7 +1852,15 @@ const Shell = () => {
   useEffect(() => {
     if (!peerGateActive || !hubOrigin) return;
     if (!walletConnected) {
+      // Sync the ref before setState (same as connectToHub): getPresence can
+      // run on a hub reconnect before React applies the new hasFullNodePeer
+      // state, and must not report a stale not-busy.
+      hasFullNodePeerRef.current = false;
       setHasFullNodePeer(false);
+      hubConnRef.current?.setBusy(
+        presenceBusy(sessionPhaseRef.current),
+        sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+      );
       return;
     }
     let cancelled = false;
@@ -1871,18 +1879,23 @@ const Shell = () => {
     };
     check();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [peerGateActive, hubOrigin, walletConnected]);
+  }, [peerGateActive, hubOrigin, walletConnected, presenceBusy]);
 
   // Keep the synchronous presence mirrors fresh and push a busy update to the
   // hub whenever the full-node-peer gate opens or closes.
+  // When the gate is active, a disconnected wallet cannot vouch for peers —
+  // treat as not-ready even if hasFullNodePeer state is still true (e.g. peer
+  // verified and wallet dropped in the same render), so this effect cannot
+  // overwrite a synchronous clear from the poll effect with stale state.
   useEffect(() => {
     peerGateActiveRef.current = peerGateActive;
-    hasFullNodePeerRef.current = hasFullNodePeer;
+    const peerReady = peerGateActive ? (hasFullNodePeer && walletConnected) : hasFullNodePeer;
+    hasFullNodePeerRef.current = peerReady;
     hubConnRef.current?.setBusy(
       presenceBusy(sessionPhaseRef.current),
       sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
     );
-  }, [peerGateActive, hasFullNodePeer, presenceBusy]);
+  }, [peerGateActive, hasFullNodePeer, walletConnected, presenceBusy]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
