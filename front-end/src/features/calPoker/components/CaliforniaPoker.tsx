@@ -228,7 +228,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const playerResultVerb = winner === 'tie' ? 'ties' : winner === 'player' ? 'wins' : 'loses';
   const resultLabel = (label: string, verb: 'wins' | 'loses' | 'ties') => {
     if (label === 'You') {
-      return `You ${verb === 'wins' ? 'win' : verb === 'loses' ? 'lose' : 'tie'}`;
+      return `You ${verb === 'wins' ? 'won' : verb === 'loses' ? 'lose' : 'tie'}`;
     }
     return `${label} ${verb}`;
   };
@@ -657,12 +657,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             <div className='w-full h-8 flex items-center justify-center text-base font-semibold text-canvas-text'>
               <span className='truncate max-w-full'>
                 {showFinalHeader && playerDisplayText
-                  ? `${resultLabel(myLabel, playerResultVerb)} (${playerDisplayText})`
+                  ? `${resultLabel('You', playerResultVerb)} (${playerDisplayText})`
                   : settlementByUsFlag === true
-                    ? `${myLabel} ${settlementVerb}`
+                    ? `You ${settlementVerb}`
                     : settlementByUsFlag === false
-                      ? resultLabel(myLabel, 'wins')
-                      : `${possessive(myLabel)} Hand`}
+                      ? 'You won'
+                      : 'Your Hand'}
               </span>
             </div>
             <div className='flex items-center justify-center p-2'>

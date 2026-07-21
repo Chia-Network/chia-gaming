@@ -700,7 +700,7 @@ function HandDisplay(props: HandDisplayProps) {
         )}
         {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && (
           <div
-            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-solid px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
               left: '50%',
               // Right-justify the badge to the last card's right edge. Anchoring

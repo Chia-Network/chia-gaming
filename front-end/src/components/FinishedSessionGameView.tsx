@@ -36,25 +36,11 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const playerNumber = iStarted ? 1 : 2;
   const handleGameLog = useCallback((_lines: string[]) => {}, []);
 
-  const detailLine = [
-    display.terminalLabel,
-    display.terminalReward != null ? `Reward: ${display.terminalReward}` : null,
-  ].filter(Boolean).join(' · ');
-
   return (
     <div
       className='relative flex h-full w-full min-h-0 flex-col'
       data-testid='finished-session-game-view'
     >
-      <div className='shrink-0 px-4 py-2 text-center text-sm text-canvas-solid border-b border-canvas-border'>
-        <div data-testid='finished-session-banner'>{display.banner}</div>
-        {detailLine ? (
-          <div className='text-canvas-text mt-0.5' data-testid='finished-session-terminal'>
-            {detailLine}
-          </div>
-        ) : null}
-      </div>
-
       {display.hasCalpokerBoard && display.calpoker ? (
         <div className='relative flex-1 min-h-0 pointer-events-none' aria-disabled='true'>
           <Calpoker
