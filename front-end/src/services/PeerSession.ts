@@ -47,11 +47,13 @@ export class PeerSession implements PeerConnectionResult {
 
   sendMessage(msgno: number, input: Uint8Array): boolean {
     if (this.destroyed) return false;
+    log(`[peer] send msg msgno=${msgno} len=${input.byteLength} to=${this.peerId}`);
     return this.hubConn.sendToPeer(this.peerId, buildFrame(0x01, msgno, input));
   }
 
   sendAck(ackMsgno: number): boolean {
     if (this.destroyed) return false;
+    log(`[peer] send ack msgno=${ackMsgno} to=${this.peerId}`);
     return this.hubConn.sendToPeer(this.peerId, buildFrame(0x02, ackMsgno));
   }
 
@@ -136,6 +138,7 @@ export class PeerSession implements PeerConnectionResult {
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       const msgno = view.getUint32(1, false);
       const msg = payload.slice(5);
+      log(`[peer] recv msg msgno=${msgno} len=${msg.byteLength} from=${fromId}`);
       if (this.messageHandler) this.messageHandler.handler(msgno, msg);
       else this.messageBuffer.push({ tag, msgno, data: msg });
       return true;
@@ -144,6 +147,7 @@ export class PeerSession implements PeerConnectionResult {
       this.notePeerActivity();
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       const ack = view.getUint32(1, false);
+      log(`[peer] recv ack msgno=${ack} from=${fromId}`);
       if (this.messageHandler) this.messageHandler.ackHandler(ack);
       else this.messageBuffer.push({ tag, msgno: ack, data: new Uint8Array(0) });
       return true;

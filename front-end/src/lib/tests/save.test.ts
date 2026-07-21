@@ -105,6 +105,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  // Cancel debounced flushes so a late queueWrite cannot run after the suite.
+  _resetForTests();
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');
 });
@@ -315,12 +317,18 @@ describe('session persistence', () => {
   });
 
   it('propagates IndexedDB write failure to durability callers', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
     clearTestGlobal('indexedDB');
-    const scheduled = saveSession(sampleSession);
+    try {
+      const scheduled = saveSession(sampleSession);
 
-    await expect(flushSessionSave()).rejects.toThrow('IndexedDB is unavailable');
-    await expect(scheduled).rejects.toThrow('IndexedDB is unavailable');
-    setTestGlobal('indexedDB', testIndexedDb);
+      await expect(flushSessionSave()).rejects.toThrow('IndexedDB is unavailable');
+      await expect(scheduled).rejects.toThrow('IndexedDB is unavailable');
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      setTestGlobal('indexedDB', testIndexedDb);
+    }
   });
 
   it('keeps serialized session bytes out of localStorage', async () => {

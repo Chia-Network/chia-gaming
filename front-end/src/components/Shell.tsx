@@ -664,20 +664,16 @@ const Shell = () => {
         if (cancelled) return;
         markSavedSession();
         if (peekAutoResumeOnce()) {
-          console.log('[Shell] boot: stale-deploy auto-resume');
           setBootState({ kind: 'autoResuming' });
           return;
         }
-        console.log('[Shell] boot: wallet/hub/session state present, showing resume dialog');
         setBootState({ kind: 'resumeDialog', loadError: null });
         return;
       }
       if (isLeaseConflict()) {
-        console.log('[Shell] boot: no save but another tab holds the lease, showing tabConflict');
         setBootState({ kind: 'tabConflict', save: null, midSession: false });
         return;
       }
-      console.log('[Shell] boot: no state, no conflict, claiming lease');
       claimLease();
       setBootState({ kind: 'ready' });
     })();
@@ -897,6 +893,8 @@ const Shell = () => {
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
   const dashboardSessionModelRef = useRef<SessionModel | null>(null);
+  /** Bumped on cancel so in-flight startFreshSessionWithPeer aborts after awaits. */
+  const sessionStartEpochRef = useRef(0);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -982,7 +980,8 @@ const Shell = () => {
     setPeerLiveness(null);
   }, []);
 
-  const cancelAttemptedSession = useCallback(() => {
+  const cancelAttemptedSession = useCallback((options?: { error?: boolean }) => {
+    sessionStartEpochRef.current += 1;
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
     resetPeerRelayState();
@@ -1007,7 +1006,7 @@ const Shell = () => {
     setAbandonEnabled(false);
     setCleanShutdownGraceActive(false);
     setSessionPhase('none');
-    setSessionError(false);
+    setSessionError(!!options?.error);
     setSessionConfig(null);
     setPeerConn(null);
     dashboardSessionModelRef.current = null;
@@ -1021,6 +1020,7 @@ const Shell = () => {
   const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
     const conn = hubConnRef.current;
     if (!conn) return;
+    const epoch = sessionStartEpochRef.current;
 
     let myContribution: bigint;
     let theirContribution: bigint;
@@ -1067,6 +1067,10 @@ const Shell = () => {
       ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
     });
     await flushSessionSave();
+    if (epoch !== sessionStartEpochRef.current) {
+      log(`[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`);
+      return;
+    }
     sessionStartedRef.current = false;
     sessionFinishedCleanupRef.current = false;
     sessionPhaseRef.current = 'none';
@@ -1300,15 +1304,14 @@ const Shell = () => {
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
-          console.log('[Shell] advisory_start: peer=%s alias=%s my_amount=%s their_amount=%s', params.peer_id, params.peer_alias, params.my_amount, params.their_amount);
+          // Hub advisory while we are already mid-matchmaking/session: ignore.
+          // Do not session_reject the peer — advisory is not a peer request.
           if (!isAvailableForNewSessionPrompt()) {
-            console.log('[Shell] advisory_start declined: client unavailable for new session');
-            sendSessionReject(params.peer_id);
+            log(`[Shell] advisory_start ignored: unavailable peer=${params.peer_id} phase=${sessionPhaseRef.current}`);
             return;
           }
           if (!isValidTimeoutString(params.channel_timeout) || !isValidTimeoutString(params.unroll_timeout)) {
-            console.log('[Shell] advisory_start declined: timeout out of range channel=%s unroll=%s', params.channel_timeout, params.unroll_timeout);
-            sendSessionReject(params.peer_id);
+            log(`[Shell] advisory_start ignored: invalid timeouts peer=${params.peer_id}`);
             return;
           }
           setPendingAdvisoryState(params);
@@ -1323,17 +1326,15 @@ const Shell = () => {
           if (ps && ps.liveness === 'dead') return;
           if (ps) ps.notePeerActivity();
           syncPeerLiveness();
-          console.log('[Shell] onPeerAppMessage type=%s from=%s', msg.type, fromId);
           if (msg.type === 'session_proposal') {
             const peerAlias = fromAlias || msg.from_alias || fromId;
-            console.log('[Shell] session_proposal from=%s alias=%s proposer_amount=%s responder_amount=%s', fromId, peerAlias, msg.proposer_amount, msg.responder_amount);
             if (!isAvailableForNewSessionPrompt()) {
-              console.log('[Shell] session_proposal declined: client unavailable for new session');
+              log(`[Shell] session_reject to=${fromId}: proposal while unavailable phase=${sessionPhaseRef.current}`);
               sendSessionReject(fromId);
               return;
             }
             if (!isValidTimeoutString(msg.channel_timeout) || !isValidTimeoutString(msg.unroll_timeout)) {
-              console.log('[Shell] session_proposal declined: timeout out of range channel=%s unroll=%s', msg.channel_timeout, msg.unroll_timeout);
+              log(`[Shell] session_reject to=${fromId}: proposal invalid timeouts`);
               sendSessionReject(fromId);
               return;
             }
@@ -1352,12 +1353,12 @@ const Shell = () => {
             });
             setActiveTab('game');
           } else if (msg.type === 'session_reject') {
-            console.log('[Shell] session_reject from=%s sessionPeer=%s match=%s', fromId, ps?.peerId, ps?.peerId === fromId);
             if (ps?.peerId === fromId) {
+              log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
               markPeerDead();
               const channelState = dashboardSessionModelRef.current?.channel.status.state;
               if (shouldCancelOnPeerUnreachable(sessionPhaseRef.current, channelState)) {
-                cancelAttemptedSession();
+                cancelAttemptedSession({ error: true });
               }
             }
           }
@@ -1383,7 +1384,6 @@ const Shell = () => {
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
-          console.log('[Shell] registered as player_id=%s session_id=%s', playerId, getSessionId());
           const save = sessionSaveRef.current;
           const prevMine = save?.myHubPlayerId ?? loadState().myHubPlayerId;
           // Pre-cradle routing is by peer player_id. If *we* remapped (hub
@@ -1434,18 +1434,15 @@ const Shell = () => {
           }
         },
         onClosed: () => {
-          console.log('[Shell] hub connection ended');
           hubWsUpRef.current = false;
           markPeerInactive();
           setHubLiveness('disconnected');
         },
         onHubDisconnected: () => {
-          console.log('[Shell] hub disconnected');
           hubWsUpRef.current = false;
           setHubLiveness('reconnecting');
         },
         onHubReconnected: () => {
-          console.log('[Shell] hub reconnected');
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
@@ -1510,7 +1507,6 @@ const Shell = () => {
       return;
     }
     const url = getHubUrl();
-    console.log('[Shell] hub-reconnect effect: %s hubUrl=%s', bootState.kind, url ?? 'none');
     if (url && !hubConnRef.current) {
       connectToHub(url);
     }
@@ -1527,7 +1523,6 @@ const Shell = () => {
     pollMs: number,
     options: { switchToHub?: boolean } = {},
   ) => {
-    console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
     const poller = activate(iface, pollMs);
     // Pre-game wallet connection: force Resume/Start Over on reload even
@@ -1671,6 +1666,7 @@ const Shell = () => {
   }, []);
 
   const cancelDashboardSession = useCallback((options?: { retainFinishedGuard?: boolean }) => {
+    sessionStartEpochRef.current += 1;
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
     // Terminal/clean finish must not send session_reject — that signal means
@@ -1803,10 +1799,11 @@ const Shell = () => {
   }, []);
 
   const handleTerminal = useCallback(() => {
-    // Phase→resolved owns soft finish (preserves dashboard + sessionError).
-    // Terminal only stops balance polling once the cradle reports done.
-    stopBalancePolling();
-  }, [stopBalancePolling]);
+    // Session end tears down the cradle, not the wallet. Keep balance interest
+    // and nudge an immediate poll so settlement payouts show up promptly.
+    const bcType = blockchainTypeRef.current;
+    if (bcType) startBalancePolling(bcType);
+  }, [startBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
@@ -1868,7 +1865,6 @@ const Shell = () => {
   const performResume = useCallback((save: SessionSave) => {
     setActiveTab('game');
     const bcType = save.blockchainType ?? 'simulator';
-    console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
     setRestoreStatus('restoring');
     setRestoreError(null);
@@ -1979,7 +1975,6 @@ const Shell = () => {
           setConnecting(false);
         }
       }
-      console.log('[Shell] performResume: blockchain connect task done');
     })();
   }, [uniqueId, completeConnection, stablePeerConn, setActiveTab]);
 
@@ -2017,17 +2012,11 @@ const Shell = () => {
       return;
     }
     if (isLeaseConflict()) {
-      console.log('[Shell] resume: lease conflict, showing tabConflict dialog');
       clearAutoResumeOnce();
       setBootState({ kind: 'tabConflict', save, midSession: false });
       setResuming(false);
       return;
     }
-    console.log(
-      fromAutoResume
-        ? '[Shell] auto-resume: claiming lease and hydrating'
-        : '[Shell] resume: no conflict, claiming lease and hydrating',
-    );
     claimLease();
     // Select the destination tab before any hydrate so the first ready paint
     // is already on the right tab.
@@ -2071,7 +2060,6 @@ const Shell = () => {
     if (bootState.kind !== 'autoResuming') return;
     if (!sessionConfig || !peerConn) return;
     if (restoreStatus === 'failed') {
-      console.log('[Shell] auto-resume: restore failed, showing shell');
       setBootState({ kind: 'ready' });
       return;
     }
@@ -2084,7 +2072,6 @@ const Shell = () => {
       sessionStartedRef.current,
     );
     if (keepSession && !blocked) {
-      console.log('[Shell] auto-resume: presentable, showing shell');
       setBootState({ kind: 'ready' });
     }
   }, [
@@ -2102,7 +2089,6 @@ const Shell = () => {
   const handleTakeOver = useCallback(() => {
     setBootState(prev => {
       if (prev.kind !== 'tabConflict') return prev;
-      console.log('[Shell] takeOver: claiming lease in place (midSession=%s)', prev.midSession);
       claimLease();
       if (prev.midSession) {
         // Our session is already live — just reclaim the lease.
@@ -2463,8 +2449,6 @@ const Shell = () => {
     sessionStartedRef.current,
   );
   if (sessionReadyToStart) sessionStartedRef.current = true;
-  console.log('[Shell] render: sessionConfig=%s peerConn=%s poller=%s walletConnected=%s restoring=%s → keepSession=%s',
-    !!sessionConfig, !!peerConn, !!activeBlockchainPoller, walletConnected, !!sessionConfig?.restoring, keepSession);
 
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,

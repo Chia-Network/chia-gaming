@@ -86,11 +86,6 @@ class WalletState {
         continue;
       }
 
-      console.log('[WC] restoring existing session', {
-        topic: session.topic,
-        peer: session.peer?.metadata?.name,
-        expiry: session.expiry,
-      });
       this.onSessionConnected(session);
       return true;
     }
@@ -152,14 +147,6 @@ class WalletState {
   }
 
   private async doInit(): Promise<void> {
-    console.log(`[WC] network: ${CHAIN_ID}`);
-    console.log('[WC] init() starting', {
-      projectId: PROJECT_ID,
-      relayUrl: RELAY_URL,
-      chainId: CHAIN_ID,
-      origin: window.location.origin,
-    });
-
     this.observable.next({ stateName: 'initializing', initializing: true });
     log('WalletConnect initializing...');
 
@@ -176,7 +163,6 @@ class WalletState {
         },
       });
 
-      console.log('[WC] Client.init() succeeded');
       this.client = signClient;
 
       signClient.on('session_update', ({ topic, params }) => {
@@ -187,13 +173,11 @@ class WalletState {
       });
 
       signClient.on('session_delete', ({ topic }: { topic: string }) => {
-        console.log('[WC] session deleted by wallet', { topic });
         log(`[WC session] delete topic=${topic}`);
         this.resetSession();
       });
 
       signClient.on('session_expire', ({ topic }: { topic: string }) => {
-        console.log('[WC] session expired', { topic });
         log(`[WC session] expire topic=${topic}`);
         this.resetSession();
       });
@@ -241,11 +225,6 @@ class WalletState {
   }
 
   async startConnect(): Promise<StartConnectResult> {
-    console.log('[WC] startConnect() called', {
-      hasClient: !!this.client,
-      isInitialized: !!this.initPromise,
-    });
-
     if (!this.client) {
       const msg = 'startConnect() called but client is undefined -- init() may have failed';
       console.error('[WC]', msg);
@@ -260,11 +239,6 @@ class WalletState {
     try {
       const { uri, approval } = await this.client.connect({
         requiredNamespaces: REQUIRED_NAMESPACES,
-      });
-
-      console.log('[WC] startConnect() got URI', {
-        uriPrefix: uri?.substring(0, 50),
-        uriLength: uri?.length,
       });
 
       this.observable.next({
@@ -287,14 +261,8 @@ class WalletState {
   }
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
-    console.log('[WC] connect() waiting for wallet approval...');
     try {
       const session = await approval();
-      console.log('[WC] connect() session approved', {
-        topic: session.topic,
-        peer: session.peer?.metadata?.name,
-        expiry: session.expiry,
-      });
       this.onSessionConnected(session);
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);

@@ -359,6 +359,7 @@ export class HubConnection {
    * Send a bencodex app message to a specific peer through the hub pipe.
    */
   sendPeerAppMessage(targetId: string, data: PeerAppMessage): boolean {
+    log(`[hub] send app type=${data.type} to=${targetId}`);
     const payload = encodeBencodex(definedBencodexFields(data as Record<string, BencodexValue | undefined>));
     return this.sendToPeer(targetId, payload);
   }
@@ -439,6 +440,7 @@ export class HubConnection {
       try {
         const data = decodePeerAppMessage(payload);
         if (data) {
+          log(`[hub] recv app type=${data.type} from=${fromId}`);
           this.callbacks.onPeerAppMessage(fromId, fromAlias, data);
           return;
         }
