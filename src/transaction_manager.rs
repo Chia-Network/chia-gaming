@@ -67,17 +67,18 @@ struct SubmittedTx {
     expiry: Option<u64>,
 }
 
-fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
+fn expected_output_coins(bundle: &SpendBundle) -> Result<Vec<CoinString>, Error> {
     let mut allocator = AllocEncoder::new();
     let mut out = Vec::new();
     for spend in &bundle.spends {
         let puzzle = spend.bundle.puzzle.to_program();
         let solution = spend.bundle.solution.p();
-        let Ok(conditions) =
-            CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution)
-        else {
-            continue;
-        };
+        let conditions = CoinCondition::from_puzzle_and_solution(&mut allocator, &puzzle, &solution)
+            .map_err(|e| {
+                Error::StrErr(format!(
+                    "expected_output_coins: our submitted spend failed to parse: {e:?}"
+                ))
+            })?;
         let parent = spend.coin.to_coin_id();
         out.extend(conditions.into_iter().filter_map(|cond| {
             if let CoinCondition::CreateCoin(ph, amount) = cond {
@@ -87,7 +88,7 @@ fn expected_output_coins(bundle: &SpendBundle) -> Vec<CoinString> {
             }
         }));
     }
-    out
+    Ok(out)
 }
 
 /// Combine two optional expiry heights, keeping the tightest (smallest)
@@ -341,9 +342,25 @@ impl<C> TransactionManager<C> {
     /// Drain transactions queued for submission to the network.  Each drained
     /// transaction is retained (keyed by the coins it spends) so its outputs can
     /// be resubmitted if a reorg rolls them back.
-    pub fn drain_submissions(&mut self) -> Vec<SpendBundle> {
+    pub fn drain_submissions(&mut self) -> Result<Vec<SpendBundle>, Error> {
+        // Parse before consuming the queue so a bad bundle does not drop peers.
+        let mut new_outputs: Vec<Option<Vec<CoinString>>> =
+            Vec::with_capacity(self.pending_submissions.len());
+        for (bundle, _) in self.pending_submissions.iter() {
+            let spent_coin_ids: Vec<CoinID> =
+                bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
+            if self
+                .submitted
+                .iter()
+                .any(|t| t.spent_coin_ids == spent_coin_ids)
+            {
+                new_outputs.push(None);
+            } else {
+                new_outputs.push(Some(expected_output_coins(bundle)?));
+            }
+        }
         let out = std::mem::take(&mut self.pending_submissions);
-        for (bundle, expiry) in out.iter() {
+        for ((bundle, expiry), outputs) in out.iter().zip(new_outputs.into_iter()) {
             let spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
             // Don't double-track the same creating transaction across resubmits;
@@ -355,8 +372,7 @@ impl<C> TransactionManager<C> {
                 .find(|t| t.spent_coin_ids == spent_coin_ids)
             {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
-            } else {
-                let outputs = expected_output_coins(bundle);
+            } else if let Some(outputs) = outputs {
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
                     spent_coin_ids,
@@ -366,7 +382,7 @@ impl<C> TransactionManager<C> {
                 });
             }
         }
-        out.into_iter().map(|(bundle, _)| bundle).collect()
+        Ok(out.into_iter().map(|(bundle, _)| bundle).collect())
     }
 
     /// Re-queue every retained submission for resubmission.  Used on reload: a
@@ -1002,11 +1018,11 @@ mod tests {
         // The log is forwarded; the transaction is intercepted.
         assert_eq!(drain.events.len(), 1);
         assert!(matches!(drain.events[0], GameSessionEvent::Log(_)));
-        let subs = mgr.drain_submissions();
+        let subs = mgr.drain_submissions().unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].name.as_deref(), Some("tx-a"));
         // Draining empties the buffer.
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]
@@ -1124,19 +1140,19 @@ mod tests {
         // Before maturity: nothing submitted.
         mgr.report_coin_states(&mut allocator, 14, &live)
             .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
 
         // At maturity (10 + 5 = 15): the eager claim is queued exactly once.
         mgr.report_coin_states(&mut allocator, 15, &live)
             .expect("report");
-        let subs = mgr.drain_submissions();
+        let subs = mgr.drain_submissions().unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].name.as_deref(), Some("timeout-claim"));
 
         // Still mature next block, but already submitted for this birthday.
         mgr.report_coin_states(&mut allocator, 16, &live)
             .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]
@@ -1162,16 +1178,16 @@ mod tests {
             .expect("report");
         mgr.report_coin_states(&mut allocator, 15, &rec(10))
             .expect("report");
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // Reorg re-mines the coin at birthday 13: the claim re-arms and is
         // resubmitted once it matures again at 18.
         mgr.report_coin_states(&mut allocator, 12, &rec(13))
             .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
         mgr.report_coin_states(&mut allocator, 18, &rec(13))
             .expect("report");
-        let resub = mgr.drain_submissions();
+        let resub = mgr.drain_submissions().unwrap();
         assert_eq!(resub.len(), 1);
         assert_eq!(resub[0].name.as_deref(), Some("timeout-claim"));
     }
@@ -1208,7 +1224,7 @@ mod tests {
             }],
         )
         .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]
@@ -1241,7 +1257,7 @@ mod tests {
         mgr.flush_and_collect(&mut allocator).expect("drain");
 
         // The host submits the creating tx; the manager remembers it.
-        let submitted = mgr.drain_submissions();
+        let submitted = mgr.drain_submissions().unwrap();
         assert_eq!(submitted.len(), 1);
 
         // Child confirms at height 10.
@@ -1255,14 +1271,14 @@ mod tests {
             }],
         )
         .expect("report");
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
 
         // Reorg to height 8 rolls back the child's creating block.  The manager
         // flags it vanished and re-queues the creating transaction.
         mgr.report_coin_states(&mut allocator, 8, &[])
             .expect("report");
         assert!(mgr.vanished_coins().contains(&child));
-        let resubmitted = mgr.drain_submissions();
+        let resubmitted = mgr.drain_submissions().unwrap();
         assert_eq!(resubmitted.len(), 1);
         assert_eq!(resubmitted[0].name.as_deref(), Some("create-child"));
     }
@@ -1291,7 +1307,7 @@ mod tests {
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // Retained transaction outputs are replay/conflict metadata. They do
         // not become host poll targets unless a protocol handler explicitly
@@ -1351,7 +1367,7 @@ mod tests {
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
         // Drain so the funding tx is retained with its expiry.
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // Before the deadline: no failure even though the coin is absent.
         mgr.report_coin_states(&mut allocator, 99, &[])
@@ -1397,7 +1413,7 @@ mod tests {
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // Channel coin confirms (gets a birthday) before the deadline.
         mgr.report_coin_states(
@@ -1797,14 +1813,14 @@ mod tests {
         mgr.flush_and_collect(&mut allocator).expect("drain");
 
         // The host drains it once; the manager retains it for replay.
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
         // A fresh drain is empty -- the pending buffer was emptied.
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
 
         // On reload, requeue replays the retained set so any transaction that
         // was drained but may not have reached the network is submitted again.
         mgr.requeue_submitted();
-        let replay = mgr.drain_submissions();
+        let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].name.as_deref(), Some("tx-a"));
     }
@@ -1828,7 +1844,7 @@ mod tests {
         mgr.flush_and_collect(&mut allocator).expect("drain");
 
         // Host submits the spend; the manager retains it.
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
         assert!(!mgr.snapshot_watched_coins().contains(&child));
 
         // The input is spent, but the retained tx's expected child did not
@@ -1845,7 +1861,7 @@ mod tests {
         )
         .expect("report");
         mgr.requeue_submitted();
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]
@@ -1865,7 +1881,7 @@ mod tests {
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // The input is spent and the retained tx's expected child appears.  That
         // means this transaction won, so it stays retained for replay if a later
@@ -1888,7 +1904,7 @@ mod tests {
         )
         .expect("report");
         mgr.requeue_submitted();
-        let replay = mgr.drain_submissions();
+        let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].name.as_deref(), Some("spend-coin"));
 
@@ -1899,7 +1915,7 @@ mod tests {
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
         mgr.requeue_submitted();
-        assert!(mgr.drain_submissions().is_empty());
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]
@@ -1919,7 +1935,7 @@ mod tests {
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().len(), 1);
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // Subsequent blocks must not rebroadcast the transaction; the host
         // retries only on wallet reconnect via requeue_submitted.
@@ -1935,7 +1951,7 @@ mod tests {
             )
             .expect("report");
             assert!(
-                mgr.drain_submissions().is_empty(),
+                mgr.drain_submissions().unwrap().is_empty(),
                 "should not rebroadcast at height {height}",
             );
         }

@@ -83,6 +83,7 @@ impl SpendChannelCoinPhase {
         have_potato: PotatoState,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
+        last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
     ) -> Self {
         SpendChannelCoinPhase {
             state: SpendChannelCoinState::ChannelSpend { channel_coin },
@@ -97,7 +98,7 @@ impl SpendChannelCoinPhase {
             was_stale: false,
             terminal_reward_coin: None,
             expected_clean_shutdown_solution: None,
-            last_channel_coin_spend_info: None,
+            last_channel_coin_spend_info,
             replacement: None,
         }
     }
@@ -248,17 +249,16 @@ impl SpendChannelCoinPhase {
 
     /// Impatience signal: broadcast our latest unroll tx while still waiting
     /// for the channel coin to be spent.  Only available when we have cached
-    /// spend info (initiator-side clean shutdown that hasn't received a
-    /// response yet).
+    /// spend info and are still watching the channel coin. Otherwise this is a
+    /// no-op (already past channel watch, or opponent-led with no cache).
     pub fn go_on_chain(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        let saved = match self.last_channel_coin_spend_info.take() {
-            Some(s) => s,
-            None => return Ok(vec![]),
-        };
         let channel_coin = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin }
             | SpendChannelCoinState::ChannelConditions { channel_coin } => channel_coin.clone(),
             _ => return Ok(vec![]),
+        };
+        let Some(saved) = self.last_channel_coin_spend_info.take() else {
+            return Ok(vec![]);
         };
         let ch = self.base.channel_state()?;
         let bundle =
@@ -373,7 +373,7 @@ impl SpendChannelCoinPhase {
                         effects.push(Effect::Log(format!("[channel-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.transition_to_failed_terminal();
+                        self.transition_to_failed_terminal()?;
                     }
                 }
                 return Ok((effects, None));
@@ -395,7 +395,7 @@ impl SpendChannelCoinPhase {
                         effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.transition_to_failed_terminal();
+                        self.transition_to_failed_terminal()?;
                     }
                 }
                 return Ok((effects, None));
@@ -412,7 +412,7 @@ impl SpendChannelCoinPhase {
                         effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.transition_to_failed_terminal();
+                        self.transition_to_failed_terminal()?;
                     }
                 }
                 return Ok((effects, None));
@@ -427,28 +427,40 @@ impl SpendChannelCoinPhase {
 
     /// Create a terminal OnChainPhase replacement with an empty game map
     /// to represent a failed channel.
-    fn transition_to_failed_terminal(&mut self) {
+    fn transition_to_failed_terminal(&mut self) -> Result<(), Error> {
+        let ch = self.base.channel_state.as_mut().ok_or_else(|| {
+            Error::StrErr(
+                "transition_to_failed_terminal: channel_state required".to_string(),
+            )
+        })?;
         let on_chain = OnChainPhase::new_terminal(
-            self.base.channel_state.as_mut(),
+            ch,
             self.was_stale,
             false,
             self.terminal_reward_coin.clone(),
             self.advisory.clone(),
         );
         self.replacement = Some(Box::new(on_chain));
+        Ok(())
     }
 
     /// Create a terminal OnChainPhase replacement with an empty game map
     /// to represent a completed channel (clean shutdown or no-game unroll).
-    fn transition_to_completed_terminal(&mut self, resolved_clean: bool) {
+    fn transition_to_completed_terminal(&mut self, resolved_clean: bool) -> Result<(), Error> {
+        let ch = self.base.channel_state.as_mut().ok_or_else(|| {
+            Error::StrErr(
+                "transition_to_completed_terminal: channel_state required".to_string(),
+            )
+        })?;
         let on_chain = OnChainPhase::new_terminal(
-            self.base.channel_state.as_mut(),
+            ch,
             self.was_stale,
             resolved_clean,
             self.terminal_reward_coin.clone(),
             None,
         );
         self.replacement = Some(Box::new(on_chain));
+        Ok(())
     }
 
     /// Build the unroll-via-timeout spend for `unroll_coin` at `on_chain_state`.
@@ -539,7 +551,7 @@ impl SpendChannelCoinPhase {
                         None
                     })
                 };
-                self.transition_to_completed_terminal(true);
+                self.transition_to_completed_terminal(true)?;
                 return Ok(effects);
             }
         }
@@ -678,7 +690,7 @@ impl SpendChannelCoinPhase {
                         effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.transition_to_failed_terminal();
+                        self.transition_to_failed_terminal()?;
                     }
                 }
             }
@@ -686,7 +698,7 @@ impl SpendChannelCoinPhase {
                 effects.push(Effect::Log(format!("[unroll-error] {reason}",)));
                 effects.extend(self.base.emit_failure_cleanup());
                 self.advisory = Some(reason);
-                self.transition_to_failed_terminal();
+                self.transition_to_failed_terminal()?;
             }
         }
 
@@ -799,39 +811,56 @@ impl SpendChannelCoinPhase {
         }
 
         if game_map.is_empty() {
-            self.transition_to_completed_terminal(false);
+            self.transition_to_completed_terminal(false)?;
             return Ok(effects);
         }
 
-        // Zero-reward early-out
+        // Zero-reward early-out. Missing local game bookkeeping (e.g. stale
+        // opponent unroll) is a per-game EndedError, not "pretend valuable."
         {
             let player_ch = self.base.channel_state_mut()?;
             let mut zero_reward_games = Vec::new();
+            let mut missing_games = Vec::new();
             for (coin, state) in game_map.iter() {
-                let dominated = if state.timeout_claim_armed {
-                    player_ch
-                        .get_game_our_current_share(&state.game_id)
-                        .map(|s| s == Amount::default())
-                        .unwrap_or(false)
-                } else if !state.our_turn {
-                    player_ch
-                        .get_game_our_current_share(&state.game_id)
-                        .map(|s| s == Amount::default())
-                        .unwrap_or(false)
-                } else {
-                    player_ch.is_redo_zero_reward(coin, &state.game_id)?
-                };
-                if dominated {
+                if state.timeout_claim_armed || !state.our_turn {
+                    match player_ch.get_game_our_current_share(&state.game_id) {
+                        Ok(share) if share == Amount::default() => {
+                            zero_reward_games.push((
+                                coin.clone(),
+                                state.game_id,
+                                state.our_turn,
+                                state.timeout_claim_armed,
+                            ));
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            missing_games.push((coin.clone(), state.game_id));
+                        }
+                    }
+                } else if player_ch.is_redo_zero_reward(coin, &state.game_id)? {
                     zero_reward_games.push((
                         coin.clone(),
                         state.game_id,
-                        state.game_finished,
                         state.our_turn,
                         state.timeout_claim_armed,
                     ));
                 }
             }
-            for (coin, game_id, _game_finished, our_turn, accepted) in &zero_reward_games {
+            for (coin, game_id) in &missing_games {
+                game_map.remove(coin);
+                effects.push(Effect::Notify(GameNotification::GameStatus {
+                    id: *game_id,
+                    status: GameStatusKind::EndedError,
+                    my_reward: None,
+                    coin_id: Some(coin.clone()),
+                    reason: Some(
+                        "game absent from local state at unroll (possible stale unroll)"
+                            .to_string(),
+                    ),
+                    other_params: None,
+                }));
+            }
+            for (coin, game_id, our_turn, accepted) in &zero_reward_games {
                 game_map.remove(coin);
                 let outcome = if *accepted {
                     SettlementOutcome::ForfeitedWeAccepted
@@ -850,7 +879,7 @@ impl SpendChannelCoinPhase {
         }
 
         if game_map.is_empty() {
-            self.transition_to_completed_terminal(false);
+            self.transition_to_completed_terminal(false)?;
             return Ok(effects);
         }
 
@@ -900,8 +929,15 @@ impl SpendChannelCoinPhase {
 
             let player_ch = self.base.channel_state_mut()?;
             for (coin, game_id) in redo_candidates {
+                let expect_redo = replaying_ids.contains(&game_id);
                 let cached_move = match player_ch.take_cached_move_for_game(&game_id) {
                     Some(m) => m,
+                    None if expect_redo => {
+                        return Err(Error::StrErr(format!(
+                            "redo: Replaying status for game {:?} but no cached move",
+                            game_id
+                        )));
+                    }
                     None => continue,
                 };
 

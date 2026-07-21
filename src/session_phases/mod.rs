@@ -815,10 +815,20 @@ impl OffChainPhase {
                 let expected_conditions = get_conditions_with_channel_state(env, ch)?;
 
                 let peer_conds = proper_list(env.allocator.allocator_ref(), clvm_conditions, true)
-                    .unwrap_or_default();
+                    .ok_or_else(|| {
+                        Error::StrErr(
+                            "clean shutdown conditions: peer conditions are not a proper list"
+                                .to_string(),
+                        )
+                    })?;
                 let expected_conds =
                     proper_list(env.allocator.allocator_ref(), expected_conditions, true)
-                        .unwrap_or_default();
+                        .ok_or_else(|| {
+                            Error::StrErr(
+                                "clean shutdown conditions: expected conditions are not a proper list"
+                                    .to_string(),
+                            )
+                        })?;
                 if peer_conds.len() != expected_conds.len() {
                     return Err(Error::StrErr(
                         "clean shutdown conditions: wrong number of conditions".to_string(),
@@ -1383,6 +1393,7 @@ impl OffChainPhase {
                 self.have_potato.clone(),
                 self.channel_timeout.clone(),
                 self.unroll_timeout.clone(),
+                self.last_channel_coin_spend_info.take(),
             );
         if got_error {
             handler.set_advisory(Some("error receiving peer message".to_string()));
