@@ -141,8 +141,8 @@ export interface SessionSave {
   betweenHandComposeGameType?: string;
   betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; groupIds?: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; groupIds?: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 
   // Timer persistence (epoch ms timestamps)
@@ -716,7 +716,8 @@ export function loadState(): SessionSave {
  * preferences lack them, even if the record is not fully resumable — so a
  * reload never remints session_id over a durable id still on disk.
  */
-export async function hydrateSessionCacheFromDisk(): Promise<void> {
+/** @returns true when an incompatible IndexedDB schema was wiped (marker kept). */
+export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
   // Memory already holding durable game state must win over IndexedDB. Do not
   // require sessionId here: handshake saves often persist a cradle before any
   // hub identity exists. The old `&& cached.sessionId` guard fell through
@@ -724,11 +725,11 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
   // in-memory cradle on every flush — freezing the first persisted size.
   if (cached && isResumable(cached)) {
     identityDiskChecked = true;
-    return;
+    return false;
   }
   if (!hasSavedSessionMarker()) {
     identityDiskChecked = true;
-    return;
+    return false;
   }
 
   // Do not flush a prefs-only cache over disk. Cancel the debounce; the caller
@@ -744,7 +745,15 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
   await writeChain;
   const record = await readSessionRecord();
   identityDiskChecked = true;
-  if (!record || record.version !== CURRENT_VERSION) return;
+  if (!record) return false;
+  if (record.version !== CURRENT_VERSION) {
+    // Same wipe+marker policy as peekSession: remove the unreadable record but
+    // keep the boot marker so reload still forces Resume/Start Over.
+    await deleteSessionRecord();
+    markSavedSession();
+    cached = loadPreferences();
+    return true;
+  }
 
   const mem = cached ?? loadPreferences();
   if (isResumable(record)) {
@@ -769,7 +778,7 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
       wasmNotificationHistory: mem.wasmNotificationHistory ?? record.wasmNotificationHistory,
     };
     savePreferences(cached);
-    return;
+    return false;
   }
 
   // Non-resumable record: still pull hub identity if prefs lack it.
@@ -786,6 +795,7 @@ export async function hydrateSessionCacheFromDisk(): Promise<void> {
     };
     savePreferences(cached);
   }
+  return false;
 }
 
 function mutate(fn: (state: SessionSave) => void): Promise<void> {
@@ -897,7 +907,7 @@ function hasWalletConnectStorage(): boolean {
 export async function peekSession(): Promise<SessionSave | null> {
   // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
   // a durable resumable record that the boot marker is advertising.
-  await hydrateSessionCacheFromDisk();
+  const wipedIncompatible = await hydrateSessionCacheFromDisk();
   if (persistPromise) await flushSessionSave();
   await writeChain;
   let record = await readSessionRecord();
@@ -938,7 +948,11 @@ export async function peekSession(): Promise<SessionSave | null> {
     markSavedSession();
     return cached;
   }
-  clearSavedSessionMarker();
+  // Hydrate already wiped an incompatible schema and kept the marker; do not
+  // clear it here (that would undo the wipe+marker policy).
+  if (!wipedIncompatible) {
+    clearSavedSessionMarker();
+  }
   return null;
 }
 

@@ -787,6 +787,7 @@ describe('session model selectors', () => {
       },
       betweenHandReviewPeerProposal: {
         id: '42',
+        groupIds: ['42'],
         my_contribution: '20',
         their_contribution: '20',
         game_timeout: '31',
@@ -819,7 +820,7 @@ describe('session model selectors', () => {
         cachedPeerProposal: null,
         reviewPeerProposal: {
           id: '42',
-          groupIds: [],
+          groupIds: ['42'],
           terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n, gameTimeout: 31n, spacepokerUnitSize: 2n },
         },
         rejectedOnceTerms: null,

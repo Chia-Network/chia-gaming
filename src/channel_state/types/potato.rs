@@ -20,7 +20,6 @@ pub struct CachedAcceptSettlement {
     pub live_game: LiveGame,
     pub at_stake_amount: Amount,
     pub our_share_amount: Amount,
-    #[serde(default)]
     pub game_finished: bool,
 }
 

@@ -242,7 +242,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 | OpponentPlayedIllegalMove | `GameStatus { status: IllegalMoveDetected, ... }` | Opponent's on-chain move detected as illegal | Emitted before slash resolution |
 | GameMessage | `GameStatus { status: MyTurn/TheirTurn, other_params: { readable } }` | Informational game message | Decoded advisory/readable message payload |
 | MoveRejected | `MoveRejected { id, tag, message }` | A local my-turn handler rejects user input | Recoverable game-scoped rejection; no peer batch is sent for the rejected move |
-| GameOnChain | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }` | Game transitions on-chain | On-chain phase begins for this game |
+| GameOnChain | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }` | Game transitions on-chain | On-chain phase begins for this game. `Replaying` means a cached off-chain send-move exists for this game id and will be spent as an on-chain redo (same criterion as `take_cached_move_for_game`). |
 | WeMoved | `GameStatus { status: OnChainTheirTurn, other_params: { moved_by_us: true }, coin_id }` | Our on-chain move confirms | New game coin is tracked in `coin_id` |
 
 ---
@@ -252,7 +252,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 
 | Notification                                               | When                                 | Meaning                                                                                                              |
 | ---------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `ProposalMade { id, group_ids, my_contribution, their_contribution, timeout, game_type, ... }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` contains all IDs in deterministic factory order for multi-game groups (empty for a singleton). Contributions are aggregate totals in the receiver's local perspective. |
+| `ProposalMade { id, group_ids, my_contribution, their_contribution, timeout, game_type, ... }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` is always the full ordered member list (singleton ⇒ `[id]`). Contributions are aggregate totals in the receiver's local perspective. |
 | `ProposalAccepted { id, amount }`                          | Proposal accepted by either side     | The game is now live; `amount` is that game's total pot                                                              |
 | `ProposalCancelled { id, reason }`                         | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
 

@@ -1497,7 +1497,8 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 // Drain transactions the manager captured during this player's
                 // block processing and submit them to the simulator's mempool.
-                submissions_to_push.extend(cradles[i].drain_submissions());
+                submissions_to_push
+                    .extend(cradles[i].drain_submissions().expect("drain_submissions"));
                 for tx in submissions_to_push.iter() {
                     if nerf_transactions_for & (1 << i) != 0 {
                         nerfed_tx_backlog.push(tx.clone());
@@ -6079,11 +6080,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // Bob does not initially have the potato, so his proposal queues and
             // requests it. Alice then queues a proposal before processing that
             // request. Bob's queued proposal reaches Alice first and supersedes
-            // Alice's stale queued proposal.
+            // Alice's stale queued proposal. Bob then cancels his surviving
+            // proposal and shuts down (Alice must not cancel a vanished id —
+            // that is now a hard error).
             let moves = vec![
                 SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::CancelProposal(0, GameID(0)),
+                SimScriptAction::CancelProposal(1, GameID(0)),
                 SimScriptAction::CleanShutdown(1),
             ];
 
@@ -6341,34 +6344,31 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_stale_cancel_after_accept", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // No initial game. Alice proposes (50+50), Bob accepts. Alice
-        // queues a cancel for the same game, but Bob's accept has already
-        // been processed by the time Alice gets the potato. The cancel
-        // should be silently discarded. The game resolves on-chain.
+        // No initial game. Alice proposes (50+50), Bob accepts. Alice then
+        // tries to cancel the same id after it is already live — cancel of a
+        // vanished proposal is a hard error (no soft discard).
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::WaitBlocks(1, 2),
             SimScriptAction::CancelProposal(0, GameID(1)),
-            SimScriptAction::GoOnChain(0),
-            SimScriptAction::WaitBlocks(120, 0),
-            SimScriptAction::WaitBlocks(5, 0),
         ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+        match run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
             None,
             Some(200),
-        )
-        .expect("should finish without crashing on stale cancel");
-
-        let p0_notifs = &outcome.local_uis[0].notifications;
-        assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalAccepted { .. })),
-            "Alice should see ProposalAccepted (accept wins the race), got: {p0_notifs:?}"
-        );
+        ) {
+            Ok(_) => panic!("stale cancel after accept should fail loud"),
+            Err(err) => {
+                let msg = format!("{err:?}");
+                assert!(
+                    msg.contains("group_member_ids") || msg.contains("no proposal"),
+                    "expected missing-proposal cancel error, got: {msg}"
+                );
+            }
+        }
     }));
 
     res.push(("test_stale_unroll_game_at_current_state", &|| {

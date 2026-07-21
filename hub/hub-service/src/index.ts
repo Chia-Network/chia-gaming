@@ -16,6 +16,7 @@ import {
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Hub } from './hubState';
+import type { Challenge } from './types/hub';
 
 const hub = new Hub();
 const app = express();
@@ -307,15 +308,13 @@ function hasActiveGameConnection(playerId: string): boolean {
 }
 
 function cancelPlayerChallenges(playerId: string): void {
-  const toCancel: string[] = [];
+  const toCancel: Array<{ id: string; challenge: Challenge }> = [];
   for (const [id, challenge] of hub.challenges) {
     if (challenge.from_id === playerId || challenge.target_id === playerId) {
-      toCancel.push(id);
+      toCancel.push({ id, challenge });
     }
   }
-  for (const id of toCancel) {
-    const challenge = hub.getChallenge(id);
-    if (!challenge) continue;
+  for (const { id, challenge } of toCancel) {
     const otherId = challenge.from_id === playerId ? challenge.target_id : challenge.from_id;
     hub.removeChallenge(id);
     sendHubEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
@@ -345,7 +344,12 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   }
 
   const playerId = ensureSession(session_id);
-  const resolvedAlias = alias || knownAliases.get(session_id) || playerId;
+  const trimmedAlias = typeof alias === 'string' ? alias.trim() : '';
+  const resolvedAlias = trimmedAlias || knownAliases.get(session_id);
+  if (!resolvedAlias) {
+    sendWs(ws, 'error', { error: 'Missing lobby alias.' });
+    return;
+  }
 
   wsHubMeta.set(ws, { playerId, sessionId: session_id });
   cancelPendingHubLeave(playerId);
@@ -626,16 +630,14 @@ function onChallengeDecline(ws: WebSocket, msg: Extract<HubInboundMessage, { typ
 function onChallengeCancel(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'challenge_cancel' }>): void {
   const senderId = getHubSenderId(ws);
   if (!senderId) return;
-  const toCancel: string[] = [];
+  const toCancel: Array<{ id: string; challenge: Challenge }> = [];
   for (const [id, challenge] of hub.challenges) {
     if (challenge.from_id === senderId) {
-      toCancel.push(id);
+      toCancel.push({ id, challenge });
     }
   }
   if (toCancel.length === 0) return;
-  for (const id of toCancel) {
-    const challenge = hub.getChallenge(id);
-    if (!challenge) continue;
+  for (const { id, challenge } of toCancel) {
     logHub('challenge_cancelled', { challenge_id: id, challenger_id: senderId, target_id: challenge.target_id });
     hub.removeChallenge(id);
     sendHubEvent(challenge.target_id, 'challenge_resolved', { challenge_id: id, accepted: false });

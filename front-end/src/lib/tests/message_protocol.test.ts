@@ -94,9 +94,15 @@ function makePeerConn(
   sentAcks: number[],
 ): PeerConnectionResult {
   return {
-    sendMessage: (msgno, msg) => sentMessages.push({ msgno, msg }),
-    sendAck: (ackMsgno) => sentAcks.push(ackMsgno),
-    sendKeepalive: () => {},
+    sendMessage: (msgno, msg) => {
+      sentMessages.push({ msgno, msg });
+      return true;
+    },
+    sendAck: (ackMsgno) => {
+      sentAcks.push(ackMsgno);
+      return true;
+    },
+    sendKeepalive: () => true,
     hostLog: () => {},
     close: () => {},
   };

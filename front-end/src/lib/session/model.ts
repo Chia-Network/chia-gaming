@@ -923,7 +923,7 @@ type SavedHandTerms = {
   spacepoker_unit_size?: string;
 };
 
-type SavedProposal = SavedHandTerms & { id: string; groupIds?: string[] };
+type SavedProposal = SavedHandTerms & { id: string; groupIds: string[] };
 
 function parseTermsSnapshot(
   saved: SavedHandTerms | null | undefined,
@@ -955,9 +955,12 @@ function parseProposalSnapshot(
   fallbackTerms: HandTermsModel,
 ): BetweenHandProposalModel | null {
   if (!saved) return null;
+  if (!Array.isArray(saved.groupIds) || saved.groupIds.length === 0) {
+    throw new Error(`Garbled save: proposal ${saved.id} missing non-empty groupIds`);
+  }
   return {
     id: saved.id,
-    groupIds: saved.groupIds ?? [],
+    groupIds: saved.groupIds,
     terms: parseTermsSnapshot(saved, fallbackTerms),
   };
 }

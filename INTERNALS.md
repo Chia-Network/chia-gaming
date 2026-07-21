@@ -174,7 +174,18 @@ set, so the present→absent diff cannot surface it. The manager captures these
 `first_seen_spent` coins and merges them into the spend report anyway; without
 this a handler waiting on such a coin — e.g. an opponent-published unroll coin —
 never receives `coin_spent` and stalls forever
-(`coin_first_seen_already_spent_is_forwarded_as_spend`).
+(`coin_first_seen_already_spent_is_forwarded_as_spend`). Those records already
+carry `created_height` (birthday) and `spent_height` (`spent_confirmed_at`).
+
+**Unspent-only feeds and spend-height inference.** Some feeds report only the
+live unspent set and omit spent coins entirely (no `spent_height` on a record).
+When a coin that was already live (birthday already set from creation) leaves
+that set during forward progress, the manager infers a spend and, if
+`spent_confirmed_at` is still unset, stamps the current poll height as a lower
+bound. This is distinct from first-seen-already-spent (real spend height) and
+from reorg handling: a reorg that rolls back or remine-shifts a coin's creation
+clears or updates `birthday` so relative timeouts re-arm from the new creation
+height — it does not rely on the poll-height spend stamp.
 
 **Host polling vs semantic coin ownership.** The browser-side poller owns the
 active transport queue of coin names to query. It reports raw coin-state
@@ -550,6 +561,7 @@ there is a bug.
 | **Already spent**               | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
 | **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
 | **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
+| **Missing validated spend**     | `validated.spends` has no entry for an input spend index. Accepting would skip CREATE_COIN / relative-lock bookkeeping.        |
 
 
 **Conflicting mempool spends are the one exception to "this can only be a bug."**

@@ -525,9 +525,10 @@ it(
       let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
+          return true;
         },
-        sendAck: (_ackMsgno: number) => {},
-        sendKeepalive: () => {},
+        sendAck: (_ackMsgno: number) => true,
+        sendKeepalive: () => true,
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
@@ -556,9 +557,10 @@ it(
       let peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
+          return true;
         },
-        sendAck: (_ackMsgno: number) => {},
-        sendKeepalive: () => {},
+        sendAck: (_ackMsgno: number) => true,
+        sendKeepalive: () => true,
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
