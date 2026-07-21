@@ -11,6 +11,8 @@ export interface FinishedSessionGameViewProps {
   opponentName?: string;
   /** Matches live GameSession: starter is player 1. */
   iStarted?: boolean;
+  /** Preserves the Krunk atomic group's Alice/Bob game ordering. */
+  iProposedHand?: boolean;
 }
 
 /**
@@ -25,6 +27,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   myName,
   opponentName,
   iStarted = false,
+  iProposedHand = false,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
@@ -39,6 +42,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
     () => createFrozenHandBridge(handState),
     // handKey changes when a new hand starts; handState identity updates on persist.
     [model.game.handKey, handState],
+  );
+  const gameSettlementOutcomes = Object.fromEntries(
+    Object.entries(model.game.instances).map(([id, instance]) => [
+      id,
+      instance.terminal.outcome,
+    ]),
   );
 
   if (!display.canRemountHand || !handState) {
@@ -65,12 +74,14 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
         currentHandGameIds={model.game.currentHandIds}
         activeGameIds={model.game.activeIds}
         iStarted={iStarted}
+        iProposedHand={iProposedHand}
         playerNumber={playerNumber}
         perGameAmount={model.betweenHand.lastTerms.myContribution}
         lastHandTerms={model.betweenHand.lastTerms}
         myName={myName}
         opponentName={opponentName}
         settlementOutcome={model.game.terminal.outcome}
+        gameSettlementOutcomes={gameSettlementOutcomes}
         handKey={model.game.handKey}
       />
     </div>

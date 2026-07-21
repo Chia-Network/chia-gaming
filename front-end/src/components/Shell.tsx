@@ -2937,6 +2937,7 @@ const Shell = () => {
                   myName={sessionSaveRef.current?.myAlias ?? peekAlias()}
                   opponentName={sessionSaveRef.current?.opponentAlias}
                   iStarted={sessionSaveRef.current?.iStarted ?? false}
+                  iProposedHand={sessionSaveRef.current?.iProposedHand ?? false}
                 />
                 {sessionConsentOverlay}
               </div>

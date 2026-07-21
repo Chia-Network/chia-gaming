@@ -214,6 +214,7 @@ export class SessionController implements PollingGameSession {
   setReloading() { this.reloading = true; }
 
   attachBlockchain(blockchain: BlockchainPoller) {
+    if (this.disposed) return;
     if (this.blockchain && this.blockchain !== blockchain) {
       this.blockchain.detachGameSession(this);
       this.blockchainAttached = false;

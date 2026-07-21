@@ -374,7 +374,7 @@ export function useKrunkHand(
   const gsRef = useRef(gs);
   const gameObjectRef = useRef(_gameObject);
   const gameIdRef = useRef(_gameId);
-  const handFinishedRef = useRef(false);
+  const handFinishedRef = useRef(gs.handler === KrunkHandler.Terminal);
   const activeRef = useRef(active);
 
   gsRef.current = gs;
