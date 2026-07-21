@@ -883,7 +883,9 @@ impl SpendChannelCoinPhase {
         // exists for this game id (not a puzzle-hash soft-match that can disagree).
         let replaying_ids: HashSet<GameID> = {
             let player_ch = self.base.channel_state()?;
-            game_map.values().filter_map(|state| {
+            game_map
+                .values()
+                .filter_map(|state| {
                     if state.our_turn && player_ch.has_cached_move_for_game(&state.game_id) {
                         Some(state.game_id)
                     } else {

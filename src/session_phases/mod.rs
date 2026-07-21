@@ -821,17 +821,14 @@ impl OffChainPhase {
                                 .to_string(),
                         )
                     })?;
-                let expected_conds = proper_list(
-                    env.allocator.allocator_ref(),
-                    expected_conditions,
-                    true,
-                )
-                .ok_or_else(|| {
-                    Error::StrErr(
+                let expected_conds =
+                    proper_list(env.allocator.allocator_ref(), expected_conditions, true)
+                        .ok_or_else(|| {
+                            Error::StrErr(
                         "clean shutdown conditions: expected conditions are not a proper list"
                             .to_string(),
                     )
-                })?;
+                        })?;
                 if peer_conds.len() != expected_conds.len() {
                     return Err(Error::StrErr(
                         "clean shutdown conditions: wrong number of conditions".to_string(),
