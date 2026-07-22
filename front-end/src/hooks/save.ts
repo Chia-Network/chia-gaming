@@ -516,7 +516,7 @@ function loadPreferences(): SessionSave {
 
 function isTerminalFinishedChannel(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'
-    || state === 'ResolvedUnrolled'
+    || state === 'DoneUnrolling'
     || state === 'ResolvedStale'
     || state === 'Failed';
 }

@@ -41,7 +41,8 @@ pub enum ChannelStatus {
     GoingOnChain,
     Unrolling,
     ResolvedClean,
-    ResolvedUnrolled,
+    #[serde(alias = "ResolvedUnrolled")]
+    DoneUnrolling,
     ResolvedStale,
     Failed,
 }

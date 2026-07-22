@@ -36,6 +36,21 @@ session renders.
 
 ## Fixes recommended
 
+## Completed flicker removals
+
+- **Quiescent controller drains:** all synchronous FIFO effects, including
+  re-entrant handler results, are batched before React paints. Proposal
+  acceptance, grouped acceptance, on-chain move pairs, and unroll bursts remain
+  ordered protocol events but no longer produce intermediate renders.
+- **Coin metadata enrichment:** channel/game/terminal semantics now commit
+  before hashing; a coin ID can only patch the matching current record.
+- **Between-hand proposals:** compose and review dialogs dim and disable the
+  completed board instead of unmounting it.
+- **Space Poker voluntary fold:** terminal local state commits before the
+  settlement request, so settlement cannot roll back the just-folded hand.
+- **Channel status:** `DoneUnrolling` replaces `ResolvedUnrolled`; it means the
+  channel coin completed its unroll, while on-chain games may still be active.
+
 ### P0 — Serialize asynchronous notification projection
 
 **Confidence:** high
@@ -66,7 +81,7 @@ into a new protocol transition.
   pending; assert terminal state cannot be overwritten by the older turn.
 - Verify re-entrant events remain FIFO after the serialized handler completes.
 
-### P0 — Do not announce a proposal as accepted when balance preflight fails
+### Intentional transactional sequence — insufficient-balance acceptance
 
 **Confidence:** high
 
@@ -79,13 +94,10 @@ and starts the hand; the next macrotask's `InsufficientBalance` handler removes
 its IDs and instances and returns to the proposal UI. A user can therefore see
 a hand briefly start and disappear even though acceptance never succeeded.
 
-This contradicts the grouped-proposal UX invariant: a group must never appear
-partly live.
-
-**Atomic boundary:** emit a failure notification only. Prefer a typed
-`ProposalAcceptFailed { group_ids, reason: InsufficientBalance, ... }`, or make
-`InsufficientBalance` itself the sole notification for the failed group. Do not
-emit `ProposalAccepted` before the full aggregate preflight succeeds.
+This is intentionally coherent within the transaction: the UI creates the
+common acceptance lifecycle state and resolves it immediately as insufficient
+balance. The quiescent drain prevents an intermediate hand render, so no
+proposal-specific buffering or replacement notification is needed.
 
 **Regression tests:**
 
@@ -286,13 +298,13 @@ hand rows appear together.
 
 **Confidence:** high
 
-`selectSessionPhase` already recognizes that `ResolvedUnrolled` with active
+`selectSessionPhase` already recognizes that `DoneUnrolling` with active
 game IDs is still an on-chain session. The channel label nevertheless says
 “resolved” while hand rows may be “Your turn” or “Playing move.” This is a
 semantic UX mismatch, not merely a rendering issue.
 
 Add a channel status that means the channel coin has resolved but on-chain games
-remain active, or change the display projection so `ResolvedUnrolled` is not
+remain active, or change the display projection so `DoneUnrolling` is not
 presented as session completion while the game map is non-empty. Keep the
 underlying monotonic channel-coin lifecycle unchanged.
 

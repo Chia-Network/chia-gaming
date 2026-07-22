@@ -172,7 +172,7 @@ impl ToLocalUI for Pipe {
                     state,
                     ChannelStatus::GoingOnChain
                         | ChannelStatus::Unrolling
-                        | ChannelStatus::ResolvedUnrolled
+                        | ChannelStatus::DoneUnrolling
                         | ChannelStatus::ResolvedStale
                 ) {
                     self.went_on_chain = Some(

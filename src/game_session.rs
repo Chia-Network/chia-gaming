@@ -752,7 +752,7 @@ impl GameSession {
             self.last_channel_status.as_ref().map(|s| &s.state),
             Some(
                 ChannelStatus::ResolvedClean
-                    | ChannelStatus::ResolvedUnrolled
+                    | ChannelStatus::DoneUnrolling
                     | ChannelStatus::ResolvedStale
                     | ChannelStatus::Failed,
             )
@@ -914,12 +914,12 @@ impl GameSession {
                     ChannelStatus::ResolvedClean => {
                         self.state.clean_shutdown = snap.coin.clone();
                     }
-                    ChannelStatus::ResolvedUnrolled | ChannelStatus::ResolvedStale
+                    ChannelStatus::DoneUnrolling | ChannelStatus::ResolvedStale
                         if self.state.is_on_chain =>
                     {
                         self.state.peer_disconnected = true;
                     }
-                    ChannelStatus::ResolvedUnrolled | ChannelStatus::ResolvedStale => {}
+                    ChannelStatus::DoneUnrolling | ChannelStatus::ResolvedStale => {}
                     ChannelStatus::GoingOnChain | ChannelStatus::Unrolling => {
                         self.state.peer_disconnected = true;
                     }

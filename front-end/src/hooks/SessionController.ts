@@ -809,7 +809,7 @@ export class SessionController implements PollingGameSession {
       diagStack('deliver_message failed', e);
       this.rxjsEmitter?.next({ type: 'error', error: errMsg });
       const state = this.lastChannelStatus?.state;
-      const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
+      const resolved = state === 'ResolvedClean' || state === 'DoneUnrolling'
         || state === 'ResolvedStale' || state === 'Failed';
       if (!this.onChain && !resolved) {
         this.goOnChain();

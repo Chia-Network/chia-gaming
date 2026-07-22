@@ -194,7 +194,7 @@ describe('session model selectors', () => {
   it('separates channel advisories from hand terminal details', () => {
     const terminal = createSessionModel({
       channel: {
-        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' },
       },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
@@ -283,7 +283,7 @@ describe('session model selectors', () => {
     })).handStatusLabel).toBe('Replaying move');
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'finishing' },
@@ -381,7 +381,7 @@ describe('session model selectors', () => {
 
   it('shows a premature opponent timeout as an explicit ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
@@ -400,7 +400,7 @@ describe('session model selectors', () => {
 
   it('shows settled cleanly as an ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
@@ -419,7 +419,7 @@ describe('session model selectors', () => {
 
   it('shows move-too-late as an ended detail distinct from forfeit', () => {
     const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
@@ -928,7 +928,7 @@ describe('session model selectors', () => {
   it('keeps an unrolled session on-chain while an active game is unresolved', () => {
     const unrolledWithGame = createSessionModel({
       channel: {
-        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' },
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: true,
         cleanShutdownStarted: false,

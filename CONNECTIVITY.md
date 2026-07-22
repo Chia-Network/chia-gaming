@@ -221,8 +221,8 @@ Specific rules:
 | `resolved` | Terminal channel state and no pending hand obligations | No live protocol obligation. Not busy and available for matchmaking, while the finished session may remain visible as display state. |
 
 The on-chain state persists until the broader session phase is terminal. A raw
-channel status of `ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or
-`Failed` is terminal for the channel itself, but `ResolvedUnrolled` and
+channel status of `ResolvedClean`, `DoneUnrolling`, `ResolvedStale`, or
+`Failed` is terminal for the channel itself, but `DoneUnrolling` and
 `ResolvedStale` can still be followed by per-game outcomes. If any hand remains
 unresolved, the broader session phase stays `on-chain`. Once the last hand is
 finished, the broader phase becomes `resolved`: the save can be wiped and the
@@ -244,7 +244,7 @@ When a session transitions to on-chain:
 ### Terminal detection
 
 When the broader session phase becomes `resolved` after a terminal channel
-state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`) and
+state (`ResolvedClean`, `DoneUnrolling`, `ResolvedStale`, or `Failed`) and
 any pending hand obligations have finished:
 
 1. The session is done.

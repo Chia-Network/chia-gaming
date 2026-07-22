@@ -330,7 +330,7 @@ export function useSpacepokerHand(
     // hand already reached Folded/Showdown via optimistic play or replay.
     setSettlementOutcome(outcome);
     const cur = gsRef.current;
-    if (cur.handler === SpHandler.Showdown || cur.handler === SpHandler.Folded) {
+    if (handFinishedRef.current || cur.handler === SpHandler.Showdown || cur.handler === SpHandler.Folded) {
       return;
     }
     const byUs = spacepokerSettlementByUs(outcome);
@@ -750,11 +750,11 @@ export function useSpacepokerHand(
     const cur = gsRef.current;
     // "Fold" is a UX betting action. Protocol-wise this accepts the current
     // settlement; Space Poker has no fold move in its handlers or validators.
-    go.acceptSettlement(gid);
-    setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
     handFinishedRef.current = true;
+    setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
     setTerminalState('folded-by-you');
     transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
+    go.acceptSettlement(gid);
   }, []);
 
   const formatBet = useCallback((units: bigint): string => {

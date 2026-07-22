@@ -247,7 +247,7 @@ mod sim_tests {
                     ui.notifications.iter().any(|notification| matches!(
                         notification,
                         GameNotification::ChannelStatus {
-                            state: ChannelStatus::ResolvedUnrolled,
+                            state: ChannelStatus::DoneUnrolling,
                             ..
                         }
                     )),

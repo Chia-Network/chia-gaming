@@ -291,7 +291,7 @@ export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
 
 const RESOLVED_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
-  'ResolvedUnrolled',
+  'DoneUnrolling',
   'ResolvedStale',
   'Failed',
 ]);
@@ -301,7 +301,7 @@ const WINDING_DOWN_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
-  'ResolvedUnrolled',
+  'DoneUnrolling',
   'ResolvedStale',
   'Failed',
 ]);
@@ -310,7 +310,7 @@ const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
-  'ResolvedUnrolled',
+  'DoneUnrolling',
   'ResolvedStale',
 ]);
 
@@ -328,7 +328,7 @@ const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   GoingOnChain: 'Going On Chain',
   Unrolling: 'Unrolling',
   ResolvedClean: 'Resolved Clean',
-  ResolvedUnrolled: 'Resolved Unrolled',
+  DoneUnrolling: 'Unroll complete',
   ResolvedStale: 'Resolved Stale',
   Failed: 'Failed',
 };
@@ -466,7 +466,7 @@ export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
 
 export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
   if (
-    (model.channel.status.state === 'ResolvedUnrolled'
+    (model.channel.status.state === 'DoneUnrolling'
       || model.channel.status.state === 'ResolvedStale')
     && model.game.activeIds.length > 0
   ) {
@@ -711,7 +711,7 @@ function dashboardActionFor(
       }
       return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
     case 'ResolvedClean':
-    case 'ResolvedUnrolled':
+    case 'DoneUnrolling':
     case 'ResolvedStale':
     case 'Failed':
       return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
@@ -989,6 +989,10 @@ function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
   });
 }
 
+function normalizeChannelStatus(value: string): ChannelStatus {
+  return value === 'ResolvedUnrolled' ? 'DoneUnrolling' : value as ChannelStatus;
+}
+
 export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): SessionModel {
   const fallbackTerms: HandTermsModel = {
     gameType: 'calpoker',
@@ -1039,7 +1043,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     channel: {
       status: save.channelStatus
         ? {
-            state: save.channelStatus.state,
+            state: normalizeChannelStatus(save.channelStatus.state),
             advisory: save.channelStatus.advisory ?? null,
             coinHex: null,
             coinAmount: null,
@@ -1054,7 +1058,9 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: save.goOnChainPressed ?? false,
       cleanShutdownStarted: save.cleanShutdownStarted ?? false,
-      dismissedChannelStatus: (save.dismissedChannelStatus as ChannelStatus | undefined) ?? null,
+      dismissedChannelStatus: save.dismissedChannelStatus
+        ? normalizeChannelStatus(save.dismissedChannelStatus)
+        : null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
     },
     game: {

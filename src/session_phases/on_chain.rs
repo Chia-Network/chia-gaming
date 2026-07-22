@@ -1784,7 +1784,7 @@ impl PeerLifecyclePhase for OnChainPhase {
         } else if self.was_stale {
             ChannelStatus::ResolvedStale
         } else {
-            ChannelStatus::ResolvedUnrolled
+            ChannelStatus::DoneUnrolling
         };
         Some(ChannelStatusSnapshot {
             state,

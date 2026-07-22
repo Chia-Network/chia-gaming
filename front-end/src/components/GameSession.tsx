@@ -758,7 +758,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     ]),
   );
   const gameIsFrozen = session.sessionPhase === 'resolved';
-  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
+  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState);
 
   if (suppressPhaseReporting) {
     return (
@@ -782,7 +782,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
-          <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
+          <div
+            ref={gameAreaRef}
+            className={`relative overflow-hidden z-0${hideGameInterfaceForBetweenHandDialog ? ' pointer-events-none opacity-40' : ''}`}
+          >
           {showGameInterface && (
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}

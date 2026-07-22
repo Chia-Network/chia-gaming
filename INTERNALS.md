@@ -221,7 +221,7 @@ This is enforced in `GameSessionState`:
 `GameSession::go_on_chain`, before any on-chain logic runs.
 - The same flag is also set from channel status transitions in
 `emit_channel_status_if_changed` when state becomes `GoingOnChain`,
-`Unrolling`, or (`ResolvedUnrolled`/`ResolvedStale` while already on-chain).
+`Unrolling`, or (`DoneUnrolling`/`ResolvedStale` while already on-chain).
 - `PacketSender::send_message` silently drops outbound messages when
 `peer_disconnected` is true.
 - `GameSession::deliver_message` silently drops inbound messages when

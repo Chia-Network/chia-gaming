@@ -346,7 +346,7 @@ impl ToLocalUI for SimulatedPeer {
                 match state {
                     ChannelStatus::GoingOnChain
                     | ChannelStatus::Unrolling
-                    | ChannelStatus::ResolvedUnrolled
+                    | ChannelStatus::DoneUnrolling
                     | ChannelStatus::ResolvedStale
                     | ChannelStatus::Failed => Err(Error::StrErr(format!(
                         "unexpected channel status during handshake: {state:?}"
@@ -973,7 +973,7 @@ impl ToLocalUI for LocalTestUIReceiver {
                     state,
                     ChannelStatus::ShuttingDown
                         | ChannelStatus::ResolvedClean
-                        | ChannelStatus::ResolvedUnrolled
+                        | ChannelStatus::DoneUnrolling
                         | ChannelStatus::ResolvedStale
                 ) {
                     self.assert_channel_created("channel_status");
@@ -999,7 +999,7 @@ impl ToLocalUI for LocalTestUIReceiver {
                         | ChannelStatus::ShuttingDown
                         | ChannelStatus::ShutdownTransactionPending
                         | ChannelStatus::ResolvedClean
-                        | ChannelStatus::ResolvedUnrolled
+                        | ChannelStatus::DoneUnrolling
                         | ChannelStatus::ResolvedStale
                         | ChannelStatus::Failed
                 ) {
@@ -2259,7 +2259,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             ChannelStatus::GoingOnChain => 5,
             ChannelStatus::Unrolling => 6,
             ChannelStatus::ResolvedClean
-            | ChannelStatus::ResolvedUnrolled
+            | ChannelStatus::DoneUnrolling
             | ChannelStatus::ResolvedStale
             | ChannelStatus::Failed => 7,
         }
@@ -2893,7 +2893,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                 ],
                 "piss_off_basic p0",
@@ -2918,7 +2918,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                 ],
                 "piss_off_basic p1",
@@ -3136,7 +3136,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
@@ -3168,7 +3168,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     // Bob replays his moves on-chain; Alice skips her losing
                     // step e so Bob never sees her final move.  Alice times out.
@@ -3252,7 +3252,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -3271,7 +3271,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
@@ -3327,7 +3327,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                         ChannelStatus::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                 ],
                 "after_accept p0",
@@ -3355,7 +3355,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                 ],
                 "after_accept p1",
@@ -3401,7 +3401,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
@@ -3427,7 +3427,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -3478,7 +3478,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledSlashedOpponent),
@@ -3505,7 +3505,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -3580,7 +3580,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledSlashedOpponent),
@@ -3606,7 +3606,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -3665,7 +3665,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -3692,7 +3692,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledSlashedOpponent),
@@ -4324,7 +4324,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
             ],
@@ -4346,7 +4346,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
@@ -4413,7 +4413,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
@@ -4426,7 +4426,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
@@ -4488,7 +4488,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
@@ -4514,7 +4514,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
             ],
@@ -4570,7 +4570,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledSlashedOpponent),
@@ -4597,7 +4597,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -4652,7 +4652,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
@@ -4684,7 +4684,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -4764,7 +4764,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledSlashedOpponent),
@@ -4791,7 +4791,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -4873,7 +4873,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentCheated),
             ], "nerfed_cheat p0");
@@ -4885,7 +4885,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
@@ -4940,7 +4940,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
@@ -4967,7 +4967,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -5073,7 +5073,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
         ], "nerfed_accept p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
@@ -5082,7 +5082,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
         ], "nerfed_accept p1");
     }));
@@ -5133,7 +5133,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ExpectedEvent::Notification(ExpectedNotification::ProposalCancelled),
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
         ], "cancellation_nerfed p0 prefix");
         let p0_tail: Vec<String> = outcome.local_uis[0].events[6..].iter().map(event_shape).collect();
         let p0_terminal: Vec<&str> = p0_tail.iter().filter(|s| {
@@ -5153,7 +5153,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
         ], "cancellation_nerfed p1 prefix");
         let p1_tail: Vec<String> = outcome.local_uis[1].events[7..].iter().map(event_shape).collect();
         let p1_terminal: Vec<&str> = p1_tail.iter().filter(|s| {
@@ -5210,7 +5210,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
             ],
@@ -5229,7 +5229,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
@@ -5290,7 +5290,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentCheated),
             ], "opp_cheated p0");
@@ -5302,7 +5302,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
@@ -5345,7 +5345,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "destroyed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
@@ -5356,7 +5356,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "destroyed p1");
         },
@@ -5411,12 +5411,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
             ], "alice_nerfed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
             ], "alice_nerfed p1");
         },
     ));
@@ -5465,12 +5465,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
             ], "bob_nerfed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
             ], "bob_nerfed p1");
         },
     ));
@@ -5516,7 +5516,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
@@ -5542,7 +5542,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -5586,7 +5586,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
@@ -5597,7 +5597,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::DoneUnrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
@@ -5675,7 +5675,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
             ],
             "state_too_high p0",
@@ -5769,7 +5769,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
             ],
             "wrong_parity p0",
@@ -5870,7 +5870,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -5891,7 +5891,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                    ChannelStatus::ResolvedUnrolled,
+                    ChannelStatus::DoneUnrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {

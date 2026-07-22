@@ -153,7 +153,7 @@ export type ChannelStatus =
   | 'OurWalletMakingOffer' | 'OurWalletMakingOfferAcceptance' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
-  | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
+  | 'ResolvedClean' | 'DoneUnrolling' | 'ResolvedStale'
   | 'Failed';
 
 export interface ChannelStatusPayload {

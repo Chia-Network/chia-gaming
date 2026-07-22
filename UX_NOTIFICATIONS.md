@@ -150,7 +150,7 @@ for how those lenses relate.
 | `GoingOnChain` | Explicit on-chain transition initiated | Local side has initiated transition from off-chain potato flow to on-chain resolution                                                         |
 | `Unrolling`       | Unroll detected on-chain                       | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                |
 | `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
-| `ResolvedUnrolled`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately |
+| `DoneUnrolling`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately |
 | `ResolvedStale`   | Stale unroll completed                         | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                         |
 | `Failed`          | Unrecoverable error                            | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                            |
 
@@ -190,7 +190,7 @@ is intentionally calmer than the raw notification stream:
 `Channel: <channel status> <channel advisory> [Hand N: <status> <detail>]`
 
 The channel half summarizes the channel lifecycle. `Unrolling` and
-`ResolvedUnrolled` are not separate pop-up-worthy events; the bar is the source
+`DoneUnrolling` are not separate pop-up-worthy events; the bar is the source
 of truth for those states. `Failed` and `ResolvedStale` can still produce
 error-style attention because they indicate adverse channel-level outcomes.
 
@@ -439,7 +439,7 @@ and terminal game notifications per player per game ID. Every
    OurWalletMakingOffer/OurWalletMakingOfferAcceptance(1) < OfferSent(2) <
    TransactionPending(3) < Active(4) <
    ShuttingDown/GoingOnChain(5) < ShutdownTransactionPending/Unrolling(6) <
-   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(7)`. `Active` may repeat
+   ResolvedClean/DoneUnrolling/ResolvedStale/Failed(7)`. `Active` may repeat
    at the same ordinal for balance updates, and winding-down states at ordinals
    5 and 6 may repeat as shutdown/on-chain details are refined. Enforced by the
    simulation loop's post-test assertion.

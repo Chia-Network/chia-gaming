@@ -69,7 +69,7 @@ state to decide whether to preempt or wait for the timeout path (see
 coin is spent, creating game coins and reward coins.
 
 When the unroll coin spend is detected, a `ChannelStatus` notification with
-state `ResolvedUnrolled` (or `ResolvedStale` if the unroll was stale) is
+state `DoneUnrolling` (or `ResolvedStale` if the unroll was stale) is
 emitted.
 
 ### Step 3: Forward-Align State
