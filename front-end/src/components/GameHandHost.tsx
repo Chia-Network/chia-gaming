@@ -139,6 +139,7 @@ export default function GameHandHost({
     <div
       className={`relative h-full w-full min-h-0${mode === 'frozen' ? ' pointer-events-none' : ''}`}
       aria-disabled={mode === 'frozen' || undefined}
+      inert={mode === 'frozen' || undefined}
     >
       {content}
     </div>
