@@ -48,6 +48,28 @@ export function shouldReportPresenceBusy(
   return shouldReportHubBusy(sessionPhase) || (peerGateActive && !hasFullNodePeer);
 }
 
+/**
+ * Whether inbound matchmaking may open a consent prompt.
+ * Must stay aligned with `shouldReportPresenceBusy` for session + peer-gate,
+ * and also exclude temporary local matchmaking state that does not always
+ * set hub `busy` (pending advisory/proposal, live peer session, reserved peer).
+ */
+export function isAvailableForNewSessionPrompt(
+  sessionPhase: SessionPhase,
+  pendingAdvisory: boolean,
+  pendingProposal: boolean,
+  hasLivePeerSession: boolean,
+  hasReservedPeerId: boolean,
+  peerGateActive: boolean,
+  hasFullNodePeer: boolean,
+): boolean {
+  return !shouldReportPresenceBusy(sessionPhase, peerGateActive, hasFullNodePeer)
+    && !pendingAdvisory
+    && !pendingProposal
+    && !hasLivePeerSession
+    && !hasReservedPeerId;
+}
+
 /** Channel states that already finished — resume must not keep the lobby busy. */
 export function isTerminalChannelStatus(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'

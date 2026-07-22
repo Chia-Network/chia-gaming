@@ -1,4 +1,5 @@
 import {
+  isAvailableForNewSessionPrompt,
   isRestoreBlocked,
   isTerminalChannelStatus,
   shouldAdvertiseAvailable,
@@ -44,6 +45,21 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportPresenceBusy('resolved', true, true)).toBe(false);
     expect(shouldReportPresenceBusy('off-chain', false, true)).toBe(true);
     expect(shouldReportPresenceBusy('on-chain', true, false)).toBe(true);
+  });
+
+  it('rejects inbound matchmaking while the peer gate holds presence busy', () => {
+    // Idle session + no pending prompts, but peers unverified → unavailable.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false)).toBe(false);
+    // Gate open / peer verified → available when otherwise idle.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(true);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, false)).toBe(true);
+    // Session obligation or pending matchmaking still blocks.
+    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, false, true)).toBe(false);
   });
 
   it('recognizes terminal channel states that must not keep the lobby busy', () => {
