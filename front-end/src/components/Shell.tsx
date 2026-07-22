@@ -222,9 +222,9 @@ function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
 }
 
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
-  sendMessage: () => {},
-  sendAck: () => {},
-  sendKeepalive: () => {},
+  sendMessage: () => false,
+  sendAck: () => false,
+  sendKeepalive: () => false,
   hostLog: () => {},
   close: () => {},
 };
@@ -697,7 +697,7 @@ const Shell = () => {
     const handler = () => {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
-      // Drop the lobby iframe immediately so its reconnect loop stops now,
+      // Drop the hub iframe immediately so its reconnect loop stops now,
       // not only after the async peekSession → tabConflict re-render.
       setIframeUrl('about:blank');
       setHubOrigin(null);
@@ -1144,7 +1144,7 @@ const Shell = () => {
       type: 'session_proposal',
       proposer_amount: advisory.my_amount,
       responder_amount: advisory.their_amount,
-      // Lobby-synced alias only — never getAlias(), which invents Player_*.
+      // Hub-synced alias only — never getAlias(), which invents Player_*.
       from_alias: peekAlias(),
       channel_timeout: advisory.channel_timeout,
       unroll_timeout: advisory.unroll_timeout,
@@ -1293,7 +1293,7 @@ const Shell = () => {
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
 
-  // Connect to a hub by origin URL. Creates the lobby iframe + game relay WebSocket.
+  // Connect to a hub by origin URL. Creates the hub iframe + game relay WebSocket.
   const connectToHub = useCallback((rawOrigin: string, options: { resetSession?: boolean } = {}) => {
     const origin = normalizeHubOrigin(rawOrigin);
     hubConnRef.current?.disconnect();
@@ -1317,8 +1317,8 @@ const Shell = () => {
 
     setHubOrigin(origin);
     saveHubUrl(origin);
-    const lobbyUrl = `${origin}/?session=${hubSessionId}&uniqueId=${uniqueId}`;
-    setIframeUrl(lobbyUrl);
+    const hubUrl = `${origin}/?session=${hubSessionId}&uniqueId=${uniqueId}`;
+    setIframeUrl(hubUrl);
 
     setHubLiveness('reconnecting');
 
@@ -1445,7 +1445,9 @@ const Shell = () => {
             bindPeerMessageHandler(peerSessionRef.current);
             setRestoreHubReconciled(true);
             // Restore never goes through startFreshSessionWithPeer, which is
-            // otherwise the only place that marks the hub busy.
+            // otherwise the only place that marks the hub busy. Use restoreBusy
+            // (session/peer-gate presence); terminal saves stay available unless
+            // the peer gate still requires busy.
             conn.setBusy(restoreBusy, save.myAlias ?? peekAlias());
           } else if (save?.serializedGameSession || save?.pairingToken) {
             setRestoreHubReconciled(true);
@@ -1455,7 +1457,7 @@ const Shell = () => {
             sessionController.resendUnacked();
           }
         },
-        onLobbyAttention: () => {
+        onHubAttention: () => {
           if (activeTabRef.current !== 'hub') {
             setHubAlert(true);
           }
@@ -1473,6 +1475,8 @@ const Shell = () => {
           hubWsUpRef.current = true;
           lastHubActivityRef.current = Date.now();
           setHubLiveness('connected');
+          // Retry outbound/acks that failed while the hub WS was down.
+          sessionController?.resendUnacked();
         },
         onHubActivity: () => {
           lastHubActivityRef.current = Date.now();
@@ -1488,7 +1492,7 @@ const Shell = () => {
             || (restoring && !terminalSave && !!(save?.serializedGameSession || save?.pairingToken));
           return {
             busy,
-            // Prefer session aliases, then the lobby-synced prefs alias. Never call
+            // Prefer session aliases, then the hub-synced prefs alias. Never call
             // getAlias() here — inventing Player_* would pollute identify/set_busy.
             alias: sessionConfigRef.current?.myAlias
               ?? save?.myAlias
@@ -1923,13 +1927,13 @@ const Shell = () => {
 
   useThemeSyncToIframe('hub-iframe', [iframeUrl]);
 
-  // Lobby owns the display name; keep local prefs aligned so presence and
+  // Hub owns the display name; keep local prefs aligned so presence and
   // session_proposal do not invent a Player_* fallback that later overwrites
   // the hub.
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       const data = ev.data;
-      if (!data || data.type !== 'lobby-alias' || typeof data.alias !== 'string') return;
+      if (!data || data.type !== 'hub-alias' || typeof data.alias !== 'string') return;
       const trimmed = data.alias.trim();
       if (!trimmed) return;
       if (peekAlias() === trimmed) return;

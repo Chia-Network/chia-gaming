@@ -509,9 +509,12 @@ function compare_card(a: bigint, b: bigint): number {
 }
 
 export interface PeerConnectionResult {
-  sendMessage: (msgno: number, input: Uint8Array) => void;
-  sendAck: (ackMsgno: number) => void;
-  sendKeepalive: () => void;
+  /** Returns false when the hub WS is not OPEN (frame was not sent). */
+  sendMessage: (msgno: number, input: Uint8Array) => boolean;
+  /** Returns false when the hub WS is not OPEN (frame was not sent). */
+  sendAck: (ackMsgno: number) => boolean;
+  /** Returns false when the hub WS is not OPEN. */
+  sendKeepalive: () => boolean;
   hostLog: (msg: string) => void;
   close: () => void;
 }

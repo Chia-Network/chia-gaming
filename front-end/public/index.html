@@ -19,6 +19,14 @@
             base.href = meta.basePath;
             document.head.appendChild(base);
 
+            // Start WASM bytes as early as possible (before glue calls loadWasm).
+            var preloadWasm = document.createElement('link');
+            preloadWasm.rel = 'preload';
+            preloadWasm.as = 'fetch';
+            preloadWasm.href = 'chia_gaming_wasm_bg.wasm';
+            preloadWasm.crossOrigin = 'anonymous';
+            document.head.appendChild(preloadWasm);
+
             var css = document.createElement('link');
             css.rel = 'stylesheet';
             css.href = 'index.css';

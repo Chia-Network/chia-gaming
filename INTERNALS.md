@@ -26,8 +26,8 @@ There are three distinct timeouts in the system:
 
 | Timeout           | Purpose                                                                                                                                                                                    | Typical test value |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The hub lobby accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
-| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The hub lobby accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
+| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The hub accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
+| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The hub accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
 | `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals may choose any positive value; the UX defaults to 15 blocks. | 15 blocks          |
 
 
@@ -46,7 +46,7 @@ mempool.
 The default 15-block unroll timeout gives honest users enough time to preempt
 stale unrolls without making mainnet dispute resolution overly slow. At mainnet
 block cadence it is roughly five minutes; in the simulator it is roughly 150
-seconds. The hub lobby bounds channel and unroll timeout negotiation to
+seconds. The hub bounds channel and unroll timeout negotiation to
 3-30 blocks so users can make small adjustments without accepting arbitrarily
 long or short dispute windows.
 
@@ -174,7 +174,18 @@ set, so the present→absent diff cannot surface it. The manager captures these
 `first_seen_spent` coins and merges them into the spend report anyway; without
 this a handler waiting on such a coin — e.g. an opponent-published unroll coin —
 never receives `coin_spent` and stalls forever
-(`coin_first_seen_already_spent_is_forwarded_as_spend`).
+(`coin_first_seen_already_spent_is_forwarded_as_spend`). Those records already
+carry `created_height` (birthday) and `spent_height` (`spent_confirmed_at`).
+
+**Unspent-only feeds and spend-height inference.** Some feeds report only the
+live unspent set and omit spent coins entirely (no `spent_height` on a record).
+When a coin that was already live (birthday already set from creation) leaves
+that set during forward progress, the manager infers a spend and, if
+`spent_confirmed_at` is still unset, stamps the current poll height as a lower
+bound. This is distinct from first-seen-already-spent (real spend height) and
+from reorg handling: a reorg that rolls back or remine-shifts a coin's creation
+clears or updates `birthday` so relative timeouts re-arm from the new creation
+height — it does not rely on the poll-height spend stamp.
 
 **Host polling vs semantic coin ownership.** The browser-side poller owns the
 active transport queue of coin names to query. It reports raw coin-state
@@ -550,6 +561,7 @@ there is a bug.
 | **Already spent**               | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
 | **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
 | **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
+| **Missing validated spend**     | `validated.spends` has no entry for an input spend index. Accepting would skip CREATE_COIN / relative-lock bookkeeping.        |
 
 
 **Conflicting mempool spends are the one exception to "this can only be a bug."**

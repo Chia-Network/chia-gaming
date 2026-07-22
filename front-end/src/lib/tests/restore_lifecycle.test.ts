@@ -22,7 +22,7 @@ describe('restore lifecycle gates', () => {
     expect(isRestoreBlocked(false, 'idle', false)).toBe(false);
   });
 
-  it('keeps the lobby unavailable while restore is blocked', () => {
+  it('keeps the hub unavailable while restore is blocked', () => {
     expect(shouldAdvertiseAvailable('none', true)).toBe(false);
     expect(shouldAdvertiseAvailable('resolved', true)).toBe(false);
     expect(shouldAdvertiseAvailable('none', false)).toBe(true);
@@ -71,7 +71,7 @@ describe('restore lifecycle gates', () => {
     expect(isAvailableForNewSessionPrompt('none', false, false, false, true, false, true)).toBe(false);
   });
 
-  it('recognizes terminal channel states that must not keep the lobby busy', () => {
+  it('recognizes terminal channel states that must not keep the hub busy', () => {
     expect(isTerminalChannelStatus('Failed')).toBe(true);
     expect(isTerminalChannelStatus('ResolvedClean')).toBe(true);
     expect(isTerminalChannelStatus('ResolvedUnrolled')).toBe(true);

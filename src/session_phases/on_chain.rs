@@ -7,7 +7,6 @@ use crate::channel_state::types::ChannelEnv;
 use crate::channel_state::types::{
     ChannelPrivateKeys, CoinSpentInformation, LiveGame, OnChainGameState, ReadableMove,
 };
-use crate::common::types::PrivateKey;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
@@ -125,80 +124,33 @@ impl OnChainPhase {
 
     /// Create a terminal handler with an empty game map.  Used when
     /// SpendChannelCoinPhase reaches a terminal state (completed or failed)
-    /// without any on-chain games to track.
+    /// without any on-chain games to track. Requires live channel state —
+    /// forged zero keys/balances are not allowed.
     pub fn new_terminal(
-        channel_state: Option<&mut crate::channel_state::ChannelState>,
+        channel_state: &mut crate::channel_state::ChannelState,
         was_stale: bool,
         resolved_clean: bool,
         terminal_reward_coin: Option<CoinString>,
         advisory: Option<String>,
     ) -> Self {
-        let (
-            private_keys,
-            reward_puzzle_hash,
-            their_reward_puzzle_hash,
-            my_out_of_game_balance,
-            their_out_of_game_balance,
-            my_allocated_balance,
-            their_allocated_balance,
-            live_games,
-            pending_settlements,
-            unroll_advance_timeout,
-            is_initial_potato,
-            state_number,
-        ) = if let Some(ch) = channel_state {
-            (
-                ch.private_keys().clone(),
-                ch.my_reward_puzzle_hash().clone(),
-                ch.their_reward_puzzle_hash().clone(),
-                ch.my_out_of_game_balance(),
-                ch.their_out_of_game_balance(),
-                ch.my_allocated_balance(),
-                ch.their_allocated_balance(),
-                ch.take_live_games(),
-                ch.take_pending_settlements(),
-                ch.unroll_advance_timeout().clone(),
-                ch.is_initial_potato(),
-                ch.state_number(),
-            )
-        } else {
-            (
-                ChannelPrivateKeys {
-                    my_channel_coin_private_key: PrivateKey::default(),
-                    my_unroll_coin_private_key: PrivateKey::default(),
-                    my_referee_private_key: PrivateKey::default(),
-                },
-                PuzzleHash::default(),
-                PuzzleHash::default(),
-                Amount::default(),
-                Amount::default(),
-                Amount::default(),
-                Amount::default(),
-                vec![],
-                vec![],
-                Timeout::new(0),
-                false,
-                0,
-            )
-        };
         OnChainPhase {
             have_potato: PotatoState::Present,
             channel_timeout: Timeout::new(0),
             game_action_queue: VecDeque::new(),
             game_map: HashMap::new(),
             pending_moves: HashMap::new(),
-            private_keys,
-            reward_puzzle_hash,
-            their_reward_puzzle_hash,
-            my_out_of_game_balance,
-            their_out_of_game_balance,
-            my_allocated_balance,
-            their_allocated_balance,
-            live_games,
-            pending_settlements,
-            unroll_advance_timeout,
-            is_initial_potato,
-            state_number,
+            private_keys: channel_state.private_keys().clone(),
+            reward_puzzle_hash: channel_state.my_reward_puzzle_hash().clone(),
+            their_reward_puzzle_hash: channel_state.their_reward_puzzle_hash().clone(),
+            my_out_of_game_balance: channel_state.my_out_of_game_balance(),
+            their_out_of_game_balance: channel_state.their_out_of_game_balance(),
+            my_allocated_balance: channel_state.my_allocated_balance(),
+            their_allocated_balance: channel_state.their_allocated_balance(),
+            live_games: channel_state.take_live_games(),
+            pending_settlements: channel_state.take_pending_settlements(),
+            unroll_advance_timeout: channel_state.unroll_advance_timeout().clone(),
+            is_initial_potato: channel_state.is_initial_potato(),
+            state_number: channel_state.state_number(),
             was_stale,
             resolved_clean,
             terminal_reward_coin,
@@ -551,7 +503,10 @@ impl OnChainPhase {
         {
             self.pending_settlements[idx].get_transaction_for_timeout(env.allocator, coin)?
         } else {
-            return Ok(None);
+            return Err(Error::StrErr(format!(
+                "build_timeout_claim: no live or pending game {:?}",
+                game_id
+            )));
         };
 
         let tx = match tx {
@@ -740,6 +695,9 @@ impl OnChainPhase {
             self.have_potato = PotatoState::Present;
             old_definition
         } else {
+            // Not in the live map: either we already dropped this coin after a
+            // terminal outcome, or the host delivered a puzzle/solution for a
+            // coin we never tracked. Both are ignore (not a session-level Err).
             return Ok((effects, None));
         };
 

@@ -156,8 +156,8 @@ export function krunkSettlementStatus(
   }
 }
 
-export function parseSettlementShare(value: unknown): string {
-  if (value == null) return '0';
+export function parseSettlementShare(value: unknown): string | null {
+  if (value == null) return null;
   if (typeof value === 'object' && value !== null && 'Amount' in (value as Record<string, unknown>)) {
     return String((value as Record<string, unknown>).Amount);
   }

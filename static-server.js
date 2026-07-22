@@ -43,6 +43,54 @@ const MIME = {
   '.map': 'application/json',
 };
 
+/** Cache policy for nonce deploy layout (only root URLs are stable across rebuilds). */
+function cacheControlForPath(pathname) {
+  if (pathname.startsWith('/app/')) {
+    return 'public, max-age=31536000, immutable';
+  }
+  if (pathname === '/build-meta.json') {
+    return 'no-store';
+  }
+  if (pathname === '/' || pathname === '/index.html' || pathname.endsWith('.html')) {
+    return 'no-cache';
+  }
+  // favicon and other stable root static
+  return 'public, max-age=86400';
+}
+
+function sendFile(res, filePath, pathname) {
+  const ext = path.extname(filePath);
+  const ct = MIME[ext] || 'application/octet-stream';
+  const headers = {
+    'Content-Type': ct,
+    'Cache-Control': cacheControlForPath(pathname),
+  };
+  if (ext === '.wasm') {
+    headers['SourceMap'] = path.basename(filePath) + '.map';
+  }
+
+  const stream = fs.createReadStream(filePath);
+  stream.on('open', () => {
+    res.writeHead(200, headers);
+    stream.pipe(res);
+  });
+  stream.on('error', (err) => {
+    if (err.code === 'ENOENT') {
+      if (!res.headersSent) {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+      return;
+    }
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end('Internal error');
+    } else {
+      res.destroy(err);
+    }
+  });
+}
+
 const server = http.createServer((req, res) => {
   let pathname = new URL(req.url, 'http://localhost').pathname;
   if (pathname === '/') pathname = '/index.html';
@@ -53,37 +101,31 @@ const server = http.createServer((req, res) => {
     return res.end('Forbidden');
   }
 
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      // SPA fallback: serve index.html for missing files
-      if (err.code === 'ENOENT' && !path.extname(pathname)) {
-        return fs.readFile(path.join(ROOT, 'index.html'), (err2, html) => {
-          if (err2) { res.writeHead(404); return res.end('Not found'); }
-          res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-          res.end(html);
-        });
-      }
-      res.writeHead(404);
-      return res.end('Not found');
+  fs.stat(filePath, (err, st) => {
+    if (!err && st.isFile()) {
+      return sendFile(res, filePath, pathname);
     }
-    const ext = path.extname(filePath);
-    const ct = MIME[ext] || 'application/octet-stream';
-    const cc = pathname.startsWith('/app/')
-      ? 'public, max-age=31536000, immutable'
-      : 'no-store';
-    const headers = { 'Content-Type': ct, 'Cache-Control': cc };
-    if (ext === '.wasm') {
-      headers['SourceMap'] = path.basename(filePath) + '.map';
+
+    // SPA fallback: serve index.html for missing extensionless paths
+    if (err && err.code === 'ENOENT' && !path.extname(pathname)) {
+      const indexPath = path.join(ROOT, 'index.html');
+      return fs.stat(indexPath, (err2, st2) => {
+        if (err2 || !st2.isFile()) {
+          res.writeHead(404);
+          return res.end('Not found');
+        }
+        return sendFile(res, indexPath, '/index.html');
+      });
     }
-    res.writeHead(200, headers);
-    res.end(data);
+
+    res.writeHead(404);
+    return res.end('Not found');
   });
 });
 
-// Leave HTTP asset connections reusable briefly, then let Node close idle
-// keep-alives. This does not affect upgraded WebSocket connections.
-server.keepAliveTimeout = 5_000;
-server.headersTimeout = 6_000;
+// Keep connections reusable across parallel WASM + CLSP fetches.
+server.keepAliveTimeout = 60_000;
+server.headersTimeout = 61_000;
 
 server.listen(PORT, HOST, () => {
   console.log(`Static server: http://${HOST}:${PORT} -> ${ROOT}`);

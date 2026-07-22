@@ -45,21 +45,25 @@ export class PeerSession implements PeerConnectionResult {
 
   // --- PeerConnectionResult interface ---
 
-  sendMessage(msgno: number, input: Uint8Array): void {
-    if (this.destroyed) return;
+  sendMessage(msgno: number, input: Uint8Array): boolean {
+    if (this.destroyed) return false;
     log(`[peer] send msg msgno=${msgno} len=${input.byteLength} to=${this.peerId}`);
-    this.hubConn.sendToPeer(this.peerId, buildFrame(0x01, msgno, input));
+    return this.hubConn.sendToPeer(this.peerId, buildFrame(0x01, msgno, input));
   }
 
-  sendAck(ackMsgno: number): void {
-    if (this.destroyed) return;
+  sendAck(ackMsgno: number): boolean {
+    if (this.destroyed) return false;
     log(`[peer] send ack msgno=${ackMsgno} to=${this.peerId}`);
-    this.hubConn.sendToPeer(this.peerId, buildFrame(0x02, ackMsgno));
+    return this.hubConn.sendToPeer(this.peerId, buildFrame(0x02, ackMsgno));
   }
 
-  sendKeepalive(): void {
-    if (this.destroyed) return;
-    this.hubConn.sendToPeer(this.peerId, new Uint8Array([0x03]));
+  sendKeepalive(): boolean {
+    if (this.destroyed) return false;
+    const sent = this.hubConn.sendToPeer(this.peerId, new Uint8Array([0x03]));
+    if (!sent) {
+      log(`[PeerSession] keepalive dropped (hub ws not open) peer=${this.peerId}`);
+    }
+    return sent;
   }
 
   hostLog(_msg: string): void { /* no-op */ }
@@ -124,27 +128,38 @@ export class PeerSession implements PeerConnectionResult {
   deliverRawPeerMessage(fromId: string, payload: Uint8Array): boolean {
     if (this.destroyed || this._liveness === 'dead') return false;
     if (fromId !== this.peerId) return false;
-    this.notePeerActivity();
-    if (payload.length < 1) return false;
+    if (payload.length < 1) {
+      log(`[PeerSession] reject empty peer frame from=${fromId}`);
+      return false;
+    }
     const tag = payload[0];
     if (tag === 0x01 && payload.length >= 5) {
+      this.notePeerActivity();
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       const msgno = view.getUint32(1, false);
       const msg = payload.slice(5);
       log(`[peer] recv msg msgno=${msgno} len=${msg.byteLength} from=${fromId}`);
       if (this.messageHandler) this.messageHandler.handler(msgno, msg);
       else this.messageBuffer.push({ tag, msgno, data: msg });
-    } else if (tag === 0x02 && payload.length >= 5) {
+      return true;
+    }
+    if (tag === 0x02 && payload.length >= 5) {
+      this.notePeerActivity();
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       const ack = view.getUint32(1, false);
       log(`[peer] recv ack msgno=${ack} from=${fromId}`);
       if (this.messageHandler) this.messageHandler.ackHandler(ack);
       else this.messageBuffer.push({ tag, msgno: ack, data: new Uint8Array(0) });
-    } else if (tag === 0x03) {
+      return true;
+    }
+    if (tag === 0x03) {
+      this.notePeerActivity();
       if (this.messageHandler) this.messageHandler.keepaliveHandler();
       else this.messageBuffer.push({ tag, msgno: 0, data: new Uint8Array(0) });
+      return true;
     }
-    return true;
+    log(`[PeerSession] reject peer frame tag=0x${tag.toString(16)} len=${payload.length} from=${fromId}`);
+    return false;
   }
 
   // --- App-message helpers ---

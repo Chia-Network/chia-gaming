@@ -1,5 +1,5 @@
 import { SessionController } from './SessionController';
-import { WasmStateInit } from './WasmStateInit';
+import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 import {
   PeerConnectionResult,
 } from '../types/ChiaGaming';
@@ -18,7 +18,6 @@ import {
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
-import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 
 export var sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
@@ -57,20 +56,6 @@ export function destroySessionController(): void {
 }
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
-
-async function fetchPreset(fetchUrl: string): Promise<Uint8Array> {
-    const url = resolveDeployAssetUrl(fetchUrl);
-    const resp = await fetch(url);
-    if (!resp.ok) {
-        await recoverFromMissingDeployAsset(
-            'fetchPreset',
-            url,
-            resp.status,
-            resp.statusText,
-        );
-    }
-    return new Uint8Array(await resp.arrayBuffer());
-}
 
 export async function configSessionController(
   sc: SessionController,
@@ -182,7 +167,7 @@ export function getOrCreateSessionController(
     return { sessionController };
   }
 
-  const wasmStateInit = new WasmStateInit(fetchPreset);
+  const wasmStateInit = new WasmStateInit(fetchDeployPreset);
 
   sessionController = new SessionController(
     blockchain,

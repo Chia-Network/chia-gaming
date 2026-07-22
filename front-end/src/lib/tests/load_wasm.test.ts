@@ -15,6 +15,7 @@ import { Subscription } from 'rxjs';
 import {
   WasmStateInit,
   storeInitArgs,
+  _resetWasmLoadForTests,
 } from '../../hooks/WasmStateInit';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
@@ -162,6 +163,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   resetSaveState();
+  _resetWasmLoadForTests();
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
     request.onsuccess = () => resolve();
@@ -523,9 +525,10 @@ it(
       let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
+          return true;
         },
-        sendAck: (_ackMsgno: number) => {},
-        sendKeepalive: () => {},
+        sendAck: (_ackMsgno: number) => true,
+        sendKeepalive: () => true,
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
@@ -554,9 +557,10 @@ it(
       let peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
+          return true;
         },
-        sendAck: (_ackMsgno: number) => {},
-        sendKeepalive: () => {},
+        sendAck: (_ackMsgno: number) => true,
+        sendKeepalive: () => true,
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };

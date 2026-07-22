@@ -52,22 +52,39 @@ export interface UseKrunkHandResult {
   submitGuess: (word: string) => void;
 }
 
+const MAX_KRUNK_GUESSES = 5;
+
+/** True while the guesser can type (send now or add to the queue). */
 export function canDraftKrunkGuess(
   wordCommitted: boolean,
   handler: KrunkHandler,
-  guessCount: number,
+  filledCount: number,
 ): boolean {
+  // Any non-terminal bob state: BobWaiting (incl. waiting on commit/clue)
+  // or BobGuess (our turn to send).
+  if (!wordCommitted || filledCount >= MAX_KRUNK_GUESSES) return false;
+  return handler === KrunkHandler.BobWaiting || handler === KrunkHandler.BobGuess;
+}
+
+/** True while guesses should be queued (waiting on commit/clue), not sent. */
+export function canQueueKrunkGuess(
+  wordCommitted: boolean,
+  handler: KrunkHandler,
+  filledCount: number,
+): boolean {
+  // Queue while waiting — both before opponent commit and while a clue is
+  // outstanding after we already sent a guess.
   return wordCommitted
     && handler === KrunkHandler.BobWaiting
-    && guessCount === 0;
+    && filledCount < MAX_KRUNK_GUESSES;
 }
 
 export function krunkGuessSubmissionMode(
   isGuessPhase: boolean,
-  canQueueFirstGuess: boolean,
+  canQueue: boolean,
 ): 'send' | 'queue' | null {
   if (isGuessPhase) return 'send';
-  if (canQueueFirstGuess) return 'queue';
+  if (canQueue) return 'queue';
   return null;
 }
 
@@ -75,10 +92,18 @@ const PENDING_CLUE: KrunkGuess['clue'] = [-1, -1, -1, -1, -1];
 
 export function krunkGuessesWithQueued(
   guesses: KrunkGuess[],
-  queuedGuess: string | null,
+  queuedGuesses: readonly string[],
 ): KrunkGuess[] {
-  if (guesses.length > 0 || queuedGuess === null) return guesses;
-  return [{ word: queuedGuess, clue: PENDING_CLUE }];
+  if (queuedGuesses.length === 0) return guesses;
+  return [
+    ...guesses,
+    ...queuedGuesses.map(word => ({ word, clue: PENDING_CLUE })),
+  ];
+}
+
+/** True when gameState.error is a dictionary rejection (drop later queued guesses). */
+export function isKrunkDictionaryRejectionError(error: string | null): boolean {
+  return error != null && error.endsWith(' is not in the dictionary.');
 }
 
 export function applyKrunkMoveRejected(
@@ -133,7 +158,7 @@ export function krunkTerminalStatus(
   if (state.role === 'bob') {
     // Bob win amount is shown from moverShare in the UI (large font).
     if (state.outcome === 'win') return null;
-    return `Out of guesses. Word was ${state.revealedWord ?? '?????'}.`;
+    return 'Out of guesses.';
   }
   return state.outcome === 'win'
     ? `${opponentLabel} couldn't guess it!`
@@ -279,8 +304,15 @@ export function useKrunkHand(
   activeRef.current = active;
 
   useEffect(() => {
-    if (_gameId && !active) {
+    if (!_gameId) return;
+    if (!active) {
       handFinishedRef.current = true;
+      return;
+    }
+    // Clear a stale finished latch if the hand is live again and we have not
+    // actually reached Terminal (guards against transient active=false gaps).
+    if (gsRef.current.handler !== KrunkHandler.Terminal) {
+      handFinishedRef.current = false;
     }
   }, [_gameId, active]);
 

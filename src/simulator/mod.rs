@@ -448,10 +448,14 @@ impl Simulator {
     ) -> Result<Option<CoinString>, Error> {
         let coins = self.get_my_coins(puzzle_hash)?;
         for coin in coins {
-            if let Some((_, _, coin_amount)) = coin.to_parts() {
-                if &coin_amount >= amount {
-                    return Ok(Some(coin));
-                }
+            let (_, _, coin_amount) = coin.to_parts().ok_or_else(|| {
+                Error::StrErr(format!(
+                    "malformed coin string (to_parts failed): {}",
+                    hex::encode(coin.to_bytes())
+                ))
+            })?;
+            if &coin_amount >= amount {
+                return Ok(Some(coin));
             }
         }
         Ok(None)
@@ -632,37 +636,57 @@ impl Simulator {
                 });
             };
 
-            // Use validated conditions for state tracking.
-            if let Some(spend_conds) = validated.spends.get(i) {
-                for (ph_bytes, amt, _memo) in &spend_conds.create_coin {
-                    let ph = PuzzleHash::from_hash(Hash::from_bytes(ph_bytes.to_bytes()));
-                    let amount = Amount::new(*amt);
-                    let child = CoinString::from_parts(&coin_id, &ph, &amount);
-                    ephemeral_coins.insert(child.to_coin_id(), ph.clone());
-                    additions.push((coin_id.clone(), ph, amount));
+            // Use validated conditions for state tracking. Index must match the
+            // input spend; a gap would skip CREATE_COIN / relative locks while
+            // still accepting the removal.
+            let Some(spend_conds) = validated.spends.get(i) else {
+                if self.strict {
+                    panic!(
+                        "Strict mode: validated.spends missing index {} (len={}, txs={})",
+                        i,
+                        validated.spends.len(),
+                        txs.len(),
+                    );
                 }
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(1),
+                    diagnostic: format!(
+                        "validated.spends missing index {} (len={}, txs={})",
+                        i,
+                        validated.spends.len(),
+                        txs.len(),
+                    ),
+                });
+            };
+            for (ph_bytes, amt, _memo) in &spend_conds.create_coin {
+                let ph = PuzzleHash::from_hash(Hash::from_bytes(ph_bytes.to_bytes()));
+                let amount = Amount::new(*amt);
+                let child = CoinString::from_parts(&coin_id, &ph, &amount);
+                ephemeral_coins.insert(child.to_coin_id(), ph.clone());
+                additions.push((coin_id.clone(), ph, amount));
+            }
 
-                // ASSERT_HEIGHT_RELATIVE needs the actual creation height.
-                if let Some(required) = spend_conds.height_relative {
-                    let elapsed = state.height.saturating_sub(record_created_height);
-                    if elapsed < required {
-                        if self.strict {
-                            panic!(
-                                "Strict mode: ASSERT_HEIGHT_RELATIVE violated: \
-                                 coin {:?} created at height {}, current height {}, \
-                                 elapsed {} but required {}",
-                                coin_id, record_created_height, state.height, elapsed, required,
-                            );
-                        }
-                        return Ok(IncludeTransactionResult {
-                            code: 3,
-                            e: Some(8),
-                            diagnostic: format!(
-                                "Relative timelock not satisfied: elapsed {} < required {}",
-                                elapsed, required,
-                            ),
-                        });
+            // ASSERT_HEIGHT_RELATIVE needs the actual creation height.
+            if let Some(required) = spend_conds.height_relative {
+                let elapsed = state.height.saturating_sub(record_created_height);
+                if elapsed < required {
+                    if self.strict {
+                        panic!(
+                            "Strict mode: ASSERT_HEIGHT_RELATIVE violated: \
+                             coin {:?} created at height {}, current height {}, \
+                             elapsed {} but required {}",
+                            coin_id, record_created_height, state.height, elapsed, required,
+                        );
                     }
+                    return Ok(IncludeTransactionResult {
+                        code: 3,
+                        e: Some(8),
+                        diagnostic: format!(
+                            "Relative timelock not satisfied: elapsed {} < required {}",
+                            elapsed, required,
+                        ),
+                    });
                 }
             }
 

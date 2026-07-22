@@ -91,7 +91,7 @@ echo "=== Building WASM (web target, release) ==="
 echo "=== Building player app ==="
 (cd "$FE_DIR" && pnpm install --frozen-lockfile && CLSP_DIR="$CLSP_DIR" WASM_OUT_DIR="$FE_DIR/dist" pnpm run bundle)
 
-# ── 4. Lobby frontend ────────────────────────────────────────────────
+# ── 4. Hub frontend ────────────────────────────────────────────────
 
 echo "=== Building hub frontend ==="
 # --ignore-scripts: skip native build scripts (esbuild, @parcel/watcher) that
@@ -100,7 +100,7 @@ echo "=== Building hub frontend ==="
 (cd "$HUB_DIR" && pnpm install --frozen-lockfile --ignore-scripts)
 (cd "$HUB_DIR" && pnpm --filter chia-gaming-hub-frontend run build:deploy)
 
-# ── 5. Lobby service ─────────────────────────────────────────────────
+# ── 5. Hub service ─────────────────────────────────────────────────
 
 echo "=== Building hub service ==="
 (cd "$HUB_DIR" && pnpm --filter chia-gaming-hub-service run build)
