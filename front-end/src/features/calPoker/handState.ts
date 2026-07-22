@@ -32,6 +32,7 @@ export interface CalpokerHandState {
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
   settlementOutcome?: CalpokerSettlementOutcome | null;
+  settlementOnChain?: boolean | null;
 }
 
 export interface PersistedCalpokerHand {

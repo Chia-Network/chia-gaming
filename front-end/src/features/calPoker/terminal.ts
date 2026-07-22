@@ -35,7 +35,9 @@ export function settlementByUs(outcome: CalpokerSettlementOutcome): boolean | nu
 export function calpokerTimeoutBadge(
   outcome: CalpokerSettlementOutcome,
   side: 'ours' | 'theirs',
+  onChain: boolean | null | undefined,
 ): 'winner' | 'timeout' | 'forfeit' | null {
+  if (!onChain) return null;
   const byUs = settlementByUs(outcome);
   if (byUs == null) return null;
   if (side === 'ours') return byUs ? (isForfeitOutcome(outcome) ? 'forfeit' : 'timeout') : 'winner';

@@ -785,7 +785,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
           <div
             ref={gameAreaRef}
-            className={`relative overflow-hidden z-0${hideGameInterfaceForBetweenHandDialog ? ' pointer-events-none opacity-40' : ''}`}
+            className={`relative overflow-hidden z-0${hideGameInterfaceForBetweenHandDialog ? ' pointer-events-none' : ''}`}
           >
           {showGameInterface && (
             <GameAreaErrorBoundary
@@ -827,47 +827,39 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             </div>
           )}
 
+          {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (
+            <div className='pointer-events-auto absolute inset-0 z-30 flex min-h-full items-center justify-center overflow-y-auto bg-canvas-bg p-4'>
+              {session.betweenHandMode === 'decision' && (
+                <div className='flex w-full max-w-xl items-center justify-center gap-2 rounded-md border border-canvas-line bg-canvas-bg p-4'>
+                  <Button
+                    variant='solid'
+                    color='primary'
+                    size='sm'
+                    onClick={session.chooseNewHandSameTerms}
+                    disabled={session.newHandRequested}
+                  >
+                    {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    color='neutral'
+                    size='sm'
+                    onClick={session.chooseDoNotUseCurrentProposal}
+                    leadingIcon={<span className='text-base leading-none'>&times;</span>}
+                  >
+                    Close
+                  </Button>
+                </div>
+              )}
+              {session.betweenHandMode === 'compose-proposal' && (
+                <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
+              )}
+              {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+                <ReviewProposalDialog session={session} />
+              )}
+            </div>
+          )}
         </div>
-
-        {/* Between-hand session controls — only when the channel is Active */}
-        {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (
-          <>
-            {session.betweenHandMode === 'decision' && (
-              <div className='relative flex w-full items-center justify-center py-2'>
-                <Button
-                  variant='solid'
-                  color='primary'
-                  size='sm'
-                  onClick={session.chooseNewHandSameTerms}
-                  disabled={session.newHandRequested}
-                >
-                  {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
-                </Button>
-                <Button
-                  variant='ghost'
-                  color='neutral'
-                  size='sm'
-                  className='absolute right-2'
-                  onClick={session.chooseDoNotUseCurrentProposal}
-                  leadingIcon={<span className='text-base leading-none'>&times;</span>}
-                >
-                  Close
-                </Button>
-              </div>
-            )}
-
-            {session.betweenHandMode === 'compose-proposal' && (
-              <ComposeProposalDialog
-                session={session}
-                maxPerHandMojos={maxPerHandMojos}
-              />
-            )}
-
-            {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <ReviewProposalDialog session={session} />
-            )}
-          </>
-        )}
       </div>
 
       {session.channelQueue[0] && (

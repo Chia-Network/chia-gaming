@@ -58,7 +58,7 @@ export type RawGameNotification =
   | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
-  | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
+  | { Settled: { gameId: string; outcome: SettlementOutcome; onChain: boolean; ourShare: string } }
   | { GameError: { gameId: string; reason: string } };
 
 function asBytes(value: unknown): Uint8Array | null {
@@ -80,6 +80,7 @@ export function rawNotificationForMoveRejected(
 export function rawSettlementNotification(
   gameId: string,
   info: GameTerminalInfo,
+  onChain: boolean,
 ): RawGameNotification | null {
   if (info.type !== 'settled' || info.outcome == null || info.myReward == null) {
     return null;
@@ -88,6 +89,7 @@ export function rawSettlementNotification(
     Settled: {
       gameId,
       outcome: info.outcome,
+      onChain,
       ourShare: info.myReward,
     },
   };
@@ -1481,7 +1483,11 @@ export function useGameSession(
         handStatus: 'ended',
         terminal: earlyTerminal,
       }));
-      const earlySettledEvent = rawSettlementNotification(terminalId, earlyTerminal);
+      const earlySettledEvent = rawSettlementNotification(
+        terminalId,
+        earlyTerminal,
+        settled.on_chain,
+      );
       if (earlySettledEvent) {
         gameplayEventSubject.next(earlySettledEvent);
       } else if (earlyTerminal.type === 'game-error') {

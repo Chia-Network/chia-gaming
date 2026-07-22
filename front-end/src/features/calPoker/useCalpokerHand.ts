@@ -62,6 +62,7 @@ export interface UseCalpokerHandResult {
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
   settlementOutcome: CalpokerSettlementOutcome | null;
+  settlementOnChain: boolean | null;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
@@ -116,6 +117,9 @@ export function useCalpokerHand(
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [settlementOutcome, setSettlementOutcome] = useState<CalpokerSettlementOutcome | null>(
     initialHandState?.settlementOutcome ?? null,
+  );
+  const [settlementOnChain, setSettlementOnChain] = useState<boolean | null>(
+    initialHandState?.settlementOnChain ?? null,
   );
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
@@ -206,6 +210,7 @@ export function useCalpokerHand(
           // the hand already finished via reveal / autofire.
           handFinishedRef.current = true;
           setSettlementOutcome(evt.Settled.outcome);
+          setSettlementOnChain(evt.Settled.onChain);
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
@@ -288,9 +293,10 @@ export function useCalpokerHand(
         cardSelections: cardSelectionsRef.current,
         displaySnapshot: existing?.displaySnapshot,
         settlementOutcome,
+        settlementOnChain,
       }));
     }
-  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome, gameObject]);
+  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome, settlementOnChain, gameObject]);
 
   useEffect(() => {
     if (playerHand.length > 0) {
@@ -359,6 +365,7 @@ export function useCalpokerHand(
     moveNumber,
     outcome,
     settlementOutcome,
+    settlementOnChain,
     handleMakeMove,
     handleCheat,
     handleNerf,

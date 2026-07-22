@@ -150,6 +150,8 @@ pub enum GameNotification {
     GameSettled {
         id: GameID,
         outcome: SettlementOutcome,
+        /// Whether settlement occurred through the on-chain game-coin path.
+        on_chain: bool,
         our_share: Amount,
         coin_id: Option<CoinString>,
     },
@@ -245,6 +247,7 @@ impl GameNotification {
         GameNotification::GameSettled {
             id,
             outcome,
+            on_chain: !matches!(outcome, SettlementOutcome::AcceptSettlement),
             our_share,
             coin_id,
         }

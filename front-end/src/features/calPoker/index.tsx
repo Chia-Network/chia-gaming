@@ -26,6 +26,7 @@ export interface CalpokerProps {
   myName?: string;
   opponentName?: string;
   settlementOutcome?: CalpokerSettlementOutcome | null;
+  settlementOnChain?: boolean | null;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -46,6 +47,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   myName,
   opponentName,
   settlementOutcome,
+  settlementOnChain,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
@@ -72,6 +74,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           myName={myName}
           opponentName={opponentName}
           settlementOutcome={settlementOutcome}
+          settlementOnChain={settlementOnChain}
         />
       </div>
     </div>

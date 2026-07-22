@@ -56,6 +56,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myName,
   opponentName,
   settlementOutcome,
+  settlementOnChain,
 }) => {
   const hasTerminalSettlement = hasTerminalCalpokerSettlement(settlementOutcome);
   const settlementByUsFlag = settlementOutcome == null ? null : settlementByUs(settlementOutcome);
@@ -660,7 +661,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 formatHandDescription={formatHandDescription}
                 selectedCards={[]}
-                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'theirs') : null}
+                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'theirs', settlementOnChain) : null}
               />
             </div>
           </div>
@@ -696,7 +697,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                 formatHandDescription={formatHandDescription}
-                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'ours') : null}
+                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'ours', settlementOnChain) : null}
               />
             </div>
           </div>

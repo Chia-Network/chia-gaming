@@ -80,6 +80,7 @@ export default function CalpokerGameHand({
     moveNumber,
     outcome,
     settlementOutcome,
+    settlementOnChain,
     handleMakeMove,
     handleCheat,
     handleNerf,
@@ -141,6 +142,7 @@ export default function CalpokerGameHand({
       myName={myName}
       opponentName={opponentName}
       settlementOutcome={(settlementOutcomeOverride ?? settlementOutcome) as CalpokerSettlementOutcome | null}
+      settlementOnChain={settlementOnChain}
     />
   );
 }

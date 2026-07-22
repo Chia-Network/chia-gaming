@@ -6,7 +6,6 @@ import { RawGameNotification } from '../../hooks/useGameSession';
 import { log } from '../../services/log';
 import type { OpaqueHandState } from '../../hooks/save';
 import type { PersistedSpacepokerHand, SpacepokerSettlementOutcome } from './handState';
-import { isSpacepokerForfeitOutcome, spacepokerSettlementByUs } from './terminal';
 
 const SPACEPOKER_PERSISTED_STATE_VERSION = 1n;
 const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;
@@ -63,7 +62,8 @@ export type SpTerminalState =
   | 'conceded-by-you'
   | 'conceded-by-opponent'
   | 'folded-by-you'
-  | 'folded-by-opponent';
+  | 'folded-by-opponent'
+  | 'settled';
 
 export interface UseSpacepokerHandResult {
   gameState: SpGameState;
@@ -235,15 +235,6 @@ export function useSpacepokerHand(
   const communityCardsRef = useRef(communityCards);
   const lastRaiseRef = useRef(lastRaise);
   const outcomeRef = useRef(outcome);
-  const halfPotRef = useRef(halfPot);
-  const iRaisedLastRef = useRef(iRaisedLast);
-  const handHistoryRef = useRef(handHistory);
-  const lastActionSnapshotRef = useRef<{
-    halfPot: bigint;
-    lastRaise: bigint;
-    iRaisedLast: boolean;
-    historyLength: number;
-  } | null>(null);
 
   gsRef.current = gs;
   gameObjectRef.current = _gameObject;
@@ -251,9 +242,6 @@ export function useSpacepokerHand(
   coinTossIOpenRef.current = coinTossIOpen;
   communityCardsRef.current = communityCards;
   lastRaiseRef.current = lastRaise;
-  halfPotRef.current = halfPot;
-  iRaisedLastRef.current = iRaisedLast;
-  handHistoryRef.current = handHistory;
 
   useEffect(() => {
     if (unitSizeMojos && unitSizeMojos > 0n && !initialHandState) {
@@ -330,46 +318,15 @@ export function useSpacepokerHand(
   }
 
   function applySettlement(outcome: SpacepokerSettlementOutcome) {
-    // Always keep the settlement label (Timed Out / Forfeit), even when the
-    // hand already reached Folded/Showdown via optimistic play or replay.
+    // A settlement does not itself prove either player folded. Preserve a
+    // previously known fold/showdown, otherwise present a neutral terminal.
     setSettlementOutcome(outcome);
     const cur = gsRef.current;
     handFinishedRef.current = true;
     if (isTerminalSpacepokerHandler(cur.handler)) {
       return;
     }
-    const byUs = spacepokerSettlementByUs(outcome);
-    if (byUs === true || isSpacepokerForfeitOutcome(outcome)) {
-      if (byUs && !cur.myTurn) {
-        const snap = lastActionSnapshotRef.current;
-        if (snap) {
-          setHalfPot(snap.halfPot);
-          setLastRaise(snap.lastRaise);
-          setIRaisedLast(snap.iRaisedLast);
-          setHandHistory(prev => prev.slice(0, snap.historyLength));
-        }
-      }
-      setTerminalState('folded-by-you');
-      transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
-      return;
-    }
-    if (byUs === false) {
-      if (cur.handler === SpHandler.End) {
-        recordOutcome(null);
-        setOpponentHoleCards(null);
-        setOpponentBoost(null);
-        setHandHistory(prev => [...prev, { player: 'opponent', action: 'concede' }]);
-        setTerminalState('conceded-by-opponent');
-        transition({ handler: SpHandler.Showdown, myTurn: false, N: 0n });
-      } else {
-        setHandHistory(prev => [...prev, { player: 'opponent', action: 'fold' }]);
-        setTerminalState('folded-by-opponent');
-        transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
-      }
-      return;
-    }
-    // Non-directional settles (e.g. settled_cleanly) with no showdown yet.
-    setTerminalState('folded-by-you');
+    setTerminalState('settled');
     transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
   }
 
@@ -687,12 +644,6 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    lastActionSnapshotRef.current = {
-      halfPot: halfPotRef.current,
-      lastRaise: lastRaiseRef.current,
-      iRaisedLast: iRaisedLastRef.current,
-      historyLength: handHistoryRef.current.length,
-    };
     go.makeMove(gid, Program.fromBigInt(0n));
     setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
     transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
@@ -703,12 +654,6 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    lastActionSnapshotRef.current = {
-      halfPot: halfPotRef.current,
-      lastRaise: lastRaiseRef.current,
-      iRaisedLast: iRaisedLastRef.current,
-      historyLength: handHistoryRef.current.length,
-    };
     const mojoAmount = units * betUnit;
     go.makeMove(gid, Program.fromBigInt(mojoAmount));
     setHalfPot(prev => prev + lastRaiseRef.current);
@@ -723,12 +668,6 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    lastActionSnapshotRef.current = {
-      halfPot: halfPotRef.current,
-      lastRaise: lastRaiseRef.current,
-      iRaisedLast: iRaisedLastRef.current,
-      historyLength: handHistoryRef.current.length,
-    };
     go.makeMove(gid, null);
     setHalfPot(prev => prev + lastRaiseRef.current);
     setLastRaise(0n);

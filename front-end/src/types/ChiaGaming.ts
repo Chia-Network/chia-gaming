@@ -144,6 +144,7 @@ export interface GameStatusPayload {
 export interface GameSettledPayload {
   id: unknown;
   outcome: string;
+  on_chain: boolean;
   our_share: unknown;
   coin_id?: unknown;
 }

@@ -8,6 +8,7 @@ import {
   calpokerResponderFinishesAtReveal,
 } from './useCalpokerHand';
 import { hasTerminalCalpokerSettlement } from './terminal';
+import { calpokerTimeoutBadge } from './terminal';
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
@@ -44,5 +45,10 @@ describe('Calpoker bigint domain helpers', () => {
   it('treats clean settlement as terminal on a frozen remount', () => {
     expect(hasTerminalCalpokerSettlement('settled_cleanly')).toBe(true);
     expect(hasTerminalCalpokerSettlement(null)).toBe(false);
+  });
+
+  it('only presents timeout badges for on-chain settlement', () => {
+    expect(calpokerTimeoutBadge('accept_settlement', 'ours', false)).toBeNull();
+    expect(calpokerTimeoutBadge('timed_out_waiting_for_our_move', 'ours', true)).toBe('timeout');
   });
 });
