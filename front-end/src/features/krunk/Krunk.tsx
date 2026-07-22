@@ -517,8 +517,6 @@ const Krunk: React.FC<KrunkProps> = ({
   const [guessQueue, setGuessQueue] = useState<string[]>([]);
 
   // Track the index of the most recently resolved guess for animation.
-  // Detect new clues synchronously to avoid a flash frame, but persist
-  // the value in state so it survives re-renders while the animation plays.
   const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
   // A frozen/recovered board already contains historical clues. Start its
   // counter at the persisted count so mounting it never replays those flips.
@@ -533,10 +531,17 @@ const Krunk: React.FC<KrunkProps> = ({
     displayQueue,
   );
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
-  if (!frozen && resolvedCount > prevResolvedCountRef.current) {
-    prevResolvedCountRef.current = resolvedCount;
-    setAnimateIndex(resolvedCount - 1);
-  }
+  useEffect(() => {
+    if (frozen) {
+      prevResolvedCountRef.current = resolvedCount;
+      setAnimateIndex(undefined);
+      return;
+    }
+    if (resolvedCount > prevResolvedCountRef.current) {
+      prevResolvedCountRef.current = resolvedCount;
+      setAnimateIndex(resolvedCount - 1);
+    }
+  }, [frozen, resolvedCount]);
 
   const bobRevealedWord = bobHand.gameState.revealedWord;
   const bobSolved = bobHand.gameState.guesses.some(g => g.clue.every(v => v === 2));

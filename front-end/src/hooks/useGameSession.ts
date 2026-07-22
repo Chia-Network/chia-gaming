@@ -1751,7 +1751,10 @@ export function useGameSession(
       next: (evt: WasmEvent) => {
         switch (evt.type) {
           case 'notification':
-            handleNotification(evt.data);
+            void handleNotification(evt.data).catch(error => {
+              const message = error instanceof Error ? error.message : String(error);
+              pushChannel({ kind: 'infra-error', title: 'Error', message });
+            });
             break;
           case 'error':
             pushChannel({ kind: 'infra-error', title: 'Error', message: evt.error });

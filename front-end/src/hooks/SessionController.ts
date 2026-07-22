@@ -1,4 +1,5 @@
 import { Subject, NextObserver } from 'rxjs';
+import { unstable_batchedUpdates } from 'react-dom';
 import { Program } from 'clvm-lib';
 
 import {
@@ -120,8 +121,7 @@ export class SessionController implements PollingGameSession {
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: GameSessionEvent[] = [];
-  private drainScheduled = false;
-  private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private isDrainingEvents = false;
   private pendingCoinStates: { peak: bigint; records: CoinStateRecord[] } | null = null;
   launcherProvided: boolean;
   private lastSelectCoinsValue: string | null = null;
@@ -259,15 +259,10 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    if (this.drainTimer) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
-    }
     if (this.durabilityFlushTimer) {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    this.drainScheduled = false;
     void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
@@ -594,7 +589,7 @@ export class SessionController implements PollingGameSession {
     }
 
     this.drainAndSubmitTransactions();
-    this.scheduleDrain();
+    this.drainToQuiescence();
 
     if (result.terminal) {
       this.blockchain?.stop();
@@ -603,15 +598,23 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  private scheduleDrain(): void {
-    if (this.drainScheduled || this.eventQueue.length === 0) return;
-    this.drainScheduled = true;
-    this.drainTimer = setTimeout(() => {
-      this.drainTimer = null;
-      this.drainScheduled = false;
-      this.drainOneEvent();
-      this.scheduleDrain();
-    }, 0);
+  /**
+   * Deliver one FIFO transaction as one React-visible update. A notification
+   * handler may synchronously call back into WASM; processResult appends those
+   * effects to this queue, and this loop consumes them before React can paint.
+   */
+  private drainToQuiescence(): void {
+    if (this.isDrainingEvents || this.eventQueue.length === 0) return;
+    this.isDrainingEvents = true;
+    try {
+      unstable_batchedUpdates(() => {
+        while (this.eventQueue.length > 0) {
+          this.drainOneEvent();
+        }
+      });
+    } finally {
+      this.isDrainingEvents = false;
+    }
   }
 
   private drainOneEvent(): void {
@@ -627,14 +630,7 @@ export class SessionController implements PollingGameSession {
   }
 
   flushDeferredWork(): void {
-    if (this.drainTimer) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
-    }
-    this.drainScheduled = false;
-    while (this.eventQueue.length > 0) {
-      this.drainOneEvent();
-    }
+    this.drainToQuiescence();
 
     if (this.durabilityFlushTimer) {
       clearTimeout(this.durabilityFlushTimer);
@@ -654,7 +650,7 @@ export class SessionController implements PollingGameSession {
       this.flushDeferredWork();
       if (this.pendingEffects.size === 0
           && this.eventQueue.length === 0
-          && !this.drainScheduled
+          && !this.isDrainingEvents
           && !this.durabilityFlushScheduled
           && this.pendingOutboundSends.length === 0
           && this.pendingAcks.length === 0) {
@@ -960,7 +956,7 @@ const result = this.gameSession.report_coin_states(peak, records);
     const timer = setTimeout(() => {
       this.durabilityFlushTimer = null;
       this.durabilityFlushScheduled = false;
-      if (this.drainScheduled || this.eventQueue.length > 0) {
+      if (this.isDrainingEvents || this.eventQueue.length > 0) {
         this.scheduleDurabilityFlush();
         return;
       }

@@ -7,6 +7,7 @@ import {
   InternalBlockchainInterface,
   PeerConnectionResult,
   SpendBundle,
+  WasmEvent,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { restoreSession } from '../../hooks/blobSingleton';
@@ -228,6 +229,48 @@ async function flushPromiseJobs(): Promise<void> {
 }
 
 describe('in-order delivery', () => {
+  it('drains queued notifications in one quiescent transaction', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const received: WasmEvent[] = [];
+    blob.getObservable().subscribe(event => received.push(event));
+
+    blob.processResult({
+      events: [
+        { Notification: { ActionFailed: { reason: 'first' } } },
+        { Notification: { ActionFailed: { reason: 'second' } } },
+      ],
+    });
+    flushDeferredWork(blob);
+
+    expect(received).toEqual([
+      { type: 'notification', data: { ActionFailed: { reason: 'first' } } },
+      { type: 'notification', data: { ActionFailed: { reason: 'second' } } },
+    ]);
+  });
+
+  it('drains effects appended by a notification handler before returning', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      const reason = String(event.data.ActionFailed.reason);
+      reasons.push(reason);
+      if (reason === 'first') {
+        blob.processResult({
+          events: [{ Notification: { ActionFailed: { reason: 'second' } } }],
+        });
+      }
+    });
+
+    blob.processResult({
+      events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
+    });
+
+    expect(reasons).toEqual(['first', 'second']);
+  });
+
   it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
     const { blob, gameSession, sentAcks } = createReadyBlob();
     activeBlob = blob;
