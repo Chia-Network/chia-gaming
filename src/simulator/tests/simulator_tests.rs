@@ -825,6 +825,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 coin_string: child.clone(),
                 timeout: Timeout::new(100),
                 spend: None,
+                semantic: None,
             },
             GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);

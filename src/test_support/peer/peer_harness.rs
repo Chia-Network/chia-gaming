@@ -119,6 +119,7 @@ impl WalletSpendInterface for Pipe {
         timeout: &Timeout,
         _name: Option<&'static str>,
         _spend: Option<SpendBundle>,
+        _semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());

@@ -304,6 +304,7 @@ impl WalletSpendInterface for SimulatedPeer {
         timeout: &Timeout,
         name: Option<&'static str>,
         _spend: Option<SpendBundle>,
+        _semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.simulated_wallet_spend
             .register_coin(coin_id, timeout, name)
@@ -689,6 +690,9 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
             GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
+            GameNotification::TimeoutClaimSubmitted(semantic) => {
+                format!("Notif(TimeoutClaimSubmitted({semantic:?}))")
+            }
         },
     }
 }
@@ -1435,7 +1439,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 }
                             }
                             GameSessionEvent::Notification(n) => {
-                                local_uis[i].notification(n)?;
+                                // Timeout-submission semantics are a host/UI hook;
+                                // simulator protocol expectations intentionally
+                                // track only protocol notifications.
+                                if !matches!(n, GameNotification::TimeoutClaimSubmitted(_)) {
+                                    local_uis[i].notification(n)?;
+                                }
                             }
                             GameSessionEvent::ReceiveError(e) => {
                                 eprintln!("SIM receive error p{i}: {e}");
@@ -1447,6 +1456,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     their_balance: None,
                                     game_allocated: None,
                                     have_potato: None,
+                                    unroll_initiator: None,
+                                    semantic_phase: None,
                                 })?;
                             }
                             GameSessionEvent::CoinSolutionRequest(coin) => {

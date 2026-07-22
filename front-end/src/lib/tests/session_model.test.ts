@@ -34,6 +34,29 @@ import {
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
+  it('shows authoritative unroll progress details', () => {
+    const cases = [
+      ['submitting_channel_spend', 'Submitting channel spend'],
+      ['resolving_opponent_channel_spend', 'Resolving opponent channel spend'],
+      ['preempting', 'Preempting unroll'],
+      ['waiting_timeout', 'Waiting for timeout'],
+      ['submitting_timeout_finish', 'Submitting timeout finish'],
+      ['resolving', 'Resolving'],
+    ] as const;
+
+    for (const [semanticPhase, channelDetail] of cases) {
+      expect(selectGameDashboardView(createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            semanticPhase,
+          },
+        },
+      })).channelDetail).toBe(channelDetail);
+    }
+  });
+
   it('derives dashboard actions for no-session, waiting, active, and terminal states', () => {
     expect(selectGameDashboardView(null)).toMatchObject({
       channelStatusLabel: 'No Session',

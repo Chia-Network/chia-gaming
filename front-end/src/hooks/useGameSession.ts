@@ -278,6 +278,8 @@ export interface ChannelStatusInfo {
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase: NonNullable<ChannelStatusPayload['semantic_phase']> | null;
 }
 
 const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
@@ -289,6 +291,8 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
 
 function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
@@ -306,6 +310,8 @@ function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | nu
     theirBalance: parseAmount(cs.their_balance),
     gameAllocated: parseAmount(cs.game_allocated),
     havePotato: cs.have_potato ?? null,
+    unrollInitiator: cs.unroll_initiator ?? null,
+    semanticPhase: cs.semantic_phase ?? null,
   };
 }
 
@@ -1194,6 +1200,23 @@ export function useGameSession(
   const handleNotification = useCallback((n: WasmNotification) => {
     const go = scRef.current;
     if (typeof n !== 'object' || n === null) return;
+
+    if ('TimeoutClaimSubmitted' in n) {
+      const semantic = n.TimeoutClaimSubmitted as Record<string, unknown> | undefined;
+      if (semantic && 'ChannelTimeoutFinish' in semantic) {
+        setChannelStatus(prev => ({ ...prev, semanticPhase: 'submitting_timeout_finish' }));
+      } else {
+        const game = semantic?.GameOpponentTurn as { id?: unknown } | undefined;
+        if (game?.id != null) {
+          updateGameInstance(String(game.id), instance => ({
+            ...instance,
+            handStatus: 'claiming-timeout',
+          }));
+          setHandStatus('claiming-timeout');
+        }
+      }
+      return;
+    }
 
     // ChannelStatus: persistent display, no toast
     if ('ChannelStatus' in n) {

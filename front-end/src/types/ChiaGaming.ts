@@ -112,7 +112,8 @@ type WasmNotificationTag =
   | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
   | 'MoveRejected'
-  | 'ActionFailed';
+  | 'ActionFailed'
+  | 'TimeoutClaimSubmitted';
 
 export type GameStatusState =
   | 'my-turn'
@@ -130,6 +131,7 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
+  timeout_claim_activity?: 'waiting' | 'submitting';
 }
 
 export interface GameStatusPayload {
@@ -165,6 +167,8 @@ export interface ChannelStatusPayload {
   their_balance: unknown;
   game_allocated: unknown;
   have_potato?: boolean | null;
+  unroll_initiator?: 'us' | 'opponent' | null;
+  semantic_phase?: 'submitting_channel_spend' | 'resolving_opponent_channel_spend' | 'preempting' | 'waiting_timeout' | 'submitting_timeout_finish' | 'resolving' | null;
 }
 
 export interface ProposalAcceptedPayload {

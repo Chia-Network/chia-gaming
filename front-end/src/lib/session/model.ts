@@ -32,6 +32,7 @@ export type HandStatus =
   | 'playing-move'
   | 'replaying-move'
   | 'slashing'
+  | 'claiming-timeout'
   | 'finishing'
   | 'ended';
 
@@ -61,6 +62,15 @@ export interface ChannelStatusModel {
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase:
+    | 'submitting_channel_spend'
+    | 'resolving_opponent_channel_spend'
+    | 'preempting'
+    | 'waiting_timeout'
+    | 'submitting_timeout_finish'
+    | 'resolving'
+    | null;
 }
 
 export interface GameCoinModel {
@@ -268,6 +278,8 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
 
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
@@ -346,6 +358,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'playing-move': 'Playing move',
   'replaying-move': 'Replaying move',
   slashing: 'Slashing cheater',
+  'claiming-timeout': 'Claiming timeout',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -588,6 +601,15 @@ export interface GameDashboardSelectorOptions {
 
 function channelStatusDetail(model: SessionModel): string | null {
   const channel = model.channel.status;
+  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
+    submitting_channel_spend: 'Submitting channel spend',
+    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
+    preempting: 'Preempting unroll',
+    waiting_timeout: 'Waiting for timeout',
+    submitting_timeout_finish: 'Submitting timeout finish',
+    resolving: 'Resolving',
+  };
+  if (channel.semanticPhase) return phaseLabels[channel.semanticPhase];
   switch (channel.state) {
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
@@ -1057,6 +1079,8 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             theirBalance: save.channelStatus.their_balance == null ? null : String(save.channelStatus.their_balance),
             gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
             havePotato: save.channelStatus.have_potato ?? null,
+            unrollInitiator: save.channelStatus.unroll_initiator ?? null,
+            semanticPhase: save.channelStatus.semantic_phase ?? null,
           }
         : INITIAL_CHANNEL_STATUS_MODEL,
       connection: save.channelStatus
