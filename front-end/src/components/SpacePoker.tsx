@@ -12,7 +12,7 @@ import {
 } from '../hooks/useSpacepokerHand';
 import { GameplayEvent } from '../hooks/useGameSession';
 import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
-import { calpokerTimeoutBadge, type SettlementOutcome } from '../lib/settlement';
+import { calpokerTimeoutBadge, isForfeitOutcome, type SettlementOutcome } from '../lib/settlement';
 import { formatAmount } from '../util';
 
 const RANK_LABELS: Record<number, string> = {
@@ -665,11 +665,19 @@ export default function SpacePoker({
   let playerBanner: HoleCardsBannerKind = null;
   let oppBanner: HoleCardsBannerKind = null;
   const settlementOutcome = settlementOutcomeOverride ?? sp.settlementOutcome;
-  const oursTimeoutBadge = settlementOutcome
-    ? calpokerTimeoutBadge(settlementOutcome, 'ours')
+  const timeoutOrForfeitOutcome = settlementOutcome != null
+    && (
+      settlementOutcome === 'timed_out_waiting_for_our_move'
+      || settlementOutcome === 'opponent_timed_out'
+      || isForfeitOutcome(settlementOutcome)
+    )
+    ? settlementOutcome
     : null;
-  const theirsTimeoutBadge = settlementOutcome
-    ? calpokerTimeoutBadge(settlementOutcome, 'theirs')
+  const oursTimeoutBadge = timeoutOrForfeitOutcome
+    ? calpokerTimeoutBadge(timeoutOrForfeitOutcome, 'ours')
+    : null;
+  const theirsTimeoutBadge = timeoutOrForfeitOutcome
+    ? calpokerTimeoutBadge(timeoutOrForfeitOutcome, 'theirs')
     : null;
   if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
     if (showdownOutcome.result > 0n) {
