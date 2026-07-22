@@ -552,6 +552,7 @@ const Shell = () => {
   }, []);
   const [pendingProposal, setPendingProposal] = useState<PendingSessionProposal | null>(null);
   const pendingProposalRef = useRef<PendingSessionProposal | null>(null);
+  const startingSessionRef = useRef(false);
   const setPendingProposalState = useCallback((next: PendingSessionProposal | null) => {
     pendingProposalRef.current = next;
     setPendingProposal(next);
@@ -1121,8 +1122,8 @@ const Shell = () => {
 
   const acceptPendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
     const conn = hubConnRef.current;
-    if (!conn) return;
-    setPendingAdvisoryState(null);
+    if (!conn || startingSessionRef.current) return;
+    startingSessionRef.current = true;
     const gameSessionId = generateSessionId();
     // Reserve the peer relay before sending so a delivery_failure for this
     // proposal can cancel the attempt (PeerSession must already exist).
@@ -1139,7 +1140,7 @@ const Shell = () => {
       unroll_timeout: advisory.unroll_timeout,
       game_session_id: gameSessionId,
     });
-    startFreshSessionWithPeer({
+    void startFreshSessionWithPeer({
       peerId: advisory.peer_id,
       opponentAlias: advisory.peer_alias,
       myAmount: advisory.my_amount,
@@ -1148,6 +1149,9 @@ const Shell = () => {
       unroll_timeout: advisory.unroll_timeout,
       iStarted: true,
       gameSessionId,
+    }).finally(() => {
+      startingSessionRef.current = false;
+      setPendingAdvisoryState(null);
     });
   }, [setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler]);
 
@@ -1157,8 +1161,9 @@ const Shell = () => {
   }, [sendSessionReject, setPendingAdvisoryState]);
 
   const acceptPendingProposal = useCallback((proposal: PendingSessionProposal) => {
-    setPendingProposalState(null);
-    startFreshSessionWithPeer({
+    if (startingSessionRef.current) return;
+    startingSessionRef.current = true;
+    void startFreshSessionWithPeer({
       peerId: proposal.from_id,
       opponentAlias: proposal.from_alias,
       myAmount: proposal.responder_amount,
@@ -1167,6 +1172,9 @@ const Shell = () => {
       unroll_timeout: proposal.unroll_timeout,
       iStarted: false,
       gameSessionId: proposal.game_session_id,
+    }).finally(() => {
+      startingSessionRef.current = false;
+      setPendingProposalState(null);
     });
   }, [setPendingProposalState, startFreshSessionWithPeer]);
 
