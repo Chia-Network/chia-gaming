@@ -14,8 +14,8 @@ use crate::common::types::{
 };
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::effects::{
-    format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    ChannelSemanticPhase, GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
+    format_coin, CancelReason, ChannelSemanticPhase, ChannelStatus, ChannelStatusSnapshot,
+    CoinOfInterest, Effect, GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
     TimeoutClaimSemantic, UnrollInitiator,
 };
 use crate::session_phases::handler_base::{
@@ -1152,11 +1152,19 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             | SpendChannelCoinState::UnrollConditions { unroll_coin, .. } => {
                 let phase = match &self.state {
                     SpendChannelCoinState::UnrollSpend { .. } => ChannelSemanticPhase::Preempting,
-                    SpendChannelCoinState::UnrollTimeoutOrSpend { .. } => ChannelSemanticPhase::WaitingTimeout,
-                    SpendChannelCoinState::UnrollConditions { .. } => ChannelSemanticPhase::Resolving,
+                    SpendChannelCoinState::UnrollTimeoutOrSpend { .. } => {
+                        ChannelSemanticPhase::WaitingTimeout
+                    }
+                    SpendChannelCoinState::UnrollConditions { .. } => {
+                        ChannelSemanticPhase::Resolving
+                    }
                     _ => unreachable!(),
                 };
-                (ChannelStatus::Unrolling, Some(unroll_coin.clone()), Some(phase))
+                (
+                    ChannelStatus::Unrolling,
+                    Some(unroll_coin.clone()),
+                    Some(phase),
+                )
             }
         };
         let (our_balance, their_balance, game_allocated) =

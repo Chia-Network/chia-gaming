@@ -705,9 +705,10 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         for (spend, semantic) in to_submit {
             self.pending_submissions.push((spend, None));
             if let Some(semantic) = semantic {
-                self.pending_events.push_back(GameSessionEvent::Notification(
-                    GameNotification::TimeoutClaimSubmitted(semantic),
-                ));
+                self.pending_events
+                    .push_back(GameSessionEvent::Notification(
+                        GameNotification::TimeoutClaimSubmitted(semantic),
+                    ));
             }
         }
 
