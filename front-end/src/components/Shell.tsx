@@ -32,6 +32,7 @@ import {
   clearSavedSessionMarker,
   loadState,
   SessionSave,
+  type OpaqueHandState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
   getFeeUnit,
@@ -1826,6 +1827,23 @@ const Shell = () => {
     setDashboardSessionModel(model);
   }, []);
 
+  const handleFrozenHandStateChange = useCallback((handState: OpaqueHandState | null) => {
+    const model = dashboardSessionModelRef.current;
+    if (!model || !sessionFinishedCleanupRef.current) return;
+
+    const updatedModel: SessionModel = {
+      ...model,
+      game: { ...model.game, handState },
+    };
+    dashboardSessionModelRef.current = updatedModel;
+    setDashboardSessionModel(updatedModel);
+    sessionSaveRef.current = {
+      ...(sessionSaveRef.current ?? loadState()),
+      handState,
+    };
+    void saveSession({ handState });
+  }, []);
+
   const handleTerminal = useCallback(() => {
     // Session end tears down the game session, not the wallet. Keep balance interest
     // and nudge an immediate poll so settlement payouts show up promptly.
@@ -2918,6 +2936,7 @@ const Shell = () => {
                     onSessionPhaseChange={handleSessionPhaseChange}
                     onRestoreStatusChange={handleRestoreStatusChange}
                     onSessionModelChange={handleSessionModelChange}
+                    onFrozenHandStateChange={handleFrozenHandStateChange}
                     onProtocolStateProviderChange={handleProtocolStateProviderChange}
                     onCoinsProviderChange={handleCoinsProviderChange}
                     suppressPhaseReporting={restoreBlocked}

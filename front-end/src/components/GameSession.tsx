@@ -616,6 +616,7 @@ export interface GameSessionProps {
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
+  onFrozenHandStateChange?: (state: import('../hooks/save').OpaqueHandState | null) => void;
   onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
   onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
@@ -623,7 +624,7 @@ export interface GameSessionProps {
   onTerminal?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onFrozenHandStateChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain, onTerminal);
@@ -748,8 +749,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   );
   const gameSpecificView = session.gameSpecificView;
   const frozenHandBridge = useMemo(
-    () => createFrozenHandBridge(gameSpecificView.handState),
-    [session.handKey, gameSpecificView.handState],
+    () => createFrozenHandBridge(gameSpecificView.handState, onFrozenHandStateChange),
+    [session.handKey, gameSpecificView.handState, onFrozenHandStateChange],
   );
   const gameSettlementOutcomes = Object.fromEntries(
     Object.entries(session.sessionModel.game.instances).map(([id, instance]) => [

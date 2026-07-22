@@ -7,6 +7,7 @@ import type { SessionController } from './SessionController';
  */
 export function createFrozenHandBridge(
   initialHandState: OpaqueHandState | null,
+  onHandStateChange?: (state: OpaqueHandState | null) => void,
 ): SessionController {
   let handState: OpaqueHandState | null = initialHandState;
   const bridge = {
@@ -15,9 +16,11 @@ export function createFrozenHandBridge(
     },
     set handState(next: OpaqueHandState | null) {
       handState = next;
+      onHandStateChange?.(next);
     },
     setHandState(next: OpaqueHandState | null) {
       handState = next;
+      onHandStateChange?.(next);
     },
     isChannelReady() {
       return false;
