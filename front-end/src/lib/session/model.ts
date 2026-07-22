@@ -314,6 +314,11 @@ const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
   'ResolvedStale',
 ]);
 
+const UNROLL_COMPLETED_HAND_STATES = new Set<ChannelStatus>([
+  'DoneUnrolling',
+  'ResolvedStale',
+]);
+
 const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
@@ -598,6 +603,12 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
+  // The channel's unroll commitment can still be preempted while it is
+  // GoingOnChain or Unrolling. Per-game coin/turn classifications are not
+  // authoritative until the unroll coin resolves.
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
+    return 'active';
+  }
   if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
     switch (model.game.coin.turnState) {
       case 'my-turn':
@@ -647,8 +658,7 @@ function instanceTerminalDetail(instance: GameInstanceModel): string | null {
 }
 
 function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
-  if (!ON_CHAIN_HAND_STATES.has(model.channel.status.state)
-      || model.channel.status.state === 'ResolvedClean') {
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return [];
   }
   const multiple = model.game.currentHandIds.length > 1;

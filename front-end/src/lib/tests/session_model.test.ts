@@ -239,7 +239,7 @@ describe('session model selectors', () => {
     expect(view.handDetail).toBeNull();
   });
 
-  it('uses turn-specific hand status as soon as unroll classifies the game', () => {
+  it('keeps hands active until unrolling completes', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: {
@@ -254,7 +254,7 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: null, turnState: 'their-turn' },
       },
-    })).handStatusLabel).toBe('Their turn');
+    })).handStatusLabel).toBe('Active');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
@@ -265,12 +265,12 @@ describe('session model selectors', () => {
     })).handStatusLabel).toBe('Your turn');
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: null, turnState: 'replaying' },
       },
-    })).handStatusLabel).toBe('Replaying move');
+    })).handStatusLabel).toBe('Active');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
@@ -278,7 +278,7 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'their-turn' },
       },
-    })).handStatusLabel).toBe('Their turn');
+    })).handStatusLabel).toBe('Active');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
@@ -286,12 +286,12 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
       },
-    })).handStatusLabel).toBe('Playing move');
+    })).handStatusLabel).toBe('Active');
 
-    // 'replaying' is a distinct WASM state (a redo replayed after unroll) and is
-    // communicated as 'Replaying move', not collapsed into 'Playing move'.
+    // 'replaying' is exposed only after the unroll result made the game coin
+    // authoritative.
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'replaying' },
@@ -309,7 +309,7 @@ describe('session model selectors', () => {
     // Detecting the opponent's illegal on-chain move puts us in the slash flow;
     // the bar should say so explicitly instead of a generic "Your turn".
     const slashing = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'opponent-illegal-move' },
@@ -349,6 +349,11 @@ describe('session model selectors', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       game,
+    })).lifecycleRows).toEqual([]);
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
+      game,
     })).lifecycleRows).toEqual([
       { id: '7', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
       { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
@@ -381,11 +386,11 @@ describe('session model selectors', () => {
     });
 
     const singleton = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: { activeIds: ['7'], currentHandIds: ['7'], instances: { '7': updated['7'] } },
     }));
     const multiple = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: { activeIds: ['7', '9'], currentHandIds: ['7', '9'], instances: updated },
     }));
     expect(singleton.lifecycleRows[0]).toMatchObject({ label: 'Hand', statusLabel: 'Playing move' });
