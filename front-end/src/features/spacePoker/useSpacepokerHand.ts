@@ -647,20 +647,30 @@ export function useSpacepokerHand(
       if (!currentOutcome) return;
       handFinishedRef.current = true;
       const action = currentOutcome.result >= 0n ? 'reveal' : 'accept';
+      const optimisticHistoryAction = action === 'reveal' ? 'reveal' : 'concede';
+      const previousTerminalState = terminalState;
       try {
         if (action === 'reveal') {
           terminalActionByUsRef.current = 'reveal';
-          setHandHistory(prev => [...prev, { player: 'you', action: 'reveal' }]);
+          setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
           setTerminalState('revealed');
           go.makeMove(gid, null);
         } else {
           terminalActionByUsRef.current = 'concede';
-          setHandHistory(prev => [...prev, { player: 'you', action: 'concede' }]);
+          setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
           setTerminalState('conceded-by-you');
           go.acceptSettlement(gid);
         }
       } catch (error) {
         handFinishedRef.current = false;
+        terminalActionByUsRef.current = null;
+        setHandHistory(prev => {
+          const last = prev[prev.length - 1];
+          return last?.player === 'you' && last.action === optimisticHistoryAction
+            ? prev.slice(0, -1)
+            : prev;
+        });
+        setTerminalState(previousTerminalState);
         log(`[spacepoker] failed to ${action} at showdown: ${errorMessage(error)}`);
         return;
       }
