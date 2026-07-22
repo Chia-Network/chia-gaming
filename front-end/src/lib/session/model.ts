@@ -598,9 +598,6 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
-  if (!model.game.coin.coinHex) {
-    return 'active';
-  }
   if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
     switch (model.game.coin.turnState) {
       case 'my-turn':

@@ -1617,7 +1617,7 @@ export function useGameSession(
             },
             handStatus: finishing
               ? 'finishing'
-              : status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active',
+              : status === 'on-chain-my-turn' ? 'our-turn' : 'active',
           };
         }
         if (status === 'their-turn' || status === 'on-chain-their-turn') {
@@ -1629,14 +1629,14 @@ export function useGameSession(
             },
             handStatus: finishing
               ? 'finishing'
-              : status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active',
+              : status === 'on-chain-their-turn' ? 'their-turn' : 'active',
           };
         }
         if (status === 'replaying') {
           return {
             ...instance,
             coin: { coinHex: coinHex ?? instance.coin.coinHex, turnState: 'replaying' },
-            handStatus: coinHex ? 'replaying-move' : 'active',
+            handStatus: 'replaying-move',
           };
         }
         if (status === 'illegal-move-detected') {
@@ -1679,7 +1679,7 @@ export function useGameSession(
         } else {
           turnStateRef.current = 'my-turn';
           setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
-          setHandStatus(status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active');
+          setHandStatus(status === 'on-chain-my-turn' ? 'our-turn' : 'active');
         }
       } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
         // A nil validation program is terminal regardless of which side would
@@ -1692,12 +1692,12 @@ export function useGameSession(
         } else {
           turnStateRef.current = 'their-turn';
           setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
-          setHandStatus(status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active');
+          setHandStatus(status === 'on-chain-their-turn' ? 'their-turn' : 'active');
         }
       } else if (status === 'replaying') {
         turnStateRef.current = 'replaying';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
-        setHandStatus(coinHex ? 'replaying-move' : 'active');
+        setHandStatus('replaying-move');
       } else if (status === 'illegal-move-detected') {
         turnStateRef.current = 'opponent-illegal-move';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));

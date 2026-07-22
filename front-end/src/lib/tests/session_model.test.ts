@@ -239,7 +239,7 @@ describe('session model selectors', () => {
     expect(view.handDetail).toBeNull();
   });
 
-  it('uses turn-specific hand status in the bar only once a game coin is on-chain', () => {
+  it('uses turn-specific hand status as soon as unroll classifies the game', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: {
@@ -254,7 +254,23 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: null, turnState: 'their-turn' },
       },
-    })).handStatusLabel).toBe('Active');
+    })).handStatusLabel).toBe('Their turn');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: null, turnState: 'my-turn' },
+      },
+    })).handStatusLabel).toBe('Your turn');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: null, turnState: 'replaying' },
+      },
+    })).handStatusLabel).toBe('Replaying move');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
