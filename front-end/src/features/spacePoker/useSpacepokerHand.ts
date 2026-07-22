@@ -37,6 +37,14 @@ export interface SpGameState {
   N: bigint;
 }
 
+export function opponentTerminalAction(state: SpGameState): 'fold' | 'concede' | null {
+  if (state.handler === SpHandler.MidRound && !state.myTurn) return 'fold';
+  // We are waiting for the opponent's final move. If settlement arrives
+  // without an `end` readable, they chose the no-reveal (flag) action.
+  if (state.handler === SpHandler.End && !state.myTurn) return 'concede';
+  return null;
+}
+
 export interface SpHandEntry {
   player: 'you' | 'opponent';
   // 'reveal' is the final showdown reveal — the phantom end-of-hand move where
@@ -235,6 +243,8 @@ export function useSpacepokerHand(
   const communityCardsRef = useRef(communityCards);
   const lastRaiseRef = useRef(lastRaise);
   const outcomeRef = useRef(outcome);
+  const terminalActionByUsRef = useRef<'fold' | 'concede' | 'reveal' | null>(null);
+  const terminalActionByOpponentRef = useRef<'fold' | 'concede' | null>(null);
 
   gsRef.current = gs;
   gameObjectRef.current = _gameObject;
@@ -323,6 +333,23 @@ export function useSpacepokerHand(
     setSettlementOutcome(outcome);
     const cur = gsRef.current;
     handFinishedRef.current = true;
+    if (
+      terminalActionByUsRef.current === 'fold'
+      || terminalActionByUsRef.current === 'concede'
+    ) {
+      return;
+    }
+    const opponentAction = opponentTerminalAction(cur);
+    if (opponentAction) {
+      if (terminalActionByOpponentRef.current == null) {
+        terminalActionByOpponentRef.current = opponentAction;
+        setHandHistory(prev => [...prev, { player: 'opponent', action: opponentAction }]);
+        setTerminalState(
+          opponentAction === 'fold' ? 'folded-by-opponent' : 'conceded-by-opponent',
+        );
+      }
+      return;
+    }
     if (isTerminalSpacepokerHandler(cur.handler)) {
       return;
     }
@@ -621,13 +648,15 @@ export function useSpacepokerHand(
       const action = currentOutcome.result >= 0n ? 'reveal' : 'accept';
       try {
         if (action === 'reveal') {
-          go.makeMove(gid, null);
+          terminalActionByUsRef.current = 'reveal';
           setHandHistory(prev => [...prev, { player: 'you', action: 'reveal' }]);
           setTerminalState('revealed');
+          go.makeMove(gid, null);
         } else {
-          go.acceptSettlement(gid);
+          terminalActionByUsRef.current = 'concede';
           setHandHistory(prev => [...prev, { player: 'you', action: 'concede' }]);
           setTerminalState('conceded-by-you');
+          go.acceptSettlement(gid);
         }
       } catch (error) {
         handFinishedRef.current = false;
@@ -693,6 +722,7 @@ export function useSpacepokerHand(
     // "Fold" is a UX betting action. Protocol-wise this accepts the current
     // settlement; Space Poker has no fold move in its handlers or validators.
     handFinishedRef.current = true;
+    terminalActionByUsRef.current = 'fold';
     setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
     setTerminalState('folded-by-you');
     transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
