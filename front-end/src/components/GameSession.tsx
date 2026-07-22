@@ -567,7 +567,7 @@ function ReviewProposalDialog({
   if (!review) return null;
 
   return (
-    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
       <div className='flex flex-col gap-3'>
         <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
         <p className='text-xs text-canvas-text'>
@@ -588,7 +588,7 @@ function ReviewProposalDialog({
             </p>
           ) : null;
         })()}
-        <div className='flex flex-wrap items-center gap-3'>
+        <div className='flex flex-wrap items-center justify-center gap-3'>
           <Button
             variant='solid'
             color='primary'
@@ -861,7 +861,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
         && session.channelStatus.state === 'Active'
         && !session.cleanShutdownStarted
         && session.betweenHandMode !== 'decision' && (
-        <div className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg p-4'>
+        <div className='absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-canvas-bg p-4'>
           {session.betweenHandMode === 'compose-proposal' && (
             <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}

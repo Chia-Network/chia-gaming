@@ -202,15 +202,35 @@ function parseSessionAmount(raw: string): bigint {
   }
 }
 
-function SessionBuyIn({ myAmount, theirAmount }: { myAmount: string; theirAmount: string }) {
+function SessionBuyIn({
+  myAmount,
+  theirAmount,
+  channelTimeout,
+  unrollTimeout,
+}: {
+  myAmount: string;
+  theirAmount: string;
+  channelTimeout?: string;
+  unrollTimeout?: string;
+}) {
+  const effectiveChannelTimeout = channelTimeout ?? String(DEFAULT_CHANNEL_TIMEOUT_BLOCKS);
+  const effectiveUnrollTimeout = unrollTimeout ?? String(DEFAULT_UNROLL_TIMEOUT_BLOCKS);
   if (myAmount === theirAmount) {
-    return <><br />Buy-in: <strong>{myAmount}</strong> mojos</>;
+    return (
+      <>
+        <br />Buy-in: <strong>{myAmount}</strong> mojos
+        <br />Channel timeout: <strong>{effectiveChannelTimeout}</strong> blocks
+        <br />Unroll timeout: <strong>{effectiveUnrollTimeout}</strong> blocks
+      </>
+    );
   }
 
   return (
     <>
       <br />Your buy-in: <strong>{myAmount}</strong> mojos
       <br />Their buy-in: <strong>{theirAmount}</strong> mojos
+      <br />Channel timeout: <strong>{effectiveChannelTimeout}</strong> blocks
+      <br />Unroll timeout: <strong>{effectiveUnrollTimeout}</strong> blocks
     </>
   );
 }
@@ -2519,7 +2539,12 @@ const Shell = () => {
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
           <strong>{pendingAdvisory.peer_alias}</strong> would like to play.
-          <SessionBuyIn myAmount={pendingAdvisory.my_amount} theirAmount={pendingAdvisory.their_amount} />
+          <SessionBuyIn
+            myAmount={pendingAdvisory.my_amount}
+            theirAmount={pendingAdvisory.their_amount}
+            channelTimeout={pendingAdvisory.channel_timeout}
+            unrollTimeout={pendingAdvisory.unroll_timeout}
+          />
         </p>
         <div className='flex gap-3 justify-center'>
           <button
@@ -2543,7 +2568,12 @@ const Shell = () => {
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
           <strong>{pendingProposal.from_alias}</strong> is proposing a session.
-          <SessionBuyIn myAmount={pendingProposal.responder_amount} theirAmount={pendingProposal.proposer_amount} />
+          <SessionBuyIn
+            myAmount={pendingProposal.responder_amount}
+            theirAmount={pendingProposal.proposer_amount}
+            channelTimeout={pendingProposal.channel_timeout}
+            unrollTimeout={pendingProposal.unroll_timeout}
+          />
         </p>
         <div className='flex gap-3 justify-center'>
           <button
