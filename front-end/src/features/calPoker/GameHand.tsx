@@ -82,8 +82,6 @@ export default function CalpokerGameHand({
     settlementOutcome,
     settlementOnChain,
     handleMakeMove,
-    handleCheat,
-    handleNerf,
     saveDisplaySnapshot,
     initialDisplaySnapshot,
   } = useCalpokerHand(
@@ -128,8 +126,6 @@ export default function CalpokerGameHand({
       setCardSelections={setUiCardSelections}
       setHandOrder={setUiHandOrder}
       handleMakeMove={handleMakeMove}
-      handleCheat={handleCheat}
-      handleNerf={handleNerf}
       onGameLog={handleGameLog}
       onSnapshotChange={handleSnapshotChange}
       initialSnapshot={initialDisplaySnapshot && {

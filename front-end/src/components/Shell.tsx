@@ -54,7 +54,12 @@ import {
   peekAlias,
   setAlias,
 } from '../hooks/save';
-import { sessionController, destroySessionController } from '../hooks/blobSingleton';
+import {
+  sessionController,
+  destroySessionController,
+  isTransactionPublishNerfed,
+  setTransactionPublishNerfed as setTransactionPublishNerf,
+} from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
@@ -551,6 +556,7 @@ const Shell = () => {
   const [sessionConfig, setSessionConfig] = useState<GameSessionParams | null>(null);
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
+  const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
@@ -623,6 +629,26 @@ const Shell = () => {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreHubReconciled, setRestoreHubReconciled] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
+  useEffect(() => {
+    setTransactionPublishNerfed(isTransactionPublishNerfed());
+  }, [sessionConfig, sessionPhase]);
+  const toggleTransactionPublishNerf = useCallback(() => {
+    if (isTransactionPublishNerfed()) {
+      setTransactionPublishNerf(false);
+      setTransactionPublishNerfed(false);
+      return;
+    }
+    setConfirmDialog({
+      title: 'Nerf transaction publishing?',
+      body: 'Dropping transaction publications can leave your game unresolved and may cause you to lose money.',
+      confirmLabel: 'Enable nerfing',
+      onConfirm: () => {
+        setTransactionPublishNerf(true);
+        setTransactionPublishNerfed(true);
+        setConfirmDialog(null);
+      },
+    });
+  }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
@@ -2702,6 +2728,15 @@ const Shell = () => {
 
         {/* Wallet tab */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'wallet' ? 'flex' : 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
+          <Button
+            variant={transactionPublishNerfed ? 'solid' : 'outline'}
+            color={transactionPublishNerfed ? 'primary' : 'neutral'}
+            size='sm'
+            className='absolute right-4 top-4'
+            onClick={toggleTransactionPublishNerf}
+          >
+            Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+          </Button>
           {walletConnected ? (
             <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
               <div className='flex items-center gap-2'>

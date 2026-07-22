@@ -64,8 +64,6 @@ export interface UseCalpokerHandResult {
   settlementOutcome: CalpokerSettlementOutcome | null;
   settlementOnChain: boolean | null;
   handleMakeMove: () => void;
-  handleCheat: () => void;
-  handleNerf: () => void;
   saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
   initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
@@ -307,24 +305,6 @@ export function useCalpokerHand(
     }
   }, [cardSelections, gameObject]);
 
-  const handleCheat = useCallback(() => {
-    const go = gameObjectRef.current;
-    const gid = gameIdRef.current;
-    if (!go || !gid) return;
-    go.cheat(gid, 0n);
-    // A cheat is just an (illegal) move; drive the same turn-change path a
-    // normal move uses so the status shows "Playing our move on-chain" while
-    // it lands, instead of staying on our turn.
-    setMyTurn(false);
-    onTurnChanged(false);
-  }, [onTurnChanged]);
-
-  const handleNerf = useCallback(() => {
-    const go = gameObjectRef.current;
-    if (!go) return;
-    go.nerf();
-  }, []);
-
   const setCardSelections = useCallback((selectionsOrFn: bigint[] | ((prev: bigint[]) => bigint[])) => {
     if (typeof selectionsOrFn === 'function') {
       setOurCardSelections(prev => {
@@ -367,8 +347,6 @@ export function useCalpokerHand(
     settlementOutcome,
     settlementOnChain,
     handleMakeMove,
-    handleCheat,
-    handleNerf,
     saveDisplaySnapshot,
     initialDisplaySnapshot: initialHandState?.displaySnapshot,
   };

@@ -11,7 +11,7 @@ import {
   SpacepokerHandState,
 } from './useSpacepokerHand';
 import { RawGameNotification } from '../../hooks/useGameSession';
-import { useCheatNerfKeys } from './useCheatNerfKeys';
+import { useCheatKeys } from './useCheatKeys';
 import type { SpacepokerSettlementOutcome } from './handState';
 import { isSpacepokerTimeoutOrForfeit, spacepokerTerminalBadge } from './terminal';
 import { formatAmount } from '../../util';
@@ -570,11 +570,7 @@ export default function SpacePoker({
     // it lands, instead of staying on our turn.
     onTurnChanged(false);
   }, [gameObject, gameId, onTurnChanged]);
-  const handleNerf = useCallback(() => {
-    if (!gameObject) return;
-    gameObject.nerf();
-  }, [gameObject]);
-  useCheatNerfKeys(handleCheat, handleNerf);
+  useCheatKeys(handleCheat);
 
   // Write to the session history panel when the hand finishes.
   // If restoring from a persisted terminal state, skip logging (already logged).

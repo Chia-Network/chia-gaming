@@ -30,7 +30,6 @@ export function createFrozenHandBridge(
     },
     acceptSettlement(_gameId: string) {},
     cheat(_gameId: string, _moverShare: bigint) {},
-    nerf() {},
   };
   return bridge as unknown as SessionController;
 }
