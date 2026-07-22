@@ -7,6 +7,7 @@ import {
   shouldProcessCalpokerOpponentMoved,
   calpokerResponderFinishesAtReveal,
 } from './useCalpokerHand';
+import { hasTerminalCalpokerSettlement } from './terminal';
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
@@ -38,5 +39,10 @@ describe('Calpoker bigint domain helpers', () => {
     // iStarted === true is the responder ("Bob"), who gives up and must not
     // send a phantom sixth move.
     expect(calpokerResponderFinishesAtReveal(true)).toBe(true);
+  });
+
+  it('treats clean settlement as terminal on a frozen remount', () => {
+    expect(hasTerminalCalpokerSettlement('settled_cleanly')).toBe(true);
+    expect(hasTerminalCalpokerSettlement(null)).toBe(false);
   });
 });

@@ -6,6 +6,12 @@ function isForfeitOutcome(outcome: CalpokerSettlementOutcome): boolean {
     || outcome === 'forfeited_we_accepted';
 }
 
+export function hasTerminalCalpokerSettlement(
+  settlementOutcome: CalpokerSettlementOutcome | null | undefined,
+): boolean {
+  return settlementOutcome != null;
+}
+
 export function settlementByUs(outcome: CalpokerSettlementOutcome): boolean | null {
   switch (outcome) {
     case 'accept_settlement':
