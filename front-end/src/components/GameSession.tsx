@@ -827,23 +827,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             </div>
           )}
 
-          {session.betweenHands
-            && session.channelStatus.state === 'Active'
-            && !session.cleanShutdownStarted
-            && session.betweenHandMode !== 'decision' && (
-            <div
-              className={`pointer-events-auto z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg p-4${
-                showGameInterface ? ' absolute inset-0 min-h-full' : ' relative'
-              }`}
-            >
-              {session.betweenHandMode === 'compose-proposal' && (
-                <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
-              )}
-              {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-                <ReviewProposalDialog session={session} />
-              )}
-            </div>
-          )}
         </div>
 
         {session.betweenHands
@@ -873,6 +856,20 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           </div>
         )}
       </div>
+
+      {session.betweenHands
+        && session.channelStatus.state === 'Active'
+        && !session.cleanShutdownStarted
+        && session.betweenHandMode !== 'decision' && (
+        <div className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg p-4'>
+          {session.betweenHandMode === 'compose-proposal' && (
+            <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
+          )}
+          {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+            <ReviewProposalDialog session={session} />
+          )}
+        </div>
+      )}
 
       {session.channelQueue[0] && (
         <NotificationOverlay

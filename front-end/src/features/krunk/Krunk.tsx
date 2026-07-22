@@ -687,6 +687,9 @@ const Krunk: React.FC<KrunkProps> = ({
   const hasTerminalResult =
     bobTerminalState.handler === KrunkHandler.Terminal
     || aliceTerminalState.handler === KrunkHandler.Terminal;
+  const handComplete =
+    bobTerminalState.handler === KrunkHandler.Terminal
+    && aliceTerminalState.handler === KrunkHandler.Terminal;
 
   const bobResult = krunkBobResult(bobTerminalState, themLabel);
 
@@ -796,12 +799,14 @@ const Krunk: React.FC<KrunkProps> = ({
             showDraftRow={showGuessDraft}
             latestAnimateIndex={latestAnimateIndex}
           />
-          {bobMissed && bobRevealReady && bobRevealedWord ? (
-            <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
-          ) : (
-            <div className='flex gap-1 mt-2'>
-              {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
-            </div>
+          {!handComplete && (
+            bobMissed && bobRevealReady && bobRevealedWord ? (
+              <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
+            ) : (
+              <div className='flex gap-1 mt-2'>
+                {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
+              </div>
+            )
           )}
           <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>
             {bobResult ?? ''}
@@ -830,33 +835,35 @@ const Krunk: React.FC<KrunkProps> = ({
         </div>
       </div>
 
-      <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
-        <OnScreenKeyboard
-          statuses={letterStatuses}
-          disabled={keyboardMode === null}
-          onLetter={typeLetter}
-          onBackspace={backspace}
-        />
-        <button
-          type='button'
-          className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-          disabled={!actionEnabled}
-          onClick={submitActive}
-        >
-          {actionLabel}
-        </button>
-        <p
-          className={`min-h-7 text-center text-lg mt-1 ${
-            statusNotice?.kind === 'error'
-              ? 'text-red-600'
-              : statusNotice?.kind === 'win'
-                ? 'text-2xl font-bold text-canvas-text-contrast'
-                : 'text-canvas-text-contrast'
-          }`}
-        >
-          {statusNotice?.text ?? ''}
-        </p>
-      </div>
+      {!handComplete && (
+        <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
+          <OnScreenKeyboard
+            statuses={letterStatuses}
+            disabled={keyboardMode === null}
+            onLetter={typeLetter}
+            onBackspace={backspace}
+          />
+          <button
+            type='button'
+            className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+            disabled={!actionEnabled}
+            onClick={submitActive}
+          >
+            {actionLabel}
+          </button>
+          <p
+            className={`min-h-7 text-center text-lg mt-1 ${
+              statusNotice?.kind === 'error'
+                ? 'text-red-600'
+                : statusNotice?.kind === 'win'
+                  ? 'text-2xl font-bold text-canvas-text-contrast'
+                  : 'text-canvas-text-contrast'
+            }`}
+          >
+            {statusNotice?.text ?? ''}
+          </p>
+        </div>
+      )}
     </div>
   );
 };
