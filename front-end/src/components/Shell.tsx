@@ -1886,16 +1886,27 @@ const Shell = () => {
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const alias = () =>
+      sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
+    // Sync the ref before setState (same as the wallet-disconnect branch):
+    // isAvailableForNewSessionPrompt / getPresence read the refs synchronously
+    // and can run before React applies hasFullNodePeer state (e.g. inbound
+    // session_proposal while a zero-count poll result is still pending commit).
+    const applyPeerReady = (ready: boolean) => {
+      hasFullNodePeerRef.current = ready;
+      setHasFullNodePeer(ready);
+      hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current), alias());
+    };
     const check = async () => {
       try {
         const count = await getActiveBlockchain().rpc.getFullNodePeerCount();
         if (cancelled) return;
-        if (count > 0n) { setHasFullNodePeer(true); return; }
+        if (count > 0n) { applyPeerReady(true); return; }
       } catch (e) {
         log(`[Shell] full node peer check failed: ${String(e)}`);
       }
       if (cancelled) return;
-      setHasFullNodePeer(false);
+      applyPeerReady(false);
       timer = setTimeout(check, 5000);
     };
     check();
