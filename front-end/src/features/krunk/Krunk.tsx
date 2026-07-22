@@ -521,6 +521,12 @@ const Krunk: React.FC<KrunkProps> = ({
   // A frozen/recovered board already contains historical clues. Start its
   // counter at the persisted count so mounting it never replays those flips.
   const prevResolvedCountRef = useRef(frozen ? resolvedCount : 0);
+  // The resolved cells must receive their delay in the render where they
+  // mount. Updating animateIndex only from the effect below is one render too
+  // late: LetterCell intentionally latches its initial delay.
+  const newlyResolvedIndex = !frozen && resolvedCount > prevResolvedCountRef.current
+    ? resolvedCount - 1
+    : undefined;
   // Dictionary rejection rolls back the sent guess in gameState; hide any
   // still-queued rows in the same render (don't wait for the clear effect).
   const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error)
@@ -542,13 +548,14 @@ const Krunk: React.FC<KrunkProps> = ({
       setAnimateIndex(resolvedCount - 1);
     }
   }, [frozen, resolvedCount]);
+  const latestAnimateIndex = newlyResolvedIndex ?? animateIndex;
 
   const bobRevealedWord = bobHand.gameState.revealedWord;
   const bobSolved = bobHand.gameState.guesses.some(g => g.clue.every(v => v === 2));
   const bobMissed = bobRevealedWord != null && !bobSolved;
   const animateBobReveal = !frozen
     && bobMissed
-    && animateIndex === bobHand.gameState.guesses.length - 1;
+    && latestAnimateIndex === bobHand.gameState.guesses.length - 1;
   // Wait for the final guess row to finish flipping before mounting the
   // answer row, so its flip starts only after that animation ends.
   const [bobRevealReady, setBobRevealReady] = useState(false);
@@ -780,7 +787,7 @@ const Krunk: React.FC<KrunkProps> = ({
             guesses={displayedBobGuesses}
             draft={guessDraft}
             showDraftRow={showGuessDraft}
-            latestAnimateIndex={animateIndex}
+            latestAnimateIndex={latestAnimateIndex}
           />
           {bobMissed && bobRevealReady && bobRevealedWord ? (
             <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
