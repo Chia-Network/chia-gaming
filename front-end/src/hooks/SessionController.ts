@@ -22,7 +22,7 @@ import {
 import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
-import type { PersistedGameState } from './save';
+import type { OpaqueHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -49,7 +49,7 @@ export interface WasmFields {
   durabilityWarning: string | undefined;
   activeGameId: string | null;
   activeGameIds: string[];
-  handState: PersistedGameState | null;
+  handState: OpaqueHandState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
@@ -148,7 +148,7 @@ export class SessionController implements PollingGameSession {
   private pendingEffects = new Set<Promise<void>>();
   activeGameId: string | null = null;
   activeGameIds: string[] = [];
-  private _handState!: PersistedGameState | null;
+  private _handState!: OpaqueHandState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
@@ -157,11 +157,11 @@ export class SessionController implements PollingGameSession {
   onSaveNeeded: (() => void | Promise<void>) | null = null;
   getFee: () => bigint = () => 0n;
 
-  get handState(): PersistedGameState | null {
+  get handState(): OpaqueHandState | null {
     return this._handState;
   }
 
-  set handState(state: PersistedGameState | null) {
+  set handState(state: OpaqueHandState | null) {
     this._handState = state;
   }
 
@@ -1120,7 +1120,7 @@ const result = this.gameSession.report_coin_states(peak, records);
     }
   }
 
-  setHandState(state: PersistedGameState | null) {
+  setHandState(state: OpaqueHandState | null) {
     this.handState = state;
     this.scheduleSave();
   }

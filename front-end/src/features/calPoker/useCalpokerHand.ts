@@ -3,11 +3,16 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import {
   CalpokerOutcome,
-} from '../types/ChiaGaming';
-import { SessionController } from './SessionController';
-import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
-import { GameplayEvent } from './useGameSession';
-import { type SettlementOutcome } from '../lib/settlement';
+} from '../../types/ChiaGaming';
+import { SessionController } from '../../hooks/SessionController';
+import type { OpaqueHandState } from '../../hooks/save';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import type {
+  CalpokerDisplaySnapshot,
+  CalpokerHandState,
+  CalpokerSettlementOutcome,
+  PersistedCalpokerHand,
+} from './handState';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
@@ -32,7 +37,7 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
 }
 
 export function calpokerStateFromPersisted(
-  persisted: PersistedGameState | null | undefined,
+  persisted: OpaqueHandState | null | undefined,
 ): CalpokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'calpoker') return undefined;
   if (persisted.version !== CALPOKER_PERSISTED_STATE_VERSION) return undefined;
@@ -40,7 +45,7 @@ export function calpokerStateFromPersisted(
   return persisted.state as CalpokerHandState;
 }
 
-function persistedCalpokerState(state: CalpokerHandState): PersistedGameState<CalpokerHandState> {
+function persistedCalpokerState(state: CalpokerHandState): PersistedCalpokerHand {
   return {
     gameType: 'calpoker',
     version: CALPOKER_PERSISTED_STATE_VERSION,
@@ -56,7 +61,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
-  settlementOutcome: SettlementOutcome | null;
+  settlementOutcome: CalpokerSettlementOutcome | null;
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
@@ -94,10 +99,10 @@ export function useCalpokerHand(
   gameObject: SessionController,
   gameId: string,
   iStarted: boolean,
-  gameplayEvent$: Observable<GameplayEvent>,
+  gameplayEvent$: Observable<RawGameNotification>,
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
-  initialPersistedState?: PersistedGameState,
+  initialPersistedState?: OpaqueHandState,
 ): UseCalpokerHandResult {
   const initialHandState = useMemo(
     () => calpokerStateFromPersisted(initialPersistedState),
@@ -109,7 +114,7 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
+  const [settlementOutcome, setSettlementOutcome] = useState<CalpokerSettlementOutcome | null>(
     initialHandState?.settlementOutcome ?? null,
   );
 
@@ -135,7 +140,7 @@ export function useCalpokerHand(
 
   useEffect(() => {
     const subscription = gameplayEvent$.subscribe({
-      next: (evt: GameplayEvent) => {
+      next: (evt: RawGameNotification) => {
         if ('OpponentMoved' in evt) {
           if (evt.OpponentMoved.gameId && evt.OpponentMoved.gameId !== gameIdRef.current) return;
           if (!shouldProcessCalpokerOpponentMoved(handFinishedRef.current, !!outcomeRef.current)) return;

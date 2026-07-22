@@ -5,7 +5,7 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { PersistedGameState, SessionSave } from '../../hooks/save';
+import type { OpaqueHandState, SessionSave } from '../../hooks/save';
 import type { SettlementOutcome } from '../settlement';
 import { isSettlementOutcome } from '../settlement';
 import {
@@ -141,7 +141,7 @@ export interface GameModel {
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: string;
-  handState: PersistedGameState | null;
+  handState: OpaqueHandState | null;
   queue: QueuedNotificationModel[];
 }
 
@@ -864,7 +864,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
 export interface GameSpecificViewModel {
   gameType: string;
   displayGameId: string | null;
-  handState: PersistedGameState | null;
+  handState: OpaqueHandState | null;
   turnState: GameTurnState;
   terminal: GameTerminalModel;
 }

@@ -6,7 +6,6 @@ import {
   writeSessionRecord,
 } from '../lib/session/indexedDb';
 import { isDenseNumericByteObject } from '../lib/reactPropSafe';
-import type { SettlementOutcome } from '../lib/settlement';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -21,31 +20,11 @@ function randomHex(): string {
 }
 
 
-export interface CalpokerDisplaySnapshot {
-  gameState: string;
-  winner: string | null;
-  playerBestHandCardIds: bigint[];
-  opponentBestHandCardIds: bigint[];
-  playerHaloCardIds: bigint[];
-  opponentHaloCardIds: bigint[];
-  playerDisplayText: string;
-  opponentDisplayText: string;
-}
-
-export interface CalpokerHandState {
-  playerHand: bigint[];
-  opponentHand: bigint[];
-  moveNumber: bigint;
-  isPlayerTurn: boolean;
-  cardSelections?: bigint[];
-  displaySnapshot?: CalpokerDisplaySnapshot;
-  settlementOutcome?: SettlementOutcome | null;
-}
-
-export interface PersistedGameState<T = unknown> {
+/** Shell-owned envelope. Its state payload is opaque outside game features. */
+export interface OpaqueHandState {
   gameType: string;
   version: bigint;
-  state: T;
+  state: unknown;
 }
 
 type BlockchainType = 'simulator' | 'walletconnect';
@@ -118,7 +97,7 @@ export interface SessionSave {
   }>;
   iProposedHand?: boolean;
   activeGameType?: string;
-  handState?: PersistedGameState | null;
+  handState?: OpaqueHandState | null;
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;

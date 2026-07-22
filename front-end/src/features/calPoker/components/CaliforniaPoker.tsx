@@ -7,7 +7,7 @@ import {
   MovingCardData,
   cardIdToRankSuit,
   handValueToDescription,
-} from '../../../types/californiaPoker';
+} from '../types';
 // Constants
 import {
   GAME_STATES,
@@ -18,17 +18,17 @@ import {
 // Utils
 import { formatHandDescription, makeDescription, formatCardsForLog, formatOrderedCardsForLog, orderUsedCardsForLog } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
+import { SuitName } from '../types/CardValueSuit';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../../../types/californiaPoker/CaliforniapokerProps';
+} from '../types/CaliforniapokerProps';
 import GameBottomBar from './components/GameBottomBar';
 import {
   calpokerSettlementVerb,
   calpokerTimeoutBadge,
   settlementByUs,
-} from '../../../lib/settlement';
+} from '../terminal';
 
 
 function translateTopline(topline: string | undefined): string | null {

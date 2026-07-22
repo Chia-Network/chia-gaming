@@ -1236,8 +1236,20 @@ gameplay hooks; settlements use `GameSettled` only.
 
 ### Terminal game UX and resolved sessions
 
+#### Browser game isolation
+
+Calpoker, Space Poker, and Krunk have separate browser feature modules. They
+may share the session shell's controller bridge, raw game-ID-scoped
+notifications, opaque hand-state envelope, and live/frozen mount lifecycle,
+but do not share frontend event types, persistence schemas, terminal mappings,
+recovery adapters, dev-key hooks, or UX components. The shell never decodes a
+hand-state payload: it selects the feature by `gameType` and passes the opaque
+payload to that feature's mount. Small repeated browser code is intentionally
+duplicated in the owning feature rather than abstracted into a game-plugin
+layer.
+
 `GameSettled` is the handoff from protocol state to game UX. The framework
-emits `Settled` while the live game component is still mounted; the game hook
+emits a raw settlement notification while the live game component is still mounted; the game hook
 then owns the terminal transition. For example, Space Poker uses its
 optimistic-action snapshot to roll back a timeout discovered during on-chain
 replay, while each game decides its own terminal copy and badges.
@@ -1263,8 +1275,8 @@ the finished-session snapshot, which must reload into frozen recovery rather
 than the live resume flow.
 
 `FinishedSessionGameView` is only reload recovery, when no live component tree
-exists to preserve. It restores validated persisted terminal `handState` using
-the same `GameHandHost` registry. Keep `handState` on the controller (or
+exists to preserve. It dispatches the opaque persisted terminal `handState` to
+the selected feature using the same `GameHandHost` lifecycle. Keep `handState` on the controller (or
 non-enumerable on the model) — never as an enumerable React prop. React's
 prop/error describe path `JSON.stringify`s arrays and throws on nested
 `bigint` card ids, which locks the UI.

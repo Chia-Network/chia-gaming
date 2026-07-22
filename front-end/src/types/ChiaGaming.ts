@@ -1,7 +1,11 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
-import { cardIdToRankSuit } from './californiaPoker/cardHelpers';
+
+function cardIdToRankSuit(cardId: bigint | number): { rank: number; suit: number } {
+  const id = typeof cardId === 'bigint' ? Number(cardId) : cardId;
+  return { rank: Math.floor(id / 4) + 2, suit: (id % 4) + 1 };
+}
 
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 

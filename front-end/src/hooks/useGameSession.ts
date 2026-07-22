@@ -49,7 +49,11 @@ import {
   snapshotFromSessionModel,
 } from '../lib/session/model';
 
-export type GameplayEvent =
+/**
+ * Shell transport record. Game features receive this as opaque protocol input
+ * and validate only the payloads their own handlers understand.
+ */
+export type RawGameNotification =
   | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
@@ -61,9 +65,9 @@ function asBytes(value: unknown): Uint8Array | null {
   return coerceToBytes(value);
 }
 
-export function gameplayEventForMoveRejected(
+export function rawNotificationForMoveRejected(
   payload: MoveRejectedPayload,
-): GameplayEvent {
+): RawGameNotification {
   return {
     MoveRejected: {
       gameId: String(payload.id),
@@ -73,10 +77,10 @@ export function gameplayEventForMoveRejected(
   };
 }
 
-export function settledEventForInfo(
+export function rawSettlementNotification(
   gameId: string,
   info: GameTerminalInfo,
-): GameplayEvent | null {
+): RawGameNotification | null {
   if (info.type !== 'settled' || info.outcome == null || info.myReward == null) {
     return null;
   }
@@ -89,18 +93,18 @@ export function settledEventForInfo(
   };
 }
 
-export function gameplayEventsForGameStatus(
+export function rawNotificationsForGameStatus(
   notification: WasmNotification,
   activeIds: string[],
-  terminalEvent: GameplayEvent | null,
-): GameplayEvent[] {
+  terminalEvent: RawGameNotification | null,
+): RawGameNotification[] {
   const gs = notification.GameStatus as GameStatusPayload | undefined;
   if (!gs) return [];
   const gid = String(gs.id);
   const other = gs.other_params ?? null;
   const readable = other?.readable;
   const readableArr = asBytes(readable);
-  const events: GameplayEvent[] = [];
+  const events: RawGameNotification[] = [];
   if (readableArr) {
     const moverShare = parseAmount(other?.mover_share);
     if (moverShare != null) {
@@ -114,6 +118,12 @@ export function gameplayEventsForGameStatus(
   }
   return events;
 }
+
+// Compatibility exports for session-shell tests and callers during the
+// transport rename. Browser game features use RawGameNotification directly.
+export const gameplayEventForMoveRejected = rawNotificationForMoveRejected;
+export const settledEventForInfo = rawSettlementNotification;
+export const gameplayEventsForGameStatus = rawNotificationsForGameStatus;
 
 export function terminalInfoFromGameSettled(
   payload: GameSettledPayload,
@@ -585,7 +595,7 @@ export interface UseGameSessionResult {
   activeGameType: string;
   displayGameId: string | null;
   sessionController: SessionController;
-  gameplayEvent$: Observable<GameplayEvent>;
+  gameplayEvent$: Observable<RawGameNotification>;
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
@@ -857,7 +867,7 @@ export function useGameSession(
   const pendingRetryTermsRef = useRef<HandTerms | null>(null);
   const expectingCounterProposalRef = useRef<boolean>(false);
   const rejectionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
+  const gameplayEventSubject = useRef(new Subject<RawGameNotification>()).current;
 
   const clearExpectingCounterProposal = useCallback(() => {
     expectingCounterProposalRef.current = false;
@@ -1434,7 +1444,7 @@ export function useGameSession(
         handStatus: 'ended',
         terminal: earlyTerminal,
       }));
-      const earlySettledEvent = settledEventForInfo(terminalId, earlyTerminal);
+      const earlySettledEvent = rawSettlementNotification(terminalId, earlyTerminal);
       if (earlySettledEvent) {
         gameplayEventSubject.next(earlySettledEvent);
       } else if (earlyTerminal.type === 'game-error') {
@@ -1482,7 +1492,7 @@ export function useGameSession(
         const terminalId = String(gs.id);
         const terminalTurnState =
           gameInstancesRef.current[terminalId]?.coin.turnState ?? turnStateRef.current;
-        for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {
+        for (const event of rawNotificationsForGameStatus(n, gameIdsRef.current, null)) {
           gameplayEventSubject.next(event);
         }
 
@@ -1523,7 +1533,7 @@ export function useGameSession(
       // `readable` is the game move itself. Deliver it before unrelated
       // session/dashboard work such as hashing the serialized coin, so games
       // observe moves promptly and identically on either transport.
-      for (const event of gameplayEventsForGameStatus(n, gameIdsRef.current, null)) {
+      for (const event of rawNotificationsForGameStatus(n, gameIdsRef.current, null)) {
         gameplayEventSubject.next(event);
       }
 
@@ -1727,7 +1737,7 @@ export function useGameSession(
     } else if ('MoveRejected' in n) {
       const rejection = n.MoveRejected;
       if (!rejection) return;
-      gameplayEventSubject.next(gameplayEventForMoveRejected(rejection));
+      gameplayEventSubject.next(rawNotificationForMoveRejected(rejection));
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
       log(`[game] action failed: ${reason}`);

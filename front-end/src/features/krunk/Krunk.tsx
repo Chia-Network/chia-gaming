@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
@@ -12,24 +12,24 @@ import {
   KrunkHandler,
   KrunkGuess,
   KrunkRole,
-} from '../hooks/useKrunkHand';
-import { GameplayEvent } from '../hooks/useGameSession';
-import type { SettlementOutcome } from '../lib/settlement';
-import { formatAmount } from '../util';
+} from './useKrunkHand';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import type { KrunkSettlementOutcome } from './handState';
+import { formatAmount } from '../../util';
 
 export interface KrunkProps {
   gameObject: SessionController;
   currentHandGameIds: string[];
   activeGameIds: string[];
   iProposedHand: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
+  gameplayEvent$: Observable<RawGameNotification>;
   betSize: bigint;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
   frozen?: boolean;
-  gameSettlementOutcomes?: Record<string, SettlementOutcome | null>;
+  gameSettlementOutcomes?: Record<string, KrunkSettlementOutcome | null>;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;

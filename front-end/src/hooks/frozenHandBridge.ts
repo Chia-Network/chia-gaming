@@ -1,4 +1,4 @@
-import type { PersistedGameState } from './save';
+import type { OpaqueHandState } from './save';
 import type { SessionController } from './SessionController';
 
 /**
@@ -6,17 +6,17 @@ import type { SessionController } from './SessionController';
  * Enough for game hooks to hydrate from handState and no-op moves.
  */
 export function createFrozenHandBridge(
-  initialHandState: PersistedGameState | null,
+  initialHandState: OpaqueHandState | null,
 ): SessionController {
-  let handState: PersistedGameState | null = initialHandState;
+  let handState: OpaqueHandState | null = initialHandState;
   const bridge = {
     get handState() {
       return handState;
     },
-    set handState(next: PersistedGameState | null) {
+    set handState(next: OpaqueHandState | null) {
       handState = next;
     },
-    setHandState(next: PersistedGameState | null) {
+    setHandState(next: OpaqueHandState | null) {
       handState = next;
     },
     isChannelReady() {

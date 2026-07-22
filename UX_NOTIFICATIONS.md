@@ -301,7 +301,7 @@ GameSettled { id, outcome: SettlementOutcome, our_share, coin_id? }
 present, including `0`.
 
 **Dual delivery:** the same payload drives (1) the session banner / dashboard
-label and (2) the active reference-game UI via `GameplayEvent.Settled`.
+label and (2) the active game feature via its matching raw settlement record.
 Neither sink may invent a parallel event shape or skip "boring" outcomes.
 
 Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
@@ -532,12 +532,13 @@ matched to live games and generating spurious terminal notifications.
 
 ---
 
-## GameplayEvent Mapping
+## Raw game notification routing
 
 The `useGameSession` hook translates raw `WasmNotification` events into
-game-agnostic `GameplayEvent` variants before forwarding them to
-game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`).
-Game hooks never see raw notifications; they receive one of:
+game-ID-scoped `RawGameNotification` records before forwarding them through
+the session boundary. Each game feature validates and interprets only the
+records its handler understands; the shell owns neither game event types nor
+terminal UX.
 
 | Variant | Shape | When |
 |---------|-------|------|
@@ -548,11 +549,12 @@ Game hooks never see raw notifications; they receive one of:
 | `MoveRejected` | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook |
 | `GameError` | `{ gameId, reason }` | `EndedCancelled`, `EndedError`, `InsufficientBalance`, or unknown settlement outcome |
 
-Settlement label helpers live in `front-end/src/lib/settlement.ts`
-(`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).
+`front-end/src/lib/settlement.ts` owns only protocol validation and
+session-level labels. Timeout, forfeit, and terminal-copy mappings live in
+their owning game features.
 
 Non-terminal move/status notifications are remapped by
-`gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
+`rawNotificationsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
 above (including `moverShare` on `OpponentMoved`). The semantic game event is
 emitted immediately, before asynchronous dashboard bookkeeping such as hashing
 the notification's coin ID. This keeps all game hooks transport-agnostic:
@@ -566,5 +568,5 @@ outcome; the session-level terminal label is only a summary and must not
 replace per-game result UI.
 
 **Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalInfoFromGameSettled`,
-`settledEventForInfo`, `gameplayEventsForGameStatus`),
+`rawSettlementNotification`, `rawNotificationsForGameStatus`),
 `front-end/src/lib/settlement.ts`

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import {
   useSpacepokerHand,
   SpHandler,
@@ -9,11 +9,12 @@ import {
   SpTerminalState,
   SpacepokerDisplayMode,
   SpacepokerHandState,
-} from '../hooks/useSpacepokerHand';
-import { GameplayEvent } from '../hooks/useGameSession';
-import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
-import { calpokerTimeoutBadge, isForfeitOutcome, type SettlementOutcome } from '../lib/settlement';
-import { formatAmount } from '../util';
+} from './useSpacepokerHand';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import { useCheatNerfKeys } from './useCheatNerfKeys';
+import type { SpacepokerSettlementOutcome } from './handState';
+import { isSpacepokerTimeoutOrForfeit, spacepokerTerminalBadge } from './terminal';
+import { formatAmount } from '../../util';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',
@@ -522,7 +523,7 @@ export interface SpacePokerProps {
   gameObject: SessionController;
   gameId: string;
   iStarted: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
+  gameplayEvent$: Observable<RawGameNotification>;
   betSize: string;
   unitSizeMojos?: string;
   onTurnChanged: (isMyTurn: boolean) => void;
@@ -530,7 +531,7 @@ export interface SpacePokerProps {
   myName?: string;
   opponentName?: string;
   /** Frozen remount: session terminal when handState omitted the label. */
-  settlementOutcome?: SettlementOutcome | null;
+  settlementOutcome?: SpacepokerSettlementOutcome | null;
 }
 
 export default function SpacePoker({
@@ -669,15 +670,15 @@ export default function SpacePoker({
     && (
       settlementOutcome === 'timed_out_waiting_for_our_move'
       || settlementOutcome === 'opponent_timed_out'
-      || isForfeitOutcome(settlementOutcome)
+      || isSpacepokerTimeoutOrForfeit(settlementOutcome)
     )
     ? settlementOutcome
     : null;
   const oursTimeoutBadge = timeoutOrForfeitOutcome
-    ? calpokerTimeoutBadge(timeoutOrForfeitOutcome, 'ours')
+    ? spacepokerTerminalBadge(timeoutOrForfeitOutcome, 'ours')
     : null;
   const theirsTimeoutBadge = timeoutOrForfeitOutcome
-    ? calpokerTimeoutBadge(timeoutOrForfeitOutcome, 'theirs')
+    ? spacepokerTerminalBadge(timeoutOrForfeitOutcome, 'theirs')
     : null;
   if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
     if (showdownOutcome.result > 0n) {

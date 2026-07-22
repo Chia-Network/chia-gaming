@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { HandDisplayProps } from '../../../../types/californiaPoker';
-import { CardValueSuit } from '../../../../types/californiaPoker/CardValueSuit';
+import { HandDisplayProps } from '../../types';
+import { CardValueSuit } from '../../types/CardValueSuit';
 import { GAME_STATES, HALO_FADE_DURATION_MS } from '../constants/constants';
 import Card from './Card';
 

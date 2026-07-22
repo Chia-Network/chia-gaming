@@ -3,7 +3,7 @@ import {
   gameplayEventNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../gameTabAttention';
-import type { GameplayEvent } from '../../hooks/useGameSession';
+import type { RawGameNotification } from '../../hooks/useGameSession';
 
 describe('gameTabAttention', () => {
   it('marks opponent moves and proposal accepts as attention', () => {
@@ -34,7 +34,7 @@ describe('gameTabAttention', () => {
     expect(gameplayEventNeedsGameTabAttention({
       Settled: { gameId: '1', outcome: 'opponent_timed_out', ourShare: '50' },
     })).toBe(false);
-    const moveRejected: GameplayEvent = {
+    const moveRejected: RawGameNotification = {
       MoveRejected: { gameId: '1', tag: 'x', message: 'nope' },
     };
     expect(gameplayEventNeedsGameTabAttention(moveRejected)).toBe(false);

@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from './SessionController';
-import { GameplayEvent } from './useGameSession';
-import { log } from '../services/log';
-import { PersistedGameState } from './save';
-import {
-  isForfeitOutcome,
-  settlementByUs,
-  type SettlementOutcome,
-} from '../lib/settlement';
+import { SessionController } from '../../hooks/SessionController';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import { log } from '../../services/log';
+import type { OpaqueHandState } from '../../hooks/save';
+import type { PersistedSpacepokerHand, SpacepokerSettlementOutcome } from './handState';
+import { isSpacepokerForfeitOutcome, spacepokerSettlementByUs } from './terminal';
 
 const SPACEPOKER_PERSISTED_STATE_VERSION = 1n;
 const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;
@@ -78,7 +75,7 @@ export interface UseSpacepokerHandResult {
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
   terminalState: SpTerminalState;
-  settlementOutcome: SettlementOutcome | null;
+  settlementOutcome: SpacepokerSettlementOutcome | null;
   lastRaise: bigint;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
@@ -105,7 +102,7 @@ export interface SpacepokerHandState {
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
   terminalState?: SpTerminalState;
-  settlementOutcome?: SettlementOutcome | null;
+  settlementOutcome?: SpacepokerSettlementOutcome | null;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
   displayMode: SpacepokerDisplayMode;
@@ -144,7 +141,7 @@ function errorMessage(error: unknown): string {
 }
 
 export function spacepokerStateFromPersisted(
-  persisted: PersistedGameState | null | undefined,
+  persisted: OpaqueHandState | null | undefined,
 ): SpacepokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'spacepoker') return undefined;
   if (persisted.version !== SPACEPOKER_PERSISTED_STATE_VERSION) return undefined;
@@ -152,7 +149,7 @@ export function spacepokerStateFromPersisted(
   return persisted.state as SpacepokerHandState;
 }
 
-function persistedSpacepokerState(state: SpacepokerHandState): PersistedGameState<SpacepokerHandState> {
+function persistedSpacepokerState(state: SpacepokerHandState): PersistedSpacepokerHand<SpacepokerHandState> {
   return {
     gameType: 'spacepoker',
     version: SPACEPOKER_PERSISTED_STATE_VERSION,
@@ -164,13 +161,13 @@ export function useSpacepokerHand(
   _gameObject: SessionController,
   _gameId: string,
   _iStarted: boolean,
-  gameplayEvent$: Observable<GameplayEvent>,
+  gameplayEvent$: Observable<RawGameNotification>,
   betSize: bigint,
   unitSizeMojos: bigint | undefined,
   onTurnChanged: (isMyTurn: boolean) => void,
-  initialPersistedState?: PersistedGameState,
+  initialPersistedState?: OpaqueHandState,
   /** Session-level settlement (live terminal or frozen remount). */
-  externalSettlement: SettlementOutcome | null = null,
+  externalSettlement: SpacepokerSettlementOutcome | null = null,
 ): UseSpacepokerHandResult {
   const fallbackUnitSizeRaw = unitSizeMojos && unitSizeMojos > 0n ? unitSizeMojos : betSize / 10n;
   const fallbackUnitSize = fallbackUnitSizeRaw > 0n ? fallbackUnitSizeRaw : 1n;
@@ -211,7 +208,7 @@ export function useSpacepokerHand(
   const [handHistory, setHandHistory] = useState<SpHandEntry[]>(initialHandState?.handHistory ?? []);
   const [outcome, setOutcome] = useState<SpOutcome | null>(initialHandState?.outcome ?? null);
   const [terminalState, setTerminalState] = useState<SpTerminalState>(initialHandState?.terminalState ?? 'none');
-  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
+  const [settlementOutcome, setSettlementOutcome] = useState<SpacepokerSettlementOutcome | null>(
     initialHandState?.settlementOutcome ?? null,
   );
   // Coin toss result: true = I open, false = opponent opens, null = not yet known
@@ -328,7 +325,7 @@ export function useSpacepokerHand(
     return mojos / betUnit;
   }
 
-  function applySettlement(outcome: SettlementOutcome) {
+  function applySettlement(outcome: SpacepokerSettlementOutcome) {
     // Always keep the settlement label (Timed Out / Forfeit), even when the
     // hand already reached Folded/Showdown via optimistic play or replay.
     setSettlementOutcome(outcome);
@@ -336,8 +333,8 @@ export function useSpacepokerHand(
     if (cur.handler === SpHandler.Showdown || cur.handler === SpHandler.Folded) {
       return;
     }
-    const byUs = settlementByUs(outcome);
-    if (byUs === true || isForfeitOutcome(outcome)) {
+    const byUs = spacepokerSettlementByUs(outcome);
+    if (byUs === true || isSpacepokerForfeitOutcome(outcome)) {
       if (byUs && !cur.myTurn) {
         const snap = lastActionSnapshotRef.current;
         if (snap) {
@@ -385,7 +382,7 @@ export function useSpacepokerHand(
   // handler computed; it's the single source of truth for what happened.
   useEffect(() => {
     const sub = gameplayEvent$.subscribe({
-      next: (evt: GameplayEvent) => {
+      next: (evt: RawGameNotification) => {
         if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
           // Apply even when already finished so timeout/forfeit labels land

@@ -1,11 +1,12 @@
 import React from 'react';
 
 import { CaliforniaPoker } from './components';
-import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
+import { useCheatNerfKeys } from './useCheatNerfKeys';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../../types/californiaPoker/CaliforniapokerProps';
+} from './types/CaliforniapokerProps';
+import type { CalpokerSettlementOutcome } from './handState';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcomeView | undefined;
@@ -24,7 +25,7 @@ export interface CalpokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
+  settlementOutcome?: CalpokerSettlementOutcome | null;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({

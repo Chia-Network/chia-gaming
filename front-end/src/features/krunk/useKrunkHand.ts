@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from './SessionController';
-import { GameplayEvent } from './useGameSession';
-import { PersistedGameState } from './save';
-import {
-  krunkSettlementStatus,
-  type SettlementOutcome,
-} from '../lib/settlement';
+import { SessionController } from '../../hooks/SessionController';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import type { OpaqueHandState } from '../../hooks/save';
+import type { KrunkSettlementOutcome, PersistedKrunkHand } from './handState';
+import { krunkSettlementStatus } from './terminal';
 
 // Phase of the krunk state machine. Both roles share the enum -- which
 // transitions fire depends on whether the local player is alice (picks
@@ -43,7 +41,7 @@ export interface KrunkGameState {
   outcome: 'win' | 'lose' | null;
   // From OpponentMoved.moverShare when the hand ends on a received reveal.
   moverShare: string | null;
-  settlementOutcome: SettlementOutcome | null;
+  settlementOutcome: KrunkSettlementOutcome | null;
   error: string | null;
 }
 
@@ -84,7 +82,7 @@ function restoreKrunkGameState(state: PersistedKrunkGameState): KrunkGameState |
 }
 
 export function krunkStateFromPersisted(
-  persisted: PersistedGameState | null | undefined,
+  persisted: OpaqueHandState | null | undefined,
 ): KrunkHandState | undefined {
   if (!persisted || persisted.gameType !== 'krunk') return undefined;
   if (persisted.version !== KRUNK_PERSISTED_STATE_VERSION) return undefined;
@@ -101,7 +99,7 @@ export function krunkStateFromPersisted(
   return { games };
 }
 
-function persistedKrunkState(state: KrunkHandState): PersistedGameState<PersistedKrunkHandState> {
+function persistedKrunkState(state: KrunkHandState): PersistedKrunkHand<PersistedKrunkHandState> {
   const games = Object.fromEntries(
     Object.entries(state.games).map(([gameId, game]) => [
       gameId,
@@ -347,7 +345,7 @@ export function useKrunkHand(
   _gameObject: SessionController,
   _gameId: string,
   iStarted: boolean,
-  gameplayEvent$: Observable<GameplayEvent>,
+  gameplayEvent$: Observable<RawGameNotification>,
   onTurnChanged: (isMyTurn: boolean) => void,
   active = true,
 ): UseKrunkHandResult {
@@ -450,7 +448,7 @@ export function useKrunkHand(
   // ── OpponentMoved handling ──
   useEffect(() => {
     const sub = gameplayEvent$.subscribe({
-      next: (evt: GameplayEvent) => {
+      next: (evt: RawGameNotification) => {
         if ('OpponentMoved' in evt) {
           if (handFinishedRef.current) return;
           const evtGameId = evt.OpponentMoved.gameId;

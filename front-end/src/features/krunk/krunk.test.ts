@@ -10,16 +10,16 @@ import {
   krunkTerminalStatus,
   krunkWinMessage,
   type KrunkGameState,
-} from '../../hooks/useKrunkHand';
+} from './useKrunkHand';
 import {
   activeIdsAfterProposalAccepted,
   clearProposalTracking,
-  gameplayEventForMoveRejected,
-  gameplayEventsForGameStatus,
+  rawNotificationForMoveRejected,
+  rawNotificationsForGameStatus,
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
-import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from '../../components/Krunk';
+import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from './Krunk';
 
 describe('Krunk terms', () => {
   it('accepts only the current persisted Krunk hand-state record', () => {
@@ -336,7 +336,7 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('routes a typed move rejection with its game id, tag, and message', () => {
-    expect(gameplayEventForMoveRejected({
+    expect(rawNotificationForMoveRejected({
       id: 7n,
       tag: 'not_in_dictionary',
       message: 'xxxxx',
@@ -368,7 +368,7 @@ describe('Krunk first guess drafting', () => {
         },
       },
     };
-    expect(gameplayEventsForGameStatus(opponentCommit, activeIds, null)).toEqual([
+    expect(rawNotificationsForGameStatus(opponentCommit, activeIds, null)).toEqual([
       {
         OpponentMoved: {
           readable: Uint8Array.from([0x80]),
