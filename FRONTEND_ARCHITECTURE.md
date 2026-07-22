@@ -424,7 +424,7 @@ full mid-game session state:
 | `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
-| `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching. |
+| `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching, including optional unroll initiator and semantic progress phase. |
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |

@@ -182,11 +182,16 @@ export interface MoveRejectedPayload {
   message: string;
 }
 
+export type TimeoutClaimSubmittedPayload =
+  | 'ChannelTimeoutFinish'
+  | { GameOpponentTurn: { id: unknown } };
+
 export type WasmNotification = {
-  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected'>]?: Record<string, unknown>;
+  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected' | 'TimeoutClaimSubmitted'>]?: Record<string, unknown>;
 } & {
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
+  TimeoutClaimSubmitted?: TimeoutClaimSubmittedPayload;
 };
 
 export type WasmEvent =

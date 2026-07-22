@@ -348,6 +348,7 @@ export function useSpacepokerHand(
           opponentAction === 'fold' ? 'folded-by-opponent' : 'conceded-by-opponent',
         );
       }
+      transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
       return;
     }
     if (isTerminalSpacepokerHandler(cur.handler)) {

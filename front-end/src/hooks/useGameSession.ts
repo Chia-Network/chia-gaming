@@ -15,6 +15,7 @@ import {
   GameStatusState,
   MoveRejectedPayload,
   SessionPhase,
+  TimeoutClaimSubmittedPayload,
 } from '../types/ChiaGaming';
 import {
   getOrCreateSessionController,
@@ -1202,12 +1203,12 @@ export function useGameSession(
     if (typeof n !== 'object' || n === null) return;
 
     if ('TimeoutClaimSubmitted' in n) {
-      const semantic = n.TimeoutClaimSubmitted as Record<string, unknown> | undefined;
-      if (semantic && 'ChannelTimeoutFinish' in semantic) {
+      const semantic = n.TimeoutClaimSubmitted as TimeoutClaimSubmittedPayload | undefined;
+      if (semantic === 'ChannelTimeoutFinish') {
         setChannelStatus(prev => ({ ...prev, semanticPhase: 'submitting_timeout_finish' }));
       } else {
-        const game = semantic?.GameOpponentTurn as { id?: unknown } | undefined;
-        if (game?.id != null) {
+        const game = semantic?.GameOpponentTurn;
+        if (game) {
           updateGameInstance(String(game.id), instance => ({
             ...instance,
             handStatus: 'claiming-timeout',

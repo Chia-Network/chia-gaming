@@ -109,11 +109,11 @@ on-chain confirmation arrives.
 
 ### Step 5: Timeout Resolution
 
-Timeout resolution is split into two decoupled halves: **eager submission** of
-the timeout claim, and **confirmation-driven** notification when a spend is
-actually observed. There is no longer a maturity callback (`coin_timeout_reached`
-has been removed); reaching the timelock no longer triggers a spend or a
-notification directly.
+Timeout resolution is split into **eager submission**, a semantic
+**submission-progress notification**, and **confirmation-driven** settlement
+notification when a spend is actually observed. There is no handler maturity
+callback (`coin_timeout_reached` has been removed): maturity is decided solely
+by the transaction manager.
 
 **Eager submission.** When a game coin is registered with the wallet (via
 `register_initial_game_coins`), the handler pre-builds the timeout claim with
@@ -126,6 +126,15 @@ each coin's reorg-aware birthday and submits the stored claim once the coin
 reaches `birthday + game_timeout`, resubmitting across reorgs (see
 [Eager Timeout Submission](INTERNALS.md#eager-timeout-submission-and-confirmation-driven-notifications)).
 Handlers never build or submit timeout transactions at maturity.
+
+**Submission-progress notification.** At the same transition where the manager
+sets `claim_submitted` and queues the bundle, it emits
+`TimeoutClaimSubmitted`. Its semantic kind is `ChannelTimeoutFinish` for an
+unroll finish and `GameOpponentTurn { id }` for a game timeout claim. This is
+the source of the dashboard's “Submitting timeout finish” and “Claiming
+timeout” states. It is emitted once per watched coin birthday; a reorg may
+re-arm the claim for submission, but does not make frontend code infer maturity
+from a timer or a transaction name.
 
 **Confirmation-driven notification.** Terminal notifications are emitted from
 `handle_game_coin_spent` (reached via the `coin_spent` → `coin_puzzle_and_solution`

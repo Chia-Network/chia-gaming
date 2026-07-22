@@ -54,8 +54,9 @@ long or short dispute windows.
 
 Timeout handling is split into two decoupled responsibilities: the
 `TransactionManager` owns **submission** (and its timing), while the handlers
-own **notification**, driven by observing the resulting on-chain spend. There is
-no maturity callback into the handlers — `coin_timeout_reached` was removed.
+own **confirmation** notification, driven by observing the resulting on-chain
+spend. There is no maturity callback into the handlers —
+`coin_timeout_reached` was removed.
 
 **Eager claim, registered up front.** When a coin that can be claimed on timeout
 is registered, the handler pre-builds the claim `SpendBundle` and attaches it to
@@ -81,6 +82,16 @@ every block the manager submits a stored claim once the coin reaches
 A reorg that rolls back or shifts the coin's birthday re-arms `claim_submitted`,
 so the claim is resubmitted. This replaced the old lazy "build and submit at the
 moment the timeout fires" logic in the handlers.
+
+**Semantic maturity event.** The same `claim_submitted` transition emits a
+`GameNotification::TimeoutClaimSubmitted` only when the manager queues a
+mature claim. The durable watched-coin registration carries
+`TimeoutClaimSemantic`: `ChannelTimeoutFinish` for the unroll timeout or
+`GameOpponentTurn { id }` for a game timeout. This gives the frontend an
+authoritative “submitting” state without inspecting a `SpendBundle` name or
+running a browser timer. The event follows the manager's idempotency rule:
+there is no duplicate notification while `claim_submitted` remains set, and a
+reorg can deliberately re-arm the semantic submission along with the claim.
 
 **Reorg boundary: leaf logic pretends reorgs do not happen.** Protocol handlers
 are intentionally written against a simplified lifecycle: they register coins,

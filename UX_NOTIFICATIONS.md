@@ -25,6 +25,12 @@ like "OpponentMoved" for readability. The canonical wire model in Rust is
 - **settlements (terminal):** `GameNotification::GameSettled { id, outcome,
   our_share, coin_id }` — off-chain `accept_settlement` plus on-chain glossary
   outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
+- **timeout submission:** `TimeoutClaimSubmitted(ChannelTimeoutFinish |
+  GameOpponentTurn { id })` — emitted exactly when the transaction manager
+  queues a mature eager claim for host submission; it is progress, not a
+  confirmed settlement. Serde's externally tagged JSON shape is the string
+  `"ChannelTimeoutFinish"` for the unit variant or
+  `{ "GameOpponentTurn": { "id": ... } }` for a game claim.
 
 Settlements no longer use `EndedWeTimedOut`, `EndedOpponentTimedOut`, or other
 `Ended*` slash/timeout status kinds. Slash and cheat paths are settled outcomes
@@ -127,7 +133,10 @@ batching artifacts.
 
 All channel lifecycle events are delivered as a single `ChannelStatus`
 notification containing the current `ChannelStatus`, balance information, and
-an optional `advisory` string for context (e.g. error reason). The
+an optional `advisory` string for context (e.g. error reason). During an
+on-chain transition it can also carry optional `unroll_initiator` (`us` or
+`opponent`) and `semantic_phase`; absent fields preserve coarse-status behavior
+for older/restored snapshots. The
 `ChannelStatus` values are:
 
 `ChannelStatus` is the notification-level state model exposed to the UI and
@@ -154,6 +163,17 @@ for how those lenses relate.
 | `ResolvedStale`   | Stale unroll completed                         | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                         |
 | `Failed`          | Unrecoverable error                            | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                            |
 
+`semantic_phase` refines, rather than replaces, `GoingOnChain` and `Unrolling`:
+
+| Phase | Meaning |
+| --- | --- |
+| `submitting_channel_spend` | We initiated go-on-chain and submitted the channel spend. |
+| `resolving_opponent_channel_spend` | The observed channel spend was initiated by the opponent and is being decoded. |
+| `preempting` | We are submitting a newer unroll spend to preempt the observed state. |
+| `waiting_timeout` | The unroll coin is live and its timeout claim is armed. |
+| `submitting_timeout_finish` | The unroll timeout matured and its finish spend was queued for submission. |
+| `resolving` | The unroll coin spend is being decoded into reward and game coins. |
+
 **Assumes single-handing for `ShuttingDown` timing.** The current clean shutdown
 flow emits `ShuttingDown` as soon as the user requests it, even before the
 potato arrives and the shutdown batch is actually sent. This is correct for
@@ -167,7 +187,8 @@ details.
 
 Each `ChannelStatus` notification is emitted when the `PeerLifecyclePhase` is
 replaced (handler transition) or when the current handler's snapshot changes
-(e.g. balance update during `Active`). The frontend uses this single
+(e.g. balance update during `Active` or an on-chain semantic-phase change).
+The frontend uses this single
 notification type for its persistent channel state display.
 
 Monotonicity applies across all three lenses:
@@ -206,6 +227,7 @@ games). Each row uses that game's own turn or terminal state:
 | `Your turn` | A game coin is on-chain and the protocol says our side is the mover. |
 | `Their turn` | A game coin is on-chain and the protocol says the opponent is the mover. |
 | `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
+| `Claiming timeout` | A mature timeout claim for the opponent's turn was queued for submission. |
 | `Ended` | A `GameSettled` or non-settlement terminal (`EndedCancelled`, `EndedError`) has been observed. The collapsed bar adds a short hand detail from the settlement glossary label when useful. |
 
 Terminal hand details are derived from `GameSettled.outcome` via
