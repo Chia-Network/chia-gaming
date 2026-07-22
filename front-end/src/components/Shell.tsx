@@ -1156,6 +1156,7 @@ const Shell = () => {
   }, [setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler]);
 
   const declinePendingAdvisory = useCallback((advisory: AdvisoryStartParams) => {
+    if (startingSessionRef.current) return;
     setPendingAdvisoryState(null);
     sendSessionReject(advisory.peer_id);
   }, [sendSessionReject, setPendingAdvisoryState]);
@@ -1179,6 +1180,7 @@ const Shell = () => {
   }, [setPendingProposalState, startFreshSessionWithPeer]);
 
   const declinePendingProposal = useCallback((proposal: PendingSessionProposal) => {
+    if (startingSessionRef.current) return;
     setPendingProposalState(null);
     resetPeerRelayState();
     sendSessionReject(proposal.from_id);
