@@ -830,7 +830,7 @@ const Krunk: React.FC<KrunkProps> = ({
         </div>
       </div>
 
-      <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2'>
+      <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
         <OnScreenKeyboard
           statuses={letterStatuses}
           disabled={keyboardMode === null}
