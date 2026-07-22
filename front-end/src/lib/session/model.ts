@@ -772,8 +772,7 @@ export function selectStatusBarBalances(
 
   const channel = model.channel.status;
 
-  const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
-  if (channelFailed) {
+  if (channel.state === 'Failed') {
     return [
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },

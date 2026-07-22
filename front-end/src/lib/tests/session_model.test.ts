@@ -312,7 +312,7 @@ describe('session model selectors', () => {
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'opponent-illegal-move' },
+        coin: { coinHex: null, turnState: 'opponent-illegal-move' },
       },
     }));
     expect(slashing.handStatusLabel).toBe('Slashing cheater');
@@ -695,6 +695,43 @@ describe('session model selectors', () => {
     expect(clean).toEqual([
       { label: 'Me', value: '60' },
       { label: 'Opp', value: '40' },
+    ]);
+
+    const stale = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedStale', ourBalance: '60', theirBalance: '40' },
+      },
+      game: {
+        activeIds: ['game-1'],
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': {
+            ...pending('game-1'),
+            handStatus: 'our-turn',
+          },
+          'game-2': {
+            ...pending('game-2'),
+            coin: { coinHex: null, turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'game-error',
+              outcome: null,
+              label: 'Missing from stale unroll',
+              myReward: null,
+              rewardCoinHex: null,
+            },
+          },
+        },
+      },
+    });
+    expect(selectStatusBarBalances(stale)).toEqual([
+      { label: 'Me', value: '60' },
+      { label: 'Opp', value: '40' },
+      { label: 'Hand 1', value: '100' },
+    ]);
+    expect(selectGameDashboardView(stale).lifecycleRows).toEqual([
+      { id: 'game-1', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
+      { id: 'game-2', label: 'Hand 2', statusLabel: 'Ended', detail: 'Missing from stale unroll' },
     ]);
 
     const errored = selectStatusBarBalances(createSessionModel({

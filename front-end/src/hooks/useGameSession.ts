@@ -1646,7 +1646,7 @@ export function useGameSession(
               coinHex: coinHex ?? instance.coin.coinHex,
               turnState: 'opponent-illegal-move',
             },
-            handStatus: coinHex ? 'slashing' : 'active',
+            handStatus: 'slashing',
           };
         }
         return instance;
@@ -1701,7 +1701,7 @@ export function useGameSession(
       } else if (status === 'illegal-move-detected') {
         turnStateRef.current = 'opponent-illegal-move';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
-        setHandStatus(coinHex ? 'slashing' : 'active');
+        setHandStatus('slashing');
       }
       void coinIdHex(gs.coin_id).then(resolvedCoinHex => {
         if (!resolvedCoinHex || !gameInstancesRef.current[statusId]) return;
