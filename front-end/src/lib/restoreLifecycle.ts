@@ -50,6 +50,20 @@ export function shouldReportSessionPhase(
 }
 
 /**
+ * Hub busy bit for lobby presence: session obligation OR the WalletConnect
+ * full-node-peer gate. Callers must not push `setBusy(false)` /
+ * `shouldReportHubBusy(...)` alone — after session end/cancel the gate can
+ * still require busy until a full node peer is verified.
+ */
+export function shouldReportPresenceBusy(
+  sessionPhase: SessionPhase,
+  peerGateActive: boolean,
+  hasFullNodePeer: boolean,
+): boolean {
+  return shouldReportHubBusy(sessionPhase) || (peerGateActive && !hasFullNodePeer);
+}
+
+/**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
  * Active (or further), delivery_failure only degrades peer liveness — the peer
