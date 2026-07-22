@@ -19,7 +19,7 @@ import {
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
-import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from './Krunk';
+import { formatKrunkHandLog, krunkBobResult, krunkGameSlots, krunkLetterStatuses } from './Krunk';
 
 describe('Krunk terms', () => {
   it('accepts only the current persisted Krunk hand-state record', () => {
@@ -247,6 +247,10 @@ describe('Krunk first guess drafting', () => {
       moverShare: null,
       revealedWord: 'CRANE',
     }, 'Peer')).toBe('Out of guesses.');
+    expect(krunkBobResult({
+      ...bobWin,
+      settlementOutcome: 'settled_cleanly',
+    }, 'Peer')).toBe('You won 100 mojo!');
   });
 
   it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {

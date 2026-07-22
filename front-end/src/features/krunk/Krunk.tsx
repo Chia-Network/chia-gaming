@@ -11,6 +11,7 @@ import {
   krunkWinMessage,
   KrunkHandler,
   KrunkGuess,
+  KrunkGameState,
   KrunkRole,
 } from './useKrunkHand';
 import { RawGameNotification } from '../../hooks/useGameSession';
@@ -51,6 +52,20 @@ export function formatKrunkHandLog(
     lines.push('⬛⬛⬛⬛⬛' + revealedWord);
   }
   return lines;
+}
+
+export function krunkBobResult(
+  state: KrunkGameState,
+  opponentLabel: string,
+): string | null {
+  if (
+    state.handler === KrunkHandler.Terminal
+    && state.outcome === 'win'
+    && state.moverShare != null
+  ) {
+    return krunkWinMessage(state.moverShare);
+  }
+  return krunkTerminalStatus(state, opponentLabel);
 }
 
 export function krunkGameSlots(
@@ -649,19 +664,12 @@ const Krunk: React.FC<KrunkProps> = ({
   };
   const bobTerminalState = terminalStateFor(bobId, bobHand.gameState);
   const aliceTerminalState = terminalStateFor(aliceId, aliceHand.gameState);
-  const bobTerminal = krunkTerminalStatus(bobTerminalState, themLabel);
   const aliceTerminal = krunkTerminalStatus(aliceTerminalState, themLabel);
   const hasTerminalResult =
     bobTerminalState.handler === KrunkHandler.Terminal
     || aliceTerminalState.handler === KrunkHandler.Terminal;
 
-  const bobWon =
-    bobTerminalState.handler === KrunkHandler.Terminal
-    && bobTerminalState.outcome === 'win'
-    && bobTerminalState.settlementOutcome === null;
-  const bobResult = bobWon && bobTerminalState.moverShare != null
-    ? krunkWinMessage(bobTerminalState.moverShare)
-    : bobTerminal;
+  const bobResult = krunkBobResult(bobTerminalState, themLabel);
 
   const statusNotice = useMemo((): { text: string; kind: 'error' | 'win' | 'info' } | null => {
     if (aliceHand.gameState.error) {
