@@ -28,6 +28,10 @@ export const SpHandler = {
 } as const;
 export type SpHandler = typeof SpHandler[keyof typeof SpHandler];
 
+export function isTerminalSpacepokerHandler(handler: SpHandler): boolean {
+  return handler === SpHandler.Showdown || handler === SpHandler.Folded;
+}
+
 export interface SpGameState {
   handler: SpHandler;
   myTurn: boolean;
@@ -330,7 +334,8 @@ export function useSpacepokerHand(
     // hand already reached Folded/Showdown via optimistic play or replay.
     setSettlementOutcome(outcome);
     const cur = gsRef.current;
-    if (handFinishedRef.current || cur.handler === SpHandler.Showdown || cur.handler === SpHandler.Folded) {
+    handFinishedRef.current = true;
+    if (isTerminalSpacepokerHandler(cur.handler)) {
       return;
     }
     const byUs = spacepokerSettlementByUs(outcome);
@@ -373,7 +378,6 @@ export function useSpacepokerHand(
   // remount and leave the board mid-hand while the banner already shows timeout).
   useEffect(() => {
     if (externalSettlement == null) return;
-    handFinishedRef.current = true;
     applySettlement(externalSettlement);
   }, [externalSettlement]);
 
@@ -387,7 +391,6 @@ export function useSpacepokerHand(
           if (evt.Settled.gameId !== gameIdRef.current) return;
           // Apply even when already finished so timeout/forfeit labels land
           // after optimistic fold / on-chain replay reached a terminal handler.
-          handFinishedRef.current = true;
           applySettlement(evt.Settled.outcome);
           return;
         }

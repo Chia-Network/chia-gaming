@@ -1823,6 +1823,7 @@ const Shell = () => {
   }, []);
 
   const handleSessionModelChange = useCallback((model: SessionModel) => {
+    if (sessionFinishedCleanupRef.current) return;
     dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
   }, []);
