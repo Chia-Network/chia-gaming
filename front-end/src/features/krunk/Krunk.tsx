@@ -630,28 +630,31 @@ const Krunk: React.FC<KrunkProps> = ({
     : (canDraftGuess ? 'guess' : null);
   const activeDraft = keyboardMode === 'pick' ? wordDraft : guessDraft;
   const showGuessDraft = canDraftGuess;
+  const keyboardFocusRef = useRef<HTMLDivElement>(null);
 
   const commitWord = useCallback(() => {
-    if (wordDraft.length !== 5) return;
+    if (wordDraft.length !== 5) return false;
     aliceHand.setSecretWord(wordDraft);
     setWordDraft('');
+    return true;
   }, [wordDraft, aliceHand.setSecretWord]);
 
   const submitGuess = useCallback(() => {
-    if (guessDraft.length !== 5) return;
-    if (bobGameOver) return;
+    if (guessDraft.length !== 5) return false;
+    if (bobGameOver) return false;
     // Always allow queueing when not in a live send phase (waiting on
     // commit or clue). Send immediately only when it is our guess turn
     // and the queue is empty.
     if (isBobGuessPhase && guessQueue.length === 0) {
       bobHand.submitGuess(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
-      if (filledGuessCount >= MAX_GUESSES) return;
+      if (filledGuessCount >= MAX_GUESSES) return false;
       setGuessQueue(prev => [...prev, guessDraft]);
     } else {
-      return;
+      return false;
     }
     setGuessDraft('');
+    return true;
   }, [
     guessDraft,
     isBobGuessPhase,
@@ -663,8 +666,12 @@ const Krunk: React.FC<KrunkProps> = ({
   ]);
 
   const submitActive = useCallback(() => {
-    if (keyboardMode === 'pick') commitWord();
-    else if (keyboardMode === 'guess') submitGuess();
+    const submitted = keyboardMode === 'pick'
+      ? commitWord()
+      : keyboardMode === 'guess'
+        ? submitGuess()
+        : false;
+    if (submitted) keyboardFocusRef.current?.focus();
   }, [keyboardMode, commitWord, submitGuess]);
 
   const themLabel = opponentName ?? 'Opponent';
@@ -823,7 +830,7 @@ const Krunk: React.FC<KrunkProps> = ({
         </div>
       </div>
 
-      <div className='flex flex-col items-center gap-2'>
+      <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2'>
         <OnScreenKeyboard
           statuses={letterStatuses}
           disabled={keyboardMode === null}
