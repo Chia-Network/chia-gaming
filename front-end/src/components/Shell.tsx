@@ -70,7 +70,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
@@ -1050,12 +1050,15 @@ const Shell = () => {
   }, [bindPeerMessageHandler]);
 
   const isAvailableForNewSessionPrompt = useCallback(() => {
-    const phase = sessionPhaseRef.current;
-    return (phase === 'none' || phase === 'resolved') &&
-      pendingAdvisoryRef.current === null &&
-      pendingProposalRef.current === null &&
-      peerSessionRef.current === null &&
-      !sessionSaveRef.current?.sessionPeerId;
+    return checkAvailableForNewSessionPrompt(
+      sessionPhaseRef.current,
+      pendingAdvisoryRef.current !== null,
+      pendingProposalRef.current !== null,
+      peerSessionRef.current !== null,
+      !!sessionSaveRef.current?.sessionPeerId,
+      peerGateActiveRef.current,
+      hasFullNodePeerRef.current,
+    );
   }, []);
 
   const sendSessionReject = useCallback((peerId: string) => {

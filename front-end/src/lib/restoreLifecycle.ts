@@ -64,6 +64,28 @@ export function shouldReportPresenceBusy(
 }
 
 /**
+ * Whether inbound matchmaking may open a consent prompt.
+ * Must stay aligned with `shouldReportPresenceBusy` for session + peer-gate,
+ * and also exclude temporary local matchmaking state that does not always
+ * set hub `busy` (pending advisory/proposal, live peer session, reserved peer).
+ */
+export function isAvailableForNewSessionPrompt(
+  sessionPhase: SessionPhase,
+  pendingAdvisory: boolean,
+  pendingProposal: boolean,
+  hasLivePeerSession: boolean,
+  hasReservedPeerId: boolean,
+  peerGateActive: boolean,
+  hasFullNodePeer: boolean,
+): boolean {
+  return !shouldReportPresenceBusy(sessionPhase, peerGateActive, hasFullNodePeer)
+    && !pendingAdvisory
+    && !pendingProposal
+    && !hasLivePeerSession
+    && !hasReservedPeerId;
+}
+
+/**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
  * Active (or further), delivery_failure only degrades peer liveness — the peer
