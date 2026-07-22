@@ -2,6 +2,7 @@ import {
   isAvailableForNewSessionPrompt,
   isRestoreBlocked,
   isTerminalChannelStatus,
+  shouldActivatePeerGate,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
@@ -45,6 +46,14 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportPresenceBusy('resolved', true, true)).toBe(false);
     expect(shouldReportPresenceBusy('off-chain', false, true)).toBe(true);
     expect(shouldReportPresenceBusy('on-chain', true, false)).toBe(true);
+  });
+
+  it('activates the WalletConnect peer gate only when not restoring a cradle', () => {
+    expect(shouldActivatePeerGate('walletconnect', false)).toBe(true);
+    expect(shouldActivatePeerGate('walletconnect', true)).toBe(false);
+    expect(shouldActivatePeerGate('simulator', false)).toBe(false);
+    expect(shouldActivatePeerGate('simulator', true)).toBe(false);
+    expect(shouldActivatePeerGate(undefined, false)).toBe(false);
   });
 
   it('rejects inbound matchmaking while the peer gate holds presence busy', () => {

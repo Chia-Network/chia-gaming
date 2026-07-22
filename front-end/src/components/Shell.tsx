@@ -62,7 +62,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, isTerminalChannelStatus, shouldActivatePeerGate, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isCleanShutdownInProgress,
@@ -1304,8 +1304,10 @@ const Shell = () => {
     const hubSessionId = getSessionId();
     setSessionId(hubSessionId);
 
-    const resuming = !!loadState().serializedGameSession;     // skip on resume
-    const gate = blockchainTypeRef.current === 'walletconnect' && !resuming;  // skip on simulator
+    // Skip the gate when restoring a cradle. Callers must not open the hub
+    // during autoResuming before IndexedDB hydrate fills this field.
+    const resuming = !!loadState().serializedGameSession;
+    const gate = shouldActivatePeerGate(blockchainTypeRef.current, resuming);
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);   // simulator/resume => immediately "ready"
     // Set the refs synchronously: the HubConnection constructor below calls
@@ -1525,10 +1527,19 @@ const Shell = () => {
 
   // Auto-connect to saved hub once this tab owns the app lease. Also while
   // autoResuming (blank UI) so cradle restore can reconcile before first paint.
+  // During autoResuming, wait until performResume has applied sessionConfig —
+  // otherwise connectToHub can run before IndexedDB hydrate fills
+  // serializedGameSession and leave the WalletConnect peer gate stuck on.
+  // Derive a boolean so clearing sessionConfig later (session end) does not
+  // re-fire this effect and tear down a live hub connection.
+  const autoResumeHydrated = bootState.kind !== 'autoResuming' || !!sessionConfig;
   useEffect(() => {
     if (bootState.kind !== 'ready' && bootState.kind !== 'autoResuming') {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
+      return;
+    }
+    if (!autoResumeHydrated) {
       return;
     }
     const url = getHubUrl();
@@ -1539,7 +1550,7 @@ const Shell = () => {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
     };
-  }, [bootState.kind, connectToHub]);
+  }, [bootState.kind, connectToHub, autoResumeHydrated]);
 
   // Shared connection completion
   const completeConnection = useCallback((
@@ -1833,13 +1844,14 @@ const Shell = () => {
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
   // connectToHub snapshots the peer gate at hub-connect time, but the
-  // wallet can be connected or switched while the hub is already up.
-  // Re-evaluate whenever the blockchain type changes so a WalletConnect wallet
-  // connected after the hub still waits for a full node peer.
+  // wallet can be connected or switched while the hub is already up — and
+  // a cradle can appear after hydrate even when blockchainType is unchanged
+  // (prefs already said walletconnect). Re-evaluate on those signals.
+  const restoringCradle = !!sessionConfig?.restoring;
   useEffect(() => {
     if (!hubOrigin) return;
-    const resuming = !!loadState().serializedGameSession;
-    const gate = blockchainType === 'walletconnect' && !resuming;
+    const resuming = restoringCradle || !!loadState().serializedGameSession;
+    const gate = shouldActivatePeerGate(blockchainType, resuming);
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);
     // Set the refs synchronously (as connectToHub does): getPresence can
@@ -1847,7 +1859,7 @@ const Shell = () => {
     // and must not report a stale not-busy while the gate should be active.
     peerGateActiveRef.current = gate;
     hasFullNodePeerRef.current = !gate;
-  }, [blockchainType, hubOrigin]);
+  }, [blockchainType, hubOrigin, restoringCradle]);
 
   // While the peer gate is active, poll the wallet for a full node peer every 5s
   // and only mark ready (visible in the lobby) once one is present.
