@@ -6,6 +6,7 @@ import {
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
+  shouldReportPresenceBusy,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -32,6 +33,17 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('resolved')).toBe(false);
     expect(shouldReportHubBusy('off-chain')).toBe(true);
     expect(shouldReportHubBusy('on-chain')).toBe(true);
+  });
+
+  it('keeps presence busy after session end/cancel while the peer gate is unverified', () => {
+    // Session alone would advertise available — peer gate must still hold busy.
+    expect(shouldReportPresenceBusy('none', true, false)).toBe(true);
+    expect(shouldReportPresenceBusy('resolved', true, false)).toBe(true);
+    // Gate inactive or peer verified → session phase decides.
+    expect(shouldReportPresenceBusy('none', false, false)).toBe(false);
+    expect(shouldReportPresenceBusy('resolved', true, true)).toBe(false);
+    expect(shouldReportPresenceBusy('off-chain', false, true)).toBe(true);
+    expect(shouldReportPresenceBusy('on-chain', true, false)).toBe(true);
   });
 
   it('recognizes terminal channel states that must not keep the lobby busy', () => {

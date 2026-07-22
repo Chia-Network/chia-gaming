@@ -34,6 +34,20 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
+/**
+ * Hub busy bit for lobby presence: session obligation OR the WalletConnect
+ * full-node-peer gate. Callers must not push `setBusy(false)` /
+ * `shouldReportHubBusy(...)` alone — after session end/cancel the gate can
+ * still require busy until a full node peer is verified.
+ */
+export function shouldReportPresenceBusy(
+  sessionPhase: SessionPhase,
+  peerGateActive: boolean,
+  hasFullNodePeer: boolean,
+): boolean {
+  return shouldReportHubBusy(sessionPhase) || (peerGateActive && !hasFullNodePeer);
+}
+
 /** Channel states that already finished — resume must not keep the lobby busy. */
 export function isTerminalChannelStatus(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'

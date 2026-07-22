@@ -62,7 +62,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportHubBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isCleanShutdownInProgress,
@@ -597,11 +597,11 @@ const Shell = () => {
   // called from the HubConnection constructor and on every reconnect).
   const hasFullNodePeerRef = useRef(false);
   const peerGateActiveRef = useRef(false);
-  // Busy bit reported to the hub: busy while a session is unresolved, or
-  // while the full-node-peer gate is active and unverified (WalletConnect
-  // wallets must have a full node peer before advertising availability).
+  // Busy bit reported to the hub: session obligation OR peer gate.
+  // All setBusy paths that might clear availability must go through this
+  // (not bare false / shouldReportHubBusy alone).
   const presenceBusy = useCallback((phase: SessionPhase) =>
-    shouldReportHubBusy(phase) || (peerGateActiveRef.current && !hasFullNodePeerRef.current), []);
+    shouldReportPresenceBusy(phase, peerGateActiveRef.current, hasFullNodePeerRef.current), []);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
@@ -1025,8 +1025,8 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-    hubConnRef.current?.setBusy(false);
-  }, [clearSessionPreservingHistory, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+    hubConnRef.current?.setBusy(presenceBusy('none'));
+  }, [clearSessionPreservingHistory, presenceBusy, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
   const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
     const conn = hubConnRef.current;
@@ -1432,17 +1432,19 @@ const Shell = () => {
           saveSession({ myHubPlayerId: playerId });
           if (save) save.myHubPlayerId = playerId;
           const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
+          // Match getPresence: session/restore obligation OR the peer gate.
+          const restoreBusy = presenceBusy(sessionPhaseRef.current)
+            || (!terminalSave && !!(save?.serializedGameSession || save?.pairingToken || save?.sessionPeerId));
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
             peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
             bindPeerMessageHandler(peerSessionRef.current);
             setRestoreHubReconciled(true);
             // Restore never goes through startFreshSessionWithPeer, which is
-            // otherwise the only place that marks the hub busy. Terminal
-            // (Failed/Resolved*) saves must stay available in the lobby.
-            conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
+            // otherwise the only place that marks the hub busy.
+            conn.setBusy(restoreBusy, save.myAlias ?? peekAlias());
           } else if (save?.serializedGameSession || save?.pairingToken) {
             setRestoreHubReconciled(true);
-            conn.setBusy(!terminalSave, save.myAlias ?? peekAlias());
+            conn.setBusy(restoreBusy, save.myAlias ?? peekAlias());
           }
           if (peerSessionRef.current && sessionController) {
             sessionController.resendUnacked();
@@ -1498,7 +1500,7 @@ const Shell = () => {
     }
     hubConnRef.current = conn;
 
-  }, [uniqueId, syncPeerLiveness, markPeerActive, markPeerInactive, markPeerDead, cancelAttemptedSession, clearSessionPreservingHistory, isAvailableForNewSessionPrompt, sendSessionReject, setPendingAdvisoryState, setPendingProposalState, bindPeerMessageHandler]);
+  }, [uniqueId, syncPeerLiveness, markPeerActive, markPeerInactive, markPeerDead, cancelAttemptedSession, clearSessionPreservingHistory, isAvailableForNewSessionPrompt, presenceBusy, sendSessionReject, setPendingAdvisoryState, setPendingProposalState, bindPeerMessageHandler]);
 
   const requestHubConnect = useCallback((origin: string) => {
     if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
@@ -1713,8 +1715,8 @@ const Shell = () => {
     setRestoreHubReconciled(false);
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
-    hubConnRef.current?.setBusy(false, alias);
-  }, [clearSessionPreservingHistory, clearSessionTimers, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
+    hubConnRef.current?.setBusy(presenceBusy('none'), alias);
+  }, [clearSessionPreservingHistory, clearSessionTimers, presenceBusy, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   /**
    * End live protocol for a terminal channel but keep the dashboard freeze
@@ -1729,7 +1731,7 @@ const Shell = () => {
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');
     setSessionError(hasError);
-    hubConnRef.current?.setBusy(false, alias);
+    hubConnRef.current?.setBusy(presenceBusy('resolved'), alias);
 
     // Stop the live peer route and cradle; do not send session_reject and do
     // not wipe the dashboard model (that would flash "No Session").
@@ -1780,7 +1782,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-  }, [clearSessionTimers, resetPeerRelayState]);
+  }, [clearSessionTimers, presenceBusy, resetPeerRelayState]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
@@ -1797,8 +1799,8 @@ const Shell = () => {
     sessionPhaseRef.current = phase;
     setSessionPhase(phase);
     setSessionError(!!hasError);
-    hubConnRef.current?.setBusy(shouldReportHubBusy(phase));
-  }, [finishResolvedSessionDisplay, setActiveTab]);
+    hubConnRef.current?.setBusy(presenceBusy(phase));
+  }, [finishResolvedSessionDisplay, presenceBusy, setActiveTab]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1945,9 +1947,9 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(true);
-    hubConnRef.current?.setBusy(false, save.myAlias ?? peekAlias());
+    hubConnRef.current?.setBusy(presenceBusy('resolved'), save.myAlias ?? peekAlias());
     setResuming(false);
-  }, [setActiveTab]);
+  }, [presenceBusy, setActiveTab]);
 
   // Hydrate local UI state from a SessionSave and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
@@ -2314,8 +2316,8 @@ const Shell = () => {
 
   const handleEndPeerConnection = useCallback(() => {
     resetPeerRelayState();
-    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current));
-  }, [resetPeerRelayState]);
+    hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current));
+  }, [presenceBusy, resetPeerRelayState]);
 
   const startCleanShutdownGrace = useCallback(() => {
     if (cleanShutdownGraceTimerRef.current !== null) {
@@ -2343,14 +2345,14 @@ const Shell = () => {
     sessionController?.goOnChain();
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
-    hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
+    hubConnRef.current?.setBusy(presenceBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
     setDashboardSessionModel(prev => prev
       ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
       : prev
     );
-  }, [syncPeerLiveness]);
+  }, [presenceBusy, syncPeerLiveness]);
 
   const requestDashboardGoOnChain = useCallback(() => {
     const channelState = dashboardSessionModel?.channel.status.state;
