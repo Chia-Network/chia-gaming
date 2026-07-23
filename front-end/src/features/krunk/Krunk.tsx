@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
@@ -11,22 +11,26 @@ import {
   krunkWinMessage,
   KrunkHandler,
   KrunkGuess,
+  KrunkGameState,
   KrunkRole,
-} from '../hooks/useKrunkHand';
-import { GameplayEvent } from '../hooks/useGameSession';
-import { formatAmount } from '../util';
+} from './useKrunkHand';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import type { KrunkSettlementOutcome } from './handState';
+import { formatAmount } from '../../util';
 
 export interface KrunkProps {
   gameObject: SessionController;
   currentHandGameIds: string[];
   activeGameIds: string[];
   iProposedHand: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
+  gameplayEvent$: Observable<RawGameNotification>;
   betSize: bigint;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
+  frozen?: boolean;
+  gameSettlementOutcomes?: Record<string, KrunkSettlementOutcome | null>;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -48,6 +52,20 @@ export function formatKrunkHandLog(
     lines.push('⬛⬛⬛⬛⬛' + revealedWord);
   }
   return lines;
+}
+
+export function krunkBobResult(
+  state: KrunkGameState,
+  opponentLabel: string,
+): string | null {
+  if (
+    state.handler === KrunkHandler.Terminal
+    && state.outcome === 'win'
+    && state.moverShare != null
+  ) {
+    return krunkWinMessage(state.moverShare);
+  }
+  return krunkTerminalStatus(state, opponentLabel);
 }
 
 export function krunkGameSlots(
@@ -397,6 +415,8 @@ const Krunk: React.FC<KrunkProps> = ({
   onGameLog,
   myName: _myName,
   opponentName,
+  frozen = false,
+  gameSettlementOutcomes = {},
 }) => {
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
@@ -436,7 +456,7 @@ const Krunk: React.FC<KrunkProps> = ({
     false,
     gameplayEvent$,
     onAliceTurnChanged,
-    aliceInHand,
+    aliceInHand && !frozen,
   );
 
   const bobHand = useKrunkHand(
@@ -445,7 +465,7 @@ const Krunk: React.FC<KrunkProps> = ({
     true,
     gameplayEvent$,
     onBobTurnChanged,
-    bobInHand,
+    bobInHand && !frozen,
   );
 
   // Write each half to the session history panel when it finishes.
@@ -497,10 +517,16 @@ const Krunk: React.FC<KrunkProps> = ({
   const [guessQueue, setGuessQueue] = useState<string[]>([]);
 
   // Track the index of the most recently resolved guess for animation.
-  // Detect new clues synchronously to avoid a flash frame, but persist
-  // the value in state so it survives re-renders while the animation plays.
-  const prevResolvedCountRef = useRef(0);
   const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
+  // A frozen/recovered board already contains historical clues. Start its
+  // counter at the persisted count so mounting it never replays those flips.
+  const prevResolvedCountRef = useRef(frozen ? resolvedCount : 0);
+  // The resolved cells must receive their delay in the render where they
+  // mount. Updating animateIndex only from the effect below is one render too
+  // late: LetterCell intentionally latches its initial delay.
+  const newlyResolvedIndex = !frozen && resolvedCount > prevResolvedCountRef.current
+    ? resolvedCount - 1
+    : undefined;
   // Dictionary rejection rolls back the sent guess in gameState; hide any
   // still-queued rows in the same render (don't wait for the clear effect).
   const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error)
@@ -511,16 +537,25 @@ const Krunk: React.FC<KrunkProps> = ({
     displayQueue,
   );
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
-  if (resolvedCount > prevResolvedCountRef.current) {
-    prevResolvedCountRef.current = resolvedCount;
-    setAnimateIndex(resolvedCount - 1);
-  }
+  useEffect(() => {
+    if (frozen) {
+      prevResolvedCountRef.current = resolvedCount;
+      setAnimateIndex(undefined);
+      return;
+    }
+    if (resolvedCount > prevResolvedCountRef.current) {
+      prevResolvedCountRef.current = resolvedCount;
+      setAnimateIndex(resolvedCount - 1);
+    }
+  }, [frozen, resolvedCount]);
+  const latestAnimateIndex = newlyResolvedIndex ?? animateIndex;
 
   const bobRevealedWord = bobHand.gameState.revealedWord;
   const bobSolved = bobHand.gameState.guesses.some(g => g.clue.every(v => v === 2));
   const bobMissed = bobRevealedWord != null && !bobSolved;
-  const animateBobReveal = bobMissed
-    && animateIndex === bobHand.gameState.guesses.length - 1;
+  const animateBobReveal = !frozen
+    && bobMissed
+    && latestAnimateIndex === bobHand.gameState.guesses.length - 1;
   // Wait for the final guess row to finish flipping before mounting the
   // answer row, so its flip starts only after that animation ends.
   const [bobRevealReady, setBobRevealReady] = useState(false);
@@ -538,19 +573,22 @@ const Krunk: React.FC<KrunkProps> = ({
     return () => clearTimeout(t);
   }, [bobMissed, animateBobReveal]);
 
-  const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
+  const bobGameOver =
+    bobHand.gameState.handler === KrunkHandler.Terminal
+    || gameSettlementOutcomes[bobId] != null;
   const filledGuessCount = bobHand.gameState.guesses.length + displayQueue.length;
   const isBobGuessPhase =
+    !bobGameOver &&
     bobInHand &&
     wordCommitted &&
     bobHand.gameState.role === 'bob' &&
     bobHand.gameState.handler === KrunkHandler.BobGuess;
-  const canDraftGuess = bobInHand && canDraftKrunkGuess(
+  const canDraftGuess = !bobGameOver && bobInHand && canDraftKrunkGuess(
     wordCommitted,
     bobHand.gameState.handler,
     filledGuessCount,
   );
-  const canQueueGuess = bobInHand && canQueueKrunkGuess(
+  const canQueueGuess = !bobGameOver && bobInHand && canQueueKrunkGuess(
     wordCommitted,
     bobHand.gameState.handler,
     filledGuessCount,
@@ -592,47 +630,68 @@ const Krunk: React.FC<KrunkProps> = ({
     : (canDraftGuess ? 'guess' : null);
   const activeDraft = keyboardMode === 'pick' ? wordDraft : guessDraft;
   const showGuessDraft = canDraftGuess;
+  const keyboardFocusRef = useRef<HTMLDivElement>(null);
 
   const commitWord = useCallback(() => {
-    if (wordDraft.length !== 5) return;
+    if (wordDraft.length !== 5) return false;
     aliceHand.setSecretWord(wordDraft);
     setWordDraft('');
+    return true;
   }, [wordDraft, aliceHand.setSecretWord]);
 
   const submitGuess = useCallback(() => {
-    if (guessDraft.length !== 5) return;
+    if (guessDraft.length !== 5) return false;
+    if (bobGameOver) return false;
     // Always allow queueing when not in a live send phase (waiting on
     // commit or clue). Send immediately only when it is our guess turn
     // and the queue is empty.
     if (isBobGuessPhase && guessQueue.length === 0) {
       bobHand.submitGuess(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
-      if (filledGuessCount >= MAX_GUESSES) return;
+      if (filledGuessCount >= MAX_GUESSES) return false;
       setGuessQueue(prev => [...prev, guessDraft]);
     } else {
-      return;
+      return false;
     }
     setGuessDraft('');
+    return true;
   }, [
     guessDraft,
     isBobGuessPhase,
     canQueueGuess,
     guessQueue.length,
     filledGuessCount,
+    bobGameOver,
     bobHand.submitGuess,
   ]);
 
   const submitActive = useCallback(() => {
-    if (keyboardMode === 'pick') commitWord();
-    else if (keyboardMode === 'guess') submitGuess();
+    const submitted = keyboardMode === 'pick'
+      ? commitWord()
+      : keyboardMode === 'guess'
+        ? submitGuess()
+        : false;
+    if (submitted) keyboardFocusRef.current?.focus();
   }, [keyboardMode, commitWord, submitGuess]);
 
   const themLabel = opponentName ?? 'Opponent';
+  const terminalStateFor = (gameId: string, state: typeof bobHand.gameState) => {
+    const settlementOutcome = gameSettlementOutcomes[gameId] ?? state.settlementOutcome;
+    return settlementOutcome == null
+      ? state
+      : { ...state, handler: KrunkHandler.Terminal, settlementOutcome };
+  };
+  const bobTerminalState = terminalStateFor(bobId, bobHand.gameState);
+  const aliceTerminalState = terminalStateFor(aliceId, aliceHand.gameState);
+  const aliceTerminal = krunkTerminalStatus(aliceTerminalState, themLabel);
+  const hasTerminalResult =
+    bobTerminalState.handler === KrunkHandler.Terminal
+    || aliceTerminalState.handler === KrunkHandler.Terminal;
+  const handComplete =
+    bobTerminalState.handler === KrunkHandler.Terminal
+    && aliceTerminalState.handler === KrunkHandler.Terminal;
 
-  const bobWon =
-    bobHand.gameState.handler === KrunkHandler.Terminal
-    && bobHand.gameState.outcome === 'win'
-    && bobHand.gameState.settlementOutcome === null;
+  const bobResult = krunkBobResult(bobTerminalState, themLabel);
 
   const statusNotice = useMemo((): { text: string; kind: 'error' | 'win' | 'info' } | null => {
     if (aliceHand.gameState.error) {
@@ -641,13 +700,7 @@ const Krunk: React.FC<KrunkProps> = ({
     if (bobHand.gameState.error) {
       return { text: bobHand.gameState.error, kind: 'error' };
     }
-    if (bobWon && bobHand.gameState.moverShare != null) {
-      return { text: krunkWinMessage(bobHand.gameState.moverShare), kind: 'win' };
-    }
-    const bobTerminal = krunkTerminalStatus(bobHand.gameState, themLabel);
-    if (bobTerminal !== null) return { text: bobTerminal, kind: 'info' };
-    const aliceTerminal = krunkTerminalStatus(aliceHand.gameState, themLabel);
-    if (aliceTerminal !== null) return { text: aliceTerminal, kind: 'info' };
+    if (hasTerminalResult) return null;
     if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
     if (displayQueue.length > 0) {
       return {
@@ -670,7 +723,7 @@ const Krunk: React.FC<KrunkProps> = ({
   }, [
     aliceHand.gameState,
     bobHand.gameState,
-    bobWon,
+    hasTerminalResult,
     wordCommitted,
     displayQueue.length,
     themLabel,
@@ -744,11 +797,20 @@ const Krunk: React.FC<KrunkProps> = ({
             guesses={displayedBobGuesses}
             draft={guessDraft}
             showDraftRow={showGuessDraft}
-            latestAnimateIndex={animateIndex}
+            latestAnimateIndex={latestAnimateIndex}
           />
-          {bobMissed && bobRevealReady && bobRevealedWord ? (
-            <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
-          ) : null}
+          {!handComplete && (
+            bobMissed && bobRevealReady && bobRevealedWord ? (
+              <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
+            ) : (
+              <div className='flex gap-1 mt-2'>
+                {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
+              </div>
+            )
+          )}
+          <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>
+            {bobResult ?? ''}
+          </p>
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}
@@ -767,38 +829,41 @@ const Krunk: React.FC<KrunkProps> = ({
           ) : aliceHand.gameState.secretWord ? (
             <TargetRow word={aliceHand.gameState.secretWord} />
           ) : null}
+          <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>
+            {aliceTerminal ?? ''}
+          </p>
         </div>
       </div>
 
-      <div className='flex flex-col items-center gap-2'>
-        <OnScreenKeyboard
-          statuses={letterStatuses}
-          disabled={keyboardMode === null}
-          onLetter={typeLetter}
-          onBackspace={backspace}
-        />
-        <button
-          type='button'
-          className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-          disabled={!actionEnabled}
-          onClick={submitActive}
-        >
-          {actionLabel}
-        </button>
-        {statusNotice && (
+      {!handComplete && (
+        <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
+          <OnScreenKeyboard
+            statuses={letterStatuses}
+            disabled={keyboardMode === null}
+            onLetter={typeLetter}
+            onBackspace={backspace}
+          />
+          <button
+            type='button'
+            className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+            disabled={!actionEnabled}
+            onClick={submitActive}
+          >
+            {actionLabel}
+          </button>
           <p
-            className={`text-center text-lg mt-1 ${
-              statusNotice.kind === 'error'
+            className={`min-h-7 text-center text-lg mt-1 ${
+              statusNotice?.kind === 'error'
                 ? 'text-red-600'
-                : statusNotice.kind === 'win'
+                : statusNotice?.kind === 'win'
                   ? 'text-2xl font-bold text-canvas-text-contrast'
                   : 'text-canvas-text-contrast'
             }`}
           >
-            {statusNotice.text}
+            {statusNotice?.text ?? ''}
           </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

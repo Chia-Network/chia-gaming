@@ -37,7 +37,7 @@ describe('restore lifecycle gates', () => {
   it('recognizes terminal channel states that must not keep the hub busy', () => {
     expect(isTerminalChannelStatus('Failed')).toBe(true);
     expect(isTerminalChannelStatus('ResolvedClean')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedUnrolled')).toBe(true);
+    expect(isTerminalChannelStatus('DoneUnrolling')).toBe(true);
     expect(isTerminalChannelStatus('ResolvedStale')).toBe(true);
     expect(isTerminalChannelStatus('Active')).toBe(false);
     expect(isTerminalChannelStatus('Handshaking')).toBe(false);

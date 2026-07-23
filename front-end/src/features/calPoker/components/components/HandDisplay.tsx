@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { HandDisplayProps } from '../../../../types/californiaPoker';
-import { CardValueSuit } from '../../../../types/californiaPoker/CardValueSuit';
+import { HandDisplayProps } from '../../types';
+import { CardValueSuit } from '../../types/CardValueSuit';
 import { GAME_STATES, HALO_FADE_DURATION_MS } from '../constants/constants';
 import Card from './Card';
 
@@ -107,7 +107,7 @@ function HandDisplay(props: HandDisplayProps) {
     timeoutBadge,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
-  const [cardRightEdgeOffset, setCardRightEdgeOffset] = useState(0);
+  const [cardRightEdgeOffset, setCardRightEdgeOffset] = useState<number | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
@@ -698,15 +698,14 @@ function HandDisplay(props: HandDisplayProps) {
             Winner!
           </div>
         )}
-        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && (
+        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && cardRightEdgeOffset !== null && (
           <div
-            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-solid px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
+              // Align to the final card rather than the full-width hand
+              // container. Wait for the measurement above so it never first
+              // paints in the center before snapping into place.
               left: '50%',
-              // Right-justify the badge to the last card's right edge. Anchoring
-              // by the right edge (-100%) keeps the wider "Timed Out" / "Forfeit"
-              // text from overflowing past the cards and getting clipped, unlike
-              // the fixed-width center used for the shorter "Winner!" badge.
               transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
             }}
           >

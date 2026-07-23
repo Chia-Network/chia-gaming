@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from './SessionController';
-import { GameplayEvent } from './useGameSession';
-import {
-  krunkSettlementStatus,
-  type SettlementOutcome,
-} from '../lib/settlement';
+import { SessionController } from '../../hooks/SessionController';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import type { OpaqueHandState } from '../../hooks/save';
+import type { KrunkSettlementOutcome, PersistedKrunkHand } from './handState';
+import { krunkSettlementStatus } from './terminal';
 
 // Phase of the krunk state machine. Both roles share the enum -- which
 // transitions fire depends on whether the local player is alice (picks
@@ -42,8 +41,83 @@ export interface KrunkGameState {
   outcome: 'win' | 'lose' | null;
   // From OpponentMoved.moverShare when the hand ends on a received reveal.
   moverShare: string | null;
-  settlementOutcome: SettlementOutcome | null;
+  settlementOutcome: KrunkSettlementOutcome | null;
   error: string | null;
+}
+
+export interface KrunkHandState {
+  games: Record<string, KrunkGameState>;
+}
+
+interface PersistedKrunkGuess extends Omit<KrunkGuess, 'clue'> {
+  clue: bigint[];
+}
+
+interface PersistedKrunkGameState extends Omit<KrunkGameState, 'handler' | 'guesses'> {
+  handler: bigint;
+  guesses: PersistedKrunkGuess[];
+}
+
+interface PersistedKrunkHandState {
+  games: Record<string, PersistedKrunkGameState>;
+}
+
+const KRUNK_PERSISTED_STATE_VERSION = 1n;
+
+function restoreKrunkGameState(state: PersistedKrunkGameState): KrunkGameState | undefined {
+  const handler = Number(state.handler);
+  if (!Number.isInteger(handler) || handler < KrunkHandler.WaitingCommit || handler > KrunkHandler.Terminal) {
+    return undefined;
+  }
+  const guesses: KrunkGuess[] = [];
+  for (const guess of state.guesses) {
+    if (!Array.isArray(guess.clue) || guess.clue.length !== 5 || guess.clue.some(value => typeof value !== 'bigint')) {
+      return undefined;
+    }
+    const clue = guess.clue.map(Number);
+    if (clue.some(value => !Number.isInteger(value) || value < -1 || value > 2)) return undefined;
+    guesses.push({ ...guess, clue: clue as KrunkGuess['clue'] });
+  }
+  return { ...state, handler: handler as KrunkHandler, guesses };
+}
+
+export function krunkStateFromPersisted(
+  persisted: OpaqueHandState | null | undefined,
+): KrunkHandState | undefined {
+  if (!persisted || persisted.gameType !== 'krunk') return undefined;
+  if (persisted.version !== KRUNK_PERSISTED_STATE_VERSION) return undefined;
+  if (!persisted.state || typeof persisted.state !== 'object') return undefined;
+  const state = persisted.state as PersistedKrunkHandState;
+  if (!state.games || typeof state.games !== 'object') return undefined;
+  const games: Record<string, KrunkGameState> = {};
+  for (const [gameId, game] of Object.entries(state.games)) {
+    if (!game || typeof game !== 'object' || typeof game.handler !== 'bigint') return undefined;
+    const restored = restoreKrunkGameState(game);
+    if (!restored) return undefined;
+    games[gameId] = restored;
+  }
+  return { games };
+}
+
+function persistedKrunkState(state: KrunkHandState): PersistedKrunkHand<PersistedKrunkHandState> {
+  const games = Object.fromEntries(
+    Object.entries(state.games).map(([gameId, game]) => [
+      gameId,
+      {
+        ...game,
+        handler: BigInt(game.handler),
+        guesses: game.guesses.map(guess => ({
+          ...guess,
+          clue: guess.clue.map(BigInt),
+        })),
+      },
+    ]),
+  );
+  return {
+    gameType: 'krunk',
+    version: KRUNK_PERSISTED_STATE_VERSION,
+    state: { games },
+  };
 }
 
 export interface UseKrunkHandResult {
@@ -153,7 +227,8 @@ export function krunkTerminalStatus(
 ): string | null {
   if (state.handler !== KrunkHandler.Terminal) return null;
   if (state.settlementOutcome != null) {
-    return krunkSettlementStatus(state.settlementOutcome, opponentLabel);
+    const settlementStatus = krunkSettlementStatus(state.settlementOutcome, opponentLabel);
+    if (settlementStatus !== null) return settlementStatus;
   }
   if (state.role === 'bob') {
     // Bob win amount is shown from moverShare in the UI (large font).
@@ -270,7 +345,7 @@ export function useKrunkHand(
   _gameObject: SessionController,
   _gameId: string,
   iStarted: boolean,
-  gameplayEvent$: Observable<GameplayEvent>,
+  gameplayEvent$: Observable<RawGameNotification>,
   onTurnChanged: (isMyTurn: boolean) => void,
   active = true,
 ): UseKrunkHandResult {
@@ -278,8 +353,10 @@ export function useKrunkHand(
   // every game. Krunk's first mover is alice (the committer), so the
   // channel initiator plays bob and the receiver plays alice.
   const role: KrunkRole = iStarted ? 'bob' : 'alice';
+  const initialHandState = krunkStateFromPersisted(_gameObject.handState);
+  const restoredState = initialHandState?.games[_gameId];
 
-  const [gs, setGs] = useState<KrunkGameState>({
+  const [gs, setGs] = useState<KrunkGameState>(restoredState ?? {
     handler: role === 'alice' ? KrunkHandler.WaitingCommit : KrunkHandler.BobWaiting,
     myTurn: role === 'alice',
     role,
@@ -295,13 +372,24 @@ export function useKrunkHand(
   const gsRef = useRef(gs);
   const gameObjectRef = useRef(_gameObject);
   const gameIdRef = useRef(_gameId);
-  const handFinishedRef = useRef(false);
+  const handFinishedRef = useRef(gs.handler === KrunkHandler.Terminal);
   const activeRef = useRef(active);
 
   gsRef.current = gs;
   gameObjectRef.current = _gameObject;
   gameIdRef.current = _gameId;
   activeRef.current = active;
+
+  useEffect(() => {
+    if (!_gameId) return;
+    const existing = krunkStateFromPersisted(_gameObject.handState);
+    _gameObject.setHandState(persistedKrunkState({
+      games: {
+        ...(existing?.games ?? {}),
+        [_gameId]: gs,
+      },
+    }));
+  }, [_gameObject, _gameId, gs]);
 
   useEffect(() => {
     if (!_gameId) return;
@@ -317,6 +405,15 @@ export function useKrunkHand(
   }, [_gameId, active]);
 
   const transition = useCallback((next: KrunkGameState) => {
+    // A timeout/settlement is final. Effects started by an earlier render
+    // (notably Alice's automatic clue) must not overwrite that terminal
+    // state with a clue or another active handler.
+    if (
+      gsRef.current.handler === KrunkHandler.Terminal
+      && next.handler !== KrunkHandler.Terminal
+    ) {
+      return;
+    }
     gsRef.current = next;
     setGs(next);
     onTurnChanged(next.myTurn);
@@ -351,10 +448,9 @@ export function useKrunkHand(
   // ── OpponentMoved handling ──
   useEffect(() => {
     const sub = gameplayEvent$.subscribe({
-      next: (evt: GameplayEvent) => {
-        if (handFinishedRef.current) return;
-
+      next: (evt: RawGameNotification) => {
         if ('OpponentMoved' in evt) {
+          if (handFinishedRef.current) return;
           const evtGameId = evt.OpponentMoved.gameId;
           if (evtGameId && evtGameId !== gameIdRef.current) return;
           const prog = readableToProgram(evt.OpponentMoved.readable);
@@ -433,22 +529,21 @@ export function useKrunkHand(
           }
         } else if ('MoveRejected' in evt) {
           if (evt.MoveRejected.gameId !== gameIdRef.current) return;
+          if (handFinishedRef.current) return;
           const next = applyKrunkMoveRejected(gsRef.current, evt.MoveRejected);
           if (next !== gsRef.current) {
             transition(next);
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            transition({
-              ...gsRef.current,
-              handler: KrunkHandler.Terminal,
-              myTurn: false,
-              settlementOutcome: evt.Settled.outcome,
-              moverShare: evt.Settled.ourShare,
-            });
-          }
+          handFinishedRef.current = true;
+          transition({
+            ...gsRef.current,
+            handler: KrunkHandler.Terminal,
+            myTurn: false,
+            settlementOutcome: evt.Settled.outcome,
+            moverShare: evt.Settled.ourShare,
+          });
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
@@ -468,7 +563,13 @@ export function useKrunkHand(
     if (!activeRef.current || gs.role !== 'alice' || gs.handler !== KrunkHandler.AliceClue || !gs.myTurn) return;
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
-    if (!activeRef.current || !go || !gid) return;
+    if (
+      !activeRef.current
+      || handFinishedRef.current
+      || gsRef.current.handler === KrunkHandler.Terminal
+      || !go
+      || !gid
+    ) return;
     try {
       go.makeMove(gid, null);
       const latest = gs.guesses[gs.guesses.length - 1];

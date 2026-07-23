@@ -1,0 +1,15 @@
+---
+description: Create signed commits when requested, never push automatically
+alwaysApply: true
+---
+
+# Git commits
+
+- When the user requests a commit, create it after reviewing the complete staged
+  and unstaged diff and confirming no secrets are included.
+- Create signed commits using the repository's configured Git identity.
+- Never push, force-push, or otherwise update a remote unless the user
+  explicitly requests it.
+- If signing requires user interaction (such as a password or hardware-key
+  confirmation), stop and ask the user to complete that interaction. Do not
+  disable signing or bypass the configured signing mechanism.

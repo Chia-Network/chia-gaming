@@ -1,6 +1,6 @@
 //! Pretty-printer for the protocol-level peer state.
 //!
-//! The cradle's `peer` (`Box<dyn PeerLifecyclePhase>`) is serialized to bencodex via
+//! The session's `peer` (`Box<dyn PeerLifecyclePhase>`) is serialized to bencodex via
 //! typetag, then re-read into an untyped [`BencodexValue`] tree and rendered as
 //! indented text for the dashboard. Working from the serialized tree (rather
 //! than the typed structs) keeps the renderer decoupled from the concrete

@@ -1,11 +1,11 @@
 import React from 'react';
 
 import { CaliforniaPoker } from './components';
-import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../../types/californiaPoker/CaliforniapokerProps';
+} from './types/CaliforniapokerProps';
+import type { CalpokerSettlementOutcome } from './handState';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcomeView | undefined;
@@ -17,14 +17,13 @@ export interface CalpokerProps {
   setCardSelections: (n: string[] | ((prev: string[]) => string[])) => void;
   setHandOrder: (playerHand: string[], opponentHand?: string[]) => void;
   handleMakeMove: () => void;
-  handleCheat: () => void;
-  handleNerf: () => void;
   onGameLog: (lines: string[]) => void;
   onSnapshotChange: (snapshot: CalpokerDisplaySnapshotView) => void;
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
+  settlementOutcome?: CalpokerSettlementOutcome | null;
+  settlementOnChain?: boolean | null;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -37,18 +36,15 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   setHandOrder,
   handleMakeMove,
-  handleCheat,
-  handleNerf,
   onGameLog,
   onSnapshotChange,
   initialSnapshot,
   myName,
   opponentName,
   settlementOutcome,
+  settlementOnChain,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
-
-  useCheatNerfKeys(handleCheat, handleNerf);
 
   return (
     <div className='relative flex h-full w-full min-h-0 flex-col'>
@@ -71,6 +67,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           myName={myName}
           opponentName={opponentName}
           settlementOutcome={settlementOutcome}
+          settlementOnChain={settlementOnChain}
         />
       </div>
     </div>

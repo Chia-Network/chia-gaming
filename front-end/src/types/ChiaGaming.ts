@@ -1,7 +1,11 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
-import { cardIdToRankSuit } from './californiaPoker/cardHelpers';
+
+function cardIdToRankSuit(cardId: bigint | number): { rank: number; suit: number } {
+  const id = typeof cardId === 'bigint' ? Number(cardId) : cardId;
+  return { rank: Math.floor(id / 4) + 2, suit: (id % 4) + 1 };
+}
 
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
@@ -108,7 +112,8 @@ type WasmNotificationTag =
   | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
   | 'MoveRejected'
-  | 'ActionFailed';
+  | 'ActionFailed'
+  | 'TimeoutClaimSubmitted';
 
 export type GameStatusState =
   | 'my-turn'
@@ -126,6 +131,7 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
+  timeout_claim_activity?: 'waiting' | 'submitting';
 }
 
 export interface GameStatusPayload {
@@ -140,6 +146,7 @@ export interface GameStatusPayload {
 export interface GameSettledPayload {
   id: unknown;
   outcome: string;
+  on_chain: boolean;
   our_share: unknown;
   coin_id?: unknown;
 }
@@ -149,7 +156,7 @@ export type ChannelStatus =
   | 'OurWalletMakingOffer' | 'OurWalletMakingOfferAcceptance' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
-  | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
+  | 'ResolvedClean' | 'DoneUnrolling' | 'ResolvedStale'
   | 'Failed';
 
 export interface ChannelStatusPayload {
@@ -160,6 +167,8 @@ export interface ChannelStatusPayload {
   their_balance: unknown;
   game_allocated: unknown;
   have_potato?: boolean | null;
+  unroll_initiator?: 'us' | 'opponent' | null;
+  semantic_phase?: 'submitting_channel_spend' | 'resolving_opponent_channel_spend' | 'preempting' | 'waiting_timeout' | 'submitting_timeout_finish' | 'resolving' | null;
 }
 
 export interface ProposalAcceptedPayload {
@@ -173,11 +182,16 @@ export interface MoveRejectedPayload {
   message: string;
 }
 
+export type TimeoutClaimSubmittedPayload =
+  | 'ChannelTimeoutFinish'
+  | { GameOpponentTurn: { id: unknown } };
+
 export type WasmNotification = {
-  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected'>]?: Record<string, unknown>;
+  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected' | 'TimeoutClaimSubmitted'>]?: Record<string, unknown>;
 } & {
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
+  TimeoutClaimSubmitted?: TimeoutClaimSubmittedPayload;
 };
 
 export type WasmEvent =

@@ -1,12 +1,14 @@
 import {
   cardIdToRankSuit,
   handValueToDescription,
-} from '../../types/californiaPoker';
+} from './types';
 import {
   shouldAutoFireCalpokerMove,
   shouldProcessCalpokerOpponentMoved,
   calpokerResponderFinishesAtReveal,
-} from '../../hooks/useCalpokerHand';
+} from './useCalpokerHand';
+import { hasTerminalCalpokerSettlement } from './terminal';
+import { calpokerTimeoutBadge } from './terminal';
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
@@ -38,5 +40,15 @@ describe('Calpoker bigint domain helpers', () => {
     // iStarted === true is the responder ("Bob"), who gives up and must not
     // send a phantom sixth move.
     expect(calpokerResponderFinishesAtReveal(true)).toBe(true);
+  });
+
+  it('treats clean settlement as terminal on a frozen remount', () => {
+    expect(hasTerminalCalpokerSettlement('settled_cleanly')).toBe(true);
+    expect(hasTerminalCalpokerSettlement(null)).toBe(false);
+  });
+
+  it('only presents timeout badges for on-chain settlement', () => {
+    expect(calpokerTimeoutBadge('accept_settlement', 'ours', false)).toBeNull();
+    expect(calpokerTimeoutBadge('timed_out_waiting_for_our_move', 'ours', true)).toBe('timeout');
   });
 });

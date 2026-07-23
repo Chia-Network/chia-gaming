@@ -54,8 +54,9 @@ long or short dispute windows.
 
 Timeout handling is split into two decoupled responsibilities: the
 `TransactionManager` owns **submission** (and its timing), while the handlers
-own **notification**, driven by observing the resulting on-chain spend. There is
-no maturity callback into the handlers — `coin_timeout_reached` was removed.
+own **confirmation** notification, driven by observing the resulting on-chain
+spend. There is no maturity callback into the handlers —
+`coin_timeout_reached` was removed.
 
 **Eager claim, registered up front.** When a coin that can be claimed on timeout
 is registered, the handler pre-builds the claim `SpendBundle` and attaches it to
@@ -81,6 +82,16 @@ every block the manager submits a stored claim once the coin reaches
 A reorg that rolls back or shifts the coin's birthday re-arms `claim_submitted`,
 so the claim is resubmitted. This replaced the old lazy "build and submit at the
 moment the timeout fires" logic in the handlers.
+
+**Semantic maturity event.** The same `claim_submitted` transition emits a
+`GameNotification::TimeoutClaimSubmitted` only when the manager queues a
+mature claim. The durable watched-coin registration carries
+`TimeoutClaimSemantic`: `ChannelTimeoutFinish` for the unroll timeout or
+`GameOpponentTurn { id }` for a game timeout. This gives the frontend an
+authoritative “submitting” state without inspecting a `SpendBundle` name or
+running a browser timer. The event follows the manager's idempotency rule:
+there is no duplicate notification while `claim_submitted` remains set, and a
+reorg can deliberately re-arm the semantic submission along with the claim.
 
 **Reorg boundary: leaf logic pretends reorgs do not happen.** Protocol handlers
 are intentionally written against a simplified lifecycle: they register coins,
@@ -221,7 +232,7 @@ This is enforced in `GameSessionState`:
 `GameSession::go_on_chain`, before any on-chain logic runs.
 - The same flag is also set from channel status transitions in
 `emit_channel_status_if_changed` when state becomes `GoingOnChain`,
-`Unrolling`, or (`ResolvedUnrolled`/`ResolvedStale` while already on-chain).
+`Unrolling`, or (`DoneUnrolling`/`ResolvedStale` while already on-chain).
 - `PacketSender::send_message` silently drops outbound messages when
 `peer_disconnected` is true.
 - `GameSession::deliver_message` silently drops inbound messages when
@@ -244,7 +255,7 @@ rather than by checking `initiated_on_chain` at runtime.
 ### Peer Error Escalation
 
 Any error processing a peer message — during handshake or active play — is
-treated as a protocol violation. The cradle sets `peer_disconnected = true`,
+treated as a protocol violation. The game session sets `peer_disconnected = true`,
 emits a `ReceiveError` event for diagnostic purposes, and calls
 `go_on_chain(true)` on the active handler. The specific behavior depends on
 the channel lifecycle stage:
@@ -287,7 +298,7 @@ drained by `flush_pending_actions`. Unlike peer errors, local action failures
 indicate programming bugs — the queue was populated by our own UI/logic.
 
 Rather than implementing transactional rollback (expensive and masks the bug),
-the cradle catches `flush_pending_actions` errors and emits them as
+the game session catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
 The JS-side game action methods (`proposeGame`, `acceptProposal`,
 `cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM

@@ -269,7 +269,7 @@ mod sim_tests {
             let game_outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|move_number, _cradles| move_number >= 5),
+                Some(&|move_number, _sessions| move_number >= 5),
                 None,
             )
             .expect("opening moves should complete");
@@ -359,7 +359,7 @@ mod sim_tests {
             let game_outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|move_number, _cradles| move_number >= 5),
+                Some(&|move_number, _sessions| move_number >= 5),
                 None,
             )
             .expect("opening moves should complete");
@@ -532,7 +532,7 @@ mod sim_tests {
             let game_outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&move |move_number, _cradles| move_number >= num_moves),
+                Some(&move |move_number, _sessions| move_number >= num_moves),
                 None,
             )
             .expect("should work");
@@ -597,7 +597,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
@@ -619,7 +619,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -655,7 +655,7 @@ mod sim_tests {
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                         ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                            ChannelStatus::ResolvedUnrolled,
+                            ChannelStatus::DoneUnrolling,
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                     ],
@@ -677,7 +677,7 @@ mod sim_tests {
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                         ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                            ChannelStatus::ResolvedUnrolled,
+                            ChannelStatus::DoneUnrolling,
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                     ],
@@ -710,7 +710,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
@@ -732,7 +732,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -764,7 +764,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
@@ -790,7 +790,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
@@ -827,7 +827,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
                 ],
@@ -849,7 +849,7 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
-                        ChannelStatus::ResolvedUnrolled,
+                        ChannelStatus::DoneUnrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],

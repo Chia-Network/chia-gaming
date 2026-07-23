@@ -1,20 +1,13 @@
-import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
-import { Observable } from 'rxjs';
-import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
-import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
+import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, QueuedNotification } from '../hooks/useGameSession';
+import { SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
-import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
-import { SessionController, RestoreStatus } from '../hooks/SessionController';
+import { SessionPhase } from '../types/ChiaGaming';
+import { RestoreStatus } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import Calpoker from '../features/calPoker';
-import {
-  CalpokerDisplaySnapshotView,
-  CalpokerOutcomeView,
-} from '../types/californiaPoker/CaliforniapokerProps';
-import SpacePoker from './SpacePoker';
-import Krunk from './Krunk';
+import GameHandHost from './GameHandHost';
+import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
@@ -371,246 +364,6 @@ function NotificationOverlay({
   );
 }
 
-interface CalpokerHandProps {
-  gameObject: SessionController;
-  gameId: string;
-  iStarted: boolean;
-  playerNumber: number;
-  gameplayEvent$: Observable<GameplayEvent>;
-  onOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
-  perGameAmount: bigint;
-  myName?: string;
-  opponentName?: string;
-}
-
-function stringifyCalpokerSnapshot(snapshot: CalpokerDisplaySnapshot | undefined): CalpokerDisplaySnapshotView | undefined {
-  if (!snapshot) return undefined;
-  return {
-    ...snapshot,
-    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(String),
-    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(String),
-    playerHaloCardIds: snapshot.playerHaloCardIds.map(String),
-    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(String),
-  };
-}
-
-function parseCalpokerSnapshotView(snapshot: CalpokerDisplaySnapshotView): CalpokerDisplaySnapshot {
-  return {
-    ...snapshot,
-    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(BigInt),
-    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(BigInt),
-    playerHaloCardIds: snapshot.playerHaloCardIds.map(BigInt),
-    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(BigInt),
-  };
-}
-
-function stringifyCalpokerOutcome(outcome: CalpokerOutcome | undefined): CalpokerOutcomeView | undefined {
-  if (!outcome) return undefined;
-  return {
-    my_win_outcome: outcome.my_win_outcome,
-    my_cards: outcome.my_cards.map(String),
-    their_cards: outcome.their_cards.map(String),
-    my_final_hand: outcome.my_final_hand.map(String),
-    their_final_hand: outcome.their_final_hand.map(String),
-    my_used_cards: outcome.my_used_cards.map(String),
-    their_used_cards: outcome.their_used_cards.map(String),
-    my_hand_value: outcome.my_hand_value.map(String),
-    their_hand_value: outcome.their_hand_value.map(String),
-  };
-}
-
-function CalpokerHand({
-  gameObject,
-  gameId,
-  iStarted,
-  playerNumber,
-  gameplayEvent$,
-  onOutcome,
-  onTurnChanged,
-  appendGameLog,
-  perGameAmount,
-  myName,
-  opponentName,
-}: CalpokerHandProps) {
-  const handleTurnChanged = useCallback(
-    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
-    [gameId, onTurnChanged],
-  );
-  const {
-    playerHand,
-    opponentHand,
-    cardSelections,
-    setCardSelections,
-    setHandOrder,
-    moveNumber,
-    outcome,
-    settlementOutcome,
-    handleMakeMove,
-    handleCheat,
-    handleNerf,
-    saveDisplaySnapshot,
-    initialDisplaySnapshot,
-  } = useCalpokerHand(
-    gameObject,
-    gameId,
-    iStarted,
-    gameplayEvent$,
-    onOutcome,
-    handleTurnChanged,
-    gameObject.handState ?? undefined,
-  );
-
-  const handleGameLog = useCallback((lines: string[]) => {
-    appendGameLog(`California Poker ${formatAmount(perGameAmount)}`);
-    lines.forEach(l => appendGameLog(l));
-    appendGameLog('');
-  }, [appendGameLog, perGameAmount]);
-
-  const setUiCardSelections = useCallback((next: string[] | ((prev: string[]) => string[])) => {
-    setCardSelections((prev) => {
-      const prevView = prev.map(String);
-      const nextView = typeof next === 'function' ? next(prevView) : next;
-      return nextView.map(BigInt);
-    });
-  }, [setCardSelections]);
-
-  const handleSnapshotChange = useCallback((snapshot: CalpokerDisplaySnapshotView) => {
-    saveDisplaySnapshot(parseCalpokerSnapshotView(snapshot));
-  }, [saveDisplaySnapshot]);
-
-  const setUiHandOrder = useCallback((nextPlayerHand: string[], nextOpponentHand?: string[]) => {
-    setHandOrder(nextPlayerHand.map(BigInt), nextOpponentHand?.map(BigInt));
-  }, [setHandOrder]);
-
-  return (
-    <Calpoker
-      outcome={stringifyCalpokerOutcome(outcome)}
-      moveNumber={String(moveNumber)}
-      playerNumber={playerNumber}
-      playerHand={playerHand.map(String)}
-      opponentHand={opponentHand.map(String)}
-      cardSelections={cardSelections.map(String)}
-      setCardSelections={setUiCardSelections}
-      setHandOrder={setUiHandOrder}
-      handleMakeMove={handleMakeMove}
-      handleCheat={handleCheat}
-      handleNerf={handleNerf}
-      onGameLog={handleGameLog}
-      onSnapshotChange={handleSnapshotChange}
-      initialSnapshot={stringifyCalpokerSnapshot(initialDisplaySnapshot)}
-      myName={myName}
-      opponentName={opponentName}
-      settlementOutcome={settlementOutcome}
-    />
-  );
-}
-
-interface SpacePokerHandProps {
-  gameObject: SessionController;
-  gameId: string;
-  iStarted: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
-  betSize: string;
-  unitSizeMojos?: string;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
-  perGameAmount: bigint;
-  myName?: string;
-  opponentName?: string;
-}
-
-function SpacePokerHand({
-  gameObject,
-  gameId,
-  iStarted,
-  gameplayEvent$,
-  betSize,
-  unitSizeMojos,
-  onTurnChanged,
-  appendGameLog,
-  perGameAmount,
-  myName,
-  opponentName,
-}: SpacePokerHandProps) {
-  const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : 1n;
-  const stackSize = unitMojos > 0n ? perGameAmount / unitMojos : 0n;
-  const handleTurnChanged = useCallback(
-    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
-    [gameId, onTurnChanged],
-  );
-
-  const handleGameLog = useCallback((lines: string[]) => {
-    appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
-    lines.forEach(l => appendGameLog(l));
-    appendGameLog('');
-  }, [appendGameLog, unitMojos, stackSize]);
-
-  return (
-    <SpacePoker
-      gameObject={gameObject}
-      gameId={gameId}
-      iStarted={iStarted}
-      gameplayEvent$={gameplayEvent$}
-      betSize={betSize}
-      unitSizeMojos={unitSizeMojos}
-      onTurnChanged={handleTurnChanged}
-      onGameLog={handleGameLog}
-      myName={myName}
-      opponentName={opponentName}
-    />
-  );
-}
-
-interface KrunkHandProps {
-  gameObject: SessionController;
-  currentHandGameIds: string[];
-  activeGameIds: string[];
-  iProposedHand: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
-  betSize: bigint;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
-  myName?: string;
-  opponentName?: string;
-}
-
-function KrunkHand({
-  gameObject,
-  currentHandGameIds,
-  activeGameIds,
-  iProposedHand,
-  gameplayEvent$,
-  betSize,
-  onTurnChanged,
-  appendGameLog,
-  myName,
-  opponentName,
-}: KrunkHandProps) {
-  // Header (role + stake) is included in each block from formatKrunkHandLog.
-  const handleGameLog = useCallback((lines: string[]) => {
-    lines.forEach(l => appendGameLog(l));
-    appendGameLog('');
-  }, [appendGameLog]);
-
-  return (
-    <Krunk
-      gameObject={gameObject}
-      currentHandGameIds={currentHandGameIds}
-      activeGameIds={activeGameIds}
-      iProposedHand={iProposedHand}
-      gameplayEvent$={gameplayEvent$}
-      betSize={betSize}
-      onTurnChanged={onTurnChanged}
-      onGameLog={handleGameLog}
-      myName={myName}
-      opponentName={opponentName}
-    />
-  );
-}
-
-
 function ComposeProposalDialog({
   session,
   maxPerHandMojos,
@@ -814,7 +567,7 @@ function ReviewProposalDialog({
   if (!review) return null;
 
   return (
-    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
       <div className='flex flex-col gap-3'>
         <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
         <p className='text-xs text-canvas-text'>
@@ -835,7 +588,7 @@ function ReviewProposalDialog({
             </p>
           ) : null;
         })()}
-        <div className='flex flex-wrap items-center gap-3'>
+        <div className='flex flex-wrap items-center justify-center gap-3'>
           <Button
             variant='solid'
             color='primary'
@@ -863,6 +616,7 @@ export interface GameSessionProps {
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
+  onFrozenHandStateChange?: (state: import('../hooks/save').OpaqueHandState | null) => void;
   onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
   onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
@@ -870,7 +624,7 @@ export interface GameSessionProps {
   onTerminal?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onFrozenHandStateChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain, onTerminal);
@@ -994,7 +748,18 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     session.betweenHandMode,
   );
   const gameSpecificView = session.gameSpecificView;
-  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
+  const frozenHandBridge = useMemo(
+    () => createFrozenHandBridge(gameSpecificView.handState, onFrozenHandStateChange),
+    [session.handKey, gameSpecificView.handState, onFrozenHandStateChange],
+  );
+  const gameSettlementOutcomes = Object.fromEntries(
+    Object.entries(session.sessionModel.game.instances).map(([id, instance]) => [
+      id,
+      instance.terminal.outcome,
+    ]),
+  );
+  const gameIsFrozen = session.sessionPhase === 'resolved';
+  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState);
 
   if (suppressPhaseReporting) {
     return (
@@ -1018,64 +783,36 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
-          <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
+          <div
+            ref={gameAreaRef}
+            className={`relative overflow-hidden z-0${hideGameInterfaceForBetweenHandDialog ? ' pointer-events-none' : ''}`}
+          >
           {showGameInterface && (
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
             >
-              {gameSpecificView.gameType === 'calpoker' ? (
-                <CalpokerHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                  iStarted={session.iStarted}
-                  playerNumber={session.playerNumber}
-                  gameplayEvent$={session.gameplayEvent$}
-                  onOutcome={session.onHandOutcome}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  perGameAmount={session.currentHandAmount}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : gameSpecificView.gameType === 'spacepoker' ? (
-                <SpacePokerHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                  iStarted={session.iStarted}
-                  gameplayEvent$={session.gameplayEvent$}
-                  betSize={String(session.currentHandAmount)}
-                  unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
-                    ? String(session.lastHandTerms.spacepokerUnitSize)
-                    : undefined}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  perGameAmount={session.currentHandAmount}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : gameSpecificView.gameType === 'krunk' ? (
-                <KrunkHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  currentHandGameIds={session.currentHandGameIds}
-                  activeGameIds={session.activeGameIds}
-                  iProposedHand={session.iProposedHand}
-                  gameplayEvent$={session.gameplayEvent$}
-                  betSize={session.currentHandAmount}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : (
-                <div className='flex items-center justify-center py-20'>
-                  <p className='text-canvas-text'>
-                    Game not supported: {gameDisplayName(gameSpecificView.gameType)}
-                  </p>
-                </div>
-              )}
+              <GameHandHost
+                mode={gameIsFrozen ? 'frozen' : 'live'}
+                gameType={gameSpecificView.gameType}
+                sessionController={gameIsFrozen ? frozenHandBridge : session.sessionController}
+                gameplayEvent$={session.gameplayEvent$}
+                gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                currentHandGameIds={session.currentHandGameIds}
+                activeGameIds={session.activeGameIds}
+                iStarted={session.iStarted}
+                iProposedHand={session.iProposedHand}
+                playerNumber={session.playerNumber}
+                perGameAmount={session.currentHandAmount}
+                lastHandTerms={session.lastHandTerms}
+                myName={params.myAlias}
+                opponentName={params.opponentAlias}
+                settlementOutcome={session.gameTerminal.outcome}
+                gameSettlementOutcomes={gameSettlementOutcomes}
+                onOutcome={session.onHandOutcome}
+                onTurnChanged={session.onTurnChanged}
+                appendGameLog={session.appendGameLog}
+                handKey={session.handKey}
+              />
             </GameAreaErrorBoundary>
           )}
 
@@ -1092,46 +829,47 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
         </div>
 
-        {/* Between-hand session controls — only when the channel is Active */}
-        {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (
-          <>
-            {session.betweenHandMode === 'decision' && (
-              <div className='relative flex w-full items-center justify-center py-2'>
-                <Button
-                  variant='solid'
-                  color='primary'
-                  size='sm'
-                  onClick={session.chooseNewHandSameTerms}
-                  disabled={session.newHandRequested}
-                >
-                  {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
-                </Button>
-                <Button
-                  variant='ghost'
-                  color='neutral'
-                  size='sm'
-                  className='absolute right-2'
-                  onClick={session.chooseDoNotUseCurrentProposal}
-                  leadingIcon={<span className='text-base leading-none'>&times;</span>}
-                >
-                  Close
-                </Button>
-              </div>
-            )}
-
-            {session.betweenHandMode === 'compose-proposal' && (
-              <ComposeProposalDialog
-                session={session}
-                maxPerHandMojos={maxPerHandMojos}
-              />
-            )}
-
-            {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <ReviewProposalDialog session={session} />
-            )}
-          </>
+        {session.betweenHands
+          && session.channelStatus.state === 'Active'
+          && !session.cleanShutdownStarted
+          && session.betweenHandMode === 'decision' && (
+          <div className='relative flex w-full items-center justify-center py-2'>
+            <Button
+              variant='solid'
+              color='primary'
+              size='sm'
+              onClick={session.chooseNewHandSameTerms}
+              disabled={session.newHandRequested}
+            >
+              {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
+            </Button>
+            <Button
+              variant='ghost'
+              color='neutral'
+              size='sm'
+              className='absolute right-2'
+              onClick={session.chooseDoNotUseCurrentProposal}
+              leadingIcon={<span className='text-base leading-none'>&times;</span>}
+            >
+              Close
+            </Button>
+          </div>
         )}
       </div>
+
+      {session.betweenHands
+        && session.channelStatus.state === 'Active'
+        && !session.cleanShutdownStarted
+        && session.betweenHandMode !== 'decision' && (
+        <div className='absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-canvas-bg p-4'>
+          {session.betweenHandMode === 'compose-proposal' && (
+            <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
+          )}
+          {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+            <ReviewProposalDialog session={session} />
+          )}
+        </div>
+      )}
 
       {session.channelQueue[0] && (
         <NotificationOverlay

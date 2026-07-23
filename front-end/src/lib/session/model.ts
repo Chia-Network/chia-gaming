@@ -5,7 +5,7 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { PersistedGameState, SessionSave } from '../../hooks/save';
+import type { OpaqueHandState, SessionSave } from '../../hooks/save';
 import type { SettlementOutcome } from '../settlement';
 import { isSettlementOutcome } from '../settlement';
 import {
@@ -32,6 +32,7 @@ export type HandStatus =
   | 'playing-move'
   | 'replaying-move'
   | 'slashing'
+  | 'claiming-timeout'
   | 'finishing'
   | 'ended';
 
@@ -61,6 +62,15 @@ export interface ChannelStatusModel {
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase:
+    | 'submitting_channel_spend'
+    | 'resolving_opponent_channel_spend'
+    | 'preempting'
+    | 'waiting_timeout'
+    | 'submitting_timeout_finish'
+    | 'resolving'
+    | null;
 }
 
 export interface GameCoinModel {
@@ -141,7 +151,7 @@ export interface GameModel {
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: string;
-  handState: PersistedGameState | null;
+  handState: OpaqueHandState | null;
   queue: QueuedNotificationModel[];
 }
 
@@ -268,6 +278,8 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
 
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
@@ -291,7 +303,7 @@ export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
 
 const RESOLVED_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
-  'ResolvedUnrolled',
+  'DoneUnrolling',
   'ResolvedStale',
   'Failed',
 ]);
@@ -301,7 +313,7 @@ const WINDING_DOWN_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
-  'ResolvedUnrolled',
+  'DoneUnrolling',
   'ResolvedStale',
   'Failed',
 ]);
@@ -310,7 +322,12 @@ const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
-  'ResolvedUnrolled',
+  'DoneUnrolling',
+  'ResolvedStale',
+]);
+
+const UNROLL_COMPLETED_HAND_STATES = new Set<ChannelStatus>([
+  'DoneUnrolling',
   'ResolvedStale',
 ]);
 
@@ -328,7 +345,7 @@ const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   GoingOnChain: 'Going On Chain',
   Unrolling: 'Unrolling',
   ResolvedClean: 'Resolved Clean',
-  ResolvedUnrolled: 'Resolved Unrolled',
+  DoneUnrolling: 'Unroll complete',
   ResolvedStale: 'Resolved Stale',
   Failed: 'Failed',
 };
@@ -341,6 +358,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'playing-move': 'Playing move',
   'replaying-move': 'Replaying move',
   slashing: 'Slashing cheater',
+  'claiming-timeout': 'Claiming timeout',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -466,7 +484,7 @@ export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
 
 export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
   if (
-    (model.channel.status.state === 'ResolvedUnrolled'
+    (model.channel.status.state === 'DoneUnrolling'
       || model.channel.status.state === 'ResolvedStale')
     && model.game.activeIds.length > 0
   ) {
@@ -583,6 +601,15 @@ export interface GameDashboardSelectorOptions {
 
 function channelStatusDetail(model: SessionModel): string | null {
   const channel = model.channel.status;
+  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
+    submitting_channel_spend: 'Submitting channel spend',
+    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
+    preempting: 'Preempting unroll',
+    waiting_timeout: 'Waiting for timeout',
+    submitting_timeout_finish: 'Submitting timeout finish',
+    resolving: 'Resolving',
+  };
+  if (channel.semanticPhase) return phaseLabels[channel.semanticPhase];
   switch (channel.state) {
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
@@ -598,7 +625,10 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
-  if (!model.game.coin.coinHex) {
+  // The channel's unroll commitment can still be preempted while it is
+  // GoingOnChain or Unrolling. Per-game coin/turn classifications are not
+  // authoritative until the unroll coin resolves.
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return 'active';
   }
   if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
@@ -650,8 +680,7 @@ function instanceTerminalDetail(instance: GameInstanceModel): string | null {
 }
 
 function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
-  if (!ON_CHAIN_HAND_STATES.has(model.channel.status.state)
-      || model.channel.status.state === 'ResolvedClean') {
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return [];
   }
   const multiple = model.game.currentHandIds.length > 1;
@@ -711,7 +740,7 @@ function dashboardActionFor(
       }
       return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
     case 'ResolvedClean':
-    case 'ResolvedUnrolled':
+    case 'DoneUnrolling':
     case 'ResolvedStale':
     case 'Failed':
       return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
@@ -765,8 +794,7 @@ export function selectStatusBarBalances(
 
   const channel = model.channel.status;
 
-  const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
-  if (channelFailed) {
+  if (channel.state === 'Failed') {
     return [
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },
@@ -864,7 +892,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
 export interface GameSpecificViewModel {
   gameType: string;
   displayGameId: string | null;
-  handState: PersistedGameState | null;
+  handState: OpaqueHandState | null;
   turnState: GameTurnState;
   terminal: GameTerminalModel;
 }
@@ -989,6 +1017,10 @@ function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
   });
 }
 
+function normalizeChannelStatus(value: string): ChannelStatus {
+  return value === 'ResolvedUnrolled' ? 'DoneUnrolling' : value as ChannelStatus;
+}
+
 export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): SessionModel {
   const fallbackTerms: HandTermsModel = {
     gameType: 'calpoker',
@@ -1039,7 +1071,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     channel: {
       status: save.channelStatus
         ? {
-            state: save.channelStatus.state,
+            state: normalizeChannelStatus(save.channelStatus.state),
             advisory: save.channelStatus.advisory ?? null,
             coinHex: null,
             coinAmount: null,
@@ -1047,6 +1079,8 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             theirBalance: save.channelStatus.their_balance == null ? null : String(save.channelStatus.their_balance),
             gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
             havePotato: save.channelStatus.have_potato ?? null,
+            unrollInitiator: save.channelStatus.unroll_initiator ?? null,
+            semanticPhase: save.channelStatus.semantic_phase ?? null,
           }
         : INITIAL_CHANNEL_STATUS_MODEL,
       connection: save.channelStatus
@@ -1054,7 +1088,9 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
       goOnChainPressed: save.goOnChainPressed ?? false,
       cleanShutdownStarted: save.cleanShutdownStarted ?? false,
-      dismissedChannelStatus: (save.dismissedChannelStatus as ChannelStatus | undefined) ?? null,
+      dismissedChannelStatus: save.dismissedChannelStatus
+        ? normalizeChannelStatus(save.dismissedChannelStatus)
+        : null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
     },
     game: {
@@ -1176,6 +1212,8 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     gameTerminalLabel: model.game.terminal.label,
     gameTerminalReward: model.game.terminal.myReward,
     gameTerminalRewardCoin: model.game.terminal.rewardCoinHex,
+    activeGameType: model.game.activeGameType,
+    handState: model.game.handState ?? undefined,
     myRunningBalance: model.myRunningBalance !== 0n ? model.myRunningBalance.toString() : undefined,
     channelNotifQueue: model.channel.queue.length > 0
       ? model.channel.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))

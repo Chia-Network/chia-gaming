@@ -37,7 +37,7 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
 /** Channel states that already finished — resume must not keep the hub busy. */
 export function isTerminalChannelStatus(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'
-    || state === 'ResolvedUnrolled'
+    || state === 'DoneUnrolling'
     || state === 'ResolvedStale'
     || state === 'Failed';
 }

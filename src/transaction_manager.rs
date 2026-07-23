@@ -1,13 +1,13 @@
 //! Transaction manager: a coherent coin-lifecycle layer that wraps a game
-//! cradle.
+//! session.
 //!
 //! The manager owns the blockchain-facing bookkeeping that previously lived
 //! partly in JavaScript (`CoinStateMonitor`/`BlockchainPoller`) and partly in
-//! the cradle (`FullCoinSetAdapter`/`filter_coin_report`):
+//! the session (`FullCoinSetAdapter`/`filter_coin_report`):
 //!
 //! - It computes the created/deleted coin diff from raw per-coin chain state
 //!   (`report_coin_states`) instead of receiving a pre-computed `WatchReport`.
-//! - It captures outbound transactions the cradle wants submitted
+//! - It captures outbound transactions the session wants submitted
 //!   (`drain_submissions`) so the hosting layer becomes a thin RPC proxy.
 //! - It tracks watched coins (`snapshot_watched_coins` exposes a durable snapshot).
 //!
@@ -32,7 +32,7 @@ use crate::common::types::{
 };
 use crate::game_session::{DrainResult, GameSession, WatchReport};
 use crate::session_phases::effects::{
-    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
+    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -126,6 +126,8 @@ pub struct WatchedCoin {
     /// timeout age.  Set by the handler at registration time; held here so the
     /// manager is the sole submitter and can resubmit across reorgs.
     pub timeout_spend: Option<SpendBundle>,
+    #[serde(default)]
+    pub timeout_claim_semantic: Option<TimeoutClaimSemantic>,
     pub creation_spend: Option<SpendBundle>,
 }
 
@@ -139,6 +141,7 @@ impl WatchedCoin {
             spent_confirmed_at: None,
             claim_submitted: false,
             timeout_spend: None,
+            timeout_claim_semantic: None,
             creation_spend: None,
         }
     }
@@ -157,7 +160,7 @@ pub struct ManagerDrain {
     pub terminal: bool,
 }
 
-/// The minimal interface the [`TransactionManager`] needs from the cradle it
+/// The minimal interface the [`TransactionManager`] needs from the session it
 /// wraps.  Implemented by [`GameSession`] in production and by
 /// `MockGameSession` in unit tests.
 pub trait ManagedGameSession {
@@ -201,13 +204,13 @@ impl ManagedGameSession for GameSession {
     }
 }
 
-/// A coherent coin-lifecycle layer wrapping a cradle.
+/// A coherent coin-lifecycle layer wrapping a session.
 #[derive(Serialize, Deserialize)]
 pub struct TransactionManager<C> {
-    cradle: C,
+    inner: C,
     /// Coins we are tracking, keyed by their full `CoinString`.
     watched_coins: HashMap<CoinString, WatchedCoin>,
-    /// Transactions the cradle asked to submit, awaiting the hosting layer.
+    /// Transactions the session asked to submit, awaiting the hosting layer.
     /// Each carries the optional absolute expiry height threaded from the
     /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`), so it lands on the retained
     /// `SubmittedTx` when drained.
@@ -238,7 +241,7 @@ pub struct TransactionManager<C> {
     /// the created/deleted set difference, exactly mirroring the previous
     /// `FullCoinSetAdapter`.  Includes coins not (yet) watched so that a coin
     /// which appears one block before the manager learns to watch it is still
-    /// reported as created at its true appearance height (the inner cradle
+    /// reported as created at its true appearance height (the inner session
     /// filters the diff to the coins it actually watches).
     present_coins: std::collections::HashSet<CoinString>,
     /// Set once a coin created by the channel-creation transaction is observed
@@ -274,27 +277,27 @@ pub const CHANNEL_EXPIRY_BUFFER: u64 = 6;
 /// created/deleted diff anyway).
 pub const MAX_REPORTED_HEIGHT: u64 = 1_000_000_000_000;
 
-/// Transparent access to the wrapped cradle for the many pass-through
+/// Transparent access to the wrapped session for the many pass-through
 /// operations (game actions, status queries) the manager does not intercept.
 /// The manager's own inherent methods (`flush_and_collect`, etc.) take
 /// precedence over deref for name collisions.
 impl<C> std::ops::Deref for TransactionManager<C> {
     type Target = C;
     fn deref(&self) -> &C {
-        &self.cradle
+        &self.inner
     }
 }
 
 impl<C> std::ops::DerefMut for TransactionManager<C> {
     fn deref_mut(&mut self) -> &mut C {
-        &mut self.cradle
+        &mut self.inner
     }
 }
 
 impl<C> TransactionManager<C> {
-    pub fn new(cradle: C) -> Self {
+    pub fn new(inner: C) -> Self {
         TransactionManager {
-            cradle,
+            inner,
             watched_coins: HashMap::new(),
             pending_submissions: Vec::new(),
             pending_events: GameSessionEventQueue::default(),
@@ -310,12 +313,12 @@ impl<C> TransactionManager<C> {
         }
     }
 
-    pub fn cradle(&self) -> &C {
-        &self.cradle
+    pub fn session(&self) -> &C {
+        &self.inner
     }
 
     pub fn session_mut(&mut self) -> &mut C {
-        &mut self.cradle
+        &mut self.inner
     }
 
     pub fn last_height(&self) -> u64 {
@@ -403,23 +406,31 @@ impl<C> TransactionManager<C> {
     /// Register (or refresh) a watched coin, its timeout, and the eager spend to
     /// submit when it matures.  A `None` spend on a refresh leaves any existing
     /// eager spend in place.
-    fn register_watch(&mut self, coin: CoinString, timeout: Timeout, spend: Option<SpendBundle>) {
+    fn register_watch(
+        &mut self,
+        coin: CoinString,
+        timeout: Timeout,
+        spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
+    ) {
         self.watched_coins
             .entry(coin.clone())
             .and_modify(|w| {
                 w.timeout_blocks = timeout.clone();
                 if spend.is_some() {
                     w.timeout_spend = spend.clone();
+                    w.timeout_claim_semantic = semantic.clone();
                 }
             })
             .or_insert_with(|| {
                 let mut w = WatchedCoin::new(coin, timeout, None);
                 w.timeout_spend = spend;
+                w.timeout_claim_semantic = semantic;
                 w
             });
     }
 
-    /// Partition cradle events: intercept outbound transactions and watch-coin
+    /// Partition session events: intercept outbound transactions and watch-coin
     /// registrations; buffer the rest for the hosting layer.
     fn absorb_events(&mut self, events: GameSessionEventQueue) {
         for event in events {
@@ -431,10 +442,11 @@ impl<C> TransactionManager<C> {
                     coin_string,
                     timeout,
                     spend,
+                    semantic,
                     ..
                 } => {
                     self.pending_watch_coins.push(coin_string.clone());
-                    self.register_watch(coin_string, timeout, spend);
+                    self.register_watch(coin_string, timeout, spend, semantic);
                 }
                 other => {
                     self.pending_events.push_back(other);
@@ -447,24 +459,24 @@ impl<C> TransactionManager<C> {
 impl TransactionManager<GameSession> {
     /// Whether the channel has failed.  True if the manager observed the
     /// channel-creation transaction expire (the deadline it now owns) or if the
-    /// inner cradle reports a failure of its own (e.g. an on-chain failure).
+    /// inner session reports a failure of its own (e.g. an on-chain failure).
     /// Shadows the inner `is_failed` reachable via `Deref`.
     pub fn is_failed(&self) -> bool {
-        self.channel_expired || self.cradle.is_failed()
+        self.channel_expired || self.inner.is_failed()
     }
 
     /// Whether the channel has reached a terminal status.  ORs the manager's
-    /// own channel-creation expiry into the inner cradle's terminal check, since
-    /// the manager (not the inner cradle) now owns the expiry `Failed` signal.
+    /// own channel-creation expiry into the inner session's terminal check, since
+    /// the manager (not the inner session) now owns the expiry `Failed` signal.
     pub fn channel_status_terminal(&self) -> bool {
-        self.channel_expired || self.cradle.channel_status_terminal()
+        self.channel_expired || self.inner.channel_status_terminal()
     }
 }
 
 impl<C: ManagedGameSession> TransactionManager<C> {
     /// Report the latest confirmed height and the on-chain state of the watched
     /// coins.  Computes the created/deleted diff against tracked state and feeds
-    /// it to the inner cradle.  Does not drain events; call
+    /// it to the inner session.  Does not drain events; call
     /// [`TransactionManager::flush_and_collect`] afterwards (mirroring the
     /// previous `new_block` + `flush_and_collect` sequence).
     pub fn report_coin_states(
@@ -598,10 +610,10 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         }
 
         // Created/deleted are the symmetric difference against the previous
-        // report.  We pass the full diff to the inner cradle, which filters it
+        // report.  We pass the full diff to the inner session, which filters it
         // to the coins it actually watches.  This is what lets a coin that was
         // registered the same block it appears still be reported created at the
-        // correct height: the inner cradle already watches it even though the
+        // correct height: the inner session already watches it even though the
         // manager only intercepts its watch registration after this report.
         let mut created_watched: std::collections::HashSet<CoinString> = present_now
             .difference(&self.present_coins)
@@ -616,11 +628,11 @@ impl<C: ManagedGameSession> TransactionManager<C> {
 
         // A coin whose creation was rolled back by a reorg (flagged vanished by
         // the rollback branch above) left the live set without being spent.  It
-        // must not be treated as deleted: the inner cradle maps deleted_watched
+        // must not be treated as deleted: the inner session maps deleted_watched
         // to coin_spent, which for a tracked game coin requests a puzzle and
         // solution that does not exist and drives a spurious EndedError.  Drop
         // such coins here so they are neither recorded as spent below nor
-        // forwarded to the cradle; their re-creation is handled by resubmitting
+        // forwarded to the session; their re-creation is handled by resubmitting
         // the creating transaction.
         deleted_watched.retain(|coin| !self.vanished_coins.contains(coin));
 
@@ -668,12 +680,12 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         // Ripeness: a watched coin whose relative timeout age has elapsed since
         // its (reorg-aware) birthday is ready for its eager timeout claim.  The
         // manager owns this decision and is the sole submitter -- the inner
-        // cradle no longer computes an absolute deadline or receives a timeout
+        // session no longer computes an absolute deadline or receives a timeout
         // callback.  Eager claims that have reached their relative age and whose
         // coin is still unspent are submitted here once per birthday (and, via
         // the re-arm of `claim_submitted` on reorg, resubmitted), so submission
         // is fully decoupled from the handler.
-        let mut to_submit: Vec<SpendBundle> = Vec::new();
+        let mut to_submit: Vec<(SpendBundle, Option<TimeoutClaimSemantic>)> = Vec::new();
         for watched in self.watched_coins.values_mut() {
             // No overflow: `height` and `birthday` (`b`) are bounded by
             // MAX_REPORTED_HEIGHT at ingestion (see report_coin_states), and
@@ -685,20 +697,27 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
             if !watched.claim_submitted && watched.spent_confirmed_at.is_none() {
                 if let Some(spend) = &watched.timeout_spend {
-                    to_submit.push(spend.clone());
+                    to_submit.push((spend.clone(), watched.timeout_claim_semantic.clone()));
                     watched.claim_submitted = true;
                 }
             }
         }
-        self.pending_submissions
-            .extend(to_submit.into_iter().map(|spend| (spend, None)));
+        for (spend, semantic) in to_submit {
+            self.pending_submissions.push((spend, None));
+            if let Some(semantic) = semantic {
+                self.pending_events
+                    .push_back(GameSessionEvent::Notification(
+                        GameNotification::TimeoutClaimSubmitted(semantic),
+                    ));
+            }
+        }
 
         let report = WatchReport {
             created_watched,
             deleted_watched,
         };
 
-        self.cradle.session_new_block(allocator, height, &report)?;
+        self.inner.session_new_block(allocator, height, &report)?;
 
         self.evict_confirmed_spends(height);
         self.check_channel_expiry(height);
@@ -812,6 +831,8 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                     their_balance: None,
                     game_allocated: None,
                     have_potato: None,
+                    unroll_initiator: None,
+                    semantic_phase: None,
                 },
             ));
     }
@@ -822,18 +843,18 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         &self.vanished_coins
     }
 
-    /// Drain the inner cradle, intercepting transactions and watch
+    /// Drain the inner session, intercepting transactions and watch
     /// registrations, and return the remaining events for the hosting layer.
     pub fn flush_and_collect(
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<ManagerDrain, Error> {
-        let result = self.cradle.session_flush_and_collect(allocator)?;
+        let result = self.inner.session_flush_and_collect(allocator)?;
         if result.resync.is_some() {
             self.pending_resync = result.resync;
         }
         self.absorb_events(result.events);
-        let terminal = self.channel_expired || self.cradle.is_terminal();
+        let terminal = self.channel_expired || self.inner.is_terminal();
         Ok(ManagerDrain {
             events: std::mem::take(&mut self.pending_events),
             watch_coins: std::mem::take(&mut self.pending_watch_coins),
@@ -893,7 +914,7 @@ mod tests {
         }
     }
 
-    /// A scriptable cradle for exercising the manager in isolation.  Each call
+    /// A scriptable session for exercising the manager in isolation.  Each call
     /// to `session_flush_and_collect` returns the next queued `DrainResult`.
     #[derive(Default)]
     struct MockGameSession {
@@ -969,6 +990,7 @@ mod tests {
             coin_string: coin.clone(),
             timeout: Timeout::new(timeout),
             spend: None,
+            semantic: None,
         }
     }
 
@@ -983,6 +1005,7 @@ mod tests {
             coin_string: coin.clone(),
             timeout: Timeout::new(timeout),
             spend: Some(spend),
+            semantic: None,
         }
     }
 
@@ -1086,7 +1109,7 @@ mod tests {
             Some(20)
         );
 
-        let reports = &mgr.cradle().seen_reports;
+        let reports = &mgr.session().seen_reports;
         assert_eq!(reports.len(), 3);
         // Block 10: created only.
         assert!(reports[0].1.created_watched.contains(&coin));
@@ -1116,9 +1139,9 @@ mod tests {
 
         // The manager does not add bookkeeping for coins it was not told to
         // watch, but it still forwards the created transition so the inner
-        // cradle (which owns the watch set in phase 1) can filter it.
+        // session (which owns the watch set in phase 1) can filter it.
         assert!(mgr.watched_coin(&coin).is_none());
-        let reports = &mgr.cradle().seen_reports;
+        let reports = &mgr.session().seen_reports;
         assert_eq!(reports.len(), 1);
         assert!(reports[0].1.created_watched.contains(&coin));
     }
@@ -1250,7 +1273,7 @@ mod tests {
         };
 
         let mut mock = MockGameSession::default();
-        // The cradle wants to watch the child and submits the creating tx.
+        // The session wants to watch the child and submits the creating tx.
         mock.queue_drain(vec![
             watch_event(&child, 50),
             GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
@@ -1600,13 +1623,13 @@ mod tests {
 
         // Reorg below the creation height: the coin vanishes from the feed.  It
         // was un-created, not spent, so it must NOT be forwarded to the inner
-        // cradle as deleted_watched (which maps to coin_spent and would drive a
+        // session as deleted_watched (which maps to coin_spent and would drive a
         // spurious EndedError for a tracked game coin).
         mgr.report_coin_states(&mut allocator, 8, &[])
             .expect("report");
         assert!(mgr.vanished_coins().contains(&coin));
 
-        let reports = &mgr.cradle().seen_reports;
+        let reports = &mgr.session().seen_reports;
         // Block 12: created.
         assert!(reports[0].1.created_watched.contains(&coin));
         // Block 8 (reorg): neither created nor deleted -- the vanish is
@@ -1668,7 +1691,7 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 9, &[])
             .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(9));
-        let spend_report = mgr.cradle().seen_reports.last().expect("spend report");
+        let spend_report = mgr.session().seen_reports.last().expect("spend report");
         assert_eq!(spend_report.0, 9);
         assert!(
             spend_report.1.deleted_watched.contains(&coin),
@@ -1735,7 +1758,7 @@ mod tests {
         )
         .expect("report");
 
-        let report = mgr.cradle().seen_reports.last().expect("a report");
+        let report = mgr.session().seen_reports.last().expect("a report");
         assert_eq!(report.0, 12);
         assert!(
             report.1.deleted_watched.contains(&coin),

@@ -3,11 +3,16 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import {
   CalpokerOutcome,
-} from '../types/ChiaGaming';
-import { SessionController } from './SessionController';
-import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
-import { GameplayEvent } from './useGameSession';
-import { type SettlementOutcome } from '../lib/settlement';
+} from '../../types/ChiaGaming';
+import { SessionController } from '../../hooks/SessionController';
+import type { OpaqueHandState } from '../../hooks/save';
+import { RawGameNotification } from '../../hooks/useGameSession';
+import type {
+  CalpokerDisplaySnapshot,
+  CalpokerHandState,
+  CalpokerSettlementOutcome,
+  PersistedCalpokerHand,
+} from './handState';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
@@ -31,8 +36,8 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
   return bitfield;
 }
 
-function calpokerStateFromPersisted(
-  persisted: PersistedGameState | null | undefined,
+export function calpokerStateFromPersisted(
+  persisted: OpaqueHandState | null | undefined,
 ): CalpokerHandState | undefined {
   if (!persisted || persisted.gameType !== 'calpoker') return undefined;
   if (persisted.version !== CALPOKER_PERSISTED_STATE_VERSION) return undefined;
@@ -40,7 +45,7 @@ function calpokerStateFromPersisted(
   return persisted.state as CalpokerHandState;
 }
 
-function persistedCalpokerState(state: CalpokerHandState): PersistedGameState<CalpokerHandState> {
+function persistedCalpokerState(state: CalpokerHandState): PersistedCalpokerHand {
   return {
     gameType: 'calpoker',
     version: CALPOKER_PERSISTED_STATE_VERSION,
@@ -56,10 +61,9 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
-  settlementOutcome: SettlementOutcome | null;
+  settlementOutcome: CalpokerSettlementOutcome | null;
+  settlementOnChain: boolean | null;
   handleMakeMove: () => void;
-  handleCheat: () => void;
-  handleNerf: () => void;
   saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
   initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
@@ -94,10 +98,10 @@ export function useCalpokerHand(
   gameObject: SessionController,
   gameId: string,
   iStarted: boolean,
-  gameplayEvent$: Observable<GameplayEvent>,
+  gameplayEvent$: Observable<RawGameNotification>,
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
-  initialPersistedState?: PersistedGameState,
+  initialPersistedState?: OpaqueHandState,
 ): UseCalpokerHandResult {
   const initialHandState = useMemo(
     () => calpokerStateFromPersisted(initialPersistedState),
@@ -109,7 +113,12 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(null);
+  const [settlementOutcome, setSettlementOutcome] = useState<CalpokerSettlementOutcome | null>(
+    initialHandState?.settlementOutcome ?? null,
+  );
+  const [settlementOnChain, setSettlementOnChain] = useState<boolean | null>(
+    initialHandState?.settlementOnChain ?? null,
+  );
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -117,7 +126,7 @@ export function useCalpokerHand(
   const moveNumberRef = useRef<bigint>(initialHandState?.moveNumber ?? 0n);
   const gameObjectRef = useRef(gameObject);
   const gameIdRef = useRef(gameId);
-  const handFinishedRef = useRef(false);
+  const handFinishedRef = useRef(initialHandState?.settlementOutcome != null);
   const outcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const pendingPlayRef = useRef(false);
   const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);
@@ -133,7 +142,7 @@ export function useCalpokerHand(
 
   useEffect(() => {
     const subscription = gameplayEvent$.subscribe({
-      next: (evt: GameplayEvent) => {
+      next: (evt: RawGameNotification) => {
         if ('OpponentMoved' in evt) {
           if (evt.OpponentMoved.gameId && evt.OpponentMoved.gameId !== gameIdRef.current) return;
           if (!shouldProcessCalpokerOpponentMoved(handFinishedRef.current, !!outcomeRef.current)) return;
@@ -195,10 +204,11 @@ export function useCalpokerHand(
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            setSettlementOutcome(evt.Settled.outcome);
-          }
+          // Always record settlement labels (Timed Out / Forfeit), even when
+          // the hand already finished via reveal / autofire.
+          handFinishedRef.current = true;
+          setSettlementOutcome(evt.Settled.outcome);
+          setSettlementOnChain(evt.Settled.onChain);
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
@@ -271,15 +281,20 @@ export function useCalpokerHand(
   }, [isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
 
   useEffect(() => {
-    if (playerHand.length > 0) {
+    if (playerHand.length > 0 || settlementOutcome) {
       const existing = calpokerStateFromPersisted(gameObject.handState);
       gameObject.setHandState(persistedCalpokerState({
-        playerHand, opponentHand, moveNumber, isPlayerTurn,
+        playerHand: playerHand.length > 0 ? playerHand : (existing?.playerHand ?? []),
+        opponentHand: opponentHand.length > 0 ? opponentHand : (existing?.opponentHand ?? []),
+        moveNumber,
+        isPlayerTurn,
         cardSelections: cardSelectionsRef.current,
         displaySnapshot: existing?.displaySnapshot,
+        settlementOutcome,
+        settlementOnChain,
       }));
     }
-  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, gameObject]);
+  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome, settlementOnChain, gameObject]);
 
   useEffect(() => {
     if (playerHand.length > 0) {
@@ -289,24 +304,6 @@ export function useCalpokerHand(
       }
     }
   }, [cardSelections, gameObject]);
-
-  const handleCheat = useCallback(() => {
-    const go = gameObjectRef.current;
-    const gid = gameIdRef.current;
-    if (!go || !gid) return;
-    go.cheat(gid, 0n);
-    // A cheat is just an (illegal) move; drive the same turn-change path a
-    // normal move uses so the status shows "Playing our move on-chain" while
-    // it lands, instead of staying on our turn.
-    setMyTurn(false);
-    onTurnChanged(false);
-  }, [onTurnChanged]);
-
-  const handleNerf = useCallback(() => {
-    const go = gameObjectRef.current;
-    if (!go) return;
-    go.nerf();
-  }, []);
 
   const setCardSelections = useCallback((selectionsOrFn: bigint[] | ((prev: bigint[]) => bigint[])) => {
     if (typeof selectionsOrFn === 'function') {
@@ -348,9 +345,8 @@ export function useCalpokerHand(
     moveNumber,
     outcome,
     settlementOutcome,
+    settlementOnChain,
     handleMakeMove,
-    handleCheat,
-    handleNerf,
     saveDisplaySnapshot,
     initialDisplaySnapshot: initialHandState?.displaySnapshot,
   };

@@ -1,4 +1,4 @@
-import type { GameplayEvent } from '../hooks/useGameSession';
+import type { RawGameNotification } from '../hooks/useGameSession';
 import type { ChannelStatus } from '../types/ChiaGaming';
 
 /** Outcomes that mean a voluntary game-level accept (not a hand proposal). */
@@ -11,7 +11,7 @@ const SETTLEMENT_ACCEPT_OUTCOMES = new Set([
  * Gameplay events that should set the Game tab unread badge when the user
  * is on another tab. In-game Message / GameMessage is intentionally excluded.
  */
-export function gameplayEventNeedsGameTabAttention(evt: GameplayEvent): boolean {
+export function gameplayEventNeedsGameTabAttention(evt: RawGameNotification): boolean {
   if ('OpponentMoved' in evt || 'ProposalAccepted' in evt) return true;
   if ('Settled' in evt) {
     return SETTLEMENT_ACCEPT_OUTCOMES.has(evt.Settled.outcome);

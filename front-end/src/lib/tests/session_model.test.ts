@@ -34,6 +34,29 @@ import {
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
+  it('shows authoritative unroll progress details', () => {
+    const cases = [
+      ['submitting_channel_spend', 'Submitting channel spend'],
+      ['resolving_opponent_channel_spend', 'Resolving opponent channel spend'],
+      ['preempting', 'Preempting unroll'],
+      ['waiting_timeout', 'Waiting for timeout'],
+      ['submitting_timeout_finish', 'Submitting timeout finish'],
+      ['resolving', 'Resolving'],
+    ] as const;
+
+    for (const [semanticPhase, channelDetail] of cases) {
+      expect(selectGameDashboardView(createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            semanticPhase,
+          },
+        },
+      })).channelDetail).toBe(channelDetail);
+    }
+  });
+
   it('derives dashboard actions for no-session, waiting, active, and terminal states', () => {
     expect(selectGameDashboardView(null)).toMatchObject({
       channelStatusLabel: 'No Session',
@@ -194,7 +217,7 @@ describe('session model selectors', () => {
   it('separates channel advisories from hand terminal details', () => {
     const terminal = createSessionModel({
       channel: {
-        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' },
       },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
@@ -239,7 +262,7 @@ describe('session model selectors', () => {
     expect(view.handDetail).toBeNull();
   });
 
-  it('uses turn-specific hand status in the bar only once a game coin is on-chain', () => {
+  it('keeps hands active until unrolling completes', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: {
@@ -257,12 +280,28 @@ describe('session model selectors', () => {
     })).handStatusLabel).toBe('Active');
 
     expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: null, turnState: 'my-turn' },
+      },
+    })).handStatusLabel).toBe('Your turn');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: null, turnState: 'replaying' },
+      },
+    })).handStatusLabel).toBe('Active');
+
+    expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'their-turn' },
       },
-    })).handStatusLabel).toBe('Their turn');
+    })).handStatusLabel).toBe('Active');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
@@ -270,12 +309,12 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
       },
-    })).handStatusLabel).toBe('Playing move');
+    })).handStatusLabel).toBe('Active');
 
-    // 'replaying' is a distinct WASM state (a redo replayed after unroll) and is
-    // communicated as 'Replaying move', not collapsed into 'Playing move'.
+    // 'replaying' is exposed only after the unroll result made the game coin
+    // authoritative.
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'replaying' },
@@ -283,7 +322,7 @@ describe('session model selectors', () => {
     })).handStatusLabel).toBe('Replaying move');
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'finishing' },
@@ -293,10 +332,10 @@ describe('session model selectors', () => {
     // Detecting the opponent's illegal on-chain move puts us in the slash flow;
     // the bar should say so explicitly instead of a generic "Your turn".
     const slashing = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'opponent-illegal-move' },
+        coin: { coinHex: null, turnState: 'opponent-illegal-move' },
       },
     }));
     expect(slashing.handStatusLabel).toBe('Slashing cheater');
@@ -333,6 +372,11 @@ describe('session model selectors', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       game,
+    })).lifecycleRows).toEqual([]);
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
+      game,
     })).lifecycleRows).toEqual([
       { id: '7', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
       { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
@@ -365,11 +409,11 @@ describe('session model selectors', () => {
     });
 
     const singleton = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: { activeIds: ['7'], currentHandIds: ['7'], instances: { '7': updated['7'] } },
     }));
     const multiple = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: { activeIds: ['7', '9'], currentHandIds: ['7', '9'], instances: updated },
     }));
     expect(singleton.lifecycleRows[0]).toMatchObject({ label: 'Hand', statusLabel: 'Playing move' });
@@ -381,7 +425,7 @@ describe('session model selectors', () => {
 
   it('shows a premature opponent timeout as an explicit ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
@@ -400,7 +444,7 @@ describe('session model selectors', () => {
 
   it('shows settled cleanly as an ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
@@ -419,7 +463,7 @@ describe('session model selectors', () => {
 
   it('shows move-too-late as an ended detail distinct from forfeit', () => {
     const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' } },
       game: {
         coin: { coinHex: null, turnState: 'ended' },
         terminal: {
@@ -676,6 +720,43 @@ describe('session model selectors', () => {
       { label: 'Opp', value: '40' },
     ]);
 
+    const stale = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedStale', ourBalance: '60', theirBalance: '40' },
+      },
+      game: {
+        activeIds: ['game-1'],
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': {
+            ...pending('game-1'),
+            handStatus: 'our-turn',
+          },
+          'game-2': {
+            ...pending('game-2'),
+            coin: { coinHex: null, turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'game-error',
+              outcome: null,
+              label: 'Missing from stale unroll',
+              myReward: null,
+              rewardCoinHex: null,
+            },
+          },
+        },
+      },
+    });
+    expect(selectStatusBarBalances(stale)).toEqual([
+      { label: 'Me', value: '60' },
+      { label: 'Opp', value: '40' },
+      { label: 'Hand 1', value: '100' },
+    ]);
+    expect(selectGameDashboardView(stale).lifecycleRows).toEqual([
+      { id: 'game-1', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
+      { id: 'game-2', label: 'Hand 2', statusLabel: 'Ended', detail: 'Missing from stale unroll' },
+    ]);
+
     const errored = selectStatusBarBalances(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Failed', ourBalance: '60', theirBalance: '40' } },
     }));
@@ -766,7 +847,7 @@ describe('session model selectors', () => {
       version: 8n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
-      gameSessionSchemaVersion: 1n,
+      gameSessionSchemaVersion: 2n,
       channelReady: true,
       activeGameIds: [],
       channelStatus: {
@@ -928,7 +1009,7 @@ describe('session model selectors', () => {
   it('keeps an unrolled session on-chain while an active game is unresolved', () => {
     const unrolledWithGame = createSessionModel({
       channel: {
-        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'DoneUnrolling' },
         connection: { stateIdentifier: 'running', stateDetail: [] },
         goOnChainPressed: true,
         cleanShutdownStarted: false,

@@ -28,7 +28,7 @@ src/
   referee/          — Referee coin logic (on-chain move validation, slashing)
   session_phases/   — High-level game orchestration and on-chain actions
   games/            — Game registration (calpoker, spacepoker, test-only debug game)
-  peer_container.rs — Peer-to-peer game cradle (synchronous wrapper)
+  peer_container.rs — Peer-to-peer game session (synchronous wrapper)
   simulator/        — Chia blockchain simulator and integration tests
   test_support/     — Shared test utilities
   common/           — Shared types, CLVM utilities, standard coin logic

@@ -77,12 +77,12 @@ function makeCoinRecord(index: number): CoinRecord {
 }
 
 describe('BlockchainPoller', () => {
-  it('reports a decreased height to the cradle (reorg signal not clamped)', async () => {
+  it('reports a decreased height to the game session (reorg signal not clamped)', async () => {
     // Height goes up then drops: a reorg.  The poller must forward the lower
     // height so the transaction manager can detect the rollback.
     const rpc = makeRpc([100n, 90n]);
     const reportedPeaks: bigint[] = [];
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [],
       reportCoinStates: () => {},
       reportNewBlock: (peak) => {
@@ -91,7 +91,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     // Drive the poll loop directly, twice, without the setTimeout backoff.
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -101,9 +101,9 @@ describe('BlockchainPoller', () => {
     expect(poller.getPeak()).toEqual(90n);
   });
 
-  it('skips reporting a cradle until all of its coins are registered', async () => {
+  it('skips reporting a game session until all of its coins are registered', async () => {
     // While a coin is still pending registration we cannot query it; reporting a
-    // snapshot without it would look like a deletion to the manager.  The cradle
+    // snapshot without it would look like a deletion to the manager.  The game session
     // must be skipped until registration succeeds (retried each tick).
     let registerOk = false;
     const rpc = new Proxy(
@@ -120,7 +120,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reportedPeaks: bigint[] = [];
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
       reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
@@ -129,13 +129,13 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     // Registration fails: no report (a partial snapshot would be misread).
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(reportedPeaks).toEqual([]);
 
-    // Registration succeeds on the retry: the cradle is reported.
+    // Registration succeeds on the retry: the game session is reported.
     registerOk = true;
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(reportedPeaks).toEqual([100n]);
@@ -160,7 +160,7 @@ describe('BlockchainPoller', () => {
           (() => Promise.resolve(undefined)),
       },
     );
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => {
         snapshotCalls++;
         return interests;
@@ -170,7 +170,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
     expect(snapshotCalls).toBe(1);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -179,7 +179,7 @@ describe('BlockchainPoller', () => {
     expect(snapshotCalls).toBe(1);
     expect(queriedNames).toEqual([['aa'], ['aa']]);
 
-    poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
+    poller.watchCoin(gameSession, { coin_name: 'bb', coin_string: 'coin-b' });
     expect(snapshotCalls).toBe(1);
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(queriedNames).toEqual([['aa'], ['aa'], ['aa', 'bb']]);
@@ -345,7 +345,7 @@ describe('BlockchainPoller', () => {
     await jest.advanceTimersByTimeAsync(0);
     expect(balances).toEqual([10n]);
 
-    // SessionController calls stop() on cradle terminal — wallet balance must continue.
+    // SessionController calls stop() on game-session terminal — wallet balance must continue.
     poller.stop();
     await jest.advanceTimersByTimeAsync(1000);
     expect(balances).toEqual([10n, 20n]);
@@ -371,13 +371,13 @@ describe('BlockchainPoller', () => {
           (() => Promise.resolve(undefined)),
       },
     );
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
       reportCoinStates: () => {},
       reportNewBlock: () => {},
     };
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     scope = '100';
@@ -411,7 +411,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-buried' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
@@ -419,7 +419,7 @@ describe('BlockchainPoller', () => {
       reportNewBlock: () => {},
     };
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -467,7 +467,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [
         { coin_name: nameA!, coin_string: 'coin-a' },
         { coin_name: nameB!, coin_string: 'coin-b' },
@@ -479,7 +479,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
@@ -539,7 +539,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: nameA, coin_string: 'coin-a' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
@@ -548,7 +548,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
@@ -581,7 +581,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
-    const cradle: PollingGameSession = {
+    const gameSession: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-spent' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
@@ -590,7 +590,7 @@ describe('BlockchainPoller', () => {
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.attachGameSession(cradle);
+    poller.attachGameSession(gameSession);
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 

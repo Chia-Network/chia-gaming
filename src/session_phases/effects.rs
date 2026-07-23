@@ -41,7 +41,8 @@ pub enum ChannelStatus {
     GoingOnChain,
     Unrolling,
     ResolvedClean,
-    ResolvedUnrolled,
+    #[serde(alias = "ResolvedUnrolled")]
+    DoneUnrolling,
     ResolvedStale,
     Failed,
 }
@@ -55,6 +56,41 @@ pub struct ChannelStatusSnapshot {
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
     pub have_potato: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unroll_initiator: Option<UnrollInitiator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_phase: Option<ChannelSemanticPhase>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnrollInitiator {
+    Us,
+    Opponent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSemanticPhase {
+    SubmittingChannelSpend,
+    ResolvingOpponentChannelSpend,
+    Preempting,
+    WaitingTimeout,
+    SubmittingTimeoutFinish,
+    Resolving,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeoutClaimActivity {
+    Waiting,
+    Submitting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TimeoutClaimSemantic {
+    ChannelTimeoutFinish,
+    GameOpponentTurn { id: GameID },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -111,6 +147,8 @@ pub struct GameStatusOtherParams {
     pub game_finished: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forfeited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_claim_activity: Option<TimeoutClaimActivity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -149,6 +187,8 @@ pub enum GameNotification {
     GameSettled {
         id: GameID,
         outcome: SettlementOutcome,
+        /// Whether settlement occurred through the on-chain game-coin path.
+        on_chain: bool,
         our_share: Amount,
         coin_id: Option<CoinString>,
     },
@@ -195,7 +235,12 @@ pub enum GameNotification {
         game_allocated: Option<Amount>,
         #[serde(skip_serializing_if = "Option::is_none")]
         have_potato: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unroll_initiator: Option<UnrollInitiator>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        semantic_phase: Option<ChannelSemanticPhase>,
     },
+    TimeoutClaimSubmitted(TimeoutClaimSemantic),
 }
 
 /// A coin id worth surfacing in the dashboard so the user can look it up in a
@@ -244,6 +289,7 @@ impl GameNotification {
         GameNotification::GameSettled {
             id,
             outcome,
+            on_chain: !matches!(outcome, SettlementOutcome::AcceptSettlement),
             our_share,
             coin_id,
         }
@@ -270,6 +316,7 @@ pub enum GameSessionEvent {
         /// Eagerly-built spend to submit once this coin reaches its relative
         /// timeout age.  `None` for coins with no timeout claim.
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     },
 }
 
@@ -313,6 +360,7 @@ pub enum Effect {
         /// coin reaches its relative timeout age.  `None` when there is no
         /// timeout claim to make for this coin.
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     },
     RequestPuzzleAndSolution(CoinString),
 
@@ -357,10 +405,10 @@ pub fn apply_effects(
                 system.send_message(&PeerMessage::HandshakeF(payload))?;
             }
             Effect::NeedLauncherCoinId => {
-                // Handled by the cradle/WASM layer, not by the trait system.
+                // Handled by the session/WASM layer, not by the trait system.
             }
             Effect::NeedCoinSpend(_) => {
-                // Handled by the cradle/WASM layer, not by the trait system.
+                // Handled by the session/WASM layer, not by the trait system.
             }
             Effect::PeerBatch {
                 actions,
@@ -390,8 +438,9 @@ pub fn apply_effects(
                 timeout,
                 name,
                 spend,
+                semantic,
             } => {
-                system.register_coin(&coin, &timeout, name, spend)?;
+                system.register_coin(&coin, &timeout, name, spend, semantic)?;
             }
             Effect::RequestPuzzleAndSolution(coin) => {
                 system.request_puzzle_and_solution(&coin)?;

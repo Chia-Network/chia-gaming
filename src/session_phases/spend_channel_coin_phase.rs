@@ -14,8 +14,9 @@ use crate::common::types::{
 };
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::effects::{
-    format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
+    format_coin, CancelReason, ChannelSemanticPhase, ChannelStatus, ChannelStatusSnapshot,
+    CoinOfInterest, Effect, GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
+    TimeoutClaimSemantic, UnrollInitiator,
 };
 use crate::session_phases::handler_base::{
     build_channel_to_unroll_bundle, classify_unroll, ChannelStateBase, UnrollOutcome,
@@ -56,6 +57,7 @@ pub struct SpendChannelCoinPhase {
     advisory: Option<String>,
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
+    unroll_initiator: Option<UnrollInitiator>,
 
     expected_clean_shutdown_solution: Option<ProgramRef>,
 
@@ -97,6 +99,7 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            unroll_initiator: Some(UnrollInitiator::Us),
             expected_clean_shutdown_solution: None,
             last_channel_coin_spend_info,
             replacement: None,
@@ -128,6 +131,7 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            unroll_initiator: Some(UnrollInitiator::Opponent),
             expected_clean_shutdown_solution,
             last_channel_coin_spend_info: None,
             replacement: None,
@@ -160,6 +164,7 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            unroll_initiator: None,
             expected_clean_shutdown_solution: Some(clean_shutdown_solution),
             last_channel_coin_spend_info,
             replacement: None,
@@ -658,6 +663,7 @@ impl SpendChannelCoinPhase {
                     timeout: self.base.unroll_timeout.clone(),
                     name: Some("unroll"),
                     spend: None,
+                    semantic: None,
                 });
             }
             UnrollOutcome::WaitForTimeout => {
@@ -677,6 +683,7 @@ impl SpendChannelCoinPhase {
                             timeout: self.base.unroll_timeout.clone(),
                             name: Some("unroll"),
                             spend: Some(spend),
+                            semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
                         });
                     }
                     Err(e) => {
@@ -1125,7 +1132,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         SpendChannelCoinPhase::go_on_chain(self, env)
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
-        let (state, coin) = match &self.state {
+        let (state, coin, semantic_phase) = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin }
             | SpendChannelCoinState::ChannelConditions { channel_coin } => {
                 let s = if self.expected_clean_shutdown_solution.is_some() {
@@ -1133,12 +1140,31 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 } else {
                     ChannelStatus::GoingOnChain
                 };
-                (s, Some(channel_coin.clone()))
+                let phase = if self.unroll_initiator == Some(UnrollInitiator::Opponent) {
+                    ChannelSemanticPhase::ResolvingOpponentChannelSpend
+                } else {
+                    ChannelSemanticPhase::SubmittingChannelSpend
+                };
+                (s, Some(channel_coin.clone()), Some(phase))
             }
             SpendChannelCoinState::UnrollTimeoutOrSpend { unroll_coin, .. }
             | SpendChannelCoinState::UnrollSpend { unroll_coin, .. }
             | SpendChannelCoinState::UnrollConditions { unroll_coin, .. } => {
-                (ChannelStatus::Unrolling, Some(unroll_coin.clone()))
+                let phase = match &self.state {
+                    SpendChannelCoinState::UnrollSpend { .. } => ChannelSemanticPhase::Preempting,
+                    SpendChannelCoinState::UnrollTimeoutOrSpend { .. } => {
+                        ChannelSemanticPhase::WaitingTimeout
+                    }
+                    SpendChannelCoinState::UnrollConditions { .. } => {
+                        ChannelSemanticPhase::Resolving
+                    }
+                    _ => unreachable!(),
+                };
+                (
+                    ChannelStatus::Unrolling,
+                    Some(unroll_coin.clone()),
+                    Some(phase),
+                )
             }
         };
         let (our_balance, their_balance, game_allocated) =
@@ -1159,6 +1185,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             their_balance,
             game_allocated,
             have_potato: None,
+            unroll_initiator: self.unroll_initiator,
+            semantic_phase,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

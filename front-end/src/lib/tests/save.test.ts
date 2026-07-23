@@ -75,7 +75,7 @@ function clearTestGlobal(key: string) {
 
 const sampleSession: Partial<SessionSave> = {
   serializedGameSession: new Uint8Array([0, 1, 2, 255]),
-  gameSessionSchemaVersion: 1n,
+  gameSessionSchemaVersion: 2n,
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
@@ -223,12 +223,12 @@ describe('session persistence', () => {
   });
 
 
-  it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
+  it('does not let preference-only patches clobber a durable game session before hydrate', async () => {
     saveSession(sampleSession);
     await flushSessionSave();
     expect(hasSavedSessionMarker()).toBe(true);
 
-    // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
+    // Simulate marker-only boot: memory has preferences, IndexedDB has the game session.
     _resetForTests();
     expect(hasSavedSessionMarker()).toBe(true);
     expect(loadState().serializedGameSession).toBeUndefined();
@@ -243,13 +243,13 @@ describe('session persistence', () => {
     expect(loaded?.diagnosticLog).toEqual(['boot log']);
   });
 
-  it('flush persists a newer in-memory cradle even when sessionId is unset', async () => {
+  it('flush persists a newer in-memory gameSession even when sessionId is unset', async () => {
     const first = new Uint8Array([1, 1, 1, 1]);
     const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
     markSavedSession();
     saveSession({
       serializedGameSession: first,
-      gameSessionSchemaVersion: 1n,
+      gameSessionSchemaVersion: 2n,
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
@@ -257,7 +257,7 @@ describe('session persistence', () => {
 
     saveSession({
       serializedGameSession: second,
-      gameSessionSchemaVersion: 1n,
+      gameSessionSchemaVersion: 2n,
       pairingToken: 'tok-v2',
     });
     await flushSessionSave();
@@ -279,7 +279,7 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
-  it('keeps Resume marker for a finished channel snapshot without a live cradle', async () => {
+  it('keeps Resume marker for a finished channel snapshot without a live game session', async () => {
     saveSession({
       blockchainType: 'simulator',
       hubUrl: 'http://localhost:3000',
@@ -581,7 +581,7 @@ describe('flat state', () => {
     expect(await peekSession()).toMatchObject({ hubUrl: 'http://localhost:3003' });
   });
 
-  it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-cradle handshake', async () => {
+  it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-game-session handshake', async () => {
     markSavedSession();
     saveSession({
       ...sampleSession,
@@ -619,7 +619,7 @@ describe('flat state', () => {
     expect(remaining?.opponentAlias).toBe('Opponent');
   });
 
-  it('pairingToken-only pending handshake is resumable without a cradle', async () => {
+  it('pairingToken-only pending handshake is resumable without a game session', async () => {
     saveSession({
       blockchainType: 'simulator',
       hubUrl: 'http://localhost:3003',

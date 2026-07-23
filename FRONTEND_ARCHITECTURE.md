@@ -13,8 +13,8 @@ model (wallet, hub, peer, session interactions and rollover), see
 The system consists of two separate deployable artifacts:
 
 1. **Player App** — A fully static HTML/JS/CSS application. This is the main
-   application that players run. It contains the wallet connection, WASM cradle,
-   game session logic, and all game UIs. It is served as static files with no
+   application that players run. It contains the wallet connection, WASM game session,
+   game logic, and all game UIs. It is served as static files with no
    server-side logic. No cookies, no server-side sessions.
 2. **Hub** — A separate dynamic service that provides two things: a hub UI
    for matchmaking (loaded as an iframe inside the player app), and a WebSocket
@@ -342,9 +342,9 @@ they are served from the same origin, run in the same process, and share the
 same memory. The WASM-to-JS boundary is not a security boundary.
 
 Private keys (channel, unroll, referee) are intentionally included in the
-serialized cradle state. Without them, a deserialized session cannot resume
+serialized game-session state. Without them, a deserialized session cannot resume
 signing and the game would be unrecoverable after a page reload. Any
-JavaScript that can call `serialize_cradle()` can equally call every other
+JavaScript that can call `serialize_game_session()` can equally call every other
 exported WASM function (`make_move`, `go_on_chain`, etc.), so withholding keys
 from the serialized form would not meaningfully limit an attacker who already
 has script execution in the same origin.
@@ -359,7 +359,7 @@ The actual security boundaries are:
 
 #### RNG non-serialization
 
-The game cradle's `ChaCha8Rng` (used for move entropy and identity
+The game session's `ChaCha8Rng` (used for move entropy and identity
 generation) is **not** serialized.  The `ChaCha8SerializationWrapper`
 emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
 zeroed placeholder via `Default`.  On restore, `restore_session`
@@ -373,7 +373,7 @@ cryptographic nonces or signatures (BLS signatures are deterministic).
 #### What is saved (`SessionSave`)
 
 IndexedDB holds one complete `SessionSave` record using structured clone.
-The serialized WASM cradle and unacknowledged protocol messages remain raw
+The serialized WASM game session and unacknowledged protocol messages remain raw
 `Uint8Array` values; they are not base64-expanded or wrapped in JSON.
 localStorage holds only small preferences, the resumable-session marker, and
 tab/reset coordination keys. This storage is not encrypted and remains inside
@@ -424,7 +424,7 @@ full mid-game session state:
 | `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
-| `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching. |
+| `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching, including optional unroll initiator and semantic progress phase. |
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
@@ -463,7 +463,7 @@ Session persistence is owned by the outer JavaScript layer, not by
 `SessionController`. The save combines two sources of state:
 
 1. **WASM-native state** — `SessionController.getWasmFields()` returns the
-   cradle serialization, message counters, protocol state, history, aliases,
+   game-session serialization, message counters, protocol state, history, aliases,
    and other fields that originate inside the WASM bridge.
 2. **JS-side state** — React state in `useGameSession`: game coin, turn state,
    notification queues, between-hand mode, running balance, dismissed
@@ -498,7 +498,7 @@ queued sends/acks are held until the current WASM event drain is empty.
 At that point `SessionController` performs one immediate durability flush:
 
 1. Cancel any pending debounced save.
-2. Call `onSaveNeeded`, which serializes the cradle and merges the current
+2. Call `onSaveNeeded`, which serializes the game session and merges the current
    WASM/JS fields into `SessionSave`.
 3. Await `flushSessionSave()` to commit the record through an IndexedDB
    read/write transaction.
@@ -506,23 +506,23 @@ At that point `SessionController` performs one immediate durability flush:
 
 This preserves the transport invariant across reloads: the peer only observes a
 message or ack after the local save contains the corresponding
-`messageNumber`/`unackedMessages` or `remoteNumber`/cradle state. A burst of
-events in one drain still causes only one full cradle serialization and one
+`messageNumber`/`unackedMessages` or `remoteNumber`/game-session state. A burst of
+events in one drain still causes only one full game-session serialization and one
 IndexedDB transaction instead of one write per message. If the transaction
 fails, the app shows a persistent session-storage warning and leaves the
 messages/acks queued; none cross the protocol boundary until a later durability
 retry succeeds.
 
-Development builds log the raw cradle byte count, an estimated total IndexedDB
+Development builds log the raw game-session byte count, an estimated total IndexedDB
 record size, the compact historical-unroll count when available, and all three
 history counts. The record-size walk is skipped in production.
 
 #### Prop-safe session values
 
-`SessionSave` contains raw `Uint8Array` cradles and message payloads plus
+`SessionSave` contains raw `Uint8Array` game sessions and message payloads plus
 `bigint` fields. React props cannot safely deep-enumerate those values:
 
-- Expanding a typed array into `{0:n,1:n,...}` destroys the cradle and makes
+- Expanding a typed array into `{0:n,1:n,...}` destroys the game session and makes
   WASM restore fail with bencodex `unexpected end of input`.
 - Deep-cloning a degraded numeric-keyed byte object (or cloning the full
   session every render) can OOM the tab.
@@ -531,7 +531,7 @@ history counts. The record-size walk is skipped in production.
 dense byte-objects alone, hide bigints as non-enumerable properties, and Shell
 keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
 every parent render. Persistence itself uses IndexedDB structured clone and
-never routes cradle bytes through this React-prop path.
+never routes game-session bytes through this React-prop path.
 
 #### Session model ownership
 
@@ -590,7 +590,7 @@ hasSavedSessionMarker()?
                  │
                  ├─ yes → show Resume / Start Over (hydrate IndexedDB into the
                  │         in-memory cache in the background so incidental
-                 │         preference patches cannot clobber a durable cradle)
+                 │         preference patches cannot clobber a durable game session)
                  │       │
                  │       ├─ Start Over → hardReset(), reload
                  │       │                (separate "Starting over…" UI state;
@@ -652,10 +652,10 @@ When the user chooses to resume a full save, `performResume` fires:
 3. Connect to the hub. On `connection_status`, reconcile the hub's
    pairing state against the save (see
    [Reconnect Reconciliation](#reconnect-reconciliation)).
-4. `sessionController.restoreSession` loads WASM and deserializes the cradle
+4. `sessionController.restoreSession` loads WASM and deserializes the game session
    via `WasmStateInit.deserializeGame()`, restores counters and logs, and calls
    `markRestored()`.
-5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
+5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + game session set +
    auto-flush), re-send all un-acked messages and re-submit all pending
    transactions.
 
@@ -727,10 +727,10 @@ the log and persisted through the normal debounced save path.
   boundary is already waiting for a durability flush, the duplicate ack is
   queued behind that flush too.
 - `msgno > remoteNumber + 1`: out-of-order, buffered in a `reorderQueue` map.
-- `msgno == remoteNumber + 1`: delivered to the WASM cradle, `remoteNumber`
+- `msgno == remoteNumber + 1`: delivered to the WASM game session, `remoteNumber`
   incremented, ack queued, then contiguous messages are flushed from the reorder
   queue. Acks are sent only after the updated `remoteNumber` and serialized
-  cradle have been written to the session save.
+  game session have been written to the session save.
 
 #### Peer Liveness
 
@@ -751,7 +751,7 @@ the **tab-dot connectivity indicators** — colored dots to the left of each tab
 label showing connection health (green / yellow / red / gray). They are also
 passed to `GameSession` for in-game display. Separately, Shell has a cascade
 rule: if the peer is marked lost while the session is still off-chain, it calls
-`goOnChain()` on the WASM cradle.
+`goOnChain()` on the WASM game session.
 
 Inbound peer frames are validated before counting as activity: only tags
 `0x01` (msg, len ≥ 5), `0x02` (ack, len ≥ 5), and `0x03` (keepalive) update
@@ -853,7 +853,7 @@ but the MVP is limited to one game at a time.
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  GameSession component (TRUSTED)                         │   │
-│  │  useGameSession hook: WASM cradle, notifications, state  │   │
+│  │  useGameSession hook: WASM game session, notifications, state  │   │
 │  │  Shown as the "Game" tab                                 │   │
 │  │                                                          │   │
 │  │  ┌────────────────────────────────────────────────────┐  │   │
@@ -1118,7 +1118,7 @@ matches. The player app never reads from or writes to the iframe's DOM.
 The `GameSession` component manages one game session (a channel with a series of
 individual hands). The `useGameSession` hook owns:
 
-- **WASM cradle** — the `SessionController` lifecycle, obtained via
+- **WASM game session** — the `SessionController` lifecycle, obtained via
   `getOrCreateSessionController`. The singleton persists across hands within a session.
 - **Notification dispatch** — subscribes to `SessionController`'s observable and
   routes notifications to scoped notification queues (channel-scope and
@@ -1217,17 +1217,84 @@ via the `gameplayEventSubject` RxJS stream:
 - `ProposalAccepted` — a new game is starting (also clears stale
   `proposal-rejected` entries from the game queue)
 - `OpponentMoved` — the opponent made a move (with readable data and
-  `moverShare`, our share after that move / on timeout from it)
+  `moverShare`, our share after that move / on timeout from it). It is emitted
+  synchronously when the `GameStatus` arrives, before asynchronous
+  session/dashboard work such as hashing a coin ID. Game hooks must observe
+  the same semantic move event whether the move was delivered off-chain or
+  discovered on-chain.
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 - `MoveRejected` — a recoverable local move rejection with game id, tag, and
   message; game hooks roll back only their matching optimistic move
-- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; dual-delivered
-  to the session banner and the active game hook via `gameplayEvent$`
+- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; delivered
+  synchronously to the active game hook before asynchronous settlement
+  bookkeeping or teardown, and also reflected in the session banner
 - `GameError` — non-settlement terminals (`EndedCancelled`, `EndedError`,
   `InsufficientBalance`) and unknown settlement outcomes
 
 Legacy `GameStatus` slash/timeout `Ended*` kinds are no longer forwarded to
 gameplay hooks; settlements use `GameSettled` only.
+
+### Terminal game UX and resolved sessions
+
+#### Browser game isolation
+
+Calpoker, Space Poker, and Krunk have separate browser feature modules. They
+may share the session shell's controller bridge, raw game-ID-scoped
+notifications, opaque hand-state envelope, and live/frozen mount lifecycle,
+but do not share frontend event types, persistence schemas, terminal mappings,
+recovery adapters, dev-key hooks, or UX components. The shell never decodes a
+hand-state payload: it selects the feature by `gameType` and passes the opaque
+payload to that feature's mount. Small repeated browser code is intentionally
+duplicated in the owning feature rather than abstracted into a game-plugin
+layer.
+
+`GameSettled` is the handoff from protocol state to game UX. The framework
+emits a raw settlement notification while the live game component is still mounted; the game hook
+then owns the terminal transition. For example, Space Poker uses its
+optimistic-action snapshot to roll back a timeout discovered during on-chain
+replay, while each game decides its own terminal copy and badges.
+
+The live `GameSession` tree stays mounted through resolution. Once the game
+hook has handled `Settled`, `GameHandHost` swaps to a frozen controller and an
+empty event stream in place: controls are disabled, but the same React game
+component and its local terminal view state remain visible. Its wrapper element
+is stable in both live and frozen modes; changing only interaction attributes
+must not remount the game subtree. Shell then tears down the live WASM/session
+resources without remounting the hand UI.
+
+Each game contract is:
+
+1. Handle `Settled` in the live hook and transition to a non-interactive
+   terminal view.
+2. Persist complete terminal `handState`, including any game-specific visual
+   state needed after reload.
+
+After teardown, a `SessionController` is non-serializable. This prevents late
+React effects or save callbacks from writing stale live WASM bytes back into
+the finished-session snapshot, which must reload into frozen recovery rather
+than the live resume flow.
+
+`FinishedSessionGameView` is only reload recovery, when no live component tree
+exists to preserve. It dispatches the opaque persisted terminal `handState` to
+the selected feature using the same `GameHandHost` lifecycle. Keep `handState` on the controller (or
+non-enumerable on the model) — never as an enumerable React prop. React's
+prop/error describe path `JSON.stringify`s arrays and throws on nested
+`bigint` card ids, which locks the UI.
+
+#### Atomic game terminal UX
+
+Krunk is one logical hand with two independently settling game IDs. Terminal
+state is therefore per game ID, not just the session-level last terminal:
+
+- each Krunk board uses its own terminal outcome for result copy and input
+  disabling;
+- a timed-out guesser board immediately disables drafting, queued guesses, and
+  submission even if the hook has not yet rendered its local `Settled` event;
+- terminal results belong under their corresponding boards. The keyboard area
+  is reserved for input/error/waiting guidance and must not claim that an
+  opponent owes a move after either game has ended;
+- the answer row is reserved from the start, so a final revealed word fills an
+  existing space instead of shifting the board.
 
 ## Single-Hand Enforcement
 
@@ -1305,10 +1372,12 @@ not to limit concurrency.
 |------|---------|
 | `front-end/src/components/Shell.tsx` | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs |
 | `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
+| `front-end/src/components/GameHandHost.tsx` | Stable game registry; freezes the existing hand UI in place after terminal handling |
+| `front-end/src/components/FinishedSessionGameView.tsx` | Reload recovery for a resolved session without a live game tree |
 | `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
 | `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
 | `front-end/src/hooks/SessionController.ts` | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence |
-| `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
+| `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create game session |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts` | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods |
 | `front-end/src/hooks/save.ts` | `SessionSave` interface, marker/`saveSession`/`peekSession`/`hardReset`/`peekAlias`, tab lease management |

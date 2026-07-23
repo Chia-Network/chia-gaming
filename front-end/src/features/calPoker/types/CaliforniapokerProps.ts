@@ -37,5 +37,6 @@ export interface CaliforniapokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
+  settlementOutcome?: import('../../../lib/settlement').SettlementOutcome | null;
+  settlementOnChain?: boolean | null;
 }

@@ -25,6 +25,12 @@ like "OpponentMoved" for readability. The canonical wire model in Rust is
 - **settlements (terminal):** `GameNotification::GameSettled { id, outcome,
   our_share, coin_id }` — off-chain `accept_settlement` plus on-chain glossary
   outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
+- **timeout submission:** `TimeoutClaimSubmitted(ChannelTimeoutFinish |
+  GameOpponentTurn { id })` — emitted exactly when the transaction manager
+  queues a mature eager claim for host submission; it is progress, not a
+  confirmed settlement. Serde's externally tagged JSON shape is the string
+  `"ChannelTimeoutFinish"` for the unit variant or
+  `{ "GameOpponentTurn": { "id": ... } }` for a game claim.
 
 Settlements no longer use `EndedWeTimedOut`, `EndedOpponentTimedOut`, or other
 `Ended*` slash/timeout status kinds. Slash and cheat paths are settled outcomes
@@ -59,8 +65,8 @@ Those are conceptual progression models; the concrete emitted values are still
 
 ## WASM Event FIFO and Async Drain
 
-Every communication produced by the Rust cradle starts as a `GameSessionEvent` in
-the cradle's FIFO event queue. The `TransactionManager` drains that queue and
+Every communication produced by the Rust game session starts as a `GameSessionEvent` in
+the game session's FIFO event queue. The `TransactionManager` drains that queue and
 intercepts blockchain bookkeeping events before they reach JavaScript:
 `OutboundTransaction` entries are captured for `drain_submissions()`, and
 `WatchCoin` entries update the manager's watched-coin set and are returned as
@@ -71,7 +77,7 @@ logs, receive errors, and puzzle/solution requests — are returned to JS as
 
 Flow:
 
-1. Rust handlers push all `GameSessionEvent`s onto the cradle queue.
+1. Rust handlers push all `GameSessionEvent`s onto the game-session queue.
 2. `TransactionManager::flush_and_collect` drains that queue, intercepting
    `OutboundTransaction` and `WatchCoin` while preserving order for the events
    still delivered to JS.
@@ -127,7 +133,10 @@ batching artifacts.
 
 All channel lifecycle events are delivered as a single `ChannelStatus`
 notification containing the current `ChannelStatus`, balance information, and
-an optional `advisory` string for context (e.g. error reason). The
+an optional `advisory` string for context (e.g. error reason). During an
+on-chain transition it can also carry optional `unroll_initiator` (`us` or
+`opponent`) and `semantic_phase`; absent fields preserve coarse-status behavior
+for older/restored snapshots. The
 `ChannelStatus` values are:
 
 `ChannelStatus` is the notification-level state model exposed to the UI and
@@ -150,9 +159,20 @@ for how those lenses relate.
 | `GoingOnChain` | Explicit on-chain transition initiated | Local side has initiated transition from off-chain potato flow to on-chain resolution                                                         |
 | `Unrolling`       | Unroll detected on-chain                       | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                |
 | `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
-| `ResolvedUnrolled`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately |
+| `DoneUnrolling`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately |
 | `ResolvedStale`   | Stale unroll completed                         | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                         |
 | `Failed`          | Unrecoverable error                            | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                            |
+
+`semantic_phase` refines, rather than replaces, `GoingOnChain` and `Unrolling`:
+
+| Phase | Meaning |
+| --- | --- |
+| `submitting_channel_spend` | We initiated go-on-chain and submitted the channel spend. |
+| `resolving_opponent_channel_spend` | The observed channel spend was initiated by the opponent and is being decoded. |
+| `preempting` | We are submitting a newer unroll spend to preempt the observed state. |
+| `waiting_timeout` | The unroll coin is live and its timeout claim is armed. |
+| `submitting_timeout_finish` | The unroll timeout matured and its finish spend was queued for submission. |
+| `resolving` | The unroll coin spend is being decoded into reward and game coins. |
 
 **Assumes single-handing for `ShuttingDown` timing.** The current clean shutdown
 flow emits `ShuttingDown` as soon as the user requests it, even before the
@@ -167,7 +187,8 @@ details.
 
 Each `ChannelStatus` notification is emitted when the `PeerLifecyclePhase` is
 replaced (handler transition) or when the current handler's snapshot changes
-(e.g. balance update during `Active`). The frontend uses this single
+(e.g. balance update during `Active` or an on-chain semantic-phase change).
+The frontend uses this single
 notification type for its persistent channel state display.
 
 Monotonicity applies across all three lenses:
@@ -190,7 +211,7 @@ is intentionally calmer than the raw notification stream:
 `Channel: <channel status> <channel advisory> [Hand N: <status> <detail>]`
 
 The channel half summarizes the channel lifecycle. `Unrolling` and
-`ResolvedUnrolled` are not separate pop-up-worthy events; the bar is the source
+`DoneUnrolling` are not separate pop-up-worthy events; the bar is the source
 of truth for those states. `Failed` and `ResolvedStale` can still produce
 error-style attention because they indicate adverse channel-level outcomes.
 
@@ -206,6 +227,7 @@ games). Each row uses that game's own turn or terminal state:
 | `Your turn` | A game coin is on-chain and the protocol says our side is the mover. |
 | `Their turn` | A game coin is on-chain and the protocol says the opponent is the mover. |
 | `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
+| `Claiming timeout` | A mature timeout claim for the opponent's turn was queued for submission. |
 | `Ended` | A `GameSettled` or non-settlement terminal (`EndedCancelled`, `EndedError`) has been observed. The collapsed bar adds a short hand detail from the settlement glossary label when useful. |
 
 Terminal hand details are derived from `GameSettled.outcome` via
@@ -301,7 +323,7 @@ GameSettled { id, outcome: SettlementOutcome, our_share, coin_id? }
 present, including `0`.
 
 **Dual delivery:** the same payload drives (1) the session banner / dashboard
-label and (2) the active reference-game UI via `GameplayEvent.Settled`.
+label and (2) the active game feature via its matching raw settlement record.
 Neither sink may invent a parallel event shape or skip "boring" outcomes.
 
 Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
@@ -439,7 +461,7 @@ and terminal game notifications per player per game ID. Every
    OurWalletMakingOffer/OurWalletMakingOfferAcceptance(1) < OfferSent(2) <
    TransactionPending(3) < Active(4) <
    ShuttingDown/GoingOnChain(5) < ShutdownTransactionPending/Unrolling(6) <
-   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(7)`. `Active` may repeat
+   ResolvedClean/DoneUnrolling/ResolvedStale/Failed(7)`. `Active` may repeat
    at the same ordinal for balance updates, and winding-down states at ordinals
    5 and 6 may repeat as shutdown/on-chain details are refined. Enforced by the
    simulation loop's post-test assertion.
@@ -532,12 +554,13 @@ matched to live games and generating spurious terminal notifications.
 
 ---
 
-## GameplayEvent Mapping
+## Raw game notification routing
 
 The `useGameSession` hook translates raw `WasmNotification` events into
-game-agnostic `GameplayEvent` variants before forwarding them to
-game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`).
-Game hooks never see raw notifications; they receive one of:
+game-ID-scoped `RawGameNotification` records before forwarding them through
+the session boundary. Each game feature validates and interprets only the
+records its handler understands; the shell owns neither game event types nor
+terminal UX.
 
 | Variant | Shape | When |
 |---------|-------|------|
@@ -548,13 +571,24 @@ Game hooks never see raw notifications; they receive one of:
 | `MoveRejected` | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook |
 | `GameError` | `{ gameId, reason }` | `EndedCancelled`, `EndedError`, `InsufficientBalance`, or unknown settlement outcome |
 
-Settlement label helpers live in `front-end/src/lib/settlement.ts`
-(`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).
+`front-end/src/lib/settlement.ts` owns only protocol validation and
+session-level labels. Timeout, forfeit, and terminal-copy mappings live in
+their owning game features.
 
 Non-terminal move/status notifications are remapped by
-`gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
-above (including `moverShare` on `OpponentMoved`).
+`rawNotificationsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
+above (including `moverShare` on `OpponentMoved`). The semantic game event is
+emitted immediately, before asynchronous dashboard bookkeeping such as hashing
+the notification's coin ID. This keeps all game hooks transport-agnostic:
+on-chain replay must not delay a clue, card update, or other game move until
+after unrelated session UI work completes.
+
+`Settled` is likewise delivered to the matching live game hook before
+asynchronous settlement bookkeeping and session teardown. For atomic game
+groups such as Krunk, every member receives and retains its own terminal
+outcome; the session-level terminal label is only a summary and must not
+replace per-game result UI.
 
 **Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalInfoFromGameSettled`,
-`settledEventForInfo`, `gameplayEventsForGameStatus`),
+`rawSettlementNotification`, `rawNotificationsForGameStatus`),
 `front-end/src/lib/settlement.ts`

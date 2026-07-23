@@ -69,7 +69,7 @@ state to decide whether to preempt or wait for the timeout path (see
 coin is spent, creating game coins and reward coins.
 
 When the unroll coin spend is detected, a `ChannelStatus` notification with
-state `ResolvedUnrolled` (or `ResolvedStale` if the unroll was stale) is
+state `DoneUnrolling` (or `ResolvedStale` if the unroll was stale) is
 emitted.
 
 ### Step 3: Forward-Align State
@@ -109,11 +109,11 @@ on-chain confirmation arrives.
 
 ### Step 5: Timeout Resolution
 
-Timeout resolution is split into two decoupled halves: **eager submission** of
-the timeout claim, and **confirmation-driven** notification when a spend is
-actually observed. There is no longer a maturity callback (`coin_timeout_reached`
-has been removed); reaching the timelock no longer triggers a spend or a
-notification directly.
+Timeout resolution is split into **eager submission**, a semantic
+**submission-progress notification**, and **confirmation-driven** settlement
+notification when a spend is actually observed. There is no handler maturity
+callback (`coin_timeout_reached` has been removed): maturity is decided solely
+by the transaction manager.
 
 **Eager submission.** When a game coin is registered with the wallet (via
 `register_initial_game_coins`), the handler pre-builds the timeout claim with
@@ -126,6 +126,15 @@ each coin's reorg-aware birthday and submits the stored claim once the coin
 reaches `birthday + game_timeout`, resubmitting across reorgs (see
 [Eager Timeout Submission](INTERNALS.md#eager-timeout-submission-and-confirmation-driven-notifications)).
 Handlers never build or submit timeout transactions at maturity.
+
+**Submission-progress notification.** At the same transition where the manager
+sets `claim_submitted` and queues the bundle, it emits
+`TimeoutClaimSubmitted`. Its semantic kind is `ChannelTimeoutFinish` for an
+unroll finish and `GameOpponentTurn { id }` for a game timeout claim. This is
+the source of the dashboard's “Submitting timeout finish” and “Claiming
+timeout” states. It is emitted once per watched coin birthday; a reorg may
+re-arm the claim for submission, but does not make frontend code infer maturity
+from a timer or a transaction name.
 
 **Confirmation-driven notification.** Terminal notifications are emitted from
 `handle_game_coin_spent` (reached via the `coin_spent` → `coin_puzzle_and_solution`
@@ -351,7 +360,7 @@ signatures collected at that time. The durable minimum per hash is the state
 number, committed conditions hash, and timeout conditions. Historical full
 signatures and preemption conditions are unnecessary because preemption always
 uses the latest full record. The browser preserves this compact map inside the
-raw binary cradle stored in IndexedDB.
+raw binary game session stored in IndexedDB.
 
 The latest received unroll state number comes from
 `self.latest_received_unroll.as_ref().map(|t| t.coin.state_number)`, and
