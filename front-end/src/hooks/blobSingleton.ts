@@ -23,6 +23,16 @@ export var sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
 export { sessionController as blobSingleton };
 export var initStarted = false;
+let transactionPublishNerfed = false;
+
+export function isTransactionPublishNerfed(): boolean {
+  return transactionPublishNerfed;
+}
+
+export function setTransactionPublishNerfed(nerfed: boolean): void {
+  transactionPublishNerfed = nerfed;
+  sessionController?.setTransactionPublishNerfed(nerfed);
+}
 
 function requireBigIntCounter(value: unknown, label: string): bigint {
     if (typeof value === 'bigint') return value;
@@ -179,6 +189,9 @@ export function getOrCreateSessionController(
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;
+  if (transactionPublishNerfed) {
+    sessionController.setTransactionPublishNerfed(true);
+  }
   if (getFee) sessionController.getFee = getFee;
   sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
 

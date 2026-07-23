@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react';
 
-export function useCheatNerfKeys(handleCheat: () => void, handleNerf: () => void): void {
+export function useCheatKeys(handleCheat: () => void): void {
   const cheatBufRef = useRef('');
-  const nerfBufRef = useRef('');
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -20,15 +19,8 @@ export function useCheatNerfKeys(handleCheat: () => void, handleNerf: () => void
         cheatBufRef.current = '';
         handleCheat();
       }
-
-      const nerf = nerfBufRef.current + event.key;
-      nerfBufRef.current = 'nerf^'.startsWith(nerf) ? nerf : ('nerf^'.startsWith(event.key) ? event.key : '');
-      if (nerfBufRef.current === 'nerf^') {
-        nerfBufRef.current = '';
-        handleNerf();
-      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCheat, handleNerf]);
+  }, [handleCheat]);
 }

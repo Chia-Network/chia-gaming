@@ -566,6 +566,7 @@ impl OffChainPhase {
                         moved_by_us: None,
                         game_finished: None,
                         forfeited: None,
+                        timeout_claim_activity: None,
                     }),
                 }));
             }
@@ -747,6 +748,7 @@ impl OffChainPhase {
                             moved_by_us: None,
                             game_finished: if finished { Some(true) } else { None },
                             forfeited: None,
+                            timeout_claim_activity: None,
                         }),
                     }));
                     if !move_result.message.is_empty() {
@@ -1809,6 +1811,8 @@ impl PeerLifecyclePhase for OffChainPhase {
             their_balance: Some(ch.their_out_of_game_balance()),
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
+            unroll_initiator: None,
+            semantic_phase: None,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

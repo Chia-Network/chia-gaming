@@ -2,7 +2,11 @@ import {
   isSpacepokerTimeoutOrForfeit,
   spacepokerTerminalBadge,
 } from './terminal';
-import { isTerminalSpacepokerHandler, SpHandler } from './useSpacepokerHand';
+import {
+  isTerminalSpacepokerHandler,
+  opponentTerminalAction,
+  SpHandler,
+} from './useSpacepokerHand';
 
 describe('Space Poker terminal UX', () => {
   it('maps its own timeout and forfeit terminal badges', () => {
@@ -16,5 +20,20 @@ describe('Space Poker terminal UX', () => {
     expect(isTerminalSpacepokerHandler(SpHandler.MidRound)).toBe(false);
     expect(isTerminalSpacepokerHandler(SpHandler.Folded)).toBe(true);
     expect(isTerminalSpacepokerHandler(SpHandler.Showdown)).toBe(true);
+  });
+
+  it('records only actual opponent folds and no-reveal flags in history', () => {
+    expect(opponentTerminalAction(
+      { handler: SpHandler.MidRound, myTurn: false, N: 2n },
+    )).toBe('fold');
+    expect(opponentTerminalAction(
+      { handler: SpHandler.End, myTurn: false, N: 1n },
+    )).toBe('concede');
+    expect(opponentTerminalAction(
+      { handler: SpHandler.End, myTurn: true, N: 1n },
+    )).toBeNull();
+    expect(opponentTerminalAction(
+      { handler: SpHandler.Showdown, myTurn: false, N: 0n },
+    )).toBeNull();
   });
 });

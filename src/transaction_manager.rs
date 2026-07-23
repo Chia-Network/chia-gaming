@@ -32,7 +32,7 @@ use crate::common::types::{
 };
 use crate::game_session::{DrainResult, GameSession, WatchReport};
 use crate::session_phases::effects::{
-    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
+    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -126,6 +126,8 @@ pub struct WatchedCoin {
     /// timeout age.  Set by the handler at registration time; held here so the
     /// manager is the sole submitter and can resubmit across reorgs.
     pub timeout_spend: Option<SpendBundle>,
+    #[serde(default)]
+    pub timeout_claim_semantic: Option<TimeoutClaimSemantic>,
     pub creation_spend: Option<SpendBundle>,
 }
 
@@ -139,6 +141,7 @@ impl WatchedCoin {
             spent_confirmed_at: None,
             claim_submitted: false,
             timeout_spend: None,
+            timeout_claim_semantic: None,
             creation_spend: None,
         }
     }
@@ -403,18 +406,26 @@ impl<C> TransactionManager<C> {
     /// Register (or refresh) a watched coin, its timeout, and the eager spend to
     /// submit when it matures.  A `None` spend on a refresh leaves any existing
     /// eager spend in place.
-    fn register_watch(&mut self, coin: CoinString, timeout: Timeout, spend: Option<SpendBundle>) {
+    fn register_watch(
+        &mut self,
+        coin: CoinString,
+        timeout: Timeout,
+        spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
+    ) {
         self.watched_coins
             .entry(coin.clone())
             .and_modify(|w| {
                 w.timeout_blocks = timeout.clone();
                 if spend.is_some() {
                     w.timeout_spend = spend.clone();
+                    w.timeout_claim_semantic = semantic.clone();
                 }
             })
             .or_insert_with(|| {
                 let mut w = WatchedCoin::new(coin, timeout, None);
                 w.timeout_spend = spend;
+                w.timeout_claim_semantic = semantic;
                 w
             });
     }
@@ -431,10 +442,11 @@ impl<C> TransactionManager<C> {
                     coin_string,
                     timeout,
                     spend,
+                    semantic,
                     ..
                 } => {
                     self.pending_watch_coins.push(coin_string.clone());
-                    self.register_watch(coin_string, timeout, spend);
+                    self.register_watch(coin_string, timeout, spend, semantic);
                 }
                 other => {
                     self.pending_events.push_back(other);
@@ -673,7 +685,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         // coin is still unspent are submitted here once per birthday (and, via
         // the re-arm of `claim_submitted` on reorg, resubmitted), so submission
         // is fully decoupled from the handler.
-        let mut to_submit: Vec<SpendBundle> = Vec::new();
+        let mut to_submit: Vec<(SpendBundle, Option<TimeoutClaimSemantic>)> = Vec::new();
         for watched in self.watched_coins.values_mut() {
             // No overflow: `height` and `birthday` (`b`) are bounded by
             // MAX_REPORTED_HEIGHT at ingestion (see report_coin_states), and
@@ -685,13 +697,20 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
             if !watched.claim_submitted && watched.spent_confirmed_at.is_none() {
                 if let Some(spend) = &watched.timeout_spend {
-                    to_submit.push(spend.clone());
+                    to_submit.push((spend.clone(), watched.timeout_claim_semantic.clone()));
                     watched.claim_submitted = true;
                 }
             }
         }
-        self.pending_submissions
-            .extend(to_submit.into_iter().map(|spend| (spend, None)));
+        for (spend, semantic) in to_submit {
+            self.pending_submissions.push((spend, None));
+            if let Some(semantic) = semantic {
+                self.pending_events
+                    .push_back(GameSessionEvent::Notification(
+                        GameNotification::TimeoutClaimSubmitted(semantic),
+                    ));
+            }
+        }
 
         let report = WatchReport {
             created_watched,
@@ -812,6 +831,8 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                     their_balance: None,
                     game_allocated: None,
                     have_potato: None,
+                    unroll_initiator: None,
+                    semantic_phase: None,
                 },
             ));
     }
@@ -969,6 +990,7 @@ mod tests {
             coin_string: coin.clone(),
             timeout: Timeout::new(timeout),
             spend: None,
+            semantic: None,
         }
     }
 
@@ -983,6 +1005,7 @@ mod tests {
             coin_string: coin.clone(),
             timeout: Timeout::new(timeout),
             spend: Some(spend),
+            semantic: None,
         }
     }
 

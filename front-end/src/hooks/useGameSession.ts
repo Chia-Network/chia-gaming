@@ -15,6 +15,7 @@ import {
   GameStatusState,
   MoveRejectedPayload,
   SessionPhase,
+  TimeoutClaimSubmittedPayload,
 } from '../types/ChiaGaming';
 import {
   getOrCreateSessionController,
@@ -278,6 +279,8 @@ export interface ChannelStatusInfo {
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase: NonNullable<ChannelStatusPayload['semantic_phase']> | null;
 }
 
 const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
@@ -289,6 +292,8 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
 
 function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
@@ -306,6 +311,8 @@ function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | nu
     theirBalance: parseAmount(cs.their_balance),
     gameAllocated: parseAmount(cs.game_allocated),
     havePotato: cs.have_potato ?? null,
+    unrollInitiator: cs.unroll_initiator ?? null,
+    semanticPhase: cs.semantic_phase ?? null,
   };
 }
 
@@ -1195,6 +1202,23 @@ export function useGameSession(
     const go = scRef.current;
     if (typeof n !== 'object' || n === null) return;
 
+    if ('TimeoutClaimSubmitted' in n) {
+      const semantic = n.TimeoutClaimSubmitted as TimeoutClaimSubmittedPayload | undefined;
+      if (semantic === 'ChannelTimeoutFinish') {
+        setChannelStatus(prev => ({ ...prev, semanticPhase: 'submitting_timeout_finish' }));
+      } else {
+        const game = semantic?.GameOpponentTurn;
+        if (game) {
+          updateGameInstance(String(game.id), instance => ({
+            ...instance,
+            handStatus: 'claiming-timeout',
+          }));
+          setHandStatus('claiming-timeout');
+        }
+      }
+      return;
+    }
+
     // ChannelStatus: persistent display, no toast
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
@@ -1617,7 +1641,7 @@ export function useGameSession(
             },
             handStatus: finishing
               ? 'finishing'
-              : status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active',
+              : status === 'on-chain-my-turn' ? 'our-turn' : 'active',
           };
         }
         if (status === 'their-turn' || status === 'on-chain-their-turn') {
@@ -1629,14 +1653,14 @@ export function useGameSession(
             },
             handStatus: finishing
               ? 'finishing'
-              : status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active',
+              : status === 'on-chain-their-turn' ? 'their-turn' : 'active',
           };
         }
         if (status === 'replaying') {
           return {
             ...instance,
             coin: { coinHex: coinHex ?? instance.coin.coinHex, turnState: 'replaying' },
-            handStatus: coinHex ? 'replaying-move' : 'active',
+            handStatus: 'replaying-move',
           };
         }
         if (status === 'illegal-move-detected') {
@@ -1646,7 +1670,7 @@ export function useGameSession(
               coinHex: coinHex ?? instance.coin.coinHex,
               turnState: 'opponent-illegal-move',
             },
-            handStatus: coinHex ? 'slashing' : 'active',
+            handStatus: 'slashing',
           };
         }
         return instance;
@@ -1679,7 +1703,7 @@ export function useGameSession(
         } else {
           turnStateRef.current = 'my-turn';
           setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
-          setHandStatus(status === 'on-chain-my-turn' && coinHex ? 'our-turn' : 'active');
+          setHandStatus(status === 'on-chain-my-turn' ? 'our-turn' : 'active');
         }
       } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
         // A nil validation program is terminal regardless of which side would
@@ -1692,16 +1716,16 @@ export function useGameSession(
         } else {
           turnStateRef.current = 'their-turn';
           setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
-          setHandStatus(status === 'on-chain-their-turn' && coinHex ? 'their-turn' : 'active');
+          setHandStatus(status === 'on-chain-their-turn' ? 'their-turn' : 'active');
         }
       } else if (status === 'replaying') {
         turnStateRef.current = 'replaying';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
-        setHandStatus(coinHex ? 'replaying-move' : 'active');
+        setHandStatus('replaying-move');
       } else if (status === 'illegal-move-detected') {
         turnStateRef.current = 'opponent-illegal-move';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
-        setHandStatus(coinHex ? 'slashing' : 'active');
+        setHandStatus('slashing');
       }
       void coinIdHex(gs.coin_id).then(resolvedCoinHex => {
         if (!resolvedCoinHex || !gameInstancesRef.current[statusId]) return;

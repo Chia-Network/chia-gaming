@@ -1,7 +1,6 @@
 import React from 'react';
 
 import { CaliforniaPoker } from './components';
-import { useCheatNerfKeys } from './useCheatNerfKeys';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
@@ -18,8 +17,6 @@ export interface CalpokerProps {
   setCardSelections: (n: string[] | ((prev: string[]) => string[])) => void;
   setHandOrder: (playerHand: string[], opponentHand?: string[]) => void;
   handleMakeMove: () => void;
-  handleCheat: () => void;
-  handleNerf: () => void;
   onGameLog: (lines: string[]) => void;
   onSnapshotChange: (snapshot: CalpokerDisplaySnapshotView) => void;
   initialSnapshot?: CalpokerDisplaySnapshotView;
@@ -39,8 +36,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   setHandOrder,
   handleMakeMove,
-  handleCheat,
-  handleNerf,
   onGameLog,
   onSnapshotChange,
   initialSnapshot,
@@ -50,8 +45,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
   settlementOnChain,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
-
-  useCheatNerfKeys(handleCheat, handleNerf);
 
   return (
     <div className='relative flex h-full w-full min-h-0 flex-col'>

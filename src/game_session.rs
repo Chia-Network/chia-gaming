@@ -391,6 +391,7 @@ impl WalletSpendInterface for GameSessionState {
         timeout: &Timeout,
         name: Option<&'static str>,
         spend: Option<SpendBundle>,
+        semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.watching_coins.insert(
             coin_id.clone(),
@@ -405,6 +406,7 @@ impl WalletSpendInterface for GameSessionState {
             coin_string: coin_id.clone(),
             timeout: timeout.clone(),
             spend,
+            semantic,
         });
 
         Ok(())
@@ -886,8 +888,6 @@ impl GameSession {
             return true;
         }
         // In Active state, re-emit on balance changes (potato firings).
-        // In other states, suppress same-state re-emissions (e.g. coin
-        // changes within Unrolling).
         new_state == Some(&ChannelStatus::Active)
     }
 
@@ -900,6 +900,8 @@ impl GameSession {
             their_balance: snap.their_balance.clone(),
             game_allocated: snap.game_allocated.clone(),
             have_potato: snap.have_potato,
+            unroll_initiator: snap.unroll_initiator,
+            semantic_phase: snap.semantic_phase,
         }
     }
 

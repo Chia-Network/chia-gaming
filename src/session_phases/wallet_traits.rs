@@ -67,6 +67,7 @@ pub trait WalletSpendInterface {
         timeout: &Timeout,
         name: Option<&'static str>,
         spend: Option<SpendBundle>,
+        semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error>;
 
     /// Request the puzzle and solution for a spent coin

@@ -702,10 +702,13 @@ export class SessionController implements PollingGameSession {
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
           const endedId = gs.id != null ? String(gs.id) : null;
           this.activeGameIds = this.activeGameIds.filter(id => id !== endedId);
-          if (this.activeGameIds.length === 0) {
-            this.activeGameId = null;
-          }
+          this.activeGameId = this.activeGameIds[0] ?? null;
         }
+      }
+      if (tag === 'GameSettled' && n.GameSettled) {
+        const settledId = String(n.GameSettled.id);
+        this.activeGameIds = this.activeGameIds.filter(id => id !== settledId);
+        this.activeGameId = this.activeGameIds[0] ?? null;
       }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
@@ -1237,8 +1240,12 @@ const result = this.gameSession.report_coin_states(peak, records);
     }
   }
 
-  nerf(): void {
-    this.transactionPublishNerfed = true;
-    log('[wasm] transaction publish nerfed');
+  isTransactionPublishNerfed(): boolean {
+    return this.transactionPublishNerfed;
+  }
+
+  setTransactionPublishNerfed(nerfed: boolean): void {
+    this.transactionPublishNerfed = nerfed;
+    log(`[wasm] transaction publish ${nerfed ? 'nerfed' : 'enabled'}`);
   }
 }

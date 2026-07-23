@@ -11,7 +11,7 @@ import {
   SpacepokerHandState,
 } from './useSpacepokerHand';
 import { RawGameNotification } from '../../hooks/useGameSession';
-import { useCheatNerfKeys } from './useCheatNerfKeys';
+import { useCheatKeys } from './useCheatKeys';
 import type { SpacepokerSettlementOutcome } from './handState';
 import { isSpacepokerTimeoutOrForfeit, spacepokerTerminalBadge } from './terminal';
 import { formatAmount } from '../../util';
@@ -570,11 +570,7 @@ export default function SpacePoker({
     // it lands, instead of staying on our turn.
     onTurnChanged(false);
   }, [gameObject, gameId, onTurnChanged]);
-  const handleNerf = useCallback(() => {
-    if (!gameObject) return;
-    gameObject.nerf();
-  }, [gameObject]);
-  useCheatNerfKeys(handleCheat, handleNerf);
+  useCheatKeys(handleCheat);
 
   // Write to the session history panel when the hand finishes.
   // If restoring from a persisted terminal state, skip logging (already logged).
@@ -635,14 +631,11 @@ export default function SpacePoker({
   const finished = handler === SpHandler.Showdown || handler === SpHandler.Folded;
   let playerIndicator = '';
   let oppIndicator = '';
-  if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
-    playerIndicator = showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
-    oppIndicator = showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
-  } else if (sp.terminalState === 'conceded-by-opponent') {
+  if (sp.terminalState === 'conceded-by-opponent') {
     playerIndicator = ' \u2705';
-    oppIndicator = ' \u274C';
+    oppIndicator = ' \u{1F3F3}\uFE0F';
   } else if (sp.terminalState === 'conceded-by-you') {
-    playerIndicator = ' \u274C';
+    playerIndicator = ' \u{1F3F3}\uFE0F';
     oppIndicator = ' \u2705';
   } else if (sp.terminalState === 'folded-by-you') {
     playerIndicator = ' \u274C';
@@ -650,6 +643,9 @@ export default function SpacePoker({
   } else if (sp.terminalState === 'folded-by-opponent') {
     playerIndicator = ' \u2705';
     oppIndicator = ' \u274C';
+  } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
+    playerIndicator = showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
+    oppIndicator = showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
   }
 
   const settlementNote =
@@ -680,7 +676,15 @@ export default function SpacePoker({
   const theirsTimeoutBadge = timeoutOrForfeitOutcome
     ? spacepokerTerminalBadge(timeoutOrForfeitOutcome, 'theirs')
     : null;
-  if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
+  if (sp.terminalState === 'conceded-by-you') {
+    oppBanner = 'win';
+  } else if (sp.terminalState === 'conceded-by-opponent') {
+    playerBanner = 'win';
+  } else if (sp.terminalState === 'folded-by-you') {
+    playerBanner = 'fold';
+  } else if (sp.terminalState === 'folded-by-opponent') {
+    oppBanner = 'fold';
+  } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
     if (showdownOutcome.result > 0n) {
       playerBanner = 'win';
     } else if (showdownOutcome.result < 0n) {
@@ -695,14 +699,6 @@ export default function SpacePoker({
   } else if (theirsTimeoutBadge === 'timeout' || theirsTimeoutBadge === 'forfeit') {
     oppBanner = theirsTimeoutBadge;
     if (oursTimeoutBadge === 'winner') playerBanner = 'win';
-  } else if (sp.terminalState === 'conceded-by-you') {
-    playerBanner = 'concede';
-  } else if (sp.terminalState === 'conceded-by-opponent') {
-    oppBanner = 'concede';
-  } else if (sp.terminalState === 'folded-by-you') {
-    playerBanner = 'fold';
-  } else if (sp.terminalState === 'folded-by-opponent') {
-    oppBanner = 'fold';
   }
 
   let turnLine = '';
