@@ -1304,9 +1304,11 @@ const Shell = () => {
     const hubSessionId = getSessionId();
     setSessionId(hubSessionId);
 
-    // Skip the gate when restoring a cradle. Callers must not open the hub
-    // during autoResuming before IndexedDB hydrate fills this field.
-    const resuming = !!loadState().serializedGameSession;
+    // Skip the gate when restoring a live session (cradle or pairingToken).
+    // Callers must not open the hub during autoResuming before IndexedDB
+    // hydrate fills these fields.
+    const save = loadState();
+    const resuming = !!(save.serializedGameSession || save.pairingToken);
     const gate = shouldActivatePeerGate(blockchainTypeRef.current, resuming);
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);   // simulator/resume => immediately "ready"
@@ -1530,10 +1532,10 @@ const Shell = () => {
   }, [peerLiveness, sessionPhase, connectToHub]);
 
   // Auto-connect to saved hub once this tab owns the app lease. Also while
-  // autoResuming (blank UI) so cradle restore can reconcile before first paint.
+  // autoResuming (blank UI) so session restore can reconcile before first paint.
   // During autoResuming, wait until performResume has applied sessionConfig —
-  // otherwise connectToHub can run before IndexedDB hydrate fills
-  // serializedGameSession and leave the WalletConnect peer gate stuck on.
+  // otherwise connectToHub can run before IndexedDB hydrate fills cradle /
+  // pairingToken and leave the WalletConnect peer gate stuck on.
   // Derive a boolean so clearing sessionConfig later (session end) does not
   // re-fire this effect and tear down a live hub connection.
   const autoResumeHydrated = bootState.kind !== 'autoResuming' || !!sessionConfig;
@@ -1849,12 +1851,16 @@ const Shell = () => {
 
   // connectToHub snapshots the peer gate at hub-connect time, but the
   // wallet can be connected or switched while the hub is already up — and
-  // a cradle can appear after hydrate even when blockchainType is unchanged
-  // (prefs already said walletconnect). Re-evaluate on those signals.
-  const restoringCradle = !!sessionConfig?.restoring;
+  // a cradle / pairingToken checkpoint can appear after hydrate even when
+  // blockchainType is unchanged (prefs already said walletconnect).
+  // Re-evaluate on those signals. pairingToken-only resumes set
+  // sessionConfig.restoring=false, so depend on the token too.
+  const hasResumableSessionConfig = !!(sessionConfig?.restoring || sessionConfig?.pairingToken);
   useEffect(() => {
     if (!hubOrigin) return;
-    const resuming = restoringCradle || !!loadState().serializedGameSession;
+    const save = loadState();
+    const resuming = hasResumableSessionConfig
+      || !!(save.serializedGameSession || save.pairingToken);
     const gate = shouldActivatePeerGate(blockchainType, resuming);
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);
@@ -1863,7 +1869,7 @@ const Shell = () => {
     // and must not report a stale not-busy while the gate should be active.
     peerGateActiveRef.current = gate;
     hasFullNodePeerRef.current = !gate;
-  }, [blockchainType, hubOrigin, restoringCradle]);
+  }, [blockchainType, hubOrigin, hasResumableSessionConfig]);
 
   // While the peer gate is active, poll the wallet for a full node peer every 5s
   // and only mark ready (visible in the lobby) once one is present.

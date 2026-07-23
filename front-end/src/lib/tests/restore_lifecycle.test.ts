@@ -48,7 +48,8 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportPresenceBusy('on-chain', true, false)).toBe(true);
   });
 
-  it('activates the WalletConnect peer gate only when not restoring a cradle', () => {
+  it('activates the WalletConnect peer gate only when not resuming a live session', () => {
+    // Callers pass true for cradle OR pairingToken — both skip the pre-match gate.
     expect(shouldActivatePeerGate('walletconnect', false)).toBe(true);
     expect(shouldActivatePeerGate('walletconnect', true)).toBe(false);
     expect(shouldActivatePeerGate('simulator', false)).toBe(false);

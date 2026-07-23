@@ -36,14 +36,15 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
 
 /**
  * Whether the WalletConnect full-node-peer gate should hold lobby presence
- * busy. Simulator never gates. A saved cradle resume skips the gate — the
- * session already cleared (or never needed) that pre-match check.
+ * busy. Simulator never gates. A live-session resume skips the gate — cradle
+ * or pairingToken checkpoint already cleared (or never needed) that pre-match
+ * check. Callers must pass true for either durable field, not cradle alone.
  */
 export function shouldActivatePeerGate(
   blockchainType: 'simulator' | 'walletconnect' | undefined,
-  hasSerializedGameSession: boolean,
+  hasResumableSession: boolean,
 ): boolean {
-  return blockchainType === 'walletconnect' && !hasSerializedGameSession;
+  return blockchainType === 'walletconnect' && !hasResumableSession;
 }
 
 /**
