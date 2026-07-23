@@ -128,6 +128,8 @@ export class BlockchainPoller {
       selectCoins: (uniqueId, amount) =>
         this.enqueueRpc('selectCoins', () => adapter.selectCoins(uniqueId, amount), true),
       getHeightInfo: () => this.enqueueRpc('getHeightInfo', () => adapter.getHeightInfo()),
+      getFullNodePeerCount: () =>
+        this.enqueueRpc('getFullNodePeerCount', () => adapter.getFullNodePeerCount()),
       createOfferForIds: (uniqueId, offer, extraConditions, coinIds, maxHeight) =>
         this.enqueueRpc(
           'createOfferForIds',

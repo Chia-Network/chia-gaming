@@ -34,6 +34,55 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
+/**
+ * Whether the WalletConnect full-node-peer gate should hold lobby presence
+ * busy. Simulator never gates. A live-session resume skips the gate — cradle
+ * or pairingToken checkpoint already cleared (or never needed) that pre-match
+ * check. Callers must pass true for either durable field, not cradle alone.
+ */
+export function shouldActivatePeerGate(
+  blockchainType: 'simulator' | 'walletconnect' | undefined,
+  hasResumableSession: boolean,
+): boolean {
+  return blockchainType === 'walletconnect' && !hasResumableSession;
+}
+
+/**
+ * Hub busy bit for lobby presence: session obligation OR the WalletConnect
+ * full-node-peer gate. Callers must not push `setBusy(false)` /
+ * `shouldReportHubBusy(...)` alone — after session end/cancel the gate can
+ * still require busy until a full node peer is verified.
+ */
+export function shouldReportPresenceBusy(
+  sessionPhase: SessionPhase,
+  peerGateActive: boolean,
+  hasFullNodePeer: boolean,
+): boolean {
+  return shouldReportHubBusy(sessionPhase) || (peerGateActive && !hasFullNodePeer);
+}
+
+/**
+ * Whether inbound matchmaking may open a consent prompt.
+ * Must stay aligned with `shouldReportPresenceBusy` for session + peer-gate,
+ * and also exclude temporary local matchmaking state that does not always
+ * set hub `busy` (pending advisory/proposal, live peer session, reserved peer).
+ */
+export function isAvailableForNewSessionPrompt(
+  sessionPhase: SessionPhase,
+  pendingAdvisory: boolean,
+  pendingProposal: boolean,
+  hasLivePeerSession: boolean,
+  hasReservedPeerId: boolean,
+  peerGateActive: boolean,
+  hasFullNodePeer: boolean,
+): boolean {
+  return !shouldReportPresenceBusy(sessionPhase, peerGateActive, hasFullNodePeer)
+    && !pendingAdvisory
+    && !pendingProposal
+    && !hasLivePeerSession
+    && !hasReservedPeerId;
+}
+
 /** Channel states that already finished — resume must not keep the hub busy. */
 export function isTerminalChannelStatus(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'

@@ -1,11 +1,14 @@
 import {
+  isAvailableForNewSessionPrompt,
   isRestoreBlocked,
   isTerminalChannelStatus,
+  shouldActivatePeerGate,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
+  shouldReportPresenceBusy,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -32,6 +35,41 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('resolved')).toBe(false);
     expect(shouldReportHubBusy('off-chain')).toBe(true);
     expect(shouldReportHubBusy('on-chain')).toBe(true);
+  });
+
+  it('keeps presence busy after session end/cancel while the peer gate is unverified', () => {
+    // Session alone would advertise available — peer gate must still hold busy.
+    expect(shouldReportPresenceBusy('none', true, false)).toBe(true);
+    expect(shouldReportPresenceBusy('resolved', true, false)).toBe(true);
+    // Gate inactive or peer verified → session phase decides.
+    expect(shouldReportPresenceBusy('none', false, false)).toBe(false);
+    expect(shouldReportPresenceBusy('resolved', true, true)).toBe(false);
+    expect(shouldReportPresenceBusy('off-chain', false, true)).toBe(true);
+    expect(shouldReportPresenceBusy('on-chain', true, false)).toBe(true);
+  });
+
+  it('activates the WalletConnect peer gate only when not resuming a live session', () => {
+    // Callers pass true for cradle OR pairingToken — both skip the pre-match gate.
+    expect(shouldActivatePeerGate('walletconnect', false)).toBe(true);
+    expect(shouldActivatePeerGate('walletconnect', true)).toBe(false);
+    expect(shouldActivatePeerGate('simulator', false)).toBe(false);
+    expect(shouldActivatePeerGate('simulator', true)).toBe(false);
+    expect(shouldActivatePeerGate(undefined, false)).toBe(false);
+  });
+
+  it('rejects inbound matchmaking while the peer gate holds presence busy', () => {
+    // Idle session + no pending prompts, but peers unverified → unavailable.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false)).toBe(false);
+    // Gate open / peer verified → available when otherwise idle.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(true);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, false)).toBe(true);
+    // Session obligation or pending matchmaking still blocks.
+    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, false, true)).toBe(false);
   });
 
   it('recognizes terminal channel states that must not keep the hub busy', () => {
