@@ -50,10 +50,12 @@ export class BlockchainPoller {
   private previousPeakForCoinReport = 0n;
   private registrationScopeKey: string | undefined;
   private balanceCallbacks: BalanceCallbacks | null = null;
+  private balancePollIntervalMs = BALANCE_POLL_INTERVAL_MS;
   private requestLane: AsyncJobQueue;
   private heightPollingScheduler: AsyncPollingScheduler;
   private coinPollingScheduler: AsyncPollingScheduler;
   private balancePollingScheduler: AsyncPollingScheduler;
+  private connectionUnsubscribe: (() => void) | null = null;
 
   constructor(blockchain: InternalBlockchainInterface, pollIntervalMs: number, maxBackoffMs?: number) {
     this.adapter = blockchain;
@@ -206,12 +208,17 @@ export class BlockchainPoller {
 
   startBalanceInterest(intervalMs: number, callbacks: BalanceCallbacks): void {
     this.balanceCallbacks = callbacks;
-    this.balancePollingScheduler.start(intervalMs);
+    this.balancePollIntervalMs = intervalMs;
+    this.ensureConnectionListener();
+    if (this.adapter.isConnected()) {
+      this.balancePollingScheduler.start(intervalMs);
+    }
   }
 
   stopBalanceInterest(): void {
     this.balancePollingScheduler.stop();
     this.balanceCallbacks = null;
+    this.releaseConnectionListenerIfIdle();
   }
 
   start() {
@@ -220,8 +227,50 @@ export class BlockchainPoller {
     this.firstTick = true;
     this.startedAt = performance.now();
     log(`[blockchain-poller] started, pollMs=${this.pollIntervalMs}`);
-    this.heightPollingScheduler.start(this.pollIntervalMs);
-    this.refreshCoinInterest();
+    this.ensureConnectionListener();
+    this.resumePollingIfConnected();
+  }
+
+  private ensureConnectionListener(): void {
+    if (this.connectionUnsubscribe) return;
+    const unsubscribe = this.adapter.onConnectionChange((connected) => {
+      if (connected) {
+        this.resumePollingIfConnected();
+      } else {
+        this.pausePollingForDisconnect();
+      }
+    });
+    if (typeof unsubscribe === 'function') {
+      this.connectionUnsubscribe = unsubscribe;
+    }
+  }
+
+  private releaseConnectionListenerIfIdle(): void {
+    if (this.running || this.balanceCallbacks || !this.connectionUnsubscribe) return;
+    this.connectionUnsubscribe();
+    this.connectionUnsubscribe = null;
+  }
+
+  private pausePollingForDisconnect(): void {
+    this.heightPollingScheduler.stop();
+    this.coinPollingScheduler.stop();
+    this.balancePollingScheduler.stop();
+    this.requestLane.clearQueued();
+  }
+
+  private resumePollingIfConnected(): void {
+    if (!this.adapter.isConnected()) return;
+    if (this.running) {
+      this.heightPollingScheduler.start(this.pollIntervalMs);
+      this.refreshCoinInterest();
+    }
+    if (this.balanceCallbacks) {
+      this.balancePollingScheduler.start(this.balancePollIntervalMs);
+    }
+  }
+
+  private isConnected(): boolean {
+    return this.adapter.isConnected();
   }
 
   /**
@@ -232,6 +281,7 @@ export class BlockchainPoller {
     this.running = false;
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();
+    this.releaseConnectionListenerIfIdle();
   }
 
   private collectGameSessionCoins(): Array<{ c: PollingGameSession; coins: CoinPollInterest[] }> {
@@ -239,7 +289,10 @@ export class BlockchainPoller {
   }
 
   private refreshCoinInterest(): void {
-    if (!this.running) return;
+    if (!this.running || !this.isConnected()) {
+      this.coinPollingScheduler.stop();
+      return;
+    }
     const hasCoins = this.collectGameSessionCoins().some(({ coins }) => coins.length > 0);
     if (hasCoins) {
       this.coinPollingScheduler.start(this.pollIntervalMs);
@@ -274,6 +327,7 @@ export class BlockchainPoller {
   }
 
   private async runHeightPoll(): Promise<void> {
+    if (!this.isConnected()) return;
     try {
       // Report the latest height even when it decreases: a drop signals a reorg,
       // which the transaction manager detects via height < last_height. Clamping
@@ -304,6 +358,7 @@ export class BlockchainPoller {
   }
 
   private async runCoinPoll(): Promise<void> {
+    if (!this.isConnected()) return;
     try {
       const perSession = this.collectGameSessionCoins();
 
@@ -334,7 +389,7 @@ export class BlockchainPoller {
   }
 
   private async runBalancePoll(): Promise<void> {
-    if (!this.balanceCallbacks) return;
+    if (!this.balanceCallbacks || !this.isConnected()) return;
     try {
       const balance = await this.adapter.getBalance();
       if (this.balancePollingScheduler.isInterested()) {
