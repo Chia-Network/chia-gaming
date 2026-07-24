@@ -372,12 +372,15 @@ cryptographic nonces or signatures (BLS signatures are deterministic).
 
 #### What is saved (`SessionSave`)
 
-IndexedDB holds one complete `SessionSave` record using structured clone.
-The serialized WASM cradle and unacknowledged protocol messages remain raw
-`Uint8Array` values; they are not base64-expanded or wrapped in JSON.
-localStorage holds only small preferences, the resumable-session marker, and
-tab/reset coordination keys. This storage is not encrypted and remains inside
-the same-origin trust model described above.
+IndexedDB holds one complete `SessionSave` record as one salt-prefixed,
+obfuscated binary value. The record is encoded with bencodex, then XOR-masked
+with a stream derived from the fresh salt and a key compiled into the client.
+This deters casual inspection but is not a security boundary: the client has
+everything needed to reverse it. The serialized WASM cradle and unacknowledged
+protocol messages remain raw `Uint8Array` values within that binary encoding;
+they are not base64-expanded. localStorage holds only small preferences, the
+resumable-session marker, and tab/reset coordination keys, inside the same-origin
+trust model described above.
 
 The current schema version is `9`; because the project is still alpha, older
 versions are wiped rather than migrated. The `version` field is kept as a future

@@ -1,9 +1,133 @@
 import type { SessionSave } from '../../hooks/save';
+import { decode, encode, type BencodexValue } from 'chia-gaming-bencodex';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
 const SESSION_DB_VERSION = 1;
 const SESSION_STORE_NAME = 'session';
 const SESSION_RECORD_KEY = 'current';
+const OBFUSCATION_KEY = new Uint8Array([
+  0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b,
+  0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
+]);
+const SALT_LEN = 16;
+const ARRAY_BUFFER_TAG = '\0arrayBuffer';
+const NUMBER_TAG = '\0number';
+
+function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
+  const state = new Uint8Array(256);
+  for (let i = 0; i < state.length; i++) state[i] = i;
+  let j = 0;
+  for (let i = 0; i < state.length; i++) {
+    j = (j + state[i] + key[i % key.length]) & 0xff;
+    [state[i], state[j]] = [state[j], state[i]];
+  }
+  const stream = new Uint8Array(length);
+  let i = 0;
+  j = 0;
+  for (let offset = 0; offset < length; offset++) {
+    i = (i + 1) & 0xff;
+    j = (j + state[i]) & 0xff;
+    [state[i], state[j]] = [state[j], state[i]];
+    stream[offset] = state[(state[i] + state[j]) & 0xff];
+  }
+  return stream;
+}
+
+function toBencodexValue(value: unknown): BencodexValue {
+  if (
+    value === null
+    || typeof value === 'boolean'
+    || typeof value === 'bigint'
+    || typeof value === 'string'
+    || value instanceof Uint8Array
+  ) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return { [NUMBER_TAG]: String(value) };
+  }
+  if (value instanceof ArrayBuffer) {
+    return { [ARRAY_BUFFER_TAG]: new Uint8Array(value) };
+  }
+  if (Array.isArray(value)) {
+    return value.map(toBencodexValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, entry]) =>
+        entry === undefined ? [] : [[key, toBencodexValue(entry)]],
+      ),
+    );
+  }
+  throw new Error(`Cannot encode session value of type ${typeof value}`);
+}
+
+function fromBencodexValue(value: BencodexValue): unknown {
+  if (value instanceof Map) {
+    if (value.size === 1 && value.has(NUMBER_TAG)) {
+      const number = value.get(NUMBER_TAG);
+      if (typeof number !== 'string') {
+        throw new Error('Session record has an invalid number tag');
+      }
+      return Number(number);
+    }
+    if (value.size === 1 && value.has(ARRAY_BUFFER_TAG)) {
+      const bytes = value.get(ARRAY_BUFFER_TAG);
+      if (!(bytes instanceof Uint8Array)) {
+        throw new Error('Session record has an invalid ArrayBuffer tag');
+      }
+      return bytes.buffer;
+    }
+    return Object.fromEntries(
+      [...value.entries()].map(([key, entry]) => {
+        if (typeof key !== 'string') {
+          throw new Error('Session record contains a non-text key');
+        }
+        return [key, fromBencodexValue(entry)];
+      }),
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map(fromBencodexValue);
+  }
+  return value;
+}
+
+function obfuscateSessionRecord(record: SessionSave): Uint8Array {
+  const plaintext = encode(toBencodexValue(record));
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
+  key.set(salt);
+  key.set(OBFUSCATION_KEY, SALT_LEN);
+  const stream = rc4Keystream(key, plaintext.length);
+  const masked = new Uint8Array(SALT_LEN + plaintext.length);
+  masked.set(salt);
+  for (let i = 0; i < plaintext.length; i++) {
+    masked[SALT_LEN + i] = plaintext[i] ^ stream[i];
+  }
+  return masked;
+}
+
+function deobfuscateSessionRecord(masked: Uint8Array): SessionSave {
+  if (masked.length < SALT_LEN) {
+    throw new Error('Obfuscated session record is missing its salt');
+  }
+  const salt = masked.slice(0, SALT_LEN);
+  const ciphertext = masked.slice(SALT_LEN);
+  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
+  key.set(salt);
+  key.set(OBFUSCATION_KEY, SALT_LEN);
+  const stream = rc4Keystream(key, ciphertext.length);
+  const plaintext = new Uint8Array(ciphertext.length);
+  for (let i = 0; i < ciphertext.length; i++) {
+    plaintext[i] = ciphertext[i] ^ stream[i];
+  }
+  const record = fromBencodexValue(decode(plaintext));
+  if (!record || typeof record !== 'object' || Array.isArray(record) || record instanceof Uint8Array) {
+    throw new Error('Obfuscated session record did not decode to an object');
+  }
+  return record as SessionSave;
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -58,6 +182,11 @@ export async function readSessionRecord(): Promise<SessionSave | null> {
       request.onerror = () => reject(request.error ?? new Error('Failed to read session record'));
     });
     await transactionComplete(transaction);
+    if (record instanceof Uint8Array) {
+      return deobfuscateSessionRecord(record);
+    }
+    // Records written before save obfuscation remain readable. The next
+    // persistence write replaces them with the masked binary format.
     return record && typeof record === 'object' ? record as SessionSave : null;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'NotFoundError') {
@@ -78,7 +207,10 @@ export async function writeSessionRecord(record: SessionSave): Promise<void> {
   const db = await openDatabase();
   try {
     const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
-    transaction.objectStore(SESSION_STORE_NAME).put(record, SESSION_RECORD_KEY);
+    transaction.objectStore(SESSION_STORE_NAME).put(
+      obfuscateSessionRecord(record),
+      SESSION_RECORD_KEY,
+    );
     await transactionComplete(transaction);
   } finally {
     db.close();
