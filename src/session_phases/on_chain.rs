@@ -908,7 +908,7 @@ impl OnChainPhase {
                             spend: claim,
                             semantic: Self::opponent_timeout_claim_semantic(
                                 old_definition.game_id,
-                                old_definition.our_turn,
+                                !old_definition.our_turn,
                                 old_definition.game_finished,
                             ),
                         });
