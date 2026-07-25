@@ -444,7 +444,7 @@ describe('bounded controller histories', () => {
 });
 
 describe('durability failures', () => {
-  it('warns the user and retains messages and ACKs until a retry succeeds', async () => {
+  it('warns the user but continues sending messages and ACKs in memory', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: helloBytes }],
@@ -459,12 +459,12 @@ describe('durability failures', () => {
     try {
       blob.deliverMessage(1n, enc('trigger'));
       blob.flushDeferredWork();
-      await expect(blob.flushPendingWork()).rejects.toThrow('IndexedDB is unavailable');
+      await blob.flushPendingWork();
 
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain('remain queued');
-      expect(sentMessages).toEqual([]);
-      expect(sentAcks).toEqual([]);
+      expect(warnings[0]).toContain('Continuing in memory');
+      expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
+      expect(sentAcks).toEqual([1]);
       expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
       expect(errorSpy).toHaveBeenCalled();
     } finally {
@@ -512,7 +512,7 @@ describe('durability failures', () => {
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
   });
 
-  it('blocks delivery and preserves the durable record when cradle serialization fails', async () => {
+  it('continues delivery in memory when cradle serialization fails', async () => {
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
@@ -535,12 +535,10 @@ describe('durability failures', () => {
     };
 
     blob.deliverMessage(1n, enc('trigger'));
-    await expect(blob.flushPendingWork())
-      .rejects
-      .toThrow('malformed cradle serialization');
+    await blob.flushPendingWork();
 
-    expect(sentMessages).toEqual([]);
-    expect(sentAcks).toEqual([]);
+    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(sentAcks).toEqual([1]);
     blob.cleanup();
     activeBlob = null;
     expect((await peekSession())?.serializedGameSession).toEqual(new Uint8Array([9, 9, 9]));

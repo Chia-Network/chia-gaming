@@ -984,12 +984,13 @@ export class SessionController implements PollingGameSession {
     if (this.needsImmediateDurability) {
       const outboundCount = this.pendingOutboundSends.length;
       const ackCount = this.pendingAcks.length;
+      let persistenceFailed = false;
       if (!this.onSaveNeeded) {
         throw new Error('Session persistence callback is unavailable at a protocol delivery boundary');
       }
-      const saveRequest = Promise.resolve(this.onSaveNeeded());
-      void saveRequest.catch(() => {});
       try {
+        const saveRequest = Promise.resolve(this.onSaveNeeded());
+        void saveRequest.catch(() => {});
         // onSaveNeeded must update the in-memory session synchronously before
         // returning its Promise (see flushPendingSave). Flushing first then
         // persists that snapshot; awaiting the Promise only waits for the
@@ -998,12 +999,12 @@ export class SessionController implements PollingGameSession {
         await saveRequest;
       } catch (error) {
         const detail = extractErrorMessage(error);
-        const warning = `Session storage failed: ${detail}. Protocol messages remain queued and will not be sent until storage succeeds.`;
+        const warning = `Session storage failed: ${detail}. Continuing in memory; reloading before storage recovers may lose protocol state.`;
         if (this.durabilityWarning !== warning) {
           this.durabilityWarning = warning;
           this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
         }
-        throw error;
+        persistenceFailed = true;
       }
 
       const outbound = this.pendingOutboundSends.splice(0, outboundCount);
@@ -1029,8 +1030,8 @@ export class SessionController implements PollingGameSession {
         this.needsImmediateDurability = true;
       } else {
         this.needsImmediateDurability =
-          this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
-        if (this.needsImmediateDurability) {
+          persistenceFailed || this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
+        if (this.needsImmediateDurability && !persistenceFailed) {
           this.scheduleDurabilityFlush();
         }
       }
