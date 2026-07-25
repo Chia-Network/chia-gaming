@@ -7,9 +7,9 @@ trap 'rm -f "$before_diff" "$after_diff"' EXIT
 
 git diff --binary >"$before_diff"
 
-cargo clippy --fix --allow-dirty --allow-staged
+cargo clippy --all --features=sim-tests,sim-server --fix --allow-dirty --allow-staged
 cargo fmt
-cargo clippy -- -D warnings
+cargo clippy --all --features=sim-tests,sim-server -- -D warnings
 
 git diff --binary >"$after_diff"
 if ! cmp -s "$before_diff" "$after_diff"; then
