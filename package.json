@@ -1,0 +1,11 @@
+{
+  "name": "chia-gaming-hooks",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  },
+  "scripts": {
+    "prepare": "husky"
+  }
+}
