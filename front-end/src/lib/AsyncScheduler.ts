@@ -178,7 +178,11 @@ export class AsyncPollingScheduler {
           this.target.onError?.(e);
         } finally {
           this.inFlight = false;
-          if (!this.interested || generation !== this.generation) return;
+          if (!this.interested) return;
+          if (generation !== this.generation) {
+            this.enqueueIfIdle();
+            return;
+          }
           if (this.target.getNextIntervalMs) {
             this.timer.intervalMs = this.target.getNextIntervalMs();
           }

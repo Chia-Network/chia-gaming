@@ -56,6 +56,7 @@ export class BlockchainPoller {
   private coinPollingScheduler: AsyncPollingScheduler;
   private balancePollingScheduler: AsyncPollingScheduler;
   private connectionUnsubscribe: (() => void) | null = null;
+  private connectionActive = true;
 
   constructor(blockchain: InternalBlockchainInterface, pollIntervalMs: number, maxBackoffMs?: number) {
     this.adapter = blockchain;
@@ -211,7 +212,7 @@ export class BlockchainPoller {
     this.balanceCallbacks = callbacks;
     this.balancePollIntervalMs = intervalMs;
     this.ensureConnectionListener();
-    if (this.adapter.isConnected()) {
+    if (this.isConnected()) {
       this.balancePollingScheduler.start(intervalMs);
     }
   }
@@ -235,6 +236,7 @@ export class BlockchainPoller {
   private ensureConnectionListener(): void {
     if (this.connectionUnsubscribe) return;
     const unsubscribe = this.adapter.onConnectionChange((connected) => {
+      this.connectionActive = connected;
       if (connected) {
         this.resumePollingIfConnected();
       } else {
@@ -275,7 +277,7 @@ export class BlockchainPoller {
   }
 
   private isConnected(): boolean {
-    return this.adapter.isConnected();
+    return this.connectionActive && this.adapter.isConnected();
   }
 
   /**
