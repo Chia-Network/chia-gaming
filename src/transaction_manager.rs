@@ -1716,7 +1716,9 @@ mod tests {
             .expect("mature claim");
 
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain notification");
+        let drain = mgr
+            .flush_and_collect(&mut allocator)
+            .expect("drain notification");
         assert!(matches!(
             drain.events.as_slices(),
             ([GameSessionEvent::Notification(

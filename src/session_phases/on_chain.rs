@@ -575,11 +575,7 @@ impl OnChainPhase {
                 timeout: gt,
                 name: Some("game coin"),
                 spend: claim,
-                semantic: Self::opponent_timeout_claim_semantic(
-                    game_id,
-                    our_turn,
-                    game_finished,
-                ),
+                semantic: Self::opponent_timeout_claim_semantic(game_id, our_turn, game_finished),
             });
         }
         Ok(effects)
@@ -1077,9 +1073,7 @@ impl OnChainPhase {
                         }),
                         spend: claim,
                         semantic: Self::opponent_timeout_claim_semantic(
-                            game_id,
-                            is_my_turn,
-                            terminal,
+                            game_id, is_my_turn, terminal,
                         ),
                     });
                     if auto_settle {
