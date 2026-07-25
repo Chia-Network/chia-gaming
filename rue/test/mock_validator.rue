@@ -1,0 +1,19 @@
+// Mock validator for referee tests.
+// Mirrors clsp/test/mock_validator.clsp while puzzles migrate to Rue.
+//
+// The referee passes:
+// (mod_hash, curried_args, previous_state, ...rest)
+//
+// Returning `previous_state` lets each test control the validator result.
+fn main(
+    _mod_hash: Bytes32,
+    _curried_args: Any,
+    previous_state: Any,
+    ..._rest: Any,
+) -> Any {
+    if unchecked_cast::<Bool>(previous_state) {
+        previous_state
+    } else {
+        previous_state
+    }
+}
