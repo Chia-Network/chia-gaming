@@ -1,6 +1,7 @@
 export type AsyncQueueJob = {
   label: string;
   run: () => Promise<void>;
+  onDiscard?: () => void;
 };
 
 export type AsyncJobQueueOptions = {
@@ -35,6 +36,7 @@ export class AsyncJobQueue {
   }
 
   clearQueued(): void {
+    for (const job of [...this.frontQueue, ...this.queue]) job.onDiscard?.();
     this.frontQueue = [];
     this.queue = [];
   }

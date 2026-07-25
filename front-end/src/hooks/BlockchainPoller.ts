@@ -154,6 +154,7 @@ export class BlockchainPoller {
             reject(e);
           }
         },
+        onDiscard: () => reject(new Error(`RPC request discarded during disconnect: ${label}`)),
       };
       if (foreground) {
         this.requestLane.enqueueFront(job);
@@ -256,6 +257,10 @@ export class BlockchainPoller {
     this.coinPollingScheduler.stop();
     this.balancePollingScheduler.stop();
     this.requestLane.clearQueued();
+    // Remote wallet coin registrations are lost with the connection. Clear the
+    // local cache even when a reconnect reuses the same registration scope key.
+    this.registrationScopeKey = undefined;
+    this.registeredNames.clear();
   }
 
   private resumePollingIfConnected(): void {

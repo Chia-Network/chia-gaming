@@ -418,9 +418,40 @@ describe('BlockchainPoller', () => {
     onConnectionChange?.(true);
     await jest.advanceTimersByTimeAsync(0);
     expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
-    expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(2);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(2);
     expect(rpc.getBalance).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('rejects queued wallet RPCs when the wallet disconnects', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const height = deferred<bigint>();
+    const selectCoins = jest.fn();
+    const rpc = {
+      getHeightInfo: () => height.promise,
+      selectCoins,
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.start();
+
+    await advanceLane(0);
+    const walletRequest = poller.rpc.selectCoins('wallet', 1n);
+
+    connected = false;
+    onConnectionChange?.(false);
+    await expect(walletRequest).rejects.toThrow('RPC request discarded during disconnect: selectCoins');
+    expect(selectCoins).not.toHaveBeenCalled();
+
+    height.resolve(100n);
+    await advanceLane(0);
     jest.useRealTimers();
   });
 
