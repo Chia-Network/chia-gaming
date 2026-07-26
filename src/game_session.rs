@@ -818,6 +818,11 @@ impl GameSession {
         self.state.peer_disconnected = true;
         self.state.inbound_messages.clear();
         self.state.watching_coins.clear();
+        // Abandonment replaces the session's pending presentation with one
+        // terminal snapshot. Older notifications must not race the final
+        // Abandoned status through an asynchronous host.
+        self.state.events.clear();
+        self.state.resync = None;
         self.emit_channel_status_if_changed();
     }
 

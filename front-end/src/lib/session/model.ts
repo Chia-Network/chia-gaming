@@ -1,11 +1,13 @@
 import type {
   ChannelStatus,
+  ChannelStatusPayload,
   GameConnectionState,
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionSave } from '../../hooks/save';
+import { coinIdFromBytes, coerceToBytes } from '../../util';
 import type { SettlementOutcome } from '../settlement';
 import { isSettlementOutcome } from '../settlement';
 import {
@@ -238,6 +240,7 @@ export type GameDashboardActionLabel =
 export interface GameDashboardViewModel {
   channelStatusLabel: string;
   channelDetail: string | null;
+  havePotato: boolean;
   handStatusLabel: string;
   handDetail: string | null;
   lifecycleRows: Array<{
@@ -272,6 +275,43 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   zeroPayout: null,
 };
 
+function parseChannelAmount(coin: unknown): string | null {
+  const bytes = coerceToBytes(coin);
+  if (!bytes || bytes.length < 64) return null;
+  let value = 0n;
+  for (let i = 64; i < bytes.length; i += 1) {
+    value = (value << 8n) + BigInt(bytes[i] & 0xff);
+  }
+  return value.toString();
+}
+
+function parseChannelAmountValue(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'object' && 'Amount' in value) {
+    return String((value as { Amount: unknown }).Amount);
+  }
+  return String(value);
+}
+
+export async function channelStatusModelFromPayload(
+  status: ChannelStatusPayload,
+): Promise<ChannelStatusModel> {
+  const coin = coerceToBytes(status.coin);
+  const coinAmount = parseChannelAmount(status.coin);
+  const resolvedFromUnroll = status.state === 'ResolvedUnrolled' || status.state === 'ResolvedStale';
+  return {
+    state: status.state,
+    advisory: status.advisory ?? null,
+    coinHex: coin ? await coinIdFromBytes(coin) : null,
+    coinAmount,
+    ourBalance: resolvedFromUnroll ? (coinAmount ?? '0') : parseChannelAmountValue(status.our_balance),
+    theirBalance: parseChannelAmountValue(status.their_balance),
+    gameAllocated: parseChannelAmountValue(status.game_allocated),
+    havePotato: status.have_potato ?? null,
+    zeroPayout: status.zero_payout ?? null,
+  };
+}
+
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
   type: 'none',
   outcome: null,
@@ -291,7 +331,7 @@ export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
   gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
 };
 
-const RESOLVED_STATES = new Set<ChannelStatus>([
+export const RESOLVED_CHANNEL_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
@@ -299,23 +339,42 @@ const RESOLVED_STATES = new Set<ChannelStatus>([
   'Failed',
 ]);
 
-const WINDING_DOWN_STATES = new Set<ChannelStatus>([
+export const WINDING_DOWN_CHANNEL_STATES = new Set<ChannelStatus>([
   'ShutdownTransactionPending',
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
+  'Abandoned',
   'Failed',
 ]);
 
-const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
+export const ON_CHAIN_CHANNEL_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
 ]);
+
+export const PRE_ACTIVE_CHANNEL_STATES = new Set<ChannelStatus>([
+  'Handshaking',
+  'WaitingForHeightToOffer',
+  'WaitingForHeightToAccept',
+  'OurWalletMakingOffer',
+  'OurWalletMakingOfferAcceptance',
+  'OfferSent',
+  'TransactionPending',
+]);
+
+export function isTerminalChannelStatus(state: string | null | undefined): boolean {
+  return state !== null && state !== undefined && RESOLVED_CHANNEL_STATES.has(state as ChannelStatus);
+}
+
+export function isPreActiveChannelStatus(state: string | null | undefined): boolean {
+  return state === null || state === undefined || PRE_ACTIVE_CHANNEL_STATES.has(state as ChannelStatus);
+}
 
 const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
@@ -465,7 +524,7 @@ export function updateSessionModel(model: SessionModel, event: SessionEvent): Se
 }
 
 export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
-  return WINDING_DOWN_STATES.has(state);
+  return WINDING_DOWN_CHANNEL_STATES.has(state);
 }
 
 export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
@@ -476,7 +535,7 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
   ) {
     return 'on-chain';
   }
-  if (RESOLVED_STATES.has(model.channel.status.state)) return 'resolved';
+  if (RESOLVED_CHANNEL_STATES.has(model.channel.status.state)) return 'resolved';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
   if (model.channel.goOnChainPressed || isWindingDownChannelStatus(model.channel.status.state)) {
     return 'on-chain';
@@ -605,7 +664,7 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (!model.game.coin.coinHex) {
     return 'active';
   }
-  if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
+  if (ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)) {
     switch (model.game.coin.turnState) {
       case 'my-turn':
         return 'our-turn';
@@ -654,7 +713,7 @@ function instanceTerminalDetail(instance: GameInstanceModel): string | null {
 }
 
 function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
-  if (!ON_CHAIN_HAND_STATES.has(model.channel.status.state)
+  if (!ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)
       || model.channel.status.state === 'ResolvedClean') {
     return [];
   }
@@ -743,6 +802,7 @@ export function selectGameDashboardView(
     return {
       channelStatusLabel: 'No Session',
       channelDetail: null,
+      havePotato: false,
       handStatusLabel: 'No hand',
       handDetail: null,
       lifecycleRows: [],
@@ -758,6 +818,7 @@ export function selectGameDashboardView(
   return {
     channelStatusLabel: CHANNEL_STATUS_LABELS[channel.state],
     channelDetail: channelStatusDetail(model),
+    havePotato: channel.havePotato === true,
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
     lifecycleRows: selectLifecycleRows(model),
@@ -815,7 +876,7 @@ export function selectStatusBarBalances(
   ];
 
   const onChain =
-    ON_CHAIN_HAND_STATES.has(channel.state)
+    ON_CHAIN_CHANNEL_STATES.has(channel.state)
     && channel.state !== 'ResolvedClean';
   const displayedIds = onChain
     ? model.game.currentHandIds

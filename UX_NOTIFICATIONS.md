@@ -170,7 +170,12 @@ details.
 Each `ChannelStatus` notification is emitted when the `PeerLifecyclePhase` is
 replaced (handler transition) or when the current handler's snapshot changes
 (e.g. balance update during `Active`). The frontend uses this single
-notification type for its persistent channel state display.
+notification type for its persistent channel state display. At the WASM
+boundary it is normalized into one `ChannelStatusModel`, containing the state,
+advisory, coin identity and amount, both balances, game allocation,
+`havePotato`, and `zeroPayout`. Banner text, the potato indicator, dashboard
+actions, phase selection, persistence, and restore all project from that one
+snapshot instead of maintaining parallel channel-status shapes.
 
 Monotonicity applies across all three lenses:
 
@@ -190,7 +195,9 @@ Abandonment is a local, terminal choice owned by Rust. JavaScript can request
 `abandon`, but it does not validate whether abandonment is safe, infer a payout,
 or synthesize a terminal channel state. `GameSession::abandon` stops local peer
 participation, clears queued inbound protocol work and watched coins, and emits
-`ChannelStatus::Abandoned`. `TransactionManager::abandon` also discards
+only `ChannelStatus::Abandoned`; it first discards pending cradle events and
+resync work so an older status cannot follow the terminal result.
+`TransactionManager::abandon` also discards
 unsubmitted transactions, events, and watch registrations. It cannot retract a
 transaction that was already broadcast or change the blockchain's eventual
 resolution.
@@ -227,8 +234,9 @@ frontend decision.
 
 On any terminal drain, the JavaScript controller drops queued outbound protocol
 messages, acknowledgements, retries, durability sends, and new watch requests;
-it preserves only terminal presentation events. This prevents a final status
-from racing with stale local protocol work. The terminal signal can arrive
+it also replaces already-queued presentation work with presentation events from
+the terminal result. This prevents a final status from racing with stale local
+protocol work. The terminal signal can arrive
 before React has committed that final status, so Shell performs resolved-display
 cleanup from the status/phase update rather than using the signal to overwrite
 the dashboard snapshot.

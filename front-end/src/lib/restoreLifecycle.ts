@@ -2,9 +2,13 @@ import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
 import {
   createSessionModel,
+  isPreActiveChannelStatus,
+  isTerminalChannelStatus,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
 } from './session/model';
+
+export { isTerminalChannelStatus } from './session/model';
 
 export function isRestoreBlocked(
   restoring: boolean,
@@ -34,20 +38,6 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
-/** Channel states that already finished — resume must not keep the hub busy. */
-export function isTerminalChannelStatus(state: string | null | undefined): boolean {
-  return state === 'ResolvedClean'
-    || state === 'ResolvedUnrolled'
-    || state === 'ResolvedStale'
-    || state === 'Abandoned'
-    || state === 'Failed';
-}
-
-const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
-  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
-]);
-
 /**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
@@ -58,7 +48,7 @@ export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
   channelState: string | null | undefined,
 ): boolean {
-  const isPreActive = !channelState || PRE_ACTIVE_CHANNEL_STATES.has(channelState);
+  const isPreActive = isPreActiveChannelStatus(channelState);
   return sessionPhase === 'none' || isPreActive;
 }
 

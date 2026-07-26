@@ -67,6 +67,7 @@ import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
   isCleanShutdownInProgress,
+  PRE_ACTIVE_CHANNEL_STATES,
   selectGameDashboardView,
   selectGameTabDotColor,
   selectStatusBarBalances,
@@ -241,11 +242,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
 
-const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
-  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
-]);
-
 const MIN_TIMEOUT_BLOCKS = 3;
 const MAX_TIMEOUT_BLOCKS = 30;
 
@@ -339,6 +335,7 @@ function GameDashboard({
               <span className='flex min-w-0 flex-wrap gap-x-1'>
                 <span className='text-canvas-solid'>Channel:</span>
                 <span className='font-medium text-canvas-text-contrast'>{view.channelStatusLabel}</span>
+                {view.havePotato && <span aria-label='You have the potato' title='You have the potato'>🥔</span>}
                 {view.channelDetail && (
                   <span className='text-canvas-text'>{view.channelDetail}</span>
                 )}

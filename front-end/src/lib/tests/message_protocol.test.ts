@@ -827,7 +827,7 @@ describe('go-on-chain terminal remap', () => {
 });
 
 describe('terminal protocol cleanup', () => {
-  it('drops queued outbound protocol work while retaining terminal notifications', () => {
+  it('replaces queued protocol and presentation work with terminal notifications', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
@@ -837,7 +837,10 @@ describe('terminal protocol cleanup', () => {
     blob.setGameSession(cradle);
 
     blob.processResult({
-      events: [{ OutboundMessage: enc('stale protocol message') }],
+      events: [
+        { OutboundMessage: enc('stale protocol message') },
+        { Notification: { ChannelStatus: { state: 'Active' } } },
+      ],
     });
     blob.processResult({
       terminal: true,
@@ -851,6 +854,7 @@ describe('terminal protocol cleanup', () => {
     });
 
     expect(sentMessages).toEqual([]);
+    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Abandoned' });
   });
 });
 

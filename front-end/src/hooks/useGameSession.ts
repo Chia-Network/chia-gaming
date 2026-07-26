@@ -37,6 +37,11 @@ import {
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   createSessionModel,
+  channelStatusModelFromPayload,
+  INITIAL_CHANNEL_STATUS_MODEL,
+  isTerminalChannelStatus,
+  isWindingDownChannelStatus,
+  ON_CHAIN_CHANNEL_STATES,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
   selectGameSessionView,
@@ -45,6 +50,7 @@ import {
   sessionModelFromSave,
   type GameInstanceModel,
   type HandStatus,
+  type ChannelStatusModel,
   type SessionModel,
   snapshotFromSessionModel,
 } from '../lib/session/model';
@@ -162,23 +168,10 @@ export function activeIdsAfterProposalAccepted(
   ];
 }
 
-function parseCoinAmount(coin: unknown): string | null {
-  const bytes = asBytes(coin);
-  if (!bytes || bytes.length < 64) {
-    return null;
-  }
-  let value = 0n;
-  for (let i = 64; i < bytes.length; i++) {
-    value = (value << 8n) + BigInt(bytes[i] & 0xff);
-  }
-  return value.toString();
-}
-
 async function coinIdHex(coin: unknown): Promise<string | null> {
   const bytes = asBytes(coin);
   return bytes ? coinIdFromBytes(bytes) : null;
 }
-
 export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'finishing' | 'ended';
 
 export interface GameCoinInfo {
@@ -222,50 +215,7 @@ export interface QueuedNotification {
   kind: NotificationKind;
   title: string;
   message: string;
-  payload?: ChannelStatusInfo | GameTerminalAttentionInfo;
-}
-
-export interface ChannelStatusInfo {
-  state: ChannelStatus;
-  advisory: string | null;
-  coinHex: string | null;
-  coinAmount: string | null;
-  ourBalance: string | null;
-  theirBalance: string | null;
-  gameAllocated: string | null;
-  havePotato: boolean | null;
-  zeroPayout: boolean | null;
-}
-
-const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
-  state: 'Handshaking',
-  advisory: null,
-  coinHex: null,
-  coinAmount: null,
-  ourBalance: null,
-  theirBalance: null,
-  gameAllocated: null,
-  havePotato: null,
-  zeroPayout: null,
-};
-
-function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
-  const amount = parseCoinAmount(cs.coin);
-  const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
-  const resolvedShare = isResolvedFromUnroll
-    ? (amount ?? '0')
-    : parseAmount(cs.our_balance);
-  return {
-    state: cs.state,
-    advisory: cs.advisory ?? null,
-    coinHex,
-    coinAmount: amount,
-    ourBalance: resolvedShare,
-    theirBalance: parseAmount(cs.their_balance),
-    gameAllocated: parseAmount(cs.game_allocated),
-    havePotato: cs.have_potato ?? null,
-    zeroPayout: cs.zero_payout ?? null,
-  };
+  payload?: ChannelStatusModel | GameTerminalAttentionInfo;
 }
 
 const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
@@ -280,15 +230,6 @@ const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
 // the status bar instead; only error resolutions interrupt the user.
 const ERROR_CHANNEL_STATUSES: ChannelStatus[] = ['ResolvedStale', 'Failed'];
 
-const WINDING_DOWN_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
-  'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
-  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Abandoned', 'Failed',
-]);
-
-const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
-  'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
-]);
-
 export function nextGameTurnAfterLocalTurn(
   current: GameTurnState,
   isMyTurn: boolean,
@@ -300,7 +241,7 @@ export function nextGameTurnAfterLocalTurn(
   if (isMyTurn) {
     return 'my-turn';
   }
-  return ON_CHAIN_FLOW_STATES.has(channelState) ? 'playing-on-chain' : 'their-turn';
+  return ON_CHAIN_CHANNEL_STATES.has(channelState) ? 'playing-on-chain' : 'their-turn';
 }
 
 export function nextGameInstanceAfterLocalTurn(
@@ -319,7 +260,7 @@ export function nextGameInstanceAfterLocalTurn(
   return {
     ...instance,
     coin: { ...instance.coin, turnState },
-    handStatus: ON_CHAIN_FLOW_STATES.has(channelState)
+    handStatus: ON_CHAIN_CHANNEL_STATES.has(channelState)
       ? isMyTurn ? 'our-turn' : 'playing-move'
       : 'active',
   };
@@ -351,7 +292,7 @@ const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 export function isWindingDown(state: ChannelStatus): boolean {
-  return WINDING_DOWN_STATES.has(state);
+  return isWindingDownChannelStatus(state);
 }
 
 const RESOLVED_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
@@ -366,7 +307,7 @@ export function deriveSessionPhase(
   if ((channelState === 'ResolvedUnrolled' || channelState === 'ResolvedStale') && activeGameId) {
     return 'on-chain';
   }
-  if (RESOLVED_STATES.has(channelState)) return 'resolved';
+  if (isTerminalChannelStatus(channelState)) return 'resolved';
   if (channelState === 'ShutdownTransactionPending') return 'off-chain';
   if (goOnChainPressed || isWindingDown(channelState)) return 'on-chain';
   return 'off-chain';
@@ -577,7 +518,7 @@ export interface UseGameSessionResult {
   myRunningBalance: bigint;
   iStarted: boolean;
   playerNumber: number;
-  channelStatus: ChannelStatusInfo;
+  channelStatus: ChannelStatusModel;
   gameCoin: GameCoinInfo;
   gameTerminal: GameTerminalInfo;
   handKey: number;
@@ -675,11 +616,11 @@ export function useGameSession(
   const [goOnChainPressed, setGoOnChainPressed] = useState(
     () => restoredModel?.channel.goOnChainPressed ?? false
   );
-  const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
-    return restoredModel?.channel.status ?? INITIAL_CHANNEL_STATUS;
+  const [channelStatus, setChannelStatus] = useState<ChannelStatusModel>(() => {
+    return restoredModel?.channel.status ?? INITIAL_CHANNEL_STATUS_MODEL;
   });
   const channelStatusRef = useRef<ChannelStatus>(
-    restoredModel?.channel.status.state ?? INITIAL_CHANNEL_STATUS.state
+    restoredModel?.channel.status.state ?? INITIAL_CHANNEL_STATUS_MODEL.state
   );
 
   const [dismissedChannelStatus, setDismissedChannelStatus] = useState<ChannelStatus | null>(
@@ -1130,7 +1071,7 @@ export function useGameSession(
       setHandStatus(prev => prev === 'ended' ? prev : 'active');
     } else if (isMyTurn) {
       setHandStatus('our-turn');
-    } else if (ON_CHAIN_FLOW_STATES.has(channelStatusRef.current)) {
+    } else if (ON_CHAIN_CHANNEL_STATES.has(channelStatusRef.current)) {
       setHandStatus('playing-move');
     } else {
       setHandStatus('active');
@@ -1139,8 +1080,8 @@ export function useGameSession(
 
   const triggerGoOnChain = useCallback(() => {
     log('[game] going on chain');
+    if (!scRef.current?.goOnChain()) return;
     setGoOnChainPressed(true);
-    scRef.current?.goOnChain();
   }, []);
 
   const handleNotification = useCallback(async (n: WasmNotification) => {
@@ -1151,8 +1092,7 @@ export function useGameSession(
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
       if (!cs) return;
-      const coinHex = await coinIdHex(cs.coin);
-      const info = channelStatusFromPayload(cs, coinHex);
+      const info = await channelStatusModelFromPayload(cs);
       channelStatusRef.current = info.state;
       setChannelStatus(info);
       // If the channel state has moved away from (or to something other than)
@@ -1455,7 +1395,7 @@ export function useGameSession(
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;
       const status = gs.status;
-      const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStatusRef.current);
+      const inOnChainFlow = ON_CHAIN_CHANNEL_STATES.has(channelStatusRef.current);
       const isOnChainTurnStatus =
         status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
       const isLocalTurnStatus = status === 'my-turn' || status === 'their-turn';

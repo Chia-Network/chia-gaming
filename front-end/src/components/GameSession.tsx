@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
+import { useGameSession, isValidKrunkStake, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -24,16 +24,12 @@ import {
 } from '../lib/gameTabAttention';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
+  PRE_ACTIVE_CHANNEL_STATES,
   selectComposeAmountAfterGameTypeChoice,
   selectHideGameInterfaceForBetweenHandDialog,
+  type ChannelStatusModel,
   type SessionModel,
 } from '../lib/session/model';
-import type { ChannelStatus } from '../types/ChiaGaming';
-
-const PRE_ACTIVE_STATES: ReadonlySet<ChannelStatus> = new Set([
-  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
-]);
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -269,7 +265,7 @@ function useViewportClampedDragWithInsets(
 }
 
 
-function ChannelStatusContent({ info }: { info: ChannelStatusInfo }) {
+function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
   return (
     <>
       {info.advisory && (
@@ -351,7 +347,7 @@ function NotificationOverlay({
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
-            <ChannelStatusContent info={notification.payload as ChannelStatusInfo} />
+            <ChannelStatusContent info={notification.payload as ChannelStatusModel} />
           )}
           {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
             <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
@@ -1088,12 +1084,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             </GameAreaErrorBoundary>
           )}
 
-          {(!handEverStarted || PRE_ACTIVE_STATES.has(session.channelStatus.state)) && (
+          {(!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
-          {handEverStarted && !PRE_ACTIVE_STATES.has(session.channelStatus.state) && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
+          {handEverStarted && !PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state) && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>

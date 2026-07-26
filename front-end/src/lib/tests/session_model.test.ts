@@ -1,5 +1,6 @@
 import {
   createSessionModel,
+  channelStatusModelFromPayload,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
   isChannelAbandonable,
@@ -73,7 +74,7 @@ describe('session model selectors', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true } },
       game: { activeIds: [] },
-    })).channelStatusLabel).toBe('Active');
+    }))).toMatchObject({ channelStatusLabel: 'Active', havePotato: true });
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: { activeIds: [] },
@@ -123,6 +124,27 @@ describe('session model selectors', () => {
       { label: 'Me', value: '60' },
       { label: 'Opp', value: '40' },
     ]);
+  });
+
+  it('normalizes Rust channel status once for persistence and presentation', async () => {
+    await expect(channelStatusModelFromPayload({
+      state: 'ShuttingDown',
+      advisory: 'closing',
+      coin: null,
+      our_balance: { Amount: '0' },
+      their_balance: { Amount: '100' },
+      game_allocated: { Amount: '0' },
+      have_potato: true,
+      zero_payout: true,
+    })).resolves.toMatchObject({
+      state: 'ShuttingDown',
+      advisory: 'closing',
+      ourBalance: '0',
+      theirBalance: '100',
+      gameAllocated: '0',
+      havePotato: true,
+      zeroPayout: true,
+    });
   });
 
   it('uses a clean-shutdown grace window before offering go-on-chain escalation', () => {

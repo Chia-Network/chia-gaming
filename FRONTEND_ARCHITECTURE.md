@@ -424,7 +424,7 @@ full mid-game session state:
 | `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
-| `channelStatus` | `ChannelStatusPayload \| null?` | Last Rust-owned channel status for UI restore and coin watching, including `zero_payout` when shutdown begins. |
+| `channelStatus` | `ChannelStatusPayload \| null?` | Last Rust-owned channel status for UI restore. It is normalized once into the canonical `ChannelStatusModel` (state, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`) before any view or lifecycle policy reads it. |
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
@@ -574,6 +574,10 @@ on-chain effects only for that successful result. Timer-gated abandon actions
 in other waiting states remain separate stalled-flow escapes. See
 [Abandonment and Zero-Payout Shutdown](UX_NOTIFICATIONS.md#abandonment-and-zero-payout-shutdown)
 for the full state and terminal-effect rules.
+
+The potato marker is likewise a projection of that one status snapshot: the
+banner shows `🥔` only when `havePotato` is true. It is protocol-token context,
+not a claim about which game turn is currently playable.
 
 **Pre-game saves and the boot marker:** A durable game session is anything with
 `serializedGameSession` or `pairingToken` (`isResumable`). Those writes set the
@@ -1007,7 +1011,8 @@ state (including local abandonment, clean shutdown confirmation, completed
 on-chain resolution, or channel-creation expiry). When
 `SessionController.processResult` sees `terminal: true`, it first discards
 queued outbound protocol work, acknowledgements, retransmissions, and
-watch-coin updates, retaining only terminal presentation events. It then stops
+watch-coin updates and replaces any already-queued presentation events with the
+presentation events in that terminal result. It then stops
 the `BlockchainPoller` and keepalive timer directly — without round-tripping
 through the React notification-to-effect chain — and fires `onTerminal` after
 the retained events drain. Shell finalizes the resolved dashboard from the

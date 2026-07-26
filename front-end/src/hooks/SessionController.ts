@@ -614,7 +614,9 @@ export class SessionController implements PollingGameSession {
 
   private stopProtocolWork(): void {
     this.protocolStopped = true;
-    this.eventQueue = this.eventQueue.filter(event => this.isTerminalPresentationEvent(event));
+    // A terminal drain is a replacement boundary, not an append-only update:
+    // an older queued status must never render after the terminal result.
+    this.eventQueue = [];
     this.pendingOutboundSends = [];
     this.pendingAcks = [];
     this.unackedMessages = [];
