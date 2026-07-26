@@ -676,6 +676,15 @@ export const ABANDON_WAITING_STATES = new Set<ChannelStatus>([
   'GoingOnChain', 'Unrolling',
 ]);
 
+export function isChannelAbandonable(
+  status: ChannelStatusModel | null | undefined,
+  abandonEnabled: boolean,
+): boolean {
+  return (status?.state === 'ShuttingDown' && status.zeroPayout === true)
+    || (abandonEnabled && status !== null && status !== undefined
+      && ABANDON_WAITING_STATES.has(status.state));
+}
+
 function dashboardActionFor(
   model: SessionModel,
   cleanShutdownGraceActive: boolean,
@@ -703,6 +712,9 @@ function dashboardActionFor(
       }
       return { actionLabel: 'Clean Shutdown', actionEnabled: true, actionKind: 'clean-shutdown' };
     case 'ShuttingDown':
+      if (model.channel.status.zeroPayout) {
+        return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+      }
       if (cleanShutdownGraceActive) {
         return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
       }

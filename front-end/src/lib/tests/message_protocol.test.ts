@@ -445,7 +445,7 @@ describe('bounded controller histories', () => {
 });
 
 describe('durability failures', () => {
-  it('warns the user but continues sending messages and ACKs in memory', async () => {
+  it('warns the user and keeps messages and ACKs queued', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: helloBytes }],
@@ -460,12 +460,12 @@ describe('durability failures', () => {
     try {
       blob.deliverMessage(1n, enc('trigger'));
       blob.flushDeferredWork();
-      await blob.flushPendingWork();
+      await expect(blob.flushPendingWork()).rejects.toThrow();
 
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain('Continuing in memory');
-      expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-      expect(sentAcks).toEqual([1]);
+      expect(warnings[0]).toContain('remain queued');
+      expect(sentMessages).toEqual([]);
+      expect(sentAcks).toEqual([]);
       expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
       expect(errorSpy).toHaveBeenCalled();
     } finally {
@@ -513,7 +513,7 @@ describe('durability failures', () => {
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
   });
 
-  it('continues delivery in memory when cradle serialization fails', async () => {
+  it('does not send when cradle serialization fails', async () => {
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
@@ -536,10 +536,10 @@ describe('durability failures', () => {
     };
 
     blob.deliverMessage(1n, enc('trigger'));
-    await blob.flushPendingWork();
+    await expect(blob.flushPendingWork()).rejects.toThrow('malformed cradle serialization');
 
-    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-    expect(sentAcks).toEqual([1]);
+    expect(sentMessages).toEqual([]);
+    expect(sentAcks).toEqual([]);
     blob.cleanup();
     activeBlob = null;
     expect((await peekSession())?.serializedGameSession).toEqual(new Uint8Array([9, 9, 9]));
@@ -798,6 +798,59 @@ describe('abandon calls Rust through cradle', () => {
     blob.abandon();
 
     expect((cradle as any).abandon).toHaveBeenCalled();
+  });
+});
+
+describe('go-on-chain terminal remap', () => {
+  it('does not enter on-chain mode when Rust abandons terminally', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      go_on_chain: jest.fn(() => ({
+        terminal: true,
+        events: [{
+          Notification: {
+            ChannelStatus: { state: 'Abandoned' },
+          },
+        }],
+      } as WasmResult)),
+    } as unknown as ChiaGame;
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    expect(blob.goOnChain()).toBe(false);
+    expect((blob as any).onChain).toBe(false);
+  });
+});
+
+describe('terminal protocol cleanup', () => {
+  it('drops queued outbound protocol work while retaining terminal notifications', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = makeMockCradle();
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    blob.processResult({
+      events: [{ OutboundMessage: enc('stale protocol message') }],
+    });
+    blob.processResult({
+      terminal: true,
+      events: [{
+        Notification: {
+          ChannelStatus: {
+            state: 'Abandoned',
+          },
+        },
+      }],
+    });
+
+    expect(sentMessages).toEqual([]);
   });
 });
 

@@ -146,6 +146,7 @@ export class SessionController implements PollingGameSession {
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
   private terminalDrain: Promise<void> | null = null;
+  private protocolStopped = false;
   activeGameId: string | null = null;
   activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
@@ -580,20 +581,51 @@ export class SessionController implements PollingGameSession {
       throw new Error('cradle returned no WasmResult');
     }
 
+    const terminal = result.terminal === true;
+    if (terminal) {
+      this.stopProtocolWork();
+    }
+
     const blockchain = this.blockchain;
-    for (const coin of result.watchCoins || []) {
-      blockchain?.watchCoin(this, coin);
+    if (!terminal) {
+      for (const coin of result.watchCoins || []) {
+        blockchain?.watchCoin(this, coin);
+      }
     }
     for (const event of result.events || []) {
-      this.eventQueue.push(event);
+      if (!terminal || this.isTerminalPresentationEvent(event)) {
+        this.eventQueue.push(event);
+      }
     }
 
-    this.drainAndSubmitTransactions();
+    if (!terminal) {
+      this.drainAndSubmitTransactions();
+    }
     this.scheduleDrain();
 
-    if (result.terminal) {
+    if (terminal) {
       void this.beginTerminalDrain('wasm');
     }
+  }
+
+  private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
+    return 'Notification' in event || 'Log' in event || 'ReceiveError' in event;
+  }
+
+  private stopProtocolWork(): void {
+    this.protocolStopped = true;
+    this.eventQueue = this.eventQueue.filter(event => this.isTerminalPresentationEvent(event));
+    this.pendingOutboundSends = [];
+    this.pendingAcks = [];
+    this.unackedMessages = [];
+    this.storedMessages = [];
+    this.reorderQueue.clear();
+    this.needsImmediateDurability = false;
+    if (this.durabilityFlushTimer) {
+      clearTimeout(this.durabilityFlushTimer);
+      this.durabilityFlushTimer = null;
+    }
+    this.durabilityFlushScheduled = false;
   }
 
   private scheduleDrain(): void {
@@ -679,7 +711,7 @@ export class SessionController implements PollingGameSession {
 
   private dispatchEvent(event: GameSessionEvent): void {
     if ('OutboundMessage' in event) {
-      if (this.onChain) return;
+      if (this.protocolStopped || this.onChain) return;
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
       this.pendingOutboundSends.push({ msgno, msg: event.OutboundMessage });
@@ -779,6 +811,7 @@ export class SessionController implements PollingGameSession {
   // --- Inbound events ---
 
   deliverMessage(msgno: bigint, msg: Uint8Array) {
+    if (this.protocolStopped) return;
     this.notePeerActivity();
     if (this.onChain) {
       this.sendAck(msgno);
@@ -850,6 +883,7 @@ export class SessionController implements PollingGameSession {
   }
 
   resendUnacked() {
+    if (this.protocolStopped) return;
     // Hub reconnect / peer keepalive: also retry acks and outbound that failed
     // while the WS was closed (those sit in pending* with needsImmediateDurability,
     // not in unackedMessages).
@@ -957,11 +991,13 @@ export class SessionController implements PollingGameSession {
   }
 
   private markNeedsImmediateDurability() {
+    if (this.protocolStopped) return;
     this.needsImmediateDurability = true;
     this.scheduleDurabilityFlush();
   }
 
   private scheduleDurabilityFlush() {
+    if (this.protocolStopped) return;
     if (this.durabilityFlushScheduled) return;
     this.durabilityFlushScheduled = true;
     const timer = setTimeout(() => {
@@ -987,6 +1023,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private async performDurabilityFlushAndSend(): Promise<void> {
+    if (this.protocolStopped) return;
     if (!this.needsImmediateDurability && this.pendingOutboundSends.length === 0 && this.pendingAcks.length === 0) {
       return;
     }
@@ -997,7 +1034,6 @@ export class SessionController implements PollingGameSession {
     if (this.needsImmediateDurability) {
       const outboundCount = this.pendingOutboundSends.length;
       const ackCount = this.pendingAcks.length;
-      let persistenceFailed = false;
       if (!this.onSaveNeeded) {
         throw new Error('Session persistence callback is unavailable at a protocol delivery boundary');
       }
@@ -1012,14 +1048,15 @@ export class SessionController implements PollingGameSession {
         await saveRequest;
       } catch (error) {
         const detail = extractErrorMessage(error);
-        const warning = `Session storage failed: ${detail}. Continuing in memory; reloading before storage recovers may lose protocol state.`;
+        const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
         if (this.durabilityWarning !== warning) {
           this.durabilityWarning = warning;
           this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
         }
-        persistenceFailed = true;
+        throw error;
       }
 
+      if (this.protocolStopped) return;
       const outbound = this.pendingOutboundSends.splice(0, outboundCount);
       const acks = this.pendingAcks.splice(0, ackCount);
       const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
@@ -1043,14 +1080,15 @@ export class SessionController implements PollingGameSession {
         this.needsImmediateDurability = true;
       } else {
         this.needsImmediateDurability =
-          persistenceFailed || this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
-        if (this.needsImmediateDurability && !persistenceFailed) {
+          this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
+        if (this.needsImmediateDurability) {
           this.scheduleDurabilityFlush();
         }
       }
       return;
     }
 
+    if (this.protocolStopped) return;
     const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
     const acks = this.pendingAcks.splice(0, this.pendingAcks.length);
     const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
@@ -1247,18 +1285,22 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  goOnChain(): void {
+  goOnChain(): boolean {
     if (!this.cradle) throw new Error('no cradle');
-    this.onChain = true;
     try {
       const result = this.cradle.go_on_chain();
+      const startedOnChain = result?.terminal !== true;
+      this.onChain = startedOnChain;
       this.processResult(result);
+      return startedOnChain;
     } catch (e) {
+      this.onChain = false;
       const msg = e instanceof Error ? (e.stack || e.message)
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] goOnChain failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      return false;
     }
   }
 

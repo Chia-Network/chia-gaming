@@ -2,6 +2,7 @@ import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
+  isChannelAbandonable,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
   selectComposeAmountAfterGameTypeChoice,
@@ -142,6 +143,24 @@ describe('session model selectors', () => {
       actionEnabled: true,
       actionKind: 'go-on-chain',
     });
+
+    const zeroPayoutShutdown = createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'ShuttingDown',
+          zeroPayout: true,
+        },
+        cleanShutdownStarted: true,
+      },
+    });
+    expect(selectGameDashboardView(zeroPayoutShutdown, { cleanShutdownGraceActive: true })).toMatchObject({
+      actionLabel: 'Abandon',
+      actionEnabled: true,
+      actionKind: 'abandon',
+    });
+    expect(isChannelAbandonable(zeroPayoutShutdown.channel.status, false)).toBe(true);
+    expect(isChannelAbandonable(shuttingDown.channel.status, true)).toBe(false);
   });
 
   it('enables abandon action after timeout for waiting states', () => {

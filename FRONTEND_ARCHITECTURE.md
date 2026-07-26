@@ -424,7 +424,7 @@ full mid-game session state:
 | `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
-| `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching. |
+| `channelStatus` | `ChannelStatusPayload \| null?` | Last Rust-owned channel status for UI restore and coin watching, including `zero_payout` when shutdown begins. |
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
@@ -560,6 +560,20 @@ projects channel / lifecycle labels and the primary action button
 (clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
 projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
+
+The dashboard never derives whether a shutdown has value remaining from its
+displayed balances or game state. Rust provides `channelStatus.zero_payout`
+when shutdown begins. A `ShuttingDown` status with that flag set offers
+immediate **Abandon**; a shutdown without it observes the normal cooperative
+grace period before offering **Go On-Chain**. The same Rust predicate makes a
+direct or stale `go_on_chain` call abandon before creating a new spend, so the
+UI label is a projection of protocol authority rather than the enforcement
+point. `SessionController.goOnChain()` returns whether Rust actually began
+on-chain resolution; Shell applies the peer-disconnect, phase, and dashboard
+on-chain effects only for that successful result. Timer-gated abandon actions
+in other waiting states remain separate stalled-flow escapes. See
+[Abandonment and Zero-Payout Shutdown](UX_NOTIFICATIONS.md#abandonment-and-zero-payout-shutdown)
+for the full state and terminal-effect rules.
 
 **Pre-game saves and the boot marker:** A durable game session is anything with
 `serializedGameSession` or `pairingToken` (`isResumable`). Those writes set the
@@ -989,14 +1003,16 @@ as deltas too.
 
 **Polling Termination.** `ManagerDrain` carries a `terminal` flag, set by
 `TransactionManager.flush_and_collect` when the channel has reached a terminal
-state (clean shutdown confirmed, on-chain resolution complete, or channel
-creation expired). When `SessionController.processResult` sees `terminal: true`,
-it stops the `BlockchainPoller` and keepalive timer directly — without
-round-tripping through the React notification-to-effect chain. It also fires the
-`onTerminal` callback so Shell can perform its own cleanup (hub busy state,
-balance polling, peer relay teardown). This is the sole mechanism for stopping
-polling; `handleSessionPhaseChange` in Shell no longer performs side-effect
-cleanup.
+state (including local abandonment, clean shutdown confirmation, completed
+on-chain resolution, or channel-creation expiry). When
+`SessionController.processResult` sees `terminal: true`, it first discards
+queued outbound protocol work, acknowledgements, retransmissions, and
+watch-coin updates, retaining only terminal presentation events. It then stops
+the `BlockchainPoller` and keepalive timer directly — without round-tripping
+through the React notification-to-effect chain — and fires `onTerminal` after
+the retained events drain. Shell finalizes the resolved dashboard from the
+terminal channel-status update, preserving that final snapshot for reload
+before tearing down the peer relay and clearing hub busy state.
 
 ### WalletConnect BigInt Serialization
 

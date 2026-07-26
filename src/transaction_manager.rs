@@ -34,6 +34,7 @@ use crate::game_session::{DrainResult, GameSession, WatchReport};
 use crate::session_phases::effects::{
     ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
 };
+use crate::session_phases::types::ToLocalUI;
 
 /// Raw per-coin chain state as reported by the polling layer for a single
 /// watched coin.  `created_height`/`spent_height` are `None` until the coin is
@@ -177,9 +178,7 @@ pub trait ManagedGameSession {
         false
     }
 
-    fn abandon(&mut self, _allocator: &mut AllocEncoder) -> Result<(), Error> {
-        Ok(())
-    }
+    fn abandon(&mut self) -> Result<(), Error>;
 }
 
 impl ManagedGameSession for GameSession {
@@ -204,8 +203,9 @@ impl ManagedGameSession for GameSession {
         self.is_fully_resolved()
     }
 
-    fn abandon(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
-        GameSession::abandon(self, allocator)
+    fn abandon(&mut self) -> Result<(), Error> {
+        GameSession::abandon(self);
+        Ok(())
     }
 }
 
@@ -466,6 +466,20 @@ impl TransactionManager<GameSession> {
     /// the manager (not the inner cradle) now owns the expiry `Failed` signal.
     pub fn channel_status_terminal(&self) -> bool {
         self.channel_expired || self.cradle.channel_status_terminal()
+    }
+
+    /// Trigger on-chain resolution, or abandon through the manager when the
+    /// inner session has no remaining payout or active game for us.
+    pub fn go_on_chain(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        local_ui: &mut dyn ToLocalUI,
+        got_error: bool,
+    ) -> Result<(), Error> {
+        if self.cradle.should_abandon_on_go_on_chain(got_error) {
+            return self.abandon();
+        }
+        self.cradle.go_on_chain(allocator, local_ui, got_error)
     }
 }
 
@@ -853,7 +867,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
 
     /// Discard unsubmitted local work and transition the wrapped session to its
     /// local abandonment terminal.
-    pub fn abandon(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+    pub fn abandon(&mut self) -> Result<(), Error> {
         self.pending_submissions.clear();
         self.pending_events.clear();
         self.pending_watch_coins.clear();
@@ -861,7 +875,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         self.watched_coins.clear();
         self.submitted.clear();
         self.vanished_coins.clear();
-        self.cradle.abandon(allocator)
+        self.cradle.abandon()
     }
 }
 
@@ -968,7 +982,7 @@ mod tests {
             self.abandoned
         }
 
-        fn abandon(&mut self, _allocator: &mut AllocEncoder) -> Result<(), Error> {
+        fn abandon(&mut self) -> Result<(), Error> {
             self.abandoned = true;
             Ok(())
         }
@@ -989,7 +1003,7 @@ mod tests {
             .expect("initial drain");
         assert_eq!(manager.snapshot_watched_coins(), vec![coin]);
 
-        manager.abandon(&mut allocator).expect("abandon");
+        manager.abandon().expect("abandon");
         let drain = manager
             .flush_and_collect(&mut allocator)
             .expect("terminal drain");
@@ -1018,6 +1032,10 @@ mod tests {
             _allocator: &mut AllocEncoder,
         ) -> Result<DrainResult, Error> {
             Ok(DrainResult::default())
+        }
+
+        fn abandon(&mut self) -> Result<(), Error> {
+            Ok(())
         }
     }
 

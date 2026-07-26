@@ -56,6 +56,7 @@ pub struct ChannelStatusSnapshot {
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
     pub have_potato: Option<bool>,
+    #[serde(default)]
     pub zero_payout: Option<bool>,
 }
 
@@ -412,4 +413,39 @@ pub fn apply_effects(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    struct LegacyChannelStatusSnapshot {
+        state: ChannelStatus,
+        advisory: Option<String>,
+        coin: Option<CoinString>,
+        our_balance: Option<Amount>,
+        their_balance: Option<Amount>,
+        game_allocated: Option<Amount>,
+        have_potato: Option<bool>,
+    }
+
+    #[test]
+    fn channel_status_without_zero_payout_restores() {
+        let legacy = LegacyChannelStatusSnapshot {
+            state: ChannelStatus::Active,
+            advisory: None,
+            coin: None,
+            our_balance: None,
+            their_balance: None,
+            game_allocated: None,
+            have_potato: None,
+        };
+
+        let encoded = bencodex::to_vec(&legacy).expect("serialize legacy snapshot");
+        let restored: ChannelStatusSnapshot =
+            bencodex::from_slice(&encoded).expect("restore legacy snapshot");
+
+        assert_eq!(restored.zero_payout, None);
+    }
 }

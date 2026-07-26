@@ -1809,7 +1809,7 @@ impl PeerLifecyclePhase for OffChainPhase {
             their_balance: Some(ch.their_out_of_game_balance()),
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
-            zero_payout: shutting_down.then(|| ch.my_out_of_game_balance() == Amount::default()),
+            zero_payout: shutting_down.then(|| ch.has_zero_payout()),
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

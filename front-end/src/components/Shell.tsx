@@ -65,6 +65,7 @@ import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportHubBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
+  isChannelAbandonable,
   isCleanShutdownInProgress,
   selectGameDashboardView,
   selectGameTabDotColor,
@@ -240,6 +241,11 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
 
+const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
+  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
+  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
+]);
+
 const MIN_TIMEOUT_BLOCKS = 3;
 const MAX_TIMEOUT_BLOCKS = 30;
 
@@ -248,15 +254,7 @@ function isAbandonWaitingState(state: SessionModel['channel']['status']['state']
 }
 
 function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolean): boolean {
-  return abandonEnabled && isAbandonWaitingState(model?.channel.status.state);
-}
-
-function isZeroPayoutShutdown(model: SessionModel | null): boolean {
-  const status = model?.channel.status;
-  if (!status || (status.state !== 'ShuttingDown' && status.state !== 'ShutdownTransactionPending')) {
-    return false;
-  }
-  return status.zeroPayout === true;
+  return isChannelAbandonable(model?.channel.status, abandonEnabled);
 }
 
 function savedChannelStatus(save: SessionSave): SessionModel['channel']['status']['state'] | null {
@@ -1702,8 +1700,13 @@ const Shell = () => {
   }, [clearSessionPreservingHistory, clearSessionTimers, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const abandonActiveChannel = useCallback(() => {
+    const state = dashboardSessionModelRef.current?.channel.status.state;
+    if (state && PRE_ACTIVE_CHANNEL_STATES.has(state)) {
+      const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+      if (peerId) sendSessionReject(peerId);
+    }
     sessionController?.abandon();
-  }, []);
+  }, [sendSessionReject]);
 
   /**
    * End live protocol for a terminal channel but keep the dashboard freeze
@@ -1813,8 +1816,10 @@ const Shell = () => {
     // and nudge an immediate poll so settlement payouts show up promptly.
     const bcType = blockchainTypeRef.current;
     if (bcType) startBalancePolling(bcType);
-    if (!sessionFinishedCleanupRef.current) finishResolvedSessionDisplay(false);
-  }, [finishResolvedSessionDisplay, startBalancePolling]);
+    // The terminal signal can arrive before React commits the final
+    // ChannelStatus notification. Let the phase callback perform cleanup after
+    // that model update so its persisted dashboard snapshot is terminal.
+  }, [startBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
@@ -2261,7 +2266,7 @@ const Shell = () => {
   }, [startCleanShutdownGrace]);
 
   const performDashboardGoOnChain = useCallback(() => {
-    sessionController?.goOnChain();
+    if (!sessionController?.goOnChain()) return;
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
     hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
@@ -2274,18 +2279,6 @@ const Shell = () => {
   }, [syncPeerLiveness]);
 
   const requestDashboardGoOnChain = useCallback(() => {
-    if (isZeroPayoutShutdown(dashboardSessionModelRef.current)) {
-      setConfirmDialog({
-        title: 'Abandon session?',
-        body: 'This session will not pay you. Your opponent can complete the cooperative close without an on-chain transaction from you.',
-        confirmLabel: 'Abandon',
-        onConfirm: () => {
-          setConfirmDialog(null);
-          if (isZeroPayoutShutdown(dashboardSessionModelRef.current)) abandonActiveChannel();
-        },
-      });
-      return;
-    }
     const channelState = dashboardSessionModel?.channel.status.state;
     const isShutdownEscalation = channelState === 'ShuttingDown';
     setConfirmDialog({
@@ -2299,7 +2292,7 @@ const Shell = () => {
         performDashboardGoOnChain();
       },
     });
-  }, [abandonActiveChannel, dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
+  }, [dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
 
   const handleDashboardAction = useCallback((kind: GameDashboardActionKind) => {
     switch (kind) {

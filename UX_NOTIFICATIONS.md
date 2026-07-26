@@ -48,6 +48,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 - [WASM Event FIFO and Async Drain](#wasm-event-fifo-and-async-drain)
 - [Channel Lifecycle Notifications](#channel-lifecycle-notifications)
+- [Abandonment and Zero-Payout Shutdown](#abandonment-and-zero-payout-shutdown)
 - [Dashboard Status Labels](#dashboard-status-labels)
 - [Gameplay Notifications](#gameplay-notifications)
 - [Proposal Notifications](#proposal-notifications)
@@ -152,6 +153,7 @@ for how those lenses relate.
 | `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
 | `ResolvedUnrolled`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately |
 | `ResolvedStale`   | Stale unroll completed                         | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                         |
+| `Abandoned`       | Local session participation stopped            | The player deliberately stopped this local session. The status retains the last known balance fields rather than inventing a settlement result. |
 | `Failed`          | Unrecoverable error                            | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                            |
 
 **Assumes single-handing for `ShuttingDown` timing.** The current clean shutdown
@@ -179,6 +181,57 @@ Monotonicity applies across all three lenses:
 - **On-chain lifecycle lens:** coin progression is forward-only
   (`created -> unrolling -> resolved` for channels, and
   `off-chain -> on-chain loop -> terminal` for games).
+
+---
+
+## Abandonment and Zero-Payout Shutdown
+
+Abandonment is a local, terminal choice owned by Rust. JavaScript can request
+`abandon`, but it does not validate whether abandonment is safe, infer a payout,
+or synthesize a terminal channel state. `GameSession::abandon` stops local peer
+participation, clears queued inbound protocol work and watched coins, and emits
+`ChannelStatus::Abandoned`. `TransactionManager::abandon` also discards
+unsubmitted transactions, events, and watch registrations. It cannot retract a
+transaction that was already broadcast or change the blockchain's eventual
+resolution.
+
+`Abandoned` does not mean that the channel was resolved on-chain or that the
+player received zero. To keep the terminal dashboard useful after reload, the
+notification carries forward the most recent channel snapshot's balances, coin,
+game allocation, potato state, and `zero_payout` value. A manual abandon can
+therefore show a nonzero last-known balance; that is display context, not a
+promise that funds are settled or claimable.
+
+### Zero-payout shutdown
+
+Rust computes `zero_payout` only while the channel is shutting down. It is true
+when the local current channel share is zero **and** no active game can later
+produce a share. This deliberately reuses the channel's authoritative
+settlement/forfeit state instead of asking React to reason about pending accepts,
+game commitments, or timeout paths.
+
+The dashboard behavior is:
+
+| Situation | Primary action | Why |
+| --- | --- | --- |
+| `ShuttingDown`, `zero_payout: true` | **Abandon**, immediately | We have no remaining channel payout and no active game to protect. The Rust status is the authority for this exception; it bypasses the ordinary abandon timer. |
+| `ShuttingDown`, `zero_payout: false` or absent | **Waiting** during the cooperative-close grace period, then **Go On-Chain** | We may still have a payout or an unresolved game, so the user can escalate the cooperative close to normal on-chain resolution. |
+| `OfferSent`, `TransactionPending`, `ShutdownTransactionPending`, `GoingOnChain`, or `Unrolling` | **Abandon** only after the waiting timeout | These are stalled-state escape hatches, not a payout determination. |
+| Pre-active handshake/counterparty setup | **Cancel** / abandonment as applicable | The frontend sends `session_reject` to release the peer before terminating its local cradle. |
+
+The Rust `go_on_chain` entry point also checks this same zero-payout predicate.
+If it is invoked despite the dashboard rule — for example by a stale UI action
+or another caller — it abandons locally before producing or submitting a new
+on-chain spend. This is a safety property of the protocol host, not a second
+frontend decision.
+
+On any terminal drain, the JavaScript controller drops queued outbound protocol
+messages, acknowledgements, retries, durability sends, and new watch requests;
+it preserves only terminal presentation events. This prevents a final status
+from racing with stale local protocol work. The terminal signal can arrive
+before React has committed that final status, so Shell performs resolved-display
+cleanup from the status/phase update rather than using the signal to overwrite
+the dashboard snapshot.
 
 ---
 

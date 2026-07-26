@@ -1155,7 +1155,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             self.base
                 .channel_state
                 .as_ref()
-                .is_some_and(|ch| ch.my_out_of_game_balance() == Amount::default())
+                .is_some_and(|ch| ch.has_zero_payout())
         });
         Some(ChannelStatusSnapshot {
             state,

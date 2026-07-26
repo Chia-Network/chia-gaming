@@ -55,6 +55,10 @@ impl ManagedGameSession for ScriptedGameSession {
             resync: None,
         })
     }
+
+    fn abandon(&mut self) -> Result<(), crate::common::types::Error> {
+        Ok(())
+    }
 }
 
 /// Build a signed transaction that spends `coin` (owned by `identity`) to

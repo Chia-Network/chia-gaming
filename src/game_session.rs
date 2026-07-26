@@ -356,6 +356,7 @@ struct GameSessionState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
+    #[serde(default)]
     pub abandoned: bool,
 
     #[serde(skip)]
@@ -812,14 +813,12 @@ impl GameSession {
 
     /// Stop participating in this session immediately. This is a local user
     /// choice, not a protocol transition or a claim about on-chain resolution.
-    pub fn abandon(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+    pub fn abandon(&mut self) {
         self.state.abandoned = true;
         self.state.peer_disconnected = true;
         self.state.inbound_messages.clear();
         self.state.watching_coins.clear();
         self.emit_channel_status_if_changed();
-        let _ = allocator;
-        Ok(())
     }
 
     /// Settle deferred channel-setup work and retry any re-queued messages,
@@ -928,16 +927,22 @@ impl GameSession {
 
     fn emit_channel_status_if_changed(&mut self) {
         let snapshot = if self.state.abandoned {
-            Some(ChannelStatusSnapshot {
-                state: ChannelStatus::Abandoned,
-                advisory: None,
-                coin: None,
-                our_balance: None,
-                their_balance: None,
-                game_allocated: None,
-                have_potato: None,
-                zero_payout: None,
-            })
+            let mut snapshot = self
+                .peer
+                .channel_status_snapshot()
+                .or_else(|| self.last_channel_status.clone())
+                .unwrap_or(ChannelStatusSnapshot {
+                    state: ChannelStatus::Abandoned,
+                    advisory: None,
+                    coin: None,
+                    our_balance: None,
+                    their_balance: None,
+                    game_allocated: None,
+                    have_potato: None,
+                    zero_payout: None,
+                });
+            snapshot.state = ChannelStatus::Abandoned;
+            Some(snapshot)
         } else {
             self.peer.channel_status_snapshot()
         };
@@ -1540,6 +1545,17 @@ impl GameSession {
         Ok(())
     }
 
+    /// True if an ordinary go-on-chain request should instead stop this local
+    /// session because no channel payout or active game remains for us.
+    pub fn should_abandon_on_go_on_chain(&self, got_error: bool) -> bool {
+        !got_error
+            && self
+                .peer
+                .channel_state()
+                .ok()
+                .is_some_and(|ch| ch.has_zero_payout())
+    }
+
     /// Trigger going on chain.
     pub fn go_on_chain(
         &mut self,
@@ -1547,6 +1563,10 @@ impl GameSession {
         _local_ui: &mut dyn ToLocalUI,
         got_error: bool,
     ) -> Result<(), Error> {
+        if self.should_abandon_on_go_on_chain(got_error) {
+            self.abandon();
+            return Ok(());
+        }
         self.state.peer_disconnected = true;
         let reported_effects = {
             let mut env = ChannelEnv::new(allocator)?;

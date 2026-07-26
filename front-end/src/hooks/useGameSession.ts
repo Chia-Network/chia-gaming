@@ -700,8 +700,6 @@ export function useGameSession(
       (restoredModel?.game.queue ?? []) as QueuedNotification[],
     )
   );
-  const abandonmentScheduledRef = useRef(false);
-
   const pushChannel = useCallback((n: Omit<QueuedNotification, 'id'>) => {
     setChannelQueue(prev => {
       if (n.kind === 'channel-state') {
@@ -1194,19 +1192,6 @@ export function useGameSession(
           scRef.current?.cleanShutdown();
           return;
         }
-      }
-      if (
-        !abandonmentScheduledRef.current
-        && info.zeroPayout === true
-        && (cs.state === 'ShuttingDown'
-          || cs.state === 'ShutdownTransactionPending')
-      ) {
-        abandonmentScheduledRef.current = true;
-        const message = 'You received no funds from this session, so it was abandoned.';
-        pushChannel({ kind: 'session-over', title: 'Session Abandoned', message });
-        appendGameLog(`[session] ${message}`);
-        go?.abandon();
-        return;
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
