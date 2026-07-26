@@ -750,7 +750,10 @@ impl GameSession {
     }
 
     pub fn is_abandoned(&self) -> bool {
-        matches!(self.state.session_disposition, Some(SessionDisposition::Abandoned))
+        matches!(
+            self.state.session_disposition,
+            Some(SessionDisposition::Abandoned)
+        )
     }
 
     /// True when the last emitted [`ChannelStatus`] is a terminal channel state (sim `should_end`).
@@ -772,10 +775,12 @@ impl GameSession {
     /// still needs the persisted close command before this local session may
     /// drain.
     pub fn is_fully_resolved(&self) -> bool {
-        matches!(self.state.session_disposition, Some(SessionDisposition::Abandoned))
-            || (self.state.session_disposition.is_none()
-                && self.channel_status_terminal()
-                && !self.peer.has_active_on_chain_games())
+        matches!(
+            self.state.session_disposition,
+            Some(SessionDisposition::Abandoned)
+        ) || (self.state.session_disposition.is_none()
+            && self.channel_status_terminal()
+            && !self.peer.has_active_on_chain_games())
     }
 
     pub fn get_watching_coins(&self) -> Vec<CoinString> {
@@ -933,8 +938,12 @@ impl GameSession {
         if new_state != old_state {
             return true;
         }
-        if new.as_ref().and_then(|snapshot| snapshot.session_disposition.as_ref())
-            != old.as_ref().and_then(|snapshot| snapshot.session_disposition.as_ref())
+        if new
+            .as_ref()
+            .and_then(|snapshot| snapshot.session_disposition.as_ref())
+            != old
+                .as_ref()
+                .and_then(|snapshot| snapshot.session_disposition.as_ref())
         {
             return true;
         }
@@ -1052,7 +1061,8 @@ impl GameSession {
             return Ok(());
         }
 
-        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain {
+        if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain
+        {
             self.go_on_chain(allocator, true)?;
             return Ok(());
         }

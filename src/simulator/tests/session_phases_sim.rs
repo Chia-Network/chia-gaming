@@ -1348,7 +1348,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                 let result = cradles[i].flush_and_collect(allocator)?;
                 let mut terminal_command = match result.disposition {
                     ManagerDrainDisposition::Active | ManagerDrainDisposition::Terminal => None,
-                    ManagerDrainDisposition::AwaitOutboundTerminal(command) => Some(command.message),
+                    ManagerDrainDisposition::AwaitOutboundTerminal(command) => {
+                        Some(command.message)
+                    }
                 };
 
                 // Collect coin solution requests, launcher/coin-spend
@@ -1513,7 +1515,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let follow_up = cradles[i].flush_and_collect(allocator)?;
                     terminal_command = match follow_up.disposition {
                         ManagerDrainDisposition::Active | ManagerDrainDisposition::Terminal => None,
-                        ManagerDrainDisposition::AwaitOutboundTerminal(command) => Some(command.message),
+                        ManagerDrainDisposition::AwaitOutboundTerminal(command) => {
+                            Some(command.message)
+                        }
                     };
                     pending_events = follow_up.events;
                 }

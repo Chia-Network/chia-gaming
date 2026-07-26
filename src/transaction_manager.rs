@@ -155,17 +155,12 @@ pub struct TerminalHandoffCommand {
     pub message: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ManagerDrainDisposition {
+    #[default]
     Active,
     AwaitOutboundTerminal(TerminalHandoffCommand),
     Terminal,
-}
-
-impl Default for ManagerDrainDisposition {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 #[derive(Default)]
@@ -1125,10 +1120,14 @@ mod tests {
     fn cooperative_terminal_handoff_stays_non_terminal_until_completed() {
         let mut allocator = AllocEncoder::new();
         let mut mock = MockGameSession::default();
-        mock.queue_drain(vec![GameSessionEvent::OutboundTerminalMessage(vec![1, 2, 3])]);
+        mock.queue_drain(vec![GameSessionEvent::OutboundTerminalMessage(vec![
+            1, 2, 3,
+        ])]);
         let mut manager = TransactionManager::new(mock);
 
-        let drain = manager.flush_and_collect(&mut allocator).expect("handoff drain");
+        let drain = manager
+            .flush_and_collect(&mut allocator)
+            .expect("handoff drain");
         assert_eq!(
             drain.disposition,
             ManagerDrainDisposition::AwaitOutboundTerminal(TerminalHandoffCommand {
@@ -1141,7 +1140,9 @@ mod tests {
         manager
             .complete_outbound_terminal_handoff()
             .expect("complete handoff");
-        let terminal = manager.flush_and_collect(&mut allocator).expect("terminal drain");
+        let terminal = manager
+            .flush_and_collect(&mut allocator)
+            .expect("terminal drain");
         assert_eq!(terminal.disposition, ManagerDrainDisposition::Terminal);
     }
 
