@@ -240,11 +240,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
 
-const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
-  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
-]);
-
 const MIN_TIMEOUT_BLOCKS = 3;
 const MAX_TIMEOUT_BLOCKS = 30;
 
@@ -254,6 +249,14 @@ function isAbandonWaitingState(state: SessionModel['channel']['status']['state']
 
 function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolean): boolean {
   return abandonEnabled && isAbandonWaitingState(model?.channel.status.state);
+}
+
+function isZeroPayoutShutdown(model: SessionModel | null): boolean {
+  const status = model?.channel.status;
+  if (!status || (status.state !== 'ShuttingDown' && status.state !== 'ShutdownTransactionPending')) {
+    return false;
+  }
+  return status.zeroPayout === true;
 }
 
 function savedChannelStatus(save: SessionSave): SessionModel['channel']['status']['state'] | null {
@@ -1698,6 +1701,10 @@ const Shell = () => {
     hubConnRef.current?.setBusy(false, alias);
   }, [clearSessionPreservingHistory, clearSessionTimers, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
+  const abandonActiveChannel = useCallback(() => {
+    sessionController?.abandon();
+  }, []);
+
   /**
    * End live protocol for a terminal channel but keep the dashboard freeze
    * (Resolved Clean / balances / last status) so the game tab still shows how
@@ -1739,6 +1746,7 @@ const Shell = () => {
           their_balance: status.theirBalance,
           game_allocated: status.gameAllocated,
           have_potato: status.havePotato,
+          zero_payout: status.zeroPayout,
         },
         cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
       });
@@ -1805,7 +1813,8 @@ const Shell = () => {
     // and nudge an immediate poll so settlement payouts show up promptly.
     const bcType = blockchainTypeRef.current;
     if (bcType) startBalancePolling(bcType);
-  }, [startBalancePolling]);
+    if (!sessionFinishedCleanupRef.current) finishResolvedSessionDisplay(false);
+  }, [finishResolvedSessionDisplay, startBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
@@ -2265,6 +2274,18 @@ const Shell = () => {
   }, [syncPeerLiveness]);
 
   const requestDashboardGoOnChain = useCallback(() => {
+    if (isZeroPayoutShutdown(dashboardSessionModelRef.current)) {
+      setConfirmDialog({
+        title: 'Abandon session?',
+        body: 'This session will not pay you. Your opponent can complete the cooperative close without an on-chain transaction from you.',
+        confirmLabel: 'Abandon',
+        onConfirm: () => {
+          setConfirmDialog(null);
+          if (isZeroPayoutShutdown(dashboardSessionModelRef.current)) abandonActiveChannel();
+        },
+      });
+      return;
+    }
     const channelState = dashboardSessionModel?.channel.status.state;
     const isShutdownEscalation = channelState === 'ShuttingDown';
     setConfirmDialog({
@@ -2278,7 +2299,7 @@ const Shell = () => {
         performDashboardGoOnChain();
       },
     });
-  }, [dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
+  }, [abandonActiveChannel, dashboardSessionModel?.channel.status.state, performDashboardGoOnChain]);
 
   const handleDashboardAction = useCallback((kind: GameDashboardActionKind) => {
     switch (kind) {
@@ -2303,14 +2324,14 @@ const Shell = () => {
           onConfirm: () => {
             setConfirmDialog(null);
             if (!isSessionAbandonable(dashboardSessionModelRef.current, abandonEnabledRef.current)) return;
-            cancelDashboardSession();
+            abandonActiveChannel();
           },
         });
         break;
       case 'none':
         break;
     }
-  }, [cancelDashboardSession, requestDashboardCleanShutdown, requestDashboardGoOnChain]);
+  }, [abandonActiveChannel, cancelDashboardSession, requestDashboardCleanShutdown, requestDashboardGoOnChain]);
 
   const handleReconnect = useCallback(() => {
     if (!blockchainType || connecting) return;

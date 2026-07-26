@@ -1447,6 +1447,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     their_balance: None,
                                     game_allocated: None,
                                     have_potato: None,
+                                    zero_payout: None,
                                 })?;
                             }
                             GameSessionEvent::CoinSolutionRequest(coin) => {
@@ -2261,6 +2262,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             ChannelStatus::ResolvedClean
             | ChannelStatus::ResolvedUnrolled
             | ChannelStatus::ResolvedStale
+            | ChannelStatus::Abandoned
             | ChannelStatus::Failed => 7,
         }
     }
@@ -2935,8 +2937,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.push(SimScriptAction::CleanShutdown(1));
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
         let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -3292,8 +3299,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             moves.push(SimScriptAction::GoOnChain(1));
             moves.push(SimScriptAction::WaitBlocks(20, 1));
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("should finish");
 
             let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
             let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -3455,8 +3467,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Let both players process blocks so Alice detects & slashes.
         moves.push(SimScriptAction::WaitBlocks(30, 0));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Alice (player 0) should get all the money via slash because
@@ -3526,8 +3543,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             SimScriptAction::WaitBlocks(30, 0),
         ];
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            None,
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Bob (player 1) should get all the money via slash because
@@ -3978,8 +4000,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::NerfTransactions(0));
         moves.push(SimScriptAction::CleanShutdown(1));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4053,8 +4080,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::NerfTransactions(1));
         moves.push(SimScriptAction::CleanShutdown(1));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4153,8 +4185,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Wait for the unroll timeout to elapse and reward coins to be created.
         moves.push(SimScriptAction::WaitBlocks(17, 0));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4223,8 +4260,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Wait for the unroll timeout to elapse.
         moves.push(SimScriptAction::WaitBlocks(17, 0));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4994,8 +5036,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::WaitBlocks(120, 0));
         moves.push(SimScriptAction::WaitBlocks(5, 1));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
@@ -5035,7 +5082,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
-            None,
+            Some(200),
         )
         .expect("should finish");
 
@@ -5820,7 +5867,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut allocator,
             &moves,
             None,
-            None,
+            Some(200),
         )
         .expect("should finish");
 
@@ -6829,7 +6876,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
-            None,
+            Some(200),
         )
         .expect("should finish");
 

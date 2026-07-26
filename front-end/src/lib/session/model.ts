@@ -61,6 +61,7 @@ export interface ChannelStatusModel {
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  zeroPayout: boolean | null;
 }
 
 export interface GameCoinModel {
@@ -268,6 +269,7 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  zeroPayout: null,
 };
 
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
@@ -293,6 +295,7 @@ const RESOLVED_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
+  'Abandoned',
   'Failed',
 ]);
 
@@ -330,6 +333,7 @@ const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   ResolvedClean: 'Resolved Clean',
   ResolvedUnrolled: 'Resolved Unrolled',
   ResolvedStale: 'Resolved Stale',
+  Abandoned: 'Abandoned',
   Failed: 'Failed',
 };
 
@@ -713,6 +717,7 @@ function dashboardActionFor(
     case 'ResolvedClean':
     case 'ResolvedUnrolled':
     case 'ResolvedStale':
+    case 'Abandoned':
     case 'Failed':
       return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
   }
@@ -1047,6 +1052,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             theirBalance: save.channelStatus.their_balance == null ? null : String(save.channelStatus.their_balance),
             gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
             havePotato: save.channelStatus.have_potato ?? null,
+            zeroPayout: save.channelStatus.zero_payout ?? null,
           }
         : INITIAL_CHANNEL_STATUS_MODEL,
       connection: save.channelStatus

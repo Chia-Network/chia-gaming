@@ -176,6 +176,10 @@ pub trait ManagedGameSession {
     fn is_terminal(&self) -> bool {
         false
     }
+
+    fn abandon(&mut self, _allocator: &mut AllocEncoder) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl ManagedGameSession for GameSession {
@@ -198,6 +202,10 @@ impl ManagedGameSession for GameSession {
 
     fn is_terminal(&self) -> bool {
         self.is_fully_resolved()
+    }
+
+    fn abandon(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        GameSession::abandon(self, allocator)
     }
 }
 
@@ -812,6 +820,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                     their_balance: None,
                     game_allocated: None,
                     have_potato: None,
+                    zero_payout: None,
                 },
             ));
     }
@@ -840,6 +849,19 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             resync: self.pending_resync.take(),
             terminal,
         })
+    }
+
+    /// Discard unsubmitted local work and transition the wrapped session to its
+    /// local abandonment terminal.
+    pub fn abandon(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        self.pending_submissions.clear();
+        self.pending_events.clear();
+        self.pending_watch_coins.clear();
+        self.pending_resync = None;
+        self.watched_coins.clear();
+        self.submitted.clear();
+        self.vanished_coins.clear();
+        self.cradle.abandon(allocator)
     }
 }
 
@@ -901,6 +923,7 @@ mod tests {
         seen_reports: Vec<(u64, WatchReport)>,
         /// Pre-scripted drains, returned in order.
         scripted_drains: std::collections::VecDeque<DrainResult>,
+        abandoned: bool,
     }
 
     impl MockGameSession {
@@ -940,6 +963,41 @@ mod tests {
         ) -> Result<DrainResult, Error> {
             Ok(self.scripted_drains.pop_front().unwrap_or_default())
         }
+
+        fn is_terminal(&self) -> bool {
+            self.abandoned
+        }
+
+        fn abandon(&mut self, _allocator: &mut AllocEncoder) -> Result<(), Error> {
+            self.abandoned = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn abandon_discards_pending_protocol_work_and_is_terminal() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(90);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            GameSessionEvent::OutboundTransaction(test_bundle("pending"), None),
+        ]);
+        let mut manager = TransactionManager::new(mock);
+        manager
+            .flush_and_collect(&mut allocator)
+            .expect("initial drain");
+        assert_eq!(manager.snapshot_watched_coins(), vec![coin]);
+
+        manager.abandon(&mut allocator).expect("abandon");
+        let drain = manager
+            .flush_and_collect(&mut allocator)
+            .expect("terminal drain");
+
+        assert!(drain.terminal);
+        assert!(drain.watch_coins.is_empty());
+        assert!(manager.snapshot_watched_coins().is_empty());
+        assert!(manager.drain_submissions().expect("submissions").is_empty());
     }
 
     #[derive(Default, Serialize, Deserialize)]

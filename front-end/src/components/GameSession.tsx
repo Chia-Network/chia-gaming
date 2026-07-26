@@ -873,7 +873,16 @@ export interface GameSessionProps {
 const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
   const uniqueId = getPlayerId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain, onTerminal);
+  const session = useGameSession(
+    params,
+    uniqueId,
+    peerConn,
+    registerMessageHandler,
+    appendGameLog,
+    sessionSave,
+    blockchain,
+    onTerminal,
+  );
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);

@@ -150,7 +150,7 @@ export type ChannelStatus =
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
-  | 'Failed';
+  | 'Abandoned' | 'Failed';
 
 export interface ChannelStatusPayload {
   state: ChannelStatus;
@@ -160,6 +160,7 @@ export interface ChannelStatusPayload {
   their_balance: unknown;
   game_allocated: unknown;
   have_potato?: boolean | null;
+  zero_payout?: boolean | null;
 }
 
 export interface ProposalAcceptedPayload {
@@ -186,7 +187,7 @@ export type WasmEvent =
   | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string }
-  | { type: 'terminal' };
+  | { type: 'terminal'; reason: 'wasm' };
 
 interface GameSessionCreateConfig {
   rng_id: number;
@@ -263,6 +264,7 @@ export interface WasmConnection {
   cheat: (cid: number, id: string, mover_share: string) => WasmResult | undefined;
   accept_settlement: (cid: number, id: string) => WasmResult | undefined;
   shut_down: (cid: number) => WasmResult | undefined;
+  abandon: (cid: number) => WasmResult | undefined;
   go_on_chain: (cid: number) => WasmResult | undefined;
   report_puzzle_and_solution: (
     cid: number,
@@ -359,6 +361,10 @@ export class ChiaGame {
 
   shut_down(): WasmResult | undefined {
     return this.wasm.shut_down(this.session);
+  }
+
+  abandon(): WasmResult | undefined {
+    return this.wasm.abandon(this.session);
   }
 
   go_on_chain(): WasmResult | undefined {

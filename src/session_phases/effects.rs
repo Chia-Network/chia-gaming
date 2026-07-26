@@ -43,6 +43,7 @@ pub enum ChannelStatus {
     ResolvedClean,
     ResolvedUnrolled,
     ResolvedStale,
+    Abandoned,
     Failed,
 }
 
@@ -55,6 +56,7 @@ pub struct ChannelStatusSnapshot {
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
     pub have_potato: Option<bool>,
+    pub zero_payout: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -195,6 +197,8 @@ pub enum GameNotification {
         game_allocated: Option<Amount>,
         #[serde(skip_serializing_if = "Option::is_none")]
         have_potato: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        zero_payout: Option<bool>,
     },
 }
 

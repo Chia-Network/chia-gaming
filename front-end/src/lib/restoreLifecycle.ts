@@ -39,6 +39,7 @@ export function isTerminalChannelStatus(state: string | null | undefined): boole
   return state === 'ResolvedClean'
     || state === 'ResolvedUnrolled'
     || state === 'ResolvedStale'
+    || state === 'Abandoned'
     || state === 'Failed';
 }
 

@@ -356,6 +356,7 @@ struct GameSessionState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
+    pub abandoned: bool,
 
     #[serde(skip)]
     events: GameSessionEventQueue,
@@ -517,6 +518,7 @@ impl GameSession {
                 peer_disconnected: false,
                 is_failed: false,
                 is_on_chain: false,
+                abandoned: false,
                 events: GameSessionEventQueue::default(),
                 inbound_messages: VecDeque::default(),
             },
@@ -754,6 +756,7 @@ impl GameSession {
                 ChannelStatus::ResolvedClean
                     | ChannelStatus::ResolvedUnrolled
                     | ChannelStatus::ResolvedStale
+                    | ChannelStatus::Abandoned
                     | ChannelStatus::Failed,
             )
         )
@@ -762,7 +765,8 @@ impl GameSession {
     /// True when the session is fully resolved: channel status is terminal and
     /// no on-chain games are still being played out.
     pub fn is_fully_resolved(&self) -> bool {
-        self.channel_status_terminal() && !self.peer.has_active_on_chain_games()
+        self.state.abandoned
+            || (self.channel_status_terminal() && !self.peer.has_active_on_chain_games())
     }
 
     pub fn get_watching_coins(&self) -> Vec<CoinString> {
@@ -806,6 +810,18 @@ impl GameSession {
         Ok(())
     }
 
+    /// Stop participating in this session immediately. This is a local user
+    /// choice, not a protocol transition or a claim about on-chain resolution.
+    pub fn abandon(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        self.state.abandoned = true;
+        self.state.peer_disconnected = true;
+        self.state.inbound_messages.clear();
+        self.state.watching_coins.clear();
+        self.emit_channel_status_if_changed();
+        let _ = allocator;
+        Ok(())
+    }
+
     /// Settle deferred channel-setup work and retry any re-queued messages,
     /// flush potato-gated pending actions, and collect all accumulated events.
     /// Call this after any operation that may have changed state (delivering a
@@ -814,6 +830,12 @@ impl GameSession {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error> {
+        if self.state.abandoned {
+            return Ok(DrainResult {
+                events: std::mem::take(&mut self.state.events),
+                resync: self.state.resync.take(),
+            });
+        }
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
                 let mut env = ChannelEnv::new(allocator)?;
@@ -900,11 +922,25 @@ impl GameSession {
             their_balance: snap.their_balance.clone(),
             game_allocated: snap.game_allocated.clone(),
             have_potato: snap.have_potato,
+            zero_payout: snap.zero_payout,
         }
     }
 
     fn emit_channel_status_if_changed(&mut self) {
-        let snapshot = self.peer.channel_status_snapshot();
+        let snapshot = if self.state.abandoned {
+            Some(ChannelStatusSnapshot {
+                state: ChannelStatus::Abandoned,
+                advisory: None,
+                coin: None,
+                our_balance: None,
+                their_balance: None,
+                game_allocated: None,
+                have_potato: None,
+                zero_payout: None,
+            })
+        } else {
+            self.peer.channel_status_snapshot()
+        };
         if Self::should_emit_status(&self.last_channel_status, &snapshot) {
             if let Some(ref snap) = snapshot {
                 match snap.state {

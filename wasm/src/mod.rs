@@ -1095,6 +1095,13 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn abandon(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.abandon(&mut cradle.allocator)
+        })
+    }
+
+    #[wasm_bindgen]
     pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             cradle.cradle.go_on_chain(

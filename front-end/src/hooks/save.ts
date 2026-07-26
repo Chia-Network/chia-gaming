@@ -537,6 +537,7 @@ function isTerminalFinishedChannel(state: string | null | undefined): boolean {
   return state === 'ResolvedClean'
     || state === 'ResolvedUnrolled'
     || state === 'ResolvedStale'
+    || state === 'Abandoned'
     || state === 'Failed';
 }
 

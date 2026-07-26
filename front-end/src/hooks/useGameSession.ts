@@ -234,6 +234,7 @@ export interface ChannelStatusInfo {
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  zeroPayout: boolean | null;
 }
 
 const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
@@ -245,6 +246,7 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  zeroPayout: null,
 };
 
 function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
@@ -262,6 +264,7 @@ function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | nu
     theirBalance: parseAmount(cs.their_balance),
     gameAllocated: parseAmount(cs.game_allocated),
     havePotato: cs.have_potato ?? null,
+    zeroPayout: cs.zero_payout ?? null,
   };
 }
 
@@ -279,7 +282,7 @@ const ERROR_CHANNEL_STATUSES: ChannelStatus[] = ['ResolvedStale', 'Failed'];
 
 const WINDING_DOWN_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
   'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
-  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
+  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Abandoned', 'Failed',
 ]);
 
 const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
@@ -352,7 +355,7 @@ export function isWindingDown(state: ChannelStatus): boolean {
 }
 
 const RESOLVED_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
-  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
+  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Abandoned', 'Failed',
 ]);
 
 export function deriveSessionPhase(
@@ -697,6 +700,7 @@ export function useGameSession(
       (restoredModel?.game.queue ?? []) as QueuedNotification[],
     )
   );
+  const abandonmentScheduledRef = useRef(false);
 
   const pushChannel = useCallback((n: Omit<QueuedNotification, 'id'>) => {
     setChannelQueue(prev => {
@@ -1190,6 +1194,19 @@ export function useGameSession(
           scRef.current?.cleanShutdown();
           return;
         }
+      }
+      if (
+        !abandonmentScheduledRef.current
+        && info.zeroPayout === true
+        && (cs.state === 'ShuttingDown'
+          || cs.state === 'ShutdownTransactionPending')
+      ) {
+        abandonmentScheduledRef.current = true;
+        const message = 'You received no funds from this session, so it was abandoned.';
+        pushChannel({ kind: 'session-over', title: 'Session Abandoned', message });
+        appendGameLog(`[session] ${message}`);
+        go?.abandon();
+        return;
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
@@ -1699,7 +1716,7 @@ export function useGameSession(
       log(`[game] action failed: ${reason}`);
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance, appendGameLog]);
 
   // Subscribe to WASM events
   useEffect(() => {

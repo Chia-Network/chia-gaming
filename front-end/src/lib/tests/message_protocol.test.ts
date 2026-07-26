@@ -85,6 +85,7 @@ function makeMockCradle(
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
+    abandon: jest.fn(() => ({ events: [] } as WasmResult)),
     cradle: 0,
   } as unknown as ChiaGame;
 }
@@ -780,6 +781,23 @@ describe('cleanShutdown calls shut_down on cradle', () => {
     blob.cleanShutdown();
 
     expect((cradle as any).shut_down).toHaveBeenCalled();
+  });
+});
+
+describe('abandon calls Rust through cradle', () => {
+  it('delegates abandonment to the cradle', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+
+    const cradle = makeMockCradle();
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    blob.abandon();
+
+    expect((cradle as any).abandon).toHaveBeenCalled();
   });
 });
 

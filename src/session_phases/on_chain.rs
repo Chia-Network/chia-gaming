@@ -1794,6 +1794,7 @@ impl PeerLifecyclePhase for OnChainPhase {
             their_balance: Some(self.their_out_of_game_balance.clone()),
             game_allocated: None,
             have_potato: None,
+            zero_payout: None,
         })
     }
 

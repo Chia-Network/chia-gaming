@@ -791,6 +791,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
                 have_potato: None,
+                zero_payout: None,
             });
         }
         // The channel-creation expiry -> Failed signal now lives in the
@@ -818,6 +819,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
                 have_potato: None,
+                zero_payout: None,
             });
         }
         let state = match &self.state {
@@ -851,6 +853,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
             their_balance,
             game_allocated,
             have_potato: None,
+            zero_payout: None,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

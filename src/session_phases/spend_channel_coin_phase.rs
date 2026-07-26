@@ -1151,6 +1151,12 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             } else {
                 (None, None, None)
             };
+        let zero_payout = (state == ChannelStatus::ShutdownTransactionPending).then(|| {
+            self.base
+                .channel_state
+                .as_ref()
+                .is_some_and(|ch| ch.my_out_of_game_balance() == Amount::default())
+        });
         Some(ChannelStatusSnapshot {
             state,
             advisory: self.advisory.clone(),
@@ -1159,6 +1165,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             their_balance,
             game_allocated,
             have_potato: None,
+            zero_payout,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

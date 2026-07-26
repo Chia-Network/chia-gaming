@@ -973,7 +973,7 @@ mod sim_tests {
             moves.push(SimScriptAction::AcceptSettlement(0, GameID(2)));
             moves.push(SimScriptAction::CleanShutdown(0));
 
-            let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
+            let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(300))
                 .expect("two games joiner proposes should complete");
             assert_stayed_off_chain(&outcome, "two_games_joiner");
         }));

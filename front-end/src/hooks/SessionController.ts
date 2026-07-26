@@ -145,6 +145,7 @@ export class SessionController implements PollingGameSession {
   private pendingAcks: bigint[] = [];
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
+  private terminalDrain: Promise<void> | null = null;
   activeGameId: string | null = null;
   activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
@@ -591,9 +592,7 @@ export class SessionController implements PollingGameSession {
     this.scheduleDrain();
 
     if (result.terminal) {
-      this.blockchain?.stop();
-      this.stopKeepaliveTimer();
-      this.rxjsEmitter?.next({ type: 'terminal' });
+      void this.beginTerminalDrain('wasm');
     }
   }
 
@@ -662,6 +661,20 @@ export class SessionController implements PollingGameSession {
       }
     }
     throw new Error('SessionController pending work did not settle');
+  }
+
+  beginTerminalDrain(reason: 'wasm'): Promise<void> {
+    if (this.terminalDrain) return this.terminalDrain;
+    this.blockchain?.stop();
+    this.stopKeepaliveTimer();
+    this.terminalDrain = this.flushPendingWork()
+      .catch(error => {
+        this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
+      })
+      .then(() => {
+        this.rxjsEmitter?.next({ type: 'terminal', reason });
+      });
+    return this.terminalDrain;
   }
 
   private dispatchEvent(event: GameSessionEvent): void {
@@ -808,7 +821,7 @@ export class SessionController implements PollingGameSession {
       this.rxjsEmitter?.next({ type: 'error', error: errMsg });
       const state = this.lastChannelStatus?.state;
       const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
-        || state === 'ResolvedStale' || state === 'Failed';
+        || state === 'ResolvedStale' || state === 'Abandoned' || state === 'Failed';
       if (!this.onChain && !resolved) {
         this.goOnChain();
       }
@@ -1217,6 +1230,19 @@ export class SessionController implements PollingGameSession {
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
+  }
+
+  abandon(): void {
+    if (!this.cradle) return;
+    try {
+      this.processResult(this.cradle.abandon());
+    } catch (e) {
+      const msg = e instanceof Error ? (e.stack || e.message)
+        : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
+        : String(e);
+      console.error('[wasm] abandon failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
     }
   }
