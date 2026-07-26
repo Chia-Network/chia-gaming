@@ -271,7 +271,7 @@ describe('session persistence', () => {
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 8n,
+      version: 9n,
       playerId: 'player',
       blockchainType: 'simulator',
     });
@@ -309,7 +309,7 @@ describe('session persistence', () => {
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 8n,
+      version: 9n,
       playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
@@ -664,7 +664,7 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadState();
-    expect(state.version).toBe(8n);
+    expect(state.version).toBe(9n);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {

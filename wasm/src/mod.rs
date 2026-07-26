@@ -36,22 +36,15 @@ mod gaming_wasm {
     use chia_gaming::game_session::{
         GameSession, GameSessionConfig, WatchReport,
     };
-    use chia_gaming::transaction_manager::{CoinStateRecord, ManagerDrain, TransactionManager};
+    use chia_gaming::transaction_manager::{
+        CoinStateRecord, ManagerDrain, ManagerDrainDisposition, TerminalHandoffCommand,
+        TransactionManager,
+    };
     use chia_gaming::session_phases::effects::{GameSessionEvent, GameNotification};
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::GameProposal;
-    use chia_gaming::session_phases::types::{GameFactory, ToLocalUI};
-
-    struct NullLocalUI;
-    impl ToLocalUI for NullLocalUI {
-        fn notification(
-            &mut self,
-            _notification: &GameNotification,
-        ) -> Result<(), types::Error> {
-            Ok(())
-        }
-    }
+    use chia_gaming::session_phases::types::GameFactory;
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -147,7 +140,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 1;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 2;
 
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsWatchReport {
@@ -1100,13 +1093,36 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn complete_outbound_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.complete_outbound_terminal_handoff()
+        })
+    }
+
+    fn terminal_handoff_command_to_js(command: &TerminalHandoffCommand) -> JsValue {
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &"id".into(), &JsValue::from_str(&command.id.to_string()));
+        let bytes = js_sys::Uint8Array::from(command.message.as_slice());
+        let _ = js_sys::Reflect::set(&obj, &"message".into(), &bytes);
+        obj.into()
+    }
+
+    #[wasm_bindgen]
+    pub fn pending_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            Ok(cradle
+                .cradle
+                .pending_terminal_handoff()
+                .as_ref()
+                .map(terminal_handoff_command_to_js)
+                .unwrap_or(JsValue::NULL))
+        })
+    }
+
+    #[wasm_bindgen]
     pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.go_on_chain(
-                &mut cradle.allocator,
-                &mut NullLocalUI,
-                false,
-            )
+            cradle.cradle.go_on_chain(&mut cradle.allocator, false).map(|_| ())
         })
     }
 
@@ -1275,6 +1291,10 @@ mod gaming_wasm {
                 let _ = js_sys::Reflect::set(&obj, &"OutboundMessage".into(), &arr);
                 Ok(obj.into())
             }
+            GameSessionEvent::OutboundTerminalMessage(_) => Err(types::Error::StrErr(
+                "OutboundTerminalMessage should be intercepted before JS event serialization"
+                    .to_string(),
+            )),
             GameSessionEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
@@ -1322,9 +1342,32 @@ mod gaming_wasm {
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
-        if drain.terminal {
-            let _ = js_sys::Reflect::set(&obj, &"terminal".into(), &true.into());
+        let disposition = js_sys::Object::new();
+        match &drain.disposition {
+            ManagerDrainDisposition::Active => {
+                let _ = js_sys::Reflect::set(&disposition, &"kind".into(), &"active".into());
+            }
+            ManagerDrainDisposition::AwaitOutboundTerminal(command) => {
+                let _ = js_sys::Reflect::set(
+                    &disposition,
+                    &"kind".into(),
+                    &"await-outbound-terminal".into(),
+                );
+                let _ = js_sys::Reflect::set(
+                    &disposition,
+                    &"command".into(),
+                    &terminal_handoff_command_to_js(command),
+                );
+            }
+            ManagerDrainDisposition::Terminal => {
+                let _ = js_sys::Reflect::set(
+                    &disposition,
+                    &"kind".into(),
+                    &"terminal".into(),
+                );
+            }
         }
+        let _ = js_sys::Reflect::set(&obj, &"disposition".into(), &disposition);
         Ok(obj.into())
     }
 

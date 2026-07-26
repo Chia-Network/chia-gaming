@@ -404,9 +404,9 @@ The hub does not create a session. It can only advise and relay:
 - **Game dashboard banner**: Selector-driven channel / lifecycle /
   balance strip from `SessionModel`
   (`selectGameDashboardView`, `selectStatusBarBalances`).
-- **Channel state tracking**: `ChannelStatus` notifications from WASM with
-  full state machine (`useGameSession.ts`). `isWindingDown()` helper for
-  UI gating.
+- **Channel state tracking**: Rust-owned `ChannelStatus` notifications are
+  normalized into `SessionModel`; `selectSessionPhase` and
+  `isWindingDownChannelStatus` provide UI lifecycle gating.
 - **Go on-chain and clean shutdown**: Both implemented in WASM wrapper and
   exposed through `useGameSession`.
 

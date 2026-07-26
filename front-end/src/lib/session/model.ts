@@ -3,11 +3,12 @@ import type {
   ChannelStatusPayload,
   GameConnectionState,
   PeerLiveness,
+  SessionDisposition,
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionSave } from '../../hooks/save';
-import { coinIdFromBytes, coerceToBytes } from '../../util';
+import { coerceToBytes } from '../../util';
 import type { SettlementOutcome } from '../settlement';
 import { isSettlementOutcome } from '../settlement';
 import {
@@ -56,7 +57,9 @@ export type NotificationKind =
 
 export interface ChannelStatusModel {
   state: ChannelStatus;
+  sessionDisposition: SessionDisposition | null;
   advisory: string | null;
+  coin: Uint8Array | null;
   coinHex: string | null;
   coinAmount: string | null;
   ourBalance: string | null;
@@ -92,7 +95,11 @@ export interface QueuedNotificationModel {
   kind: NotificationKind;
   title: string;
   message: string;
-  payload?: any;
+  payload?: ChannelStatusModel | {
+    label: string;
+    myReward: string | null;
+    rewardCoinHex: string | null;
+  };
 }
 
 export interface HandTermsModel {
@@ -192,35 +199,6 @@ export interface SessionModelInput {
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
-export interface SessionSnapshot {
-  restore?: Partial<RestoreModel>;
-  peer?: Partial<PeerModel>;
-  channel?: Partial<ChannelModel>;
-  game?: Partial<GameModel>;
-  betweenHand?: Partial<BetweenHandModel>;
-  history?: Partial<SessionHistoryModel>;
-  myRunningBalance?: string;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie';
-}
-
-export type SessionEvent =
-  | { type: 'restore-status'; status: RestoreStatus; error: string | null }
-  | { type: 'hub-reconciled'; reconciled: boolean }
-  | { type: 'peer-connected'; connected: boolean | null }
-  | { type: 'channel-status'; status: ChannelStatusModel }
-  | { type: 'game-coin'; coin: GameCoinModel }
-  | { type: 'hand-status'; status: HandStatus }
-  | { type: 'game-terminal'; terminal: GameTerminalModel }
-  | { type: 'between-hand'; state: Partial<BetweenHandModel> }
-  | { type: 'history'; state: Partial<SessionHistoryModel> };
-
-export type SessionIntent =
-  | { type: 'go-on-chain' }
-  | { type: 'clean-shutdown' }
-  | { type: 'propose-game'; terms: HandTermsModel }
-  | { type: 'accept-proposal'; id: string }
-  | { type: 'reject-proposal'; id: string };
-
 export type GameDashboardActionKind =
   | 'none'
   | 'cancel'
@@ -265,7 +243,9 @@ export interface StatusBarBalanceSegment {
 
 export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   state: 'Handshaking',
+  sessionDisposition: null,
   advisory: null,
+  coin: null,
   coinHex: null,
   coinAmount: null,
   ourBalance: null,
@@ -293,22 +273,36 @@ function parseChannelAmountValue(value: unknown): string | null {
   return String(value);
 }
 
-export async function channelStatusModelFromPayload(
-  status: ChannelStatusPayload,
-): Promise<ChannelStatusModel> {
+export function channelStatusModelFromPayload(status: ChannelStatusPayload): ChannelStatusModel {
   const coin = coerceToBytes(status.coin);
   const coinAmount = parseChannelAmount(status.coin);
   const resolvedFromUnroll = status.state === 'ResolvedUnrolled' || status.state === 'ResolvedStale';
   return {
     state: status.state,
+    sessionDisposition: status.session_disposition ?? null,
     advisory: status.advisory ?? null,
-    coinHex: coin ? await coinIdFromBytes(coin) : null,
+    coin,
+    coinHex: null,
     coinAmount,
     ourBalance: resolvedFromUnroll ? (coinAmount ?? '0') : parseChannelAmountValue(status.our_balance),
     theirBalance: parseChannelAmountValue(status.their_balance),
     gameAllocated: parseChannelAmountValue(status.game_allocated),
     havePotato: status.have_potato ?? null,
     zeroPayout: status.zero_payout ?? null,
+  };
+}
+
+export function channelStatusPayloadFromModel(status: ChannelStatusModel): ChannelStatusPayload {
+  return {
+    state: status.state,
+    session_disposition: status.sessionDisposition,
+    advisory: status.advisory,
+    coin: status.coin,
+    our_balance: status.ourBalance,
+    their_balance: status.theirBalance,
+    game_allocated: status.gameAllocated,
+    have_potato: status.havePotato,
+    zero_payout: status.zeroPayout,
   };
 }
 
@@ -335,7 +329,6 @@ export const RESOLVED_CHANNEL_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
-  'Abandoned',
   'Failed',
 ]);
 
@@ -346,7 +339,6 @@ export const WINDING_DOWN_CHANNEL_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
-  'Abandoned',
   'Failed',
 ]);
 
@@ -368,8 +360,19 @@ export const PRE_ACTIVE_CHANNEL_STATES = new Set<ChannelStatus>([
   'TransactionPending',
 ]);
 
-export function isTerminalChannelStatus(state: string | null | undefined): boolean {
-  return state !== null && state !== undefined && RESOLVED_CHANNEL_STATES.has(state as ChannelStatus);
+type TerminalChannelSnapshot =
+  | Pick<ChannelStatusModel, 'state' | 'sessionDisposition'>
+  | Pick<ChannelStatusPayload, 'state' | 'session_disposition'>;
+
+export function isTerminalChannelSnapshot(
+  status: TerminalChannelSnapshot | null | undefined,
+): boolean {
+  const sessionDisposition = status && ('sessionDisposition' in status
+    ? status.sessionDisposition
+    : status.session_disposition);
+  return sessionDisposition !== 'AwaitOutboundTerminal'
+    && (sessionDisposition === 'Abandoned'
+      || (status !== null && status !== undefined && RESOLVED_CHANNEL_STATES.has(status.state)));
 }
 
 export function isPreActiveChannelStatus(state: string | null | undefined): boolean {
@@ -392,7 +395,6 @@ const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   ResolvedClean: 'Resolved Clean',
   ResolvedUnrolled: 'Resolved Unrolled',
   ResolvedStale: 'Resolved Stale',
-  Abandoned: 'Abandoned',
   Failed: 'Failed',
 };
 
@@ -476,58 +478,13 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
   };
 }
 
-export function updateSessionModel(model: SessionModel, event: SessionEvent): SessionModel {
-  switch (event.type) {
-    case 'restore-status':
-      return {
-        ...model,
-        restore: { ...model.restore, status: event.status, error: event.error },
-      };
-    case 'hub-reconciled':
-      return {
-        ...model,
-        restore: { ...model.restore, hubReconciled: event.reconciled },
-      };
-    case 'peer-connected':
-      return { ...model, peer: { connected: event.connected } };
-    case 'channel-status':
-      return {
-        ...model,
-        channel: { ...model.channel, status: event.status },
-      };
-    case 'game-coin':
-      return {
-        ...model,
-        game: { ...model.game, coin: event.coin },
-      };
-    case 'hand-status':
-      return {
-        ...model,
-        game: { ...model.game, handStatus: event.status },
-      };
-    case 'game-terminal':
-      return {
-        ...model,
-        game: { ...model.game, terminal: event.terminal },
-      };
-    case 'between-hand':
-      return {
-        ...model,
-        betweenHand: { ...model.betweenHand, ...event.state },
-      };
-    case 'history':
-      return {
-        ...model,
-        history: { ...model.history, ...event.state },
-      };
-  }
-}
-
 export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
   return WINDING_DOWN_CHANNEL_STATES.has(state);
 }
 
 export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
+  if (model.channel.status.sessionDisposition === 'Abandoned') return 'resolved';
+  if (model.channel.status.sessionDisposition === 'AwaitOutboundTerminal') return 'off-chain';
   if (
     (model.channel.status.state === 'ResolvedUnrolled'
       || model.channel.status.state === 'ResolvedStale')
@@ -535,7 +492,7 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
   ) {
     return 'on-chain';
   }
-  if (RESOLVED_CHANNEL_STATES.has(model.channel.status.state)) return 'resolved';
+  if (isTerminalChannelSnapshot(model.channel.status)) return 'resolved';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
   if (model.channel.goOnChainPressed || isWindingDownChannelStatus(model.channel.status.state)) {
     return 'on-chain';
@@ -749,6 +706,9 @@ function dashboardActionFor(
   cleanShutdownGraceActive: boolean,
   abandonEnabled: boolean,
 ): Pick<GameDashboardViewModel, 'actionLabel' | 'actionEnabled' | 'actionKind'> {
+  if (isTerminalChannelSnapshot(model.channel.status)) {
+    return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
+  }
   switch (model.channel.status.state) {
     case 'Handshaking':
     case 'WaitingForHeightToOffer':
@@ -779,6 +739,13 @@ function dashboardActionFor(
       }
       return { actionLabel: 'Go On-Chain', actionEnabled: true, actionKind: 'go-on-chain' };
     case 'ShutdownTransactionPending':
+      if (model.channel.status.zeroPayout) {
+        return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+      }
+      if (abandonEnabled) {
+        return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+      }
+      return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
     case 'GoingOnChain':
     case 'Unrolling':
       if (abandonEnabled) {
@@ -788,7 +755,6 @@ function dashboardActionFor(
     case 'ResolvedClean':
     case 'ResolvedUnrolled':
     case 'ResolvedStale':
-    case 'Abandoned':
     case 'Failed':
       return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
   }
@@ -816,7 +782,11 @@ export function selectGameDashboardView(
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false, options.abandonEnabled ?? false);
 
   return {
-    channelStatusLabel: CHANNEL_STATUS_LABELS[channel.state],
+    channelStatusLabel: channel.sessionDisposition === 'Abandoned'
+      ? 'Abandoned'
+      : channel.sessionDisposition === 'AwaitOutboundTerminal'
+        ? 'Waiting for Peer'
+        : CHANNEL_STATUS_LABELS[channel.state],
     channelDetail: channelStatusDetail(model),
     havePotato: channel.havePotato === true,
     handStatusLabel: collapsedHandStatusLabel(model),
@@ -1118,9 +1088,11 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
       status: save.channelStatus
         ? {
             state: save.channelStatus.state,
+            sessionDisposition: save.channelStatus.session_disposition ?? null,
             advisory: save.channelStatus.advisory ?? null,
+            coin: coerceToBytes(save.channelStatus.coin),
             coinHex: null,
-            coinAmount: null,
+            coinAmount: parseChannelAmount(save.channelStatus.coin),
             ourBalance: save.channelStatus.our_balance == null ? null : String(save.channelStatus.our_balance),
             theirBalance: save.channelStatus.their_balance == null ? null : String(save.channelStatus.their_balance),
             gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
@@ -1188,6 +1160,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
         reviewPeerProposal: parseProposalSnapshot(save.betweenHandReviewPeerProposal, lastTerms),
         rejectedOnceTerms: parseOptionalTermsSnapshot(save.betweenHandRejectedOnceTerms, lastTerms),
+        pendingRetryTerms: parseOptionalTermsSnapshot(save.betweenHandPendingRetryTerms, lastTerms),
         lastTerms,
         composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
         composeGameTimeout: parsePositiveBigintString(save.betweenHandComposeGameTimeout, lastTerms.gameTimeout),
@@ -1272,6 +1245,9 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms),
     betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
       ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
+      : undefined,
+    betweenHandPendingRetryTerms: model.betweenHand.pendingRetryTerms
+      ? termsSnapshot(model.betweenHand.pendingRetryTerms)
       : undefined,
     betweenHandCachedPeerProposal: model.betweenHand.cachedPeerProposal
       ? {

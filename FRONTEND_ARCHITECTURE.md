@@ -379,7 +379,7 @@ localStorage holds only small preferences, the resumable-session marker, and
 tab/reset coordination keys. This storage is not encrypted and remains inside
 the same-origin trust model described above.
 
-The current schema version is `6`; because the project is still alpha, older
+The current schema version is `9`; because the project is still alpha, older
 versions are wiped rather than migrated. The `version` field is kept as a future
 migration hook for when there is an installed base to preserve. All game-specific
 fields are optional — a save may contain only pre-game connection state or the
@@ -387,7 +387,7 @@ full mid-game session state:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `bigint` | Save schema version; currently `6`. |
+| `version` | `bigint` | Save schema version; currently `9`. |
 | `playerId` | `string` | Stable local hub/player identity for this browser state. |
 | `sessionId` | `string?` | Stable token linking the hub iframe and game-channel WebSocket. |
 | `alias` | `string?` | Local hub display alias preference. |
@@ -424,7 +424,7 @@ full mid-game session state:
 | `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
 | `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
 | `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
-| `channelStatus` | `ChannelStatusPayload \| null?` | Last Rust-owned channel status for UI restore. It is normalized once into the canonical `ChannelStatusModel` (state, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`) before any view or lifecycle policy reads it. |
+| `channelStatus` | `ChannelStatusPayload \| null?` | Last Rust-owned canonical snapshot for UI restore: actual channel lifecycle plus optional local `session_disposition`, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`. It is normalized once into `ChannelStatusModel` before any view or lifecycle policy reads it. |
 | `myAlias` | `string?` | Local player display name for the active pairing/session. |
 | `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
@@ -564,14 +564,26 @@ projects the balance segments under those labels. Both read from the shared
 The dashboard never derives whether a shutdown has value remaining from its
 displayed balances or game state. Rust provides `channelStatus.zero_payout`
 when shutdown begins. A `ShuttingDown` status with that flag set offers
-immediate **Abandon**; a shutdown without it observes the normal cooperative
-grace period before offering **Go On-Chain**. The same Rust predicate makes a
-direct or stale `go_on_chain` call abandon before creating a new spend, so the
-UI label is a projection of protocol authority rather than the enforcement
-point. `SessionController.goOnChain()` returns whether Rust actually began
-on-chain resolution; Shell applies the peer-disconnect, phase, and dashboard
-on-chain effects only for that successful result. Timer-gated abandon actions
-in other waiting states remain separate stalled-flow escapes. See
+immediate **Abandon** as a user-controlled escape hatch, but Rust continues the
+cooperative close until it has supplied the peer with the completed close
+spend. That zero-payout responder does not submit the transaction itself. Its
+drain reports one typed terminal-handoff command; `SessionController` durably
+persists, sends, and replays its complete-close message until the peer ACKs it,
+while Rust reports `session_disposition: AwaitOutboundTerminal` so React keeps
+the controller alive even if the channel snapshot becomes resolved. After the
+ACK, Rust sets `session_disposition: Abandoned` while retaining the actual channel status.
+It does not wait for the peer’s on-chain
+publication or confirmation. A shutdown without the flag observes the normal
+cooperative grace period before offering **Go On-Chain**. The same Rust
+predicate makes a direct or stale `go_on_chain` call abandon before creating a
+new spend, so the UI label is a projection of protocol authority rather than
+the enforcement point. A failed inbound `deliver_message` is also deliberately
+routed through that Go On-Chain entry point: Rust abandons a zero-payout session
+there, while a session with value remaining starts normal on-chain resolution.
+`SessionController.goOnChain()` returns whether Rust actually began on-chain
+resolution; Shell applies the peer-disconnect, phase, and dashboard on-chain
+effects only for that successful result. Timer-gated abandon actions in other
+waiting states remain separate stalled-flow escapes. See
 [Abandonment and Zero-Payout Shutdown](UX_NOTIFICATIONS.md#abandonment-and-zero-payout-shutdown)
 for the full state and terminal-effect rules.
 
@@ -905,13 +917,12 @@ and the perspective-correct `myContribution` / `theirContribution`, then renders
 the `GameSession` component. Specific game types and per-hand terms are chosen
 later inside the session through game proposals.
 
-Session-end side effects (hub busy state, balance polling, peer relay
-teardown, clearing session refs) are driven by the `onTerminal` callback wired
-at session-controller creation time, not by `handleSessionPhaseChange`. That
-callback only handles React UI state: phase, error, and tab switching. The
-`onTerminal` callback is passed through `GameSession` → `useGameSession` →
-`getOrCreateSessionController`, so the subscription is co-located with blob
-creation and naturally re-subscribes on each new session.
+Session-end side effects (hub busy state, balance polling, peer relay teardown,
+and clearing session refs) are driven by Shell's
+`handleSessionPhaseChange('resolved')`. `SessionModel` reaches that phase only
+after Rust's final `ChannelStatus` snapshot has been projected into React, so
+Shell preserves the final dashboard snapshot before tearing down the live
+controller.
 
 ### Blockchain Connection Flow
 
@@ -1005,19 +1016,15 @@ the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
 without replaying old events. Future explicit unwatch/abandon events should flow
 as deltas too.
 
-**Polling Termination.** `ManagerDrain` carries a `terminal` flag, set by
-`TransactionManager.flush_and_collect` when the channel has reached a terminal
-state (including local abandonment, clean shutdown confirmation, completed
-on-chain resolution, or channel-creation expiry). When
-`SessionController.processResult` sees `terminal: true`, it first discards
-queued outbound protocol work, acknowledgements, retransmissions, and
-watch-coin updates and replaces any already-queued presentation events with the
-presentation events in that terminal result. It then stops
-the `BlockchainPoller` and keepalive timer directly — without round-tripping
-through the React notification-to-effect chain — and fires `onTerminal` after
-the retained events drain. Shell finalizes the resolved dashboard from the
-terminal channel-status update, preserving that final snapshot for reload
-before tearing down the peer relay and clearing hub busy state.
+**Polling Termination.** `ManagerDrainDisposition` is the sole host lifecycle
+boundary: `active`, `await-outbound-terminal(command)`, or `terminal`. WASM
+exposes that one discriminated disposition. `SessionController` durably sends
+and replays its Rust-issued command until the peer ACKs it, then asks Rust to
+finalize. Only `terminal` discards queued protocol work and watch-coin updates
+and stops the `BlockchainPoller` and keepalive timer. Its retained
+`ChannelStatus` presentation event updates the `SessionModel`; Shell then sees
+`resolved`, persists the final dashboard snapshot, and tears down the peer
+relay and hub busy state.
 
 ### WalletConnect BigInt Serialization
 

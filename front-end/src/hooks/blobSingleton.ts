@@ -161,7 +161,6 @@ export function getOrCreateSessionController(
   getFee?: () => bigint,
   channelTimeout?: number,
   unrollTimeout?: number,
-  onTerminal?: () => void,
 ): { sessionController: SessionController } {
   if (sessionController) {
     return { sessionController };
@@ -181,18 +180,6 @@ export function getOrCreateSessionController(
   sessionController.perGameAmount = perGameAmount ?? 0n;
   if (getFee) sessionController.getFee = getFee;
   sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
-
-  if (onTerminal) {
-    const sc = sessionController;
-    const sub = sc.getObservable().subscribe({
-      next: (evt) => {
-        if (evt.type === 'terminal') {
-          sub.unsubscribe();
-          onTerminal();
-        }
-      },
-    });
-  }
 
   registerMessageHandler(
     (msgno: number, msg: Uint8Array) => {

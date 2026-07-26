@@ -34,7 +34,6 @@ use crate::game_session::{DrainResult, GameSession, WatchReport};
 use crate::session_phases::effects::{
     ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
 };
-use crate::session_phases::types::ToLocalUI;
 
 /// Raw per-coin chain state as reported by the polling layer for a single
 /// watched coin.  `created_height`/`spent_height` are `None` until the coin is
@@ -150,12 +149,31 @@ impl WatchedCoin {
 /// and coin-spend requests), the watch registrations intercepted during this
 /// drain, plus any resync signal. Outbound transactions are intercepted by the
 /// manager and are not present here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalHandoffCommand {
+    pub id: u64,
+    pub message: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManagerDrainDisposition {
+    Active,
+    AwaitOutboundTerminal(TerminalHandoffCommand),
+    Terminal,
+}
+
+impl Default for ManagerDrainDisposition {
+    fn default() -> Self {
+        Self::Active
+    }
+}
+
 #[derive(Default)]
 pub struct ManagerDrain {
     pub events: GameSessionEventQueue,
     pub watch_coins: Vec<CoinString>,
     pub resync: Option<(usize, bool)>,
-    pub terminal: bool,
+    pub disposition: ManagerDrainDisposition,
 }
 
 /// The minimal interface the [`TransactionManager`] needs from the cradle it
@@ -176,6 +194,16 @@ pub trait ManagedGameSession {
 
     fn is_terminal(&self) -> bool {
         false
+    }
+
+    fn is_abandoned(&self) -> bool {
+        false
+    }
+
+    fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
+        Err(Error::StrErr(
+            "no cooperative terminal handoff is pending".to_string(),
+        ))
     }
 
     fn abandon(&mut self) -> Result<(), Error>;
@@ -201,6 +229,14 @@ impl ManagedGameSession for GameSession {
 
     fn is_terminal(&self) -> bool {
         self.is_fully_resolved()
+    }
+
+    fn is_abandoned(&self) -> bool {
+        GameSession::is_abandoned(self)
+    }
+
+    fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
+        GameSession::complete_outbound_terminal_handoff(self)
     }
 
     fn abandon(&mut self) -> Result<(), Error> {
@@ -230,6 +266,12 @@ pub struct TransactionManager<C> {
     /// Resync signal observed during draining, surfaced to the hosting layer.
     #[serde(skip)]
     pending_resync: Option<(usize, bool)>,
+    /// The one tagged message that must cross the durable outbound boundary
+    /// before the manager may finalize local abandonment.
+    #[serde(default)]
+    pending_outbound_terminal: Option<TerminalHandoffCommand>,
+    #[serde(default)]
+    next_terminal_handoff_id: u64,
     /// How many blocks a coin must remain confirmed-spent before eviction.
     confirmation_depth: u64,
     /// Most recent height reported via `report_coin_states`.
@@ -308,6 +350,8 @@ impl<C> TransactionManager<C> {
             pending_events: GameSessionEventQueue::default(),
             pending_watch_coins: Vec::new(),
             pending_resync: None,
+            pending_outbound_terminal: None,
+            next_terminal_handoff_id: 0,
             confirmation_depth: DEFAULT_CONFIRMATION_DEPTH,
             last_height: 0,
             present_coins: std::collections::HashSet::new(),
@@ -444,6 +488,18 @@ impl<C> TransactionManager<C> {
                     self.pending_watch_coins.push(coin_string.clone());
                     self.register_watch(coin_string, timeout, spend);
                 }
+                GameSessionEvent::OutboundTerminalMessage(message) => {
+                    assert!(
+                        self.pending_outbound_terminal.is_none(),
+                        "only one terminal outbound handoff may be pending"
+                    );
+                    let command = TerminalHandoffCommand {
+                        id: self.next_terminal_handoff_id,
+                        message,
+                    };
+                    self.next_terminal_handoff_id += 1;
+                    self.pending_outbound_terminal = Some(command);
+                }
                 other => {
                     self.pending_events.push_back(other);
                 }
@@ -468,22 +524,47 @@ impl TransactionManager<GameSession> {
         self.channel_expired || self.cradle.channel_status_terminal()
     }
 
-    /// Trigger on-chain resolution, or abandon through the manager when the
-    /// inner session has no remaining payout or active game for us.
+    /// Trigger on-chain resolution. The cradle owns the zero-payout decision;
+    /// the manager only clears retained work when that decision abandons.
     pub fn go_on_chain(
         &mut self,
         allocator: &mut AllocEncoder,
-        local_ui: &mut dyn ToLocalUI,
         got_error: bool,
     ) -> Result<(), Error> {
-        if self.cradle.should_abandon_on_go_on_chain(got_error) {
-            return self.abandon();
+        self.cradle.go_on_chain(allocator, got_error)?;
+        if self.cradle.is_abandoned() {
+            self.discard_local_artifacts();
         }
-        self.cradle.go_on_chain(allocator, local_ui, got_error)
+        Ok(())
     }
 }
 
 impl<C: ManagedGameSession> TransactionManager<C> {
+    pub fn terminal_disposition(&self) -> ManagerDrainDisposition {
+        if let Some(command) = self.pending_outbound_terminal.clone() {
+            ManagerDrainDisposition::AwaitOutboundTerminal(command)
+        } else if self.channel_expired || self.cradle.is_terminal() {
+            ManagerDrainDisposition::Terminal
+        } else {
+            ManagerDrainDisposition::Active
+        }
+    }
+
+    pub fn pending_terminal_handoff(&self) -> Option<TerminalHandoffCommand> {
+        self.pending_outbound_terminal.clone()
+    }
+
+    fn discard_local_artifacts(&mut self) {
+        self.pending_submissions.clear();
+        self.pending_events.clear();
+        self.pending_watch_coins.clear();
+        self.pending_resync = None;
+        self.pending_outbound_terminal = None;
+        self.watched_coins.clear();
+        self.submitted.clear();
+        self.vanished_coins.clear();
+    }
+
     /// Report the latest confirmed height and the on-chain state of the watched
     /// coins.  Computes the created/deleted diff against tracked state and feeds
     /// it to the inner cradle.  Does not drain events; call
@@ -828,6 +909,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .push_back(GameSessionEvent::Notification(
                 GameNotification::ChannelStatus {
                     state: ChannelStatus::Failed,
+                    session_disposition: None,
                     advisory: Some("channel coin not confirmed in time".to_string()),
                     coin: None,
                     our_balance: None,
@@ -855,26 +937,42 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         if result.resync.is_some() {
             self.pending_resync = result.resync;
         }
+        if self.cradle.is_abandoned() {
+            self.discard_local_artifacts();
+        }
         self.absorb_events(result.events);
-        let terminal = self.channel_expired || self.cradle.is_terminal();
+        let disposition = self.terminal_disposition();
         Ok(ManagerDrain {
             events: std::mem::take(&mut self.pending_events),
             watch_coins: std::mem::take(&mut self.pending_watch_coins),
             resync: self.pending_resync.take(),
-            terminal,
+            disposition,
         })
+    }
+
+    /// Complete a cooperative zero-payout shutdown once the host has handed
+    /// the signed close spend to the peer, then discard every remaining local
+    /// manager artifact.
+    pub fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
+        if self.pending_outbound_terminal.is_none() {
+            return Err(Error::StrErr(
+                "no cooperative terminal handoff is pending".to_string(),
+            ));
+        }
+        self.cradle.complete_outbound_terminal_handoff()?;
+        self.discard_local_artifacts();
+        Ok(())
     }
 
     /// Discard unsubmitted local work and transition the wrapped session to its
     /// local abandonment terminal.
     pub fn abandon(&mut self) -> Result<(), Error> {
-        self.pending_submissions.clear();
-        self.pending_events.clear();
-        self.pending_watch_coins.clear();
-        self.pending_resync = None;
-        self.watched_coins.clear();
-        self.submitted.clear();
-        self.vanished_coins.clear();
+        if self.pending_outbound_terminal.is_some() {
+            return Err(Error::StrErr(
+                "cannot abandon while the terminal handoff awaits peer acknowledgement".to_string(),
+            ));
+        }
+        self.discard_local_artifacts();
         self.cradle.abandon()
     }
 }
@@ -982,6 +1080,15 @@ mod tests {
             self.abandoned
         }
 
+        fn is_abandoned(&self) -> bool {
+            self.abandoned
+        }
+
+        fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
+            self.abandoned = true;
+            Ok(())
+        }
+
         fn abandon(&mut self) -> Result<(), Error> {
             self.abandoned = true;
             Ok(())
@@ -1008,10 +1115,34 @@ mod tests {
             .flush_and_collect(&mut allocator)
             .expect("terminal drain");
 
-        assert!(drain.terminal);
+        assert_eq!(drain.disposition, ManagerDrainDisposition::Terminal);
         assert!(drain.watch_coins.is_empty());
         assert!(manager.snapshot_watched_coins().is_empty());
         assert!(manager.drain_submissions().expect("submissions").is_empty());
+    }
+
+    #[test]
+    fn cooperative_terminal_handoff_stays_non_terminal_until_completed() {
+        let mut allocator = AllocEncoder::new();
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTerminalMessage(vec![1, 2, 3])]);
+        let mut manager = TransactionManager::new(mock);
+
+        let drain = manager.flush_and_collect(&mut allocator).expect("handoff drain");
+        assert_eq!(
+            drain.disposition,
+            ManagerDrainDisposition::AwaitOutboundTerminal(TerminalHandoffCommand {
+                id: 0,
+                message: vec![1, 2, 3],
+            })
+        );
+        assert!(drain.events.is_empty());
+
+        manager
+            .complete_outbound_terminal_handoff()
+            .expect("complete handoff");
+        let terminal = manager.flush_and_collect(&mut allocator).expect("terminal drain");
+        assert_eq!(terminal.disposition, ManagerDrainDisposition::Terminal);
     }
 
     #[derive(Default, Serialize, Deserialize)]

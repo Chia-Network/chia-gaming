@@ -86,6 +86,8 @@ function makeMockCradle(
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
     abandon: jest.fn(() => ({ events: [] } as WasmResult)),
+    completeOutboundTerminalHandoff: jest.fn(() => ({ events: [] } as WasmResult)),
+    pendingTerminalHandoff: jest.fn(() => null),
     cradle: 0,
   } as unknown as ChiaGame;
 }
@@ -799,6 +801,32 @@ describe('abandon calls Rust through cradle', () => {
 
     expect((cradle as any).abandon).toHaveBeenCalled();
   });
+
+  it('keeps the controller available when Rust rejects abandonment', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      abandon: jest.fn(() => {
+        throw new Error('terminal handoff awaits acknowledgement');
+      }),
+    } as unknown as ChiaGame;
+    const errors: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    blob.abandon();
+
+    expect((cradle as any).abandon).toHaveBeenCalledTimes(1);
+    expect((blob as any).cradle).toBe(cradle);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('terminal handoff awaits acknowledgement');
+  });
 });
 
 describe('go-on-chain terminal remap', () => {
@@ -810,10 +838,10 @@ describe('go-on-chain terminal remap', () => {
     const cradle = {
       ...makeMockCradle(),
       go_on_chain: jest.fn(() => ({
-        terminal: true,
+        disposition: { kind: 'terminal' },
         events: [{
           Notification: {
-            ChannelStatus: { state: 'Abandoned' },
+            ChannelStatus: { state: 'ShuttingDown', session_disposition: 'Abandoned' },
           },
         }],
       } as WasmResult)),
@@ -827,6 +855,103 @@ describe('go-on-chain terminal remap', () => {
 });
 
 describe('terminal protocol cleanup', () => {
+  it('completes a restored cooperative terminal handoff', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      pendingTerminalHandoff: jest.fn(() => ({ id: '1', message: enc('complete clean close') })),
+      completeOutboundTerminalHandoff: jest.fn(() => ({
+        disposition: { kind: 'terminal' },
+        events: [{ Notification: { ChannelStatus: { state: 'ShutdownTransactionPending', session_disposition: 'Abandoned', zero_payout: true } } }],
+      } as WasmResult)),
+    } as unknown as ChiaGame;
+    blob.loadWasm(mockWasmConnection);
+    blob.onSaveNeeded = jest.fn();
+    blob.markRestored();
+    blob.setGameSession(cradle);
+    blob.kickSystem(2);
+
+    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    blob.receiveAck(1n);
+    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'ShutdownTransactionPending', session_disposition: 'Abandoned' });
+  });
+
+  it('does not complete a restored handoff when replaying its close message fails', () => {
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, {
+      ...makePeerConn([], []),
+      sendMessage: () => false,
+    });
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      pendingTerminalHandoff: jest.fn(() => ({ id: '1', message: enc('complete clean close') })),
+      completeOutboundTerminalHandoff: jest.fn(() => ({
+        disposition: { kind: 'terminal' },
+        events: [{ Notification: { ChannelStatus: { state: 'ShutdownTransactionPending', session_disposition: 'Abandoned', zero_payout: true } } }],
+      } as WasmResult)),
+    } as unknown as ChiaGame;
+    blob.unackedMessages = [{ msgno: 1n, msg: enc('complete clean close') }];
+    blob.loadWasm(mockWasmConnection);
+    blob.markRestored();
+    blob.setGameSession(cradle);
+    blob.kickSystem(2);
+
+    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect((blob as any).protocolStopped).toBe(false);
+  });
+
+  it('does not complete a terminal handoff before its message is acknowledged', () => {
+    const { blob, cradle } = createReadyBlob();
+    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({ events: [] } as WasmResult);
+
+    blob.processResult({
+      disposition: { kind: 'await-outbound-terminal', command: { id: '1', message: enc('complete clean close') } },
+      events: [],
+    });
+
+    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect(() => blob.receiveAck(1n)).not.toThrow();
+    expect((blob as any).terminalHandoff).toMatchObject({ id: '1', msgno: 1n });
+  });
+
+  it('hands off the final clean-close message before Rust terminalizes locally', async () => {
+    const { blob, cradle, sentMessages } = createReadyBlob();
+    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
+      disposition: { kind: 'terminal' },
+      events: [{
+        Notification: {
+          ChannelStatus: { state: 'ShutdownTransactionPending', session_disposition: 'Abandoned', zero_payout: true },
+        },
+      }],
+    } as WasmResult);
+
+    blob.processResult({
+      disposition: { kind: 'await-outbound-terminal', command: { id: '1', message: enc('complete clean close') } },
+      events: [
+        { OutboundMessage: enc('advisory before clean close') },
+        { Notification: { ChannelStatus: { state: 'ShutdownTransactionPending', zero_payout: true } } },
+      ],
+    });
+    await blob.flushPendingWork();
+    await blob.flushPendingSave();
+    blob.resendUnacked();
+
+    expect(sentMessages.map(message => new TextDecoder().decode(message.msg)))
+      .toContain('complete clean close');
+    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    blob.receiveAck(2n);
+    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect((blob as any).lastChannelStatus).toMatchObject({
+      state: 'ShutdownTransactionPending',
+      session_disposition: 'Abandoned',
+      zero_payout: true,
+    });
+  });
+
   it('replaces queued protocol and presentation work with terminal notifications', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
@@ -843,18 +968,26 @@ describe('terminal protocol cleanup', () => {
       ],
     });
     blob.processResult({
-      terminal: true,
+      disposition: { kind: 'terminal' },
       events: [{
         Notification: {
           ChannelStatus: {
-            state: 'Abandoned',
+            state: 'Active',
+            session_disposition: 'Abandoned',
           },
         },
       }],
     });
 
     expect(sentMessages).toEqual([]);
-    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Abandoned' });
+    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Active', session_disposition: 'Abandoned' });
+
+    blob.processResult({
+      events: [{ Notification: { ChannelStatus: { state: 'Active' } } }],
+      watchCoins: [{ coin_name: 'late', coin_string: 'late-coin' }],
+    });
+
+    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Active', session_disposition: 'Abandoned' });
   });
 });
 
@@ -1003,6 +1136,34 @@ describe('transaction submission', () => {
     resolveFirst?.();
     await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
+  });
+
+  it('submits transactions already queued when a manager result is terminal', async () => {
+    const spend = jest.fn().mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => [testSpendBundle('06')]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult({
+      disposition: { kind: 'terminal' },
+      events: [{ Notification: { ChannelStatus: { state: 'ResolvedClean' } } }],
+    });
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    blob.detachBlockchain(blockchain);
   });
 
   it('does not emit user-facing errors for benign stale spend rejections', async () => {

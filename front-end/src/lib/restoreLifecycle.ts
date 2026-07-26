@@ -3,12 +3,9 @@ import type { RestoreStatus } from '../hooks/SessionController';
 import {
   createSessionModel,
   isPreActiveChannelStatus,
-  isTerminalChannelStatus,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
 } from './session/model';
-
-export { isTerminalChannelStatus } from './session/model';
 
 export function isRestoreBlocked(
   restoring: boolean,

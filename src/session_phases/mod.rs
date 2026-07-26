@@ -570,13 +570,20 @@ impl OffChainPhase {
                 }));
             }
             PeerMessage::CleanShutdownComplete(coin_spend) => {
-                effects.push(Effect::SpendTransaction(
-                    SpendBundle {
-                        name: Some("Create unroll".to_string()),
-                        spends: vec![coin_spend.clone()],
-                    },
-                    None,
-                ));
+                let zero_payout = self
+                    .channel_state()
+                    .is_ok_and(|channel| channel.has_zero_payout());
+                if zero_payout {
+                    effects.push(Effect::CompleteZeroPayoutShutdown);
+                } else {
+                    effects.push(Effect::SpendTransaction(
+                        SpendBundle {
+                            name: Some("Create unroll".to_string()),
+                            spends: vec![coin_spend.clone()],
+                        },
+                        None,
+                    ));
+                }
                 if let Some((coin, shutdown_solution)) = self.pending_clean_shutdown.take() {
                     let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
                         self.channel_state.take(),
@@ -808,7 +815,7 @@ impl OffChainPhase {
                 }
             }
 
-            let (coin, full_spend, channel_puzzle_public_key) = {
+            let (coin, full_spend, channel_puzzle_public_key, zero_payout) = {
                 let ch = self.channel_state_mut()?;
                 let coin = ch.channel_coin().clone();
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
@@ -857,9 +864,10 @@ impl OffChainPhase {
                     ));
                 }
 
+                let zero_payout = ch.has_zero_payout();
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                (coin, full_spend, channel_puzzle_public_key)
+                (coin, full_spend, channel_puzzle_public_key, zero_payout)
             };
 
             {
@@ -888,15 +896,18 @@ impl OffChainPhase {
                 coin: coin.clone(),
                 bundle: spend,
             };
-            effects.push(Effect::SpendTransaction(
-                SpendBundle {
-                    name: Some("Create unroll".to_string()),
-                    spends: vec![coin_spend.clone()],
-                },
-                None,
-            ));
-
-            effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
+            if zero_payout {
+                effects.push(Effect::QueueTerminalHandoff(coin_spend));
+            } else {
+                effects.push(Effect::SpendTransaction(
+                    SpendBundle {
+                        name: Some("Create unroll".to_string()),
+                        spends: vec![coin_spend.clone()],
+                    },
+                    None,
+                ));
+                effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
+            }
 
             let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
                 self.channel_state.take(),
@@ -1803,6 +1814,7 @@ impl PeerLifecyclePhase for OffChainPhase {
             } else {
                 ChannelStatus::Active
             },
+            session_disposition: None,
             advisory: None,
             coin: Some(ch.channel_coin().clone()),
             our_balance: Some(ch.my_out_of_game_balance()),

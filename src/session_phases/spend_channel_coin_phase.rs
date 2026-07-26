@@ -1159,6 +1159,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         });
         Some(ChannelStatusSnapshot {
             state,
+            session_disposition: None,
             advisory: self.advisory.clone(),
             coin,
             our_balance,

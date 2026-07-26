@@ -4,6 +4,7 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
   isChannelAbandonable,
+  isTerminalChannelSnapshot,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
   selectComposeAmountAfterGameTypeChoice,
@@ -21,7 +22,6 @@ import {
   sessionAmountsFromSave,
   sessionModelFromSave,
   snapshotFromSessionModel,
-  updateSessionModel,
 } from '../session/model';
 import type { SessionSave } from '../../hooks/save';
 import {
@@ -36,6 +36,40 @@ import {
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
+  it('recognizes terminal model and persisted channel snapshots consistently', () => {
+    expect(isTerminalChannelSnapshot({
+      state: 'Active',
+      sessionDisposition: 'Abandoned',
+    })).toBe(true);
+    expect(isTerminalChannelSnapshot({
+      state: 'Active',
+      session_disposition: 'Abandoned',
+    })).toBe(true);
+    expect(isTerminalChannelSnapshot({
+      state: 'ResolvedClean',
+      session_disposition: null,
+    })).toBe(true);
+    expect(isTerminalChannelSnapshot({
+      state: 'Active',
+      session_disposition: null,
+    })).toBe(false);
+  });
+
+  it('keeps an acknowledged terminal handoff session live until Rust abandons it', () => {
+    const model = createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'ResolvedClean',
+          sessionDisposition: 'AwaitOutboundTerminal',
+        },
+      },
+    });
+
+    expect(selectSessionPhase(model)).toBe('off-chain');
+    expect(selectGameDashboardView(model).channelStatusLabel).toBe('Waiting for Peer');
+  });
+
   it('derives dashboard actions for no-session, waiting, active, and terminal states', () => {
     expect(selectGameDashboardView(null)).toMatchObject({
       channelStatusLabel: 'No Session',
@@ -127,7 +161,7 @@ describe('session model selectors', () => {
   });
 
   it('normalizes Rust channel status once for persistence and presentation', async () => {
-    await expect(channelStatusModelFromPayload({
+    expect(channelStatusModelFromPayload({
       state: 'ShuttingDown',
       advisory: 'closing',
       coin: null,
@@ -136,7 +170,7 @@ describe('session model selectors', () => {
       game_allocated: { Amount: '0' },
       have_potato: true,
       zero_payout: true,
-    })).resolves.toMatchObject({
+    })).toMatchObject({
       state: 'ShuttingDown',
       advisory: 'closing',
       ourBalance: '0',

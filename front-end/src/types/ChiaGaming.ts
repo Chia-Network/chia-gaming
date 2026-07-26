@@ -55,8 +55,13 @@ export interface WasmResult {
   events?: GameSessionEvent[];
   watchCoins?: Array<{ coin_name: string; coin_string: string }>;
   ids?: string[];
-  terminal?: boolean;
+  disposition?: WasmDisposition;
 }
+
+export type WasmDisposition =
+  | { kind: 'active' }
+  | { kind: 'await-outbound-terminal'; command: { id: string; message: Uint8Array } }
+  | { kind: 'terminal' };
 
 export type WasmInitFn = (opts?: { module_or_path?: string | URL | Request | Response | Promise<Response> }) => Promise<any>;
 
@@ -150,10 +155,13 @@ export type ChannelStatus =
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
-  | 'Abandoned' | 'Failed';
+  | 'Failed';
+
+export type SessionDisposition = 'AwaitOutboundTerminal' | 'Abandoned';
 
 export interface ChannelStatusPayload {
   state: ChannelStatus;
+  session_disposition?: SessionDisposition | null;
   advisory: string | null;
   coin: unknown;
   our_balance: unknown;
@@ -186,8 +194,7 @@ export type WasmEvent =
   | { type: 'error'; error: string }
   | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
-  | { type: 'log'; message: string }
-  | { type: 'terminal'; reason: 'wasm' };
+  | { type: 'log'; message: string };
 
 interface GameSessionCreateConfig {
   rng_id: number;
@@ -265,6 +272,8 @@ export interface WasmConnection {
   accept_settlement: (cid: number, id: string) => WasmResult | undefined;
   shut_down: (cid: number) => WasmResult | undefined;
   abandon: (cid: number) => WasmResult | undefined;
+  complete_outbound_terminal_handoff: (cid: number) => WasmResult | undefined;
+  pending_terminal_handoff: (cid: number) => { id: string; message: Uint8Array } | null;
   go_on_chain: (cid: number) => WasmResult | undefined;
   report_puzzle_and_solution: (
     cid: number,
@@ -365,6 +374,14 @@ export class ChiaGame {
 
   abandon(): WasmResult | undefined {
     return this.wasm.abandon(this.session);
+  }
+
+  completeOutboundTerminalHandoff(): WasmResult | undefined {
+    return this.wasm.complete_outbound_terminal_handoff(this.session);
+  }
+
+  pendingTerminalHandoff(): { id: string; message: Uint8Array } | null {
+    return this.wasm.pending_terminal_handoff(this.session);
   }
 
   go_on_chain(): WasmResult | undefined {

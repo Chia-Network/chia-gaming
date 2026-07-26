@@ -863,10 +863,9 @@ export interface GameSessionProps {
   onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
-  onTerminal?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(
@@ -877,7 +876,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     appendGameLog,
     sessionSave,
     blockchain,
-    onTerminal,
   );
 
   useEffect(() => {

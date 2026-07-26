@@ -32,7 +32,7 @@ use crate::session_phases::types::{
     BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::session_phases::OffChainPhase;
-use crate::transaction_manager::TransactionManager;
+use crate::transaction_manager::{ManagerDrainDisposition, TransactionManager};
 use crate::utils::proper_list;
 
 use crate::simulator::Simulator;
@@ -1320,7 +1320,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
-                cradles[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
+                cradles[i].go_on_chain(allocator, got_error)?;
             }
 
             // Feed the full live coin set so the manager reproduces the
@@ -1346,6 +1346,10 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             {
                 let result = cradles[i].flush_and_collect(allocator)?;
+                let mut terminal_command = match result.disposition {
+                    ManagerDrainDisposition::Active | ManagerDrainDisposition::Terminal => None,
+                    ManagerDrainDisposition::AwaitOutboundTerminal(command) => Some(command.message),
+                };
 
                 // Collect coin solution requests, launcher/coin-spend
                 // requests from this flush and all subsequent flushes they
@@ -1434,6 +1438,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     }
                                 }
                             }
+                            GameSessionEvent::OutboundTerminalMessage(_) => {
+                                return Err(Error::StrErr(
+                                    "terminal handoff bypassed TransactionManager disposition"
+                                        .to_string(),
+                                ));
+                            }
                             GameSessionEvent::Notification(n) => {
                                 local_uis[i].notification(n)?;
                             }
@@ -1441,6 +1451,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 eprintln!("SIM receive error p{i}: {e}");
                                 local_uis[i].notification(&GameNotification::ChannelStatus {
                                     state: ChannelStatus::Failed,
+                                    session_disposition: None,
                                     advisory: Some(format!("error receiving peer message: {e}")),
                                     coin: None,
                                     our_balance: None,
@@ -1457,6 +1468,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 logs[i].push(line.clone());
                             }
                             GameSessionEvent::WatchCoin { .. } => {}
+                        }
+                    }
+
+                    if let Some(message) = terminal_command.as_ref() {
+                        if nerf_messages_for & (1 << i) == 0 {
+                            cradles[i ^ 1].deliver_message(message)?;
+                            cradles[i].complete_outbound_terminal_handoff()?;
                         }
                     }
 
@@ -1493,6 +1511,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     let follow_up = cradles[i].flush_and_collect(allocator)?;
+                    terminal_command = match follow_up.disposition {
+                        ManagerDrainDisposition::Active | ManagerDrainDisposition::Terminal => None,
+                        ManagerDrainDisposition::AwaitOutboundTerminal(command) => Some(command.message),
+                    };
                     pending_events = follow_up.events;
                 }
 
@@ -2262,7 +2284,6 @@ fn run_game_container_with_action_list_with_success_predicate(
             ChannelStatus::ResolvedClean
             | ChannelStatus::ResolvedUnrolled
             | ChannelStatus::ResolvedStale
-            | ChannelStatus::Abandoned
             | ChannelStatus::Failed => 7,
         }
     }

@@ -145,8 +145,9 @@ export class SessionController implements PollingGameSession {
   private pendingAcks: bigint[] = [];
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
-  private terminalDrain: Promise<void> | null = null;
   private protocolStopped = false;
+  private terminalHandoff: { id: string; msgno: bigint; acknowledged: boolean } | null = null;
+  private terminalCompletionRetryTimer: ReturnType<typeof setTimeout> | null = null;
   activeGameId: string | null = null;
   activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
@@ -263,6 +264,10 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
+    if (this.terminalCompletionRetryTimer) {
+      clearTimeout(this.terminalCompletionRetryTimer);
+      this.terminalCompletionRetryTimer = null;
+    }
     this.drainScheduled = false;
     void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
@@ -371,6 +376,8 @@ export class SessionController implements PollingGameSession {
 
   setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
+    const command = cradle.pendingTerminalHandoff();
+    if (command) this.queueTerminalHandoff(command);
     this.blockchain?.snapshotGameSessionCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
@@ -580,8 +587,12 @@ export class SessionController implements PollingGameSession {
     if (result === undefined) {
       throw new Error('cradle returned no WasmResult');
     }
+    if (this.protocolStopped) {
+      return;
+    }
 
-    const terminal = result.terminal === true;
+    const disposition = result.disposition ?? { kind: 'active' as const };
+    const terminal = disposition.kind === 'terminal';
     if (terminal) {
       this.stopProtocolWork();
     }
@@ -597,15 +608,19 @@ export class SessionController implements PollingGameSession {
         this.eventQueue.push(event);
       }
     }
+    if (disposition.kind === 'await-outbound-terminal') {
+      this.queueTerminalHandoff(disposition.command);
+    }
 
-    if (!terminal) {
-      this.drainAndSubmitTransactions();
+    // A terminal manager drain can still contain already-queued on-chain
+    // submissions (for example a mature timeout claim). Actual abandonment
+    // clears that queue in Rust before it reaches this boundary.
+    this.drainAndSubmitTransactions();
+    if (terminal) {
+      this.flushDeferredWork();
+      return;
     }
     this.scheduleDrain();
-
-    if (terminal) {
-      void this.beginTerminalDrain('wasm');
-    }
   }
 
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
@@ -614,6 +629,13 @@ export class SessionController implements PollingGameSession {
 
   private stopProtocolWork(): void {
     this.protocolStopped = true;
+    this.blockchain?.stop();
+    this.stopKeepaliveTimer();
+    this.terminalHandoff = null;
+    if (this.terminalCompletionRetryTimer) {
+      clearTimeout(this.terminalCompletionRetryTimer);
+      this.terminalCompletionRetryTimer = null;
+    }
     // A terminal drain is a replacement boundary, not an append-only update:
     // an older queued status must never render after the terminal result.
     this.eventQueue = [];
@@ -697,18 +719,20 @@ export class SessionController implements PollingGameSession {
     throw new Error('SessionController pending work did not settle');
   }
 
-  beginTerminalDrain(reason: 'wasm'): Promise<void> {
-    if (this.terminalDrain) return this.terminalDrain;
-    this.blockchain?.stop();
-    this.stopKeepaliveTimer();
-    this.terminalDrain = this.flushPendingWork()
-      .catch(error => {
-        this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
-      })
-      .then(() => {
-        this.rxjsEmitter?.next({ type: 'terminal', reason });
-      });
-    return this.terminalDrain;
+  private queueTerminalHandoff(command: { id: string; message: Uint8Array }): void {
+    if (this.terminalHandoff?.id === command.id) return;
+    const existing = this.unackedMessages.find(({ msg }) =>
+      msg.length === command.message.length
+      && msg.every((byte, index) => byte === command.message[index]),
+    );
+    const msgno = existing?.msgno ?? this.messageNumber++;
+    if (!existing) {
+      this.unackedMessages.push({ msgno, msg: command.message });
+      this.pendingOutboundSends.push({ msgno, msg: command.message });
+      this.markNeedsImmediateDurability();
+      this.scheduleDurabilityFlush();
+    }
+    this.terminalHandoff = { id: command.id, msgno, acknowledged: false };
   }
 
   private dispatchEvent(event: GameSessionEvent): void {
@@ -797,7 +821,7 @@ export class SessionController implements PollingGameSession {
         await new Promise(r => setTimeout(r, 5000));
         ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
       }
-      if (this.cradle) {
+      if (!this.protocolStopped && this.cradle) {
         const result = ps
           ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
           : this.cradle.report_puzzle_and_solution(coinHex, undefined, undefined);
@@ -854,9 +878,10 @@ export class SessionController implements PollingGameSession {
       const errMsg = extractErrorMessage(e);
       diagStack('deliver_message failed', e);
       this.rxjsEmitter?.next({ type: 'error', error: errMsg });
-      const state = this.lastChannelStatus?.state;
+      const status = this.lastChannelStatus;
+      const state = status?.state;
       const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
-        || state === 'ResolvedStale' || state === 'Abandoned' || state === 'Failed';
+        || state === 'ResolvedStale' || status?.session_disposition === 'Abandoned' || state === 'Failed';
       if (!this.onChain && !resolved) {
         this.goOnChain();
       }
@@ -877,15 +902,21 @@ export class SessionController implements PollingGameSession {
 
   receiveAck(ackMsgno: bigint) {
     this.notePeerActivity();
+    const terminalCommand = this.terminalHandoff;
+    const terminalAcknowledged = terminalCommand && ackMsgno >= terminalCommand.msgno;
     const before = this.unackedMessages.length;
     this.unackedMessages = this.unackedMessages.filter(m => m.msgno > ackMsgno);
     if (this.unackedMessages.length !== before) {
       this.scheduleSave();
     }
+    if (terminalAcknowledged) {
+      this.terminalHandoff = { ...terminalCommand, acknowledged: true };
+      this.completeOutboundTerminalHandoffAfterAck(terminalCommand.id);
+    }
   }
 
-  resendUnacked() {
-    if (this.protocolStopped) return;
+  resendUnacked(): boolean {
+    if (this.protocolStopped) return false;
     // Hub reconnect / peer keepalive: also retry acks and outbound that failed
     // while the WS was closed (those sit in pending* with needsImmediateDurability,
     // not in unackedMessages).
@@ -896,16 +927,17 @@ export class SessionController implements PollingGameSession {
     ) {
       this.scheduleDurabilityFlush();
     }
-    if (this.unackedMessages.length === 0) return;
+    if (this.unackedMessages.length === 0) return true;
     const now = Date.now();
-    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return;
+    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return false;
     this.lastUnackedResendAt = now;
     for (const { msgno, msg } of this.unackedMessages) {
       if (!this.sendMessage(msgno, msg)) {
         log(`[wasm] resendUnacked: hub send failed for msgno=${msgno}`);
-        break;
+        return false;
       }
     }
+    return true;
   }
 
   // --- PollingGameSession: driven by the BlockchainPoller ---
@@ -1113,6 +1145,31 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  private completeOutboundTerminalHandoffAfterAck(commandId: string): void {
+    if (this.terminalHandoff?.id !== commandId) return;
+    if (!this.cradle) {
+      throw new Error('WASM cradle is unavailable for cooperative terminal handoff');
+    }
+    try {
+      const result = this.cradle.completeOutboundTerminalHandoff();
+      if ((result?.disposition?.kind ?? 'active') !== 'terminal') {
+        throw new Error('cooperative terminal handoff did not produce a terminal result');
+      }
+      this.terminalHandoff = null;
+      this.processResult(result);
+    } catch (error) {
+      const message = extractErrorMessage(error);
+      diagStack('complete terminal handoff failed', error);
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+      if (!this.terminalCompletionRetryTimer) {
+        this.terminalCompletionRetryTimer = setTimeout(() => {
+          this.terminalCompletionRetryTimer = null;
+          this.completeOutboundTerminalHandoffAfterAck(commandId);
+        }, 1000);
+      }
+    }
+  }
+
   getWasmFields(): WasmFields | null {
     // Null means the cradle is not loaded yet (e.g. mid-restore). Serialize
     // failures must throw so callers like durability flush do not treat a
@@ -1291,7 +1348,7 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.go_on_chain();
-      const startedOnChain = result?.terminal !== true;
+    const startedOnChain = result?.disposition?.kind === 'active';
       this.onChain = startedOnChain;
       this.processResult(result);
       return startedOnChain;

@@ -773,6 +773,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         if self.failed {
             return Some(ChannelStatusSnapshot {
                 state: ChannelStatus::Failed,
+                session_disposition: None,
                 advisory: self.failure_advisory.clone(),
                 coin: self
                     .channel_state
@@ -801,6 +802,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         if self.pending_coin_spend {
             return Some(ChannelStatusSnapshot {
                 state: ChannelStatus::WaitingForHeightToAccept,
+                session_disposition: None,
                 advisory: None,
                 coin: self
                     .channel_state
@@ -847,6 +849,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
             };
         Some(ChannelStatusSnapshot {
             state,
+            session_disposition: None,
             advisory: None,
             coin,
             our_balance,

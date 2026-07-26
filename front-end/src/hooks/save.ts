@@ -1,4 +1,5 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
+import { isTerminalChannelSnapshot } from '../lib/session/model';
 import {
   deleteSessionRecord,
   readSessionRecord,
@@ -141,6 +142,7 @@ export interface SessionSave {
   betweenHandComposeGameType?: string;
   betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandPendingRetryTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandCachedPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandReviewPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
@@ -162,7 +164,7 @@ const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
  */
 let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 8n;
+export const CURRENT_VERSION = 9n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
@@ -533,12 +535,8 @@ function loadPreferences(): SessionSave {
   return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
-function isTerminalFinishedChannel(state: string | null | undefined): boolean {
-  return state === 'ResolvedClean'
-    || state === 'ResolvedUnrolled'
-    || state === 'ResolvedStale'
-    || state === 'Abandoned'
-    || state === 'Failed';
+function isTerminalFinishedChannel(status: ChannelStatusPayload | null | undefined): boolean {
+  return isTerminalChannelSnapshot(status);
 }
 
 /**
@@ -550,7 +548,7 @@ function isResumable(state: SessionSave): boolean {
   return !!(
     state.serializedGameSession
     || state.pairingToken
-    || (state.channelStatus && isTerminalFinishedChannel(state.channelStatus.state))
+    || isTerminalFinishedChannel(state.channelStatus)
   );
 }
 

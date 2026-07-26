@@ -1788,6 +1788,7 @@ impl PeerLifecyclePhase for OnChainPhase {
         };
         Some(ChannelStatusSnapshot {
             state,
+            session_disposition: None,
             advisory: self.advisory.clone(),
             coin: self.terminal_reward_coin.clone(),
             our_balance: Some(self.my_out_of_game_balance.clone()),

@@ -43,13 +43,22 @@ pub enum ChannelStatus {
     ResolvedClean,
     ResolvedUnrolled,
     ResolvedStale,
-    Abandoned,
     Failed,
+}
+
+/// Local host ownership of a session. This does not describe the channel coin
+/// or alter the actual protocol lifecycle in [`ChannelStatus`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SessionDisposition {
+    AwaitOutboundTerminal,
+    Abandoned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
     pub state: ChannelStatus,
+    #[serde(default)]
+    pub session_disposition: Option<SessionDisposition>,
     pub advisory: Option<String>,
     pub coin: Option<CoinString>,
     pub our_balance: Option<Amount>,
@@ -191,6 +200,8 @@ pub enum GameNotification {
     },
     ChannelStatus {
         state: ChannelStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_disposition: Option<SessionDisposition>,
         advisory: Option<String>,
         coin: Option<CoinString>,
         our_balance: Option<Amount>,
@@ -258,6 +269,9 @@ impl GameNotification {
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum GameSessionEvent {
     OutboundMessage(Vec<u8>),
+    /// The sole message required before a local terminal transition. The
+    /// transaction manager owns its durable handoff and finalization.
+    OutboundTerminalMessage(Vec<u8>),
     /// A spend bundle to submit, with the optional absolute height at/after
     /// which it can no longer be included (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
     /// the handler threads explicitly rather than parsing back out of the bundle).
@@ -302,6 +316,12 @@ pub enum Effect {
         clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
     },
     PeerCleanShutdownComplete(CoinSpend),
+    /// A durable host-owned clean-shutdown handoff. This is intercepted by
+    /// `GameSession`; it must never flow through ordinary packet delivery.
+    QueueTerminalHandoff(CoinSpend),
+    /// The peer has already received every close artifact it needs, so this
+    /// zero-payout local session can terminate without submitting a spend.
+    CompleteZeroPayoutShutdown,
     PeerRequestPotato,
     PeerGameMessage(GameID, Vec<u8>),
 
@@ -381,6 +401,12 @@ pub fn apply_effects(
             Effect::PeerCleanShutdownComplete(cs) => {
                 system.send_message(&PeerMessage::CleanShutdownComplete(cs))?;
             }
+            Effect::QueueTerminalHandoff(_) => {
+                return Err(crate::common::types::Error::StrErr(
+                    "terminal handoff must be intercepted by GameSession".to_string(),
+                ));
+            }
+            Effect::CompleteZeroPayoutShutdown => {}
             Effect::PeerRequestPotato => {
                 system.send_message(&PeerMessage::RequestPotato(()))?;
             }

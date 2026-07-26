@@ -1,6 +1,5 @@
 import {
   isRestoreBlocked,
-  isTerminalChannelStatus,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
@@ -32,16 +31,6 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('resolved')).toBe(false);
     expect(shouldReportHubBusy('off-chain')).toBe(true);
     expect(shouldReportHubBusy('on-chain')).toBe(true);
-  });
-
-  it('recognizes terminal channel states that must not keep the hub busy', () => {
-    expect(isTerminalChannelStatus('Failed')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedClean')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedUnrolled')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedStale')).toBe(true);
-    expect(isTerminalChannelStatus('Active')).toBe(false);
-    expect(isTerminalChannelStatus('Handshaking')).toBe(false);
-    expect(isTerminalChannelStatus(null)).toBe(false);
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {

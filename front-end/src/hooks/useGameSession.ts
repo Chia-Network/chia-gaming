@@ -39,7 +39,6 @@ import {
   createSessionModel,
   channelStatusModelFromPayload,
   INITIAL_CHANNEL_STATUS_MODEL,
-  isTerminalChannelStatus,
   isWindingDownChannelStatus,
   ON_CHAIN_CHANNEL_STATES,
   selectDefaultCalpokerInitialTurn,
@@ -290,28 +289,6 @@ const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
   'PeerProposalPending',
   'GameActive',
 ]);
-
-export function isWindingDown(state: ChannelStatus): boolean {
-  return isWindingDownChannelStatus(state);
-}
-
-const RESOLVED_STATES: ReadonlySet<ChannelStatus> = new Set<ChannelStatus>([
-  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Abandoned', 'Failed',
-]);
-
-export function deriveSessionPhase(
-  channelState: ChannelStatus,
-  goOnChainPressed: boolean,
-  activeGameId?: string | null,
-): Exclude<SessionPhase, 'none'> {
-  if ((channelState === 'ResolvedUnrolled' || channelState === 'ResolvedStale') && activeGameId) {
-    return 'on-chain';
-  }
-  if (isTerminalChannelStatus(channelState)) return 'resolved';
-  if (channelState === 'ShutdownTransactionPending') return 'off-chain';
-  if (goOnChainPressed || isWindingDown(channelState)) return 'on-chain';
-  return 'off-chain';
-}
 
 function parseAmount(v: unknown): string | null {
   if (v == null) return null;
@@ -576,7 +553,6 @@ export function useGameSession(
   appendGameLog: (line: string) => void,
   sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
-  onTerminal?: () => void,
 ): UseGameSessionResult {
   const { iStarted, myContribution, theirContribution, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
@@ -595,7 +571,6 @@ export function useGameSession(
     getDefaultFee,
     Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
     Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
-    onTerminal,
   );
 
   if (params.myAlias) sc.myAlias = params.myAlias;
@@ -641,6 +616,7 @@ export function useGameSession(
       (restoredModel?.game.queue ?? []) as QueuedNotification[],
     )
   );
+  const notificationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pushChannel = useCallback((n: Omit<QueuedNotification, 'id'>) => {
     setChannelQueue(prev => {
       if (n.kind === 'channel-state') {
@@ -792,7 +768,16 @@ export function useGameSession(
   const outgoingProposalIdsRef = useRef<Set<string>>(
     new Set(restoredModel?.betweenHand.outgoingProposalIds)
   );
-  const pendingRetryTermsRef = useRef<HandTerms | null>(null);
+  const pendingRetryTermsRef = useRef<HandTerms | null>(
+    restoredModel?.betweenHand.pendingRetryTerms ?? null,
+  );
+  const [pendingRetryTerms, setPendingRetryTermsState] = useState<HandTerms | null>(
+    () => restoredModel?.betweenHand.pendingRetryTerms ?? null,
+  );
+  const setPendingRetryTerms = useCallback((terms: HandTerms | null) => {
+    pendingRetryTermsRef.current = terms;
+    setPendingRetryTermsState(terms);
+  }, []);
   const expectingCounterProposalRef = useRef<boolean>(false);
   const rejectionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
@@ -927,7 +912,7 @@ export function useGameSession(
         newHandRequested,
         outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
         outgoingProposalTerms: { ...proposalTermsByIdRef.current },
-        pendingRetryTerms: pendingRetryTermsRef.current,
+        pendingRetryTerms,
       },
       history: {
         humanHistory: [],
@@ -975,7 +960,7 @@ export function useGameSession(
     gameInstances, lastDisplayedGameId,
     myRunningBalance, betweenHandMode, iProposedHand,
     composePerHandAmount, composeGameTimeout, composeGameType, lastHandTerms, rejectedOnceTerms,
-    activeGameType, composeProposalSent, newHandRequested,
+    activeGameType, composeProposalSent, newHandRequested, pendingRetryTerms,
     cachedPeerProposal, reviewPeerProposal,
     channelQueue, dismissedChannelStatus, gameQueue,
   ]);
@@ -1092,9 +1077,20 @@ export function useGameSession(
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
       if (!cs) return;
-      const info = await channelStatusModelFromPayload(cs);
+      const info = channelStatusModelFromPayload(cs);
       channelStatusRef.current = info.state;
       setChannelStatus(info);
+      const coin = coerceToBytes(cs.coin);
+      if (coin) {
+        void coinIdFromBytes(coin).then(coinHex => {
+          setChannelStatus(current =>
+            current.state === info.state
+              && current.sessionDisposition === info.sessionDisposition
+              ? { ...current, coinHex }
+              : current
+          );
+        });
+      }
       // If the channel state has moved away from (or to something other than)
       // the state the user previously dismissed a notification for, forget
       // that dismissal so future events for this state will notify again.
@@ -1206,13 +1202,13 @@ export function useGameSession(
             // Route directly to review so the user sees the accept/reject dialog with
             // no flicker through compose-proposal.
             clearExpectingCounterProposal();
-            pendingRetryTermsRef.current = null;
+            setPendingRetryTerms(null);
             sameTermsRequestedRef.current = false;
             setNewHandRequested(false);
             setReviewPeerProposal(incoming);
             setBetweenHandMode('review-incoming-proposal');
           } else if (matchesLastTerms && sameTermsRequestedRef.current) {
-            pendingRetryTermsRef.current = null;
+            setPendingRetryTerms(null);
             try {
               go?.acceptProposal(incoming.id);
               sameTermsRequestedRef.current = false;
@@ -1227,7 +1223,7 @@ export function useGameSession(
             log(`[notify] ProposalMade id=${incoming.id} different terms after New Hand; cancelling ours and reviewing theirs`);
             sameTermsRequestedRef.current = false;
             setNewHandRequested(false);
-            pendingRetryTermsRef.current = null;
+            setPendingRetryTerms(null);
             for (const id of Array.from(outgoingProposalIdsRef.current)) {
               if (id === incoming.id) continue;
               cancelProposalOrThrow(id);
@@ -1236,7 +1232,7 @@ export function useGameSession(
             setReviewPeerProposal(incoming);
             setBetweenHandMode('review-incoming-proposal');
           } else if (retryTerms) {
-            pendingRetryTermsRef.current = null;
+            setPendingRetryTerms(null);
             sameTermsRequestedRef.current = false;
             setNewHandRequested(false);
             if (matchesLastTerms) {
@@ -1255,7 +1251,7 @@ export function useGameSession(
         case 'compose-proposal': {
           const retryTerms = pendingRetryTermsRef.current;
           if (retryTerms) {
-            pendingRetryTermsRef.current = null;
+            setPendingRetryTerms(null);
             if (termsEqual(incoming.terms, lastHandTermsRef.current)) {
               log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
               cancelProposalOrThrow(incoming.id);
@@ -1329,7 +1325,7 @@ export function useGameSession(
         firstGameAcceptedRef.current = true;
         sameTermsRequestedRef.current = false;
         setNewHandRequested(false);
-        pendingRetryTermsRef.current = null;
+        setPendingRetryTerms(null);
         clearExpectingCounterProposal();
         cancelStalePeerProposals(newId);
         setLastDisplayedGameId(newId);
@@ -1601,9 +1597,9 @@ export function useGameSession(
       }
 
       if (isLocal && cancelledTerms) {
-        pendingRetryTermsRef.current = cancelledTerms;
+        setPendingRetryTerms(cancelledTerms);
       } else if (reason === 'CancelledByPeer') {
-        pendingRetryTermsRef.current = null;
+        setPendingRetryTerms(null);
         setComposeProposalSent(false);
         const wasSameTermsReq = sameTermsRequestedRef.current && wasOurs;
         sameTermsRequestedRef.current = false;
@@ -1630,7 +1626,7 @@ export function useGameSession(
           pushGame({ kind: 'proposal-rejected', title: 'Notice', message: 'Your proposal was rejected by the other side.' });
         }
       } else {
-        pendingRetryTermsRef.current = null;
+        setPendingRetryTerms(null);
       }
     } else if ('MoveRejected' in n) {
       const rejection = n.MoveRejected;
@@ -1649,7 +1645,15 @@ export function useGameSession(
       next: (evt: WasmEvent) => {
         switch (evt.type) {
           case 'notification':
-            handleNotification(evt.data);
+            notificationQueueRef.current = notificationQueueRef.current
+              .then(() => handleNotification(evt.data))
+              .catch(error => {
+                pushChannel({
+                  kind: 'infra-error',
+                  title: 'Error',
+                  message: String(error),
+                });
+              });
             break;
           case 'error':
             pushChannel({ kind: 'infra-error', title: 'Error', message: evt.error });
@@ -1665,8 +1669,6 @@ export function useGameSession(
             break;
           case 'log':
             log(`[wasm] ${evt.message}`);
-            break;
-          case 'terminal':
             break;
           default: {
             const _exhaustive: never = evt;
@@ -1862,7 +1864,7 @@ export function useGameSession(
       newHandRequested,
       outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
       outgoingProposalTerms: { ...proposalTermsByIdRef.current },
-      pendingRetryTerms: pendingRetryTermsRef.current,
+      pendingRetryTerms,
     },
     history: {
       humanHistory: [],
@@ -1878,7 +1880,7 @@ export function useGameSession(
     gameIds, currentHandGameIds, gameInstances, lastDisplayedGameId, activeGameType, sc.handState,
     gameQueue, betweenHandMode, cachedPeerProposal, reviewPeerProposal,
     rejectedOnceTerms, lastHandTerms, composePerHandAmount, composeGameTimeout,
-    composeGameType, composeProposalSent, newHandRequested, myRunningBalance,
+    composeGameType, composeProposalSent, newHandRequested, pendingRetryTerms, myRunningBalance,
     sc.wasmNotificationHistory, sc.diagnosticLog,
     sc.lastOutcomeWin,
   ]);

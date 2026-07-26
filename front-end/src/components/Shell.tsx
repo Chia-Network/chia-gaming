@@ -62,11 +62,13 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isRestoreBlocked, isTerminalChannelStatus, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportHubBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isRestoreBlocked, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportHubBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
   isCleanShutdownInProgress,
+  channelStatusPayloadFromModel,
+  isTerminalChannelSnapshot,
   PRE_ACTIVE_CHANNEL_STATES,
   selectGameDashboardView,
   selectGameTabDotColor,
@@ -259,10 +261,14 @@ function savedChannelStatus(save: SessionSave): SessionModel['channel']['status'
   return null;
 }
 
+function isTerminalSavedChannel(save: SessionSave): boolean {
+  return isTerminalChannelSnapshot(save.channelStatus);
+}
+
 /** Tab to show before any resume hydrate — session restores always open on Game. */
 function tabForResumedSave(save: SessionSave): TabId | null {
   if (save.serializedGameSession || save.pairingToken) return 'game';
-  if (isTerminalChannelStatus(savedChannelStatus(save))) return 'game';
+  if (isTerminalSavedChannel(save)) return 'game';
   return null;
 }
 
@@ -1409,7 +1415,7 @@ const Shell = () => {
           }
           saveSession({ myHubPlayerId: playerId });
           if (save) save.myHubPlayerId = playerId;
-          const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
+          const terminalSave = !!save && isTerminalSavedChannel(save);
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
             peerSessionRef.current = new PeerSession(save.sessionPeerId, save.gameSessionId ?? generateSessionId(), conn);
             bindPeerMessageHandler(peerSessionRef.current);
@@ -1454,7 +1460,7 @@ const Shell = () => {
           const phase = sessionPhaseRef.current;
           const save = sessionSaveRef.current;
           const restoring = !!sessionConfigRef.current?.restoring;
-          const terminalSave = !!save && isTerminalChannelStatus(savedChannelStatus(save));
+          const terminalSave = !!save && isTerminalSavedChannel(save);
           // A leftover cradle must not keep us busy after the session resolved
           // (wallet/handshake failures often leave Failed + persisted cradle).
           const busy = shouldReportHubBusy(phase)
@@ -1738,16 +1744,7 @@ const Shell = () => {
         sessionPeerId: undefined,
         gameSessionId: undefined,
         channelReady: false,
-        channelStatus: {
-          state: status.state,
-          advisory: status.advisory,
-          coin: null,
-          our_balance: status.ourBalance,
-          their_balance: status.theirBalance,
-          game_allocated: status.gameAllocated,
-          have_potato: status.havePotato,
-          zero_payout: status.zeroPayout,
-        },
+        channelStatus: channelStatusPayloadFromModel(status),
         cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
       });
     } else {
@@ -1777,6 +1774,8 @@ const Shell = () => {
       if (sessionFinishedCleanupRef.current) return;
       const previousPhase = sessionPhaseRef.current;
       const switchHub = shouldSwitchToHubOnResolved(previousPhase, !!hasError);
+      const bcType = blockchainTypeRef.current;
+      if (bcType) startBalancePolling(bcType);
       finishResolvedSessionDisplay(!!hasError);
       if (switchHub) {
         setActiveTab('hub');
@@ -1788,7 +1787,7 @@ const Shell = () => {
     setSessionPhase(phase);
     setSessionError(!!hasError);
     hubConnRef.current?.setBusy(shouldReportHubBusy(phase));
-  }, [finishResolvedSessionDisplay, setActiveTab]);
+  }, [finishResolvedSessionDisplay, setActiveTab, startBalancePolling]);
 
   const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1807,16 +1806,6 @@ const Shell = () => {
     dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
   }, []);
-
-  const handleTerminal = useCallback(() => {
-    // Session end tears down the cradle, not the wallet. Keep balance interest
-    // and nudge an immediate poll so settlement payouts show up promptly.
-    const bcType = blockchainTypeRef.current;
-    if (bcType) startBalancePolling(bcType);
-    // The terminal signal can arrive before React commits the final
-    // ChannelStatus notification. Let the phase callback perform cleanup after
-    // that model update so its persisted dashboard snapshot is terminal.
-  }, [startBalancePolling]);
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
@@ -2039,7 +2028,7 @@ const Shell = () => {
     const hasLiveSession = !!(save.serializedGameSession || save.pairingToken);
     if (hasLiveSession) {
       performResume(save);
-    } else if (isTerminalChannelStatus(savedChannelStatus(save))) {
+    } else if (isTerminalSavedChannel(save)) {
       restoreFinishedSessionFromSave(save);
       if (save.blockchainType) {
         void handleConnect(save.blockchainType, true);
@@ -2110,7 +2099,7 @@ const Shell = () => {
         if (resumeTab) setActiveTab(resumeTab);
         if (prev.save.serializedGameSession || prev.save.pairingToken) {
           performResume(prev.save);
-        } else if (isTerminalChannelStatus(savedChannelStatus(prev.save))) {
+        } else if (isTerminalSavedChannel(prev.save)) {
           restoreFinishedSessionFromSave(prev.save);
           const bcType = prev.save.blockchainType ?? getBlockchainType();
           if (bcType) {
@@ -2906,7 +2895,6 @@ const Shell = () => {
                     onProtocolStateProviderChange={handleProtocolStateProviderChange}
                     onCoinsProviderChange={handleCoinsProviderChange}
                     suppressPhaseReporting={restoreBlocked}
-                    onTerminal={handleTerminal}
                   />
                 </GameSessionErrorBoundary>
                 {sessionConsentOverlay}
