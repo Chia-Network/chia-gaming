@@ -375,6 +375,198 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it('pauses routine wallet queries while disconnected and resumes on reconnect', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const rpc = {
+      getHeightInfo: jest.fn().mockResolvedValue(100n),
+      registerCoins: jest.fn().mockResolvedValue(undefined),
+      getCoinRecordsByNames: jest.fn().mockResolvedValue([]),
+      getBalance: jest.fn().mockResolvedValue(10n),
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+    poller.start();
+    poller.startBalanceInterest(1000, { onBalance: () => {} });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
+    expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(1);
+
+    connected = false;
+    onConnectionChange?.(false);
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
+    expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(1);
+
+    connected = true;
+    onConnectionChange?.(true);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(2);
+    expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(2);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('restarts a poll that was in flight during reconnect', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const firstHeight = deferred<bigint>();
+    const getHeightInfo = jest.fn()
+      .mockReturnValueOnce(firstHeight.promise)
+      .mockResolvedValueOnce(101n);
+    const rpc = {
+      getHeightInfo,
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.start();
+
+    await advanceLane(0);
+    expect(getHeightInfo).toHaveBeenCalledTimes(1);
+
+    connected = false;
+    onConnectionChange?.(false);
+    connected = true;
+    onConnectionChange?.(true);
+    firstHeight.resolve(100n);
+
+    await advanceLane(0);
+    expect(getHeightInfo).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('discards a stale coin registration before reconnect polling resumes', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const firstRegistration = deferred<void>();
+    const registerCoins = jest.fn()
+      .mockReturnValueOnce(firstRegistration.promise)
+      .mockResolvedValueOnce(undefined);
+    const rpc = {
+      getHeightInfo: jest.fn().mockResolvedValue(100n),
+      registerCoins,
+      getCoinRecordsByNames: jest.fn().mockResolvedValue([]),
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+    poller.start();
+
+    await advanceLane(0);
+    expect(registerCoins).toHaveBeenCalledTimes(1);
+
+    connected = false;
+    onConnectionChange?.(false);
+    connected = true;
+    onConnectionChange?.(true);
+    firstRegistration.resolve();
+
+    await advanceLane(0);
+    expect(registerCoins).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('does not resume coin polling while the wallet session is disconnected', async () => {
+    jest.useFakeTimers();
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const rpc = {
+      getHeightInfo: jest.fn().mockResolvedValue(100n),
+      registerCoins: jest.fn().mockResolvedValue(undefined),
+      getCoinRecordsByNames: jest.fn().mockResolvedValue([]),
+      isConnected: () => true,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+    poller.start();
+
+    await advanceLane(0);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
+
+    onConnectionChange?.(false);
+    poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
+    await advanceLane(0);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
+
+    onConnectionChange?.(true);
+    await advanceLane(0);
+    expect(rpc.registerCoins).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('rejects queued wallet RPCs when the wallet disconnects', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const height = deferred<bigint>();
+    const selectCoins = jest.fn();
+    const rpc = {
+      getHeightInfo: () => height.promise,
+      selectCoins,
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.start();
+
+    await advanceLane(0);
+    const walletRequest = poller.rpc.selectCoins('wallet', 1n);
+
+    connected = false;
+    onConnectionChange?.(false);
+    await expect(walletRequest).rejects.toThrow('RPC request discarded during disconnect: selectCoins');
+    await expect(poller.rpc.selectCoins('wallet', 1n))
+      .rejects.toThrow('RPC request discarded during disconnect: selectCoins');
+    expect(selectCoins).not.toHaveBeenCalled();
+
+    height.resolve(100n);
+    await advanceLane(0);
+    jest.useRealTimers();
+  });
+
   it('clears registered coin cache when the adapter registration scope changes', async () => {
     let scope = '99';
     const registered: string[][] = [];
