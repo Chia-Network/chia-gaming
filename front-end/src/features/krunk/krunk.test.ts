@@ -18,7 +18,12 @@ import {
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
-import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from './Krunk';
+import {
+  formatKrunkHandLog,
+  krunkGameSlots,
+  krunkLetterStatuses,
+  newlyResolvedKrunkIndex,
+} from './Krunk';
 
 describe('Krunk terms', () => {
   it('clears proposal terms, group links, and outgoing refs together', () => {
@@ -62,6 +67,12 @@ describe('Krunk terms', () => {
 });
 
 describe('Krunk first guess drafting', () => {
+  it('supplies the new clue index during the render that resolves it', () => {
+    expect(newlyResolvedKrunkIndex(1, 0)).toBe(0);
+    expect(newlyResolvedKrunkIndex(3, 2)).toBe(2);
+    expect(newlyResolvedKrunkIndex(2, 2)).toBeUndefined();
+  });
+
   it('keeps factory-order role slots stable after one sibling ends', () => {
     const current = ['0', '1'];
     const active = ['1'];

@@ -1046,7 +1046,9 @@ restarts polling, peer delivery, or WASM. The terminal save retains only
 presentation payloads needed by supported game-specific rehydrators; an absent,
 unsupported, or stale payload renders the terminal summary instead. This keeps
 Rust authoritative for terminal lifecycle while preserving the last hand for
-the user.
+the user. The finished-hand wrapper is inert. Krunk rehydration remains
+explicitly unsupported by `selectFinishedSessionDisplay`, so a terminal Krunk
+session uses the terminal fallback rather than remounting a frozen board.
 
 ### WalletConnect BigInt Serialization
 

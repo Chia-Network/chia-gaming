@@ -30,6 +30,21 @@ describe('finished session shell display', () => {
     });
   });
 
+  it('keeps Krunk finished-hand remounts unsupported', () => {
+    const model = createSessionModel({
+      game: {
+        activeGameType: 'krunk',
+        handState: {
+          gameType: 'krunk',
+          version: 1n,
+          state: { guesses: [] },
+        },
+      },
+    });
+
+    expect(selectFinishedSessionDisplay(model).canRemountHand).toBe(false);
+  });
+
   it('does not expose bigint hand payloads to React prop enumeration', () => {
     const model = createSessionModel({
       game: {

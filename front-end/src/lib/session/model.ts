@@ -583,9 +583,15 @@ export function selectBetweenHands(model: SessionModel): boolean {
 export function selectHideGameInterfaceForBetweenHandDialog(
   betweenHands: boolean,
   betweenHandMode: BetweenHandModeModel,
+  hasReviewPeerProposal: boolean,
+  overlayIsActive: boolean,
 ): boolean {
-  return betweenHands
-    && (betweenHandMode === 'compose-proposal' || betweenHandMode === 'review-incoming-proposal');
+  return overlayIsActive
+    && betweenHands
+    && (
+      betweenHandMode === 'compose-proposal'
+      || (betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
+    );
 }
 
 export interface ShellViewModel {

@@ -1366,11 +1366,13 @@ describe('session model selectors', () => {
     expect(selectShouldAdvertiseAvailable(failed, 'resolved')).toBe(true);
   });
 
-  it('hides completed hand UI while compose or review dialogs are open between hands', () => {
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'decision')).toBe(false);
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal')).toBe(true);
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal')).toBe(true);
-    expect(selectHideGameInterfaceForBetweenHandDialog(false, 'compose-proposal')).toBe(false);
+  it('hides completed hand UI only while a between-hand dialog has content', () => {
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'decision', false, false)).toBe(false);
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, true)).toBe(true);
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', true, true)).toBe(true);
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', false, true)).toBe(false);
+    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, false)).toBe(false);
+    expect(selectHideGameInterfaceForBetweenHandDialog(false, 'compose-proposal', false, true)).toBe(false);
   });
 
   it('parses saved session amounts through a shared bigint adapter', () => {

@@ -39,6 +39,8 @@ import { Separator } from './ui/separator';
 import { Button } from './button';
 import { AmountInput } from './AmountInput';
 
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 interface ErrorBoundaryProps { children: ReactNode; }
 interface ErrorBoundaryState {
   error: string | null;
@@ -313,11 +315,13 @@ function NotificationOverlay({
   onDismiss,
   boundsRef,
   zClass,
+  focusBoundaryPriority,
 }: {
   notification: QueuedNotification;
   onDismiss: () => void;
   boundsRef: RefObject<HTMLElement | null>;
   zClass: string;
+  focusBoundaryPriority: number;
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   const dragControls = useDragControls();
@@ -338,6 +342,7 @@ function NotificationOverlay({
       onDrag={clampToViewport}
       onDragEnd={clampToViewport}
       className={`absolute ${zClass} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2`}
+      data-between-hand-focus-boundary={focusBoundaryPriority}
     >
       <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
         <CardHeader
@@ -851,6 +856,82 @@ function ReviewProposalDialog({
   );
 }
 
+function BetweenHandOverlay({
+  children,
+  restoreFocus,
+}: {
+  children: ReactNode;
+  restoreFocus: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const notificationFocusables = () => Array.from(
+      document.querySelectorAll<HTMLElement>('[data-between-hand-focus-boundary]'),
+    )
+        .sort((a, b) => Number(b.dataset.betweenHandFocusBoundary) - Number(a.dataset.betweenHandFocusBoundary))
+        .flatMap(boundary => Array.from(boundary.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)));
+    const focusable = () => Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      .filter(element => (
+        dialog.contains(element)
+        || element.closest('[data-between-hand-focus-boundary]') !== null
+      ));
+    (notificationFocusables()[0] ?? focusable()[0] ?? dialog).focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      if (elements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      const activeElement = document.activeElement;
+      const activeIndex = elements.indexOf(activeElement as HTMLElement);
+      if (activeIndex === -1) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (previouslyFocused?.isConnected && previouslyFocused !== document.body) {
+        previouslyFocused.focus();
+      } else {
+        restoreFocus();
+      }
+    };
+  }, [restoreFocus]);
+
+  return (
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      role='dialog'
+      aria-modal='true'
+      aria-labelledby='between-hand-dialog-title'
+      className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg p-4 focus:outline-none'
+    >
+      <h2 id='between-hand-dialog-title' className='sr-only'>Between-hand proposal</h2>
+      {children}
+    </div>
+  );
+}
+
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
@@ -991,6 +1072,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
+  const restoreGameAreaFocus = useCallback(() => gameAreaRef.current?.focus(), []);
 
   const maxPerHandMojos = (() => {
     const ours = session.channelStatus.ourBalance;
@@ -1007,9 +1089,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
   const handEverStarted = session.handKey > 0;
   const hasPersistedGameState = !!session.gameSpecificView.handState;
+  const hasReviewPeerProposal = session.reviewPeerProposal != null;
+  const showBetweenHandOverlay = session.betweenHands
+    && session.channelStatus.state === 'Active'
+    && !session.cleanShutdownStarted
+    && (
+      session.betweenHandMode === 'compose-proposal'
+      || (session.betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
+    );
   const hideGameInterfaceForBetweenHandDialog = selectHideGameInterfaceForBetweenHandDialog(
     session.betweenHands,
     session.betweenHandMode,
+    hasReviewPeerProposal,
+    showBetweenHandOverlay,
   );
   const gameSpecificView = session.gameSpecificView;
   const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
@@ -1031,12 +1123,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           onDismiss={session.dismissGame}
           boundsRef={channelOverlayBoundsRef}
           zClass='z-40'
+          focusBoundaryPriority={40}
         />
       )}
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
-          <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
+          <div ref={gameAreaRef} tabIndex={-1} className='relative overflow-hidden z-0 focus:outline-none'>
           {showGameInterface && (
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
@@ -1136,20 +1229,23 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                 </Button>
               </div>
             )}
-
-            {session.betweenHandMode === 'compose-proposal' && (
-              <ComposeProposalDialog
-                session={session}
-                maxPerHandMojos={maxPerHandMojos}
-              />
-            )}
-
-            {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <ReviewProposalDialog session={session} />
-            )}
           </>
         )}
       </div>
+
+      {showBetweenHandOverlay && (
+        <BetweenHandOverlay restoreFocus={restoreGameAreaFocus}>
+          {session.betweenHandMode === 'compose-proposal' && (
+            <ComposeProposalDialog
+              session={session}
+              maxPerHandMojos={maxPerHandMojos}
+            />
+          )}
+          {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+            <ReviewProposalDialog session={session} />
+          )}
+        </BetweenHandOverlay>
+      )}
 
       {session.channelQueue[0] && (
         <NotificationOverlay
@@ -1157,6 +1253,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           onDismiss={session.dismissChannel}
           boundsRef={channelOverlayBoundsRef}
           zClass='z-50'
+          focusBoundaryPriority={50}
         />
       )}
     </div>
