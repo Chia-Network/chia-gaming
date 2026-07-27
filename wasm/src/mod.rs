@@ -35,7 +35,9 @@ mod gaming_wasm {
     use chia_gaming::transaction_manager::{
         CoinStateRecord, ManagerDrain, TransactionManager,
     };
-    use chia_gaming::session_phases::effects::{FailedGameAction, GameSessionEvent, GameNotification};
+    use chia_gaming::session_phases::effects::{
+        FailedGameAction, GameSessionEvent, GameNotification,
+    };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::GameProposal;

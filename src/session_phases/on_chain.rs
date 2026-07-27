@@ -558,6 +558,7 @@ impl OnChainPhase {
                 timeout: gt,
                 name: Some("game coin"),
                 spend: claim,
+                semantic: None,
             });
         }
         Ok(effects)
@@ -655,6 +656,7 @@ impl OnChainPhase {
                         timeout: gt,
                         name: Some("our on-chain move confirmed"),
                         spend: claim,
+                        semantic: None,
                     });
                     effects.extend(self.process_queued_action(env)?);
                     return Ok((effects, None));
@@ -883,6 +885,7 @@ impl OnChainPhase {
                             timeout: gt,
                             name: Some("timeout-claim-armed game coin advanced by redo"),
                             spend: claim,
+                            semantic: None,
                         });
                     }
                 }
@@ -1044,6 +1047,7 @@ impl OnChainPhase {
                             "expected spend - their turn"
                         }),
                         spend: claim,
+                        semantic: None,
                     });
                     if auto_settle {
                         self.game_action_queue
@@ -1213,6 +1217,7 @@ impl OnChainPhase {
                         timeout: gt,
                         name: Some("coin gives my turn"),
                         spend: claim,
+                        semantic: None,
                     });
                     if auto_settle {
                         self.game_action_queue
@@ -1277,6 +1282,7 @@ impl OnChainPhase {
                             timeout: gt,
                             name: Some("pending slash"),
                             spend: None,
+                            semantic: None,
                         });
                     }
                     SlashOutcome::NoReward => {
@@ -1558,6 +1564,7 @@ impl OnChainPhase {
                         timeout: gt,
                         name: Some("timeout claim"),
                         spend: Some(claim),
+                        semantic: None,
                     });
                 }
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
@@ -1796,6 +1803,8 @@ impl PeerLifecyclePhase for OnChainPhase {
             game_allocated: None,
             have_potato: None,
             zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
         })
     }
 

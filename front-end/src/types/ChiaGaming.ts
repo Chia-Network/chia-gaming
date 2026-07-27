@@ -173,7 +173,17 @@ export interface ChannelStatusPayload {
   game_allocated: unknown;
   have_potato?: boolean | null;
   zero_payout?: boolean | null;
+  unroll_initiator?: 'us' | 'opponent' | null;
+  semantic_phase?: ChannelSemanticPhase | null;
 }
+
+export type ChannelSemanticPhase =
+  | 'submitting_channel_spend'
+  | 'resolving_opponent_channel_spend'
+  | 'preempting'
+  | 'waiting_timeout'
+  | 'submitting_timeout_finish'
+  | 'resolving';
 
 export interface ProposalAcceptedPayload {
   id: bigint | number | string;

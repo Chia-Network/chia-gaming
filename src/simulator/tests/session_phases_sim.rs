@@ -18,7 +18,7 @@ use crate::common::types::{
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
     CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind,
-    SettlementOutcome,
+    SettlementOutcome, UnrollInitiator,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -181,6 +181,7 @@ impl WalletSpendInterface for SimulatedPeer {
         _timeout: &Timeout,
         _name: Option<&'static str>,
         _spend: Option<SpendBundle>,
+        _semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -593,6 +594,9 @@ pub struct LocalTestUIReceiver {
     pub opponent_messages: Vec<OpponentMessageInfo>,
     pub notifications: Vec<GameNotification>,
     pub events: Vec<TestEvent>,
+    /// Scenario scripts intentionally assert lifecycle states, not each
+    /// semantic-progress refinement within one state.
+    last_event_channel_status: Option<ChannelStatus>,
     pub proposed_game_ids: Vec<GameID>,
     pub accepted_proposal_ids: Vec<GameID>,
     pub received_proposal_ids: Vec<GameID>,
@@ -786,8 +790,11 @@ impl ToLocalUI for LocalTestUIReceiver {
                         | ChannelStatus::ResolvedStale
                         | ChannelStatus::Failed
                 ) {
-                    self.events
-                        .push(TestEvent::Notification(notification.clone()));
+                    if self.last_event_channel_status.as_ref() != Some(state) {
+                        self.events
+                            .push(TestEvent::Notification(notification.clone()));
+                        self.last_event_channel_status = Some(state.clone());
+                    }
                 }
             }
             other => {
@@ -1241,6 +1248,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     game_allocated: None,
                                     have_potato: None,
                                     zero_payout: None,
+                                    unroll_initiator: None,
+                                    semantic_phase: None,
                                 })?;
                             }
                             GameSessionEvent::CoinSolutionRequest(coin) => {
@@ -5254,6 +5263,22 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 p0_balance, p1_balance,
                 "both players should get exactly the same amount back (no game was played): p0={p0_balance} p1={p1_balance}"
             );
+            assert!(outcome.local_uis[0].notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ChannelStatus {
+                    state: ChannelStatus::Unrolling,
+                    unroll_initiator: Some(UnrollInitiator::Opponent),
+                    ..
+                }
+            )));
+            assert!(outcome.local_uis[1].notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ChannelStatus {
+                    state: ChannelStatus::Unrolling,
+                    unroll_initiator: None,
+                    ..
+                }
+            )));
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),

@@ -323,6 +323,8 @@ describe('session model selectors', () => {
       game_allocated: { Amount: '0' },
       have_potato: true,
       zero_payout: true,
+      unroll_initiator: 'opponent',
+      semantic_phase: 'waiting_timeout',
     })).toMatchObject({
       state: 'ShuttingDown',
       advisory: 'closing',
@@ -331,6 +333,96 @@ describe('session model selectors', () => {
       gameAllocated: '0',
       havePotato: true,
       zeroPayout: true,
+      unrollInitiator: 'opponent',
+      semanticPhase: 'waiting_timeout',
+    });
+  });
+
+  it('shows semantic progress alongside the authoritative channel advisory', () => {
+    const view = selectGameDashboardView(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          semanticPhase: 'waiting_timeout',
+          advisory: 'The observed spend needs manual review',
+        },
+      },
+    }));
+
+    expect(view.channelDetail).toBe(
+      'Waiting for timeout: The observed spend needs manual review',
+    );
+  });
+
+  it('renders known unroll initiators without inventing an unknown label', () => {
+    const opponent = selectGameDashboardView(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          semanticPhase: 'waiting_timeout',
+          unrollInitiator: 'opponent',
+        },
+      },
+    }));
+    expect(opponent.channelDetail).toBe('Waiting for timeout (initiated by opponent)');
+
+    const us = selectGameDashboardView(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          semanticPhase: 'preempting',
+          unrollInitiator: 'us',
+        },
+      },
+    }));
+    expect(us.channelDetail).toBe('Preempting unroll (initiated by you)');
+
+    const unknown = selectGameDashboardView(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          semanticPhase: 'resolving',
+        },
+      },
+    }));
+    expect(unknown.channelDetail).toBe('Resolving');
+  });
+
+  it('prioritizes terminal disposition details over stale semantic progress', () => {
+    const abandoned = selectGameDashboardView(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          sessionDisposition: 'Abandoned',
+          semanticPhase: 'waiting_timeout',
+          advisory: 'Local session was abandoned',
+        },
+      },
+    }));
+    expect(abandoned).toMatchObject({
+      channelStatusLabel: 'Abandoned',
+      channelDetail: 'Local session was abandoned',
+    });
+
+    const awaitingPeer = selectGameDashboardView(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'Unrolling',
+          sessionDisposition: 'AwaitOutboundTerminal',
+          semanticPhase: 'submitting_timeout_finish',
+          advisory: null,
+        },
+      },
+    }));
+    expect(awaitingPeer).toMatchObject({
+      channelStatusLabel: 'Waiting for Peer',
+      channelDetail: 'Waiting for peer to acknowledge close',
     });
   });
 
@@ -346,6 +438,8 @@ describe('session model selectors', () => {
       game_allocated: { Amount: '0' },
       have_potato: false,
       zero_payout: false,
+      unroll_initiator: 'us' as const,
+      semantic_phase: 'submitting_timeout_finish' as const,
     };
     const restored = sessionModelFromSave({
       version: 8n,
@@ -356,6 +450,31 @@ describe('session model selectors', () => {
 
     expect(restored.channel.status).toEqual(channelStatusModelFromPayload(channelStatus));
     expect(restored.channel.status.ourBalance).toBe('42');
+    expect(restored.channel.status).toMatchObject({
+      unrollInitiator: 'us',
+      semanticPhase: 'submitting_timeout_finish',
+    });
+  });
+
+  it('restores pre-progress saves with unknown progress fields', () => {
+    const restored = sessionModelFromSave({
+      version: 8n,
+      playerId: 'p1',
+      activeGameIds: [],
+      channelStatus: {
+        state: 'Unrolling',
+        advisory: null,
+        coin: null,
+        our_balance: null,
+        their_balance: null,
+        game_allocated: null,
+      },
+    });
+
+    expect(restored.channel.status).toMatchObject({
+      unrollInitiator: null,
+      semanticPhase: null,
+    });
   });
 
   it('uses a clean-shutdown grace window before offering go-on-chain escalation', () => {

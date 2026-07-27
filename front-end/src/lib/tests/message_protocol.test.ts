@@ -1214,6 +1214,28 @@ describe('terminal protocol cleanup', () => {
 
     expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Active', session_disposition: 'Abandoned' });
   });
+
+  it('persists canonical timeout-submission channel progress from WASM', async () => {
+    const { blob } = createReadyBlob();
+    blob.processResult({
+      events: [{
+        Notification: {
+          ChannelStatus: {
+            state: 'Unrolling',
+            unroll_initiator: 'opponent',
+            semantic_phase: 'submitting_timeout_finish',
+          },
+        },
+      }],
+    });
+    await blob.flushPendingWork();
+
+    expect((blob as any).lastChannelStatus).toMatchObject({
+      state: 'Unrolling',
+      unroll_initiator: 'opponent',
+      semantic_phase: 'submitting_timeout_finish',
+    });
+  });
 });
 
 describe('transaction submission', () => {

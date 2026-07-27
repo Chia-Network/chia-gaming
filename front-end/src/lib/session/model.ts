@@ -66,6 +66,8 @@ export interface ChannelStatusModel {
   gameAllocated: string | null;
   havePotato: boolean | null;
   zeroPayout: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase: ChannelStatusPayload['semantic_phase'] | null;
 }
 
 export interface GameCoinModel {
@@ -253,6 +255,8 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   gameAllocated: null,
   havePotato: null,
   zeroPayout: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
 
 function parseChannelAmount(coin: unknown): string | null {
@@ -289,6 +293,8 @@ export function channelStatusModelFromPayload(status: ChannelStatusPayload): Cha
     gameAllocated: parseChannelAmountValue(status.game_allocated),
     havePotato: status.have_potato ?? null,
     zeroPayout: status.zero_payout ?? null,
+    unrollInitiator: status.unroll_initiator ?? null,
+    semanticPhase: status.semantic_phase ?? null,
   };
 }
 
@@ -303,6 +309,8 @@ export function channelStatusPayloadFromModel(status: ChannelStatusModel): Chann
     game_allocated: status.gameAllocated,
     have_potato: status.havePotato,
     zero_payout: status.zeroPayout,
+    unroll_initiator: status.unrollInitiator,
+    semantic_phase: status.semanticPhase,
   };
 }
 
@@ -654,6 +662,30 @@ export interface GameDashboardSelectorOptions {
 
 function channelStatusDetail(model: SessionModel): string | null {
   const channel = model.channel.status;
+  if (channel.sessionDisposition === 'Abandoned') {
+    return channel.advisory ?? 'Session abandoned';
+  }
+  if (channel.sessionDisposition === 'AwaitOutboundTerminal') {
+    return channel.advisory ?? 'Waiting for peer to acknowledge close';
+  }
+  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
+    submitting_channel_spend: 'Submitting channel spend',
+    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
+    preempting: 'Preempting unroll',
+    waiting_timeout: 'Waiting for timeout',
+    submitting_timeout_finish: 'Submitting timeout finish',
+    resolving: 'Resolving',
+  };
+  if (channel.semanticPhase) {
+    const phase = phaseLabels[channel.semanticPhase];
+    const initiator = channel.unrollInitiator === 'us'
+      ? ' (initiated by you)'
+      : channel.unrollInitiator === 'opponent'
+        ? ' (initiated by opponent)'
+        : '';
+    const detail = `${phase}${initiator}`;
+    return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
+  }
   switch (channel.state) {
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
