@@ -59,6 +59,8 @@ export interface WasmResult {
   events?: GameSessionEvent[];
   watchCoins?: Array<{ coin_name: string; coin_string: string }>;
   unwatchCoins?: Array<{ coin_name: string; coin_string: string }>;
+  /** Whether the WASM action completed before its result was drained. */
+  actionSucceeded?: boolean;
   ids?: string[];
   disposition?: WasmDisposition;
 }

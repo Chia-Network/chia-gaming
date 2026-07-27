@@ -896,6 +896,7 @@ describe('go-on-chain terminal remap', () => {
     const cradle = {
       ...makeMockCradle(),
       go_on_chain: jest.fn(() => ({
+        actionSucceeded: true,
         disposition: { kind: 'active' },
         events: [],
       } as WasmResult)),
@@ -920,6 +921,28 @@ describe('go-on-chain terminal remap', () => {
           Notification: {
             ChannelStatus: { state: 'ShuttingDown', session_disposition: 'Abandoned' },
           },
+        }],
+      } as WasmResult)),
+    } as unknown as ChiaGame;
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    expect(blob.goOnChain()).toBe(false);
+    expect((blob as any).onChain).toBe(false);
+  });
+
+  it('does not enter on-chain mode when the action fails in an active drain', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      go_on_chain: jest.fn(() => ({
+        actionSucceeded: false,
+        disposition: { kind: 'active' },
+        events: [{
+          Notification: { ActionFailed: { reason: 'no channel coin spend info cached' } },
         }],
       } as WasmResult)),
     } as unknown as ChiaGame;

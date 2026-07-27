@@ -1389,7 +1389,8 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.go_on_chain();
-    const startedOnChain = result?.disposition?.kind === 'active';
+      const startedOnChain = result?.actionSucceeded === true
+        && result.disposition?.kind === 'active';
       this.onChain = startedOnChain;
       this.processResult(result);
       return startedOnChain;
