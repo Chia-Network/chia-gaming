@@ -253,6 +253,46 @@ describe('in-order delivery', () => {
   });
 });
 
+describe('active game tracking', () => {
+  it('retires only the settled member of an atomic hand', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    blob.activeGameIds = ['1', '3'];
+
+    blob.processResult({
+      events: [{
+        Notification: {
+          GameSettled: {
+            id: '1',
+            outcome: 'accept_settlement',
+            on_chain: false,
+            our_share: '100',
+            coin_id: null,
+          },
+        },
+      }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.activeGameIds).toEqual(['3']);
+
+    blob.processResult({
+      events: [{
+        Notification: {
+          GameSettled: {
+            id: '3',
+            outcome: 'accept_settlement',
+            on_chain: false,
+            our_share: '100',
+            coin_id: null,
+          },
+        },
+      }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.activeGameIds).toEqual([]);
+  });
+});
+
 describe('lifecycle flush', () => {
   it('drains transient handshake events before resolving the save flush', async () => {
     const outbound = enc('next-handshake-message');

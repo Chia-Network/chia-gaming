@@ -134,7 +134,7 @@ describe('session model selectors', () => {
       .toEqual({ coinHex: null, onChain: true });
 
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: null, onChain: true, turnState: 'replaying' },
@@ -491,7 +491,7 @@ describe('session model selectors', () => {
     expect(view.handDetail).toBeNull();
   });
 
-  it('uses turn-specific hand status in the bar only once a game coin is on-chain', () => {
+  it('keeps hands active until unrolling completes', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       game: {
@@ -514,7 +514,7 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'their-turn' },
       },
-    })).handStatusLabel).toBe('Their turn');
+    })).handStatusLabel).toBe('Active');
 
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
@@ -522,15 +522,15 @@ describe('session model selectors', () => {
         activeIds: ['7'],
         coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
       },
-    })).handStatusLabel).toBe('Playing move');
+    })).handStatusLabel).toBe('Active');
 
-    // 'replaying' is a distinct WASM state (a redo replayed after unroll) and is
-    // communicated as 'Replaying move', not collapsed into 'Playing move'.
+    // The resolved-unroll state is the authoritative boundary even while
+    // deriving the game coin's hex asynchronously.
     expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
         activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'replaying' },
+        coin: { coinHex: null, turnState: 'replaying' },
       },
     })).handStatusLabel).toBe('Replaying move');
 
@@ -545,10 +545,10 @@ describe('session model selectors', () => {
     // Detecting the opponent's illegal on-chain move puts us in the slash flow;
     // the bar should say so explicitly instead of a generic "Your turn".
     const slashing = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
         activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'opponent-illegal-move' },
+        coin: { coinHex: null, turnState: 'opponent-illegal-move' },
       },
     }));
     expect(slashing.handStatusLabel).toBe('Slashing cheater');
@@ -585,6 +585,11 @@ describe('session model selectors', () => {
     expect(selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       game,
+    })).lifecycleRows).toEqual([]);
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game,
     })).lifecycleRows).toEqual([
       { id: '7', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
       { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
@@ -617,11 +622,11 @@ describe('session model selectors', () => {
     });
 
     const singleton = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: { activeIds: ['7'], currentHandIds: ['7'], instances: { '7': updated['7'] } },
     }));
     const multiple = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: { activeIds: ['7', '9'], currentHandIds: ['7', '9'], instances: updated },
     }));
     expect(singleton.lifecycleRows[0]).toMatchObject({ label: 'Hand', statusLabel: 'Playing move' });
@@ -940,6 +945,41 @@ describe('session model selectors', () => {
       { label: 'Opp', value: '15' },
       { label: 'Hand 1', value: '80', value2: '20' },
       { label: 'Hand 2', value: '20', value2: '80' },
+    ]);
+
+    const stale = selectStatusBarBalances(createSessionModel({
+      channel: {
+        status: {
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'ResolvedStale',
+          ourBalance: '60',
+          theirBalance: '40',
+        },
+      },
+      game: {
+        activeIds: ['game-1'],
+        currentHandIds: ['game-1', 'game-2'],
+        instances: {
+          'game-1': pending('game-1'),
+          'game-2': {
+            ...pending('game-2'),
+            coin: { coinHex: null, turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'game-error',
+              outcome: null,
+              label: 'Missing from stale unroll',
+              myReward: null,
+              rewardCoinHex: null,
+            },
+          },
+        },
+      },
+    }));
+    expect(stale).toEqual([
+      { label: 'Me', value: '60' },
+      { label: 'Opp', value: '40' },
+      { label: 'Hand 1', value: '100' },
     ]);
 
     const malformedReward = selectStatusBarBalances(createSessionModel({

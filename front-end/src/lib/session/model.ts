@@ -350,6 +350,16 @@ export const ON_CHAIN_CHANNEL_STATES = new Set<ChannelStatus>([
   'ResolvedStale',
 ]);
 
+/**
+ * Per-game on-chain classifications become authoritative only once the unroll
+ * result can no longer be preempted. This branch reports that boundary as a
+ * resolved unroll, not as a separate "done unrolling" lifecycle state.
+ */
+const UNROLL_COMPLETED_HAND_STATES = new Set<ChannelStatus>([
+  'ResolvedUnrolled',
+  'ResolvedStale',
+]);
+
 export const PRE_ACTIVE_CHANNEL_STATES = new Set<ChannelStatus>([
   'Handshaking',
   'WaitingForHeightToOffer',
@@ -656,10 +666,10 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
-  // `onChain` distinguishes a pending game-coin id from an off-chain game.
-  // Older saved models did not persist it, so a known coin id remains the
-  // compatibility signal for those snapshots.
-  if (coin.onChain !== true && !coin.coinHex) {
+  // The unroll commitment can still be preempted while GoingOnChain or
+  // Unrolling. Per-game coin/turn classifications are not authoritative until
+  // the unroll coin resolves, irrespective of asynchronous coin-id enrichment.
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return 'active';
   }
   if (ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)) {
@@ -711,8 +721,7 @@ function instanceTerminalDetail(instance: GameInstanceModel): string | null {
 }
 
 function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
-  if (!ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)
-      || model.channel.status.state === 'ResolvedClean') {
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return [];
   }
   const multiple = model.game.currentHandIds.length > 1;
@@ -858,8 +867,7 @@ export function selectStatusBarBalances(
 
   const channel = model.channel.status;
 
-  const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
-  if (channelFailed) {
+  if (channel.state === 'Failed') {
     return [
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },

@@ -782,6 +782,10 @@ export class SessionController implements PollingGameSession {
           this.activeGameIds = this.activeGameIds.filter(id => id !== endedId);
         }
       }
+      if (tag === 'GameSettled' && n.GameSettled) {
+        const settledId = String(n.GameSettled.id);
+        this.activeGameIds = this.activeGameIds.filter(id => id !== settledId);
+      }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
         jsonStringify(n),

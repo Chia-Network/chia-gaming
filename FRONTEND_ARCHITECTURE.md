@@ -486,6 +486,10 @@ fires in two situations:
 This means the outer JS layer always builds the complete, coherent save from
 both JS and WASM state at once.
 
+`GameSettled` retires only its own game ID from the controller’s active set.
+This allows separate members of an atomic factory group to settle independently
+without removing the still-live member from persistence or presentation.
+
 #### Delivery-critical saves
 
 Peer message counters and queues are part of the reliable transport protocol,
@@ -590,6 +594,15 @@ for the full state and terminal-effect rules.
 The potato marker is likewise a projection of that one status snapshot: the
 banner shows `🥔` only when `havePotato` is true. It is protocol-token context,
 not a claim about which game turn is currently playable.
+
+**Unroll hand projection:** `GoingOnChain` and `Unrolling` do not yet make
+per-game turn, replay, or slash classifications authoritative: the unroll can
+still be preempted. The dashboard therefore keeps each hand `Active` and hides
+per-hand lifecycle rows until Rust reports `ResolvedUnrolled` or
+`ResolvedStale`. At that boundary, the reported game classification is shown
+immediately even if asynchronous enrichment has not yet derived the game
+coin’s hex ID. A stale resolution preserves its reported channel change
+balances and continues to show any remaining classified hands.
 
 **Pre-game saves and the boot marker:** A durable game session is anything with
 `serializedGameSession` or `pairingToken` (`isResumable`). Those writes set the
