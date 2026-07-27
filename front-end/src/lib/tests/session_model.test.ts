@@ -370,6 +370,14 @@ describe('session model selectors', () => {
         coin: { coinHex: null, onChain: true, turnState: 'replaying' },
       },
     })).handStatusLabel).toBe('Replaying move');
+
+    expect(selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        activeIds: ['7'],
+        coin: { coinHex: null, onChain: true, turnState: 'submitting-timeout' },
+      },
+    })).handStatusLabel).toBe('Submitting timeout claim');
   });
 
   it('waits for terminal reward enrichment before terminal channel teardown', async () => {

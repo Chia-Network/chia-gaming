@@ -222,7 +222,7 @@ export function enqueueWasmNotification(
     .then(() => handleNotification(notification))
     .catch(onError);
 }
-export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'finishing' | 'ended';
+export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'submitting-timeout' | 'finishing' | 'ended';
 
 export interface GameCoinInfo {
   coinHex: string | null;
@@ -1642,6 +1642,7 @@ export function useGameSession(
 
       const statusId = String(gs.id);
       const hasNewCoinIdentity = gs.coin_id != null;
+      const submittingTimeoutClaim = gs.other_params?.submitting_timeout_claim === true;
       const finishing = isFinishingGameStatus(
         status,
         gs.other_params?.game_finished,
@@ -1673,11 +1674,15 @@ export function useGameSession(
             ...instance,
             coin: {
               ...coinIdentity,
-              turnState: finishing ? 'finishing' : 'their-turn',
+              turnState: finishing
+                ? 'finishing'
+                : submittingTimeoutClaim ? 'submitting-timeout' : 'their-turn',
             },
             handStatus: finishing
               ? 'finishing'
-              : status === 'on-chain-their-turn' ? 'their-turn' : 'active',
+              : submittingTimeoutClaim
+                ? 'submitting-timeout'
+                : status === 'on-chain-their-turn' ? 'their-turn' : 'active',
           };
         }
         if (status === 'replaying') {
@@ -1747,12 +1752,14 @@ export function useGameSession(
           }));
           setHandStatus('finishing');
         } else {
-          turnStateRef.current = 'their-turn';
+          turnStateRef.current = submittingTimeoutClaim ? 'submitting-timeout' : 'their-turn';
           setGameCoin(prev => ({
             ...gameCoinIdentityForGameStatus(prev, status, hasNewCoinIdentity),
-            turnState: 'their-turn',
+            turnState: submittingTimeoutClaim ? 'submitting-timeout' : 'their-turn',
           }));
-          setHandStatus(status === 'on-chain-their-turn' ? 'their-turn' : 'active');
+          setHandStatus(submittingTimeoutClaim
+            ? 'submitting-timeout'
+            : status === 'on-chain-their-turn' ? 'their-turn' : 'active');
         }
       } else if (status === 'replaying') {
         turnStateRef.current = 'replaying';
