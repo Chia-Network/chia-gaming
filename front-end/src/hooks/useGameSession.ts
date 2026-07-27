@@ -439,6 +439,75 @@ export function clearProposalTracking(
   }
 }
 
+export function clearProposalTerms(
+  ids: readonly string[],
+  termsById: Record<string, HandTerms>,
+  outgoingIds: Set<string>,
+): void {
+  for (const id of ids) {
+    delete termsById[id];
+    outgoingIds.delete(id);
+  }
+}
+
+export function outgoingProposalGroups(
+  outgoingIds: ReadonlySet<string>,
+  groupIdsById: Record<string, string[]>,
+): string[][] {
+  const groups: string[][] = [];
+  const seen = new Set<string>();
+  for (const id of outgoingIds) {
+    const groupIds = groupIdsById[id] ?? [id];
+    const key = groupIds.join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push([...groupIds]);
+  }
+  return groups;
+}
+
+export function outgoingProposalTerms(
+  outgoingIds: ReadonlySet<string>,
+  termsById: Record<string, HandTerms>,
+): Record<string, HandTerms> {
+  return Object.fromEntries(
+    Array.from(outgoingIds).flatMap(id => {
+      const terms = termsById[id];
+      return terms ? [[id, terms]] : [];
+    }),
+  );
+}
+
+export function proposalGroupMap(
+  groups: readonly (readonly string[])[],
+): Record<string, string[]> {
+  const byId: Record<string, string[]> = {};
+  for (const groupIds of groups) {
+    for (const id of groupIds) byId[id] = [...groupIds];
+  }
+  return byId;
+}
+
+export function removeProposalGroupFromHand(
+  groupIds: readonly string[],
+  activeIds: readonly string[],
+  currentHandIds: readonly string[],
+  instances: Record<string, GameInstanceModel>,
+): {
+  activeIds: string[];
+  currentHandIds: string[];
+  instances: Record<string, GameInstanceModel>;
+} {
+  const failedIds = new Set(groupIds);
+  return {
+    activeIds: activeIds.filter(id => !failedIds.has(id)),
+    currentHandIds: currentHandIds.filter(id => !failedIds.has(id)),
+    instances: Object.fromEntries(
+      Object.entries(instances).filter(([id]) => !failedIds.has(id))
+    ),
+  };
+}
+
 export function isValidKrunkStake(stake: bigint): boolean {
   return stake > 0n && stake % 100n === 0n;
 }
@@ -827,21 +896,20 @@ export function useGameSession(
     return terms;
   })());
   const proposalGroupIdsByIdRef = useRef<Record<string, string[]>>((() => {
-    const groups: Record<string, string[]> = {};
-    const outgoingIds = restoredModel?.betweenHand.outgoingProposalIds ?? [];
-    for (const id of outgoingIds) groups[id] = outgoingIds;
-    for (const proposal of [
-      restoredModel?.betweenHand.cachedPeerProposal,
-      restoredModel?.betweenHand.reviewPeerProposal,
-    ]) {
-      if (!proposal) continue;
-      const ids = proposal.groupIds;
-      for (const id of ids) groups[id] = ids;
-    }
-    return groups;
+    return proposalGroupMap([
+      ...(restoredModel?.betweenHand.outgoingProposalGroupIds ?? []),
+      ...(restoredModel?.betweenHand.acceptedProposalGroupIds ?? []),
+      ...[
+        restoredModel?.betweenHand.cachedPeerProposal,
+        restoredModel?.betweenHand.reviewPeerProposal,
+      ].flatMap(proposal => proposal ? [proposal.groupIds] : []),
+    ]);
   })());
   const outgoingProposalIdsRef = useRef<Set<string>>(
     new Set(restoredModel?.betweenHand.outgoingProposalIds)
+  );
+  const acceptedProposalGroupIdsRef = useRef<string[][]>(
+    restoredModel?.betweenHand.acceptedProposalGroupIds.map(groupIds => [...groupIds]) ?? [],
   );
   const pendingRetryTermsRef = useRef<HandTerms | null>(
     restoredModel?.betweenHand.pendingRetryTerms ?? null,
@@ -1013,7 +1081,15 @@ export function useGameSession(
         composeProposalSent,
         newHandRequested,
         outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
-        outgoingProposalTerms: { ...proposalTermsByIdRef.current },
+        outgoingProposalGroupIds: outgoingProposalGroups(
+          outgoingProposalIdsRef.current,
+          proposalGroupIdsByIdRef.current,
+        ),
+        acceptedProposalGroupIds: acceptedProposalGroupIdsRef.current.map(groupIds => [...groupIds]),
+        outgoingProposalTerms: outgoingProposalTerms(
+          outgoingProposalIdsRef.current,
+          proposalTermsByIdRef.current,
+        ),
         pendingRetryTerms,
       },
       history: {
@@ -1385,7 +1461,20 @@ export function useGameSession(
       const weProposed = acceptedGroupIds.some(id => outgoingProposalIdsRef.current.has(id));
       const acceptedTerms = proposalTermsByIdRef.current[newId];
       log(`[notify] ProposalAccepted id=${newId} first=${isFirstGameOfHand} ours=${weProposed}`);
-      clearTrackedProposals(acceptedGroupIds);
+      // Keep group membership through every ProposalAccepted in this wave and
+      // a possible following InsufficientBalance. The terms/outgoing marker
+      // are no longer proposal state once acceptance begins.
+      if (!acceptedProposalGroupIdsRef.current.some(
+        groupIds => groupIds.length === acceptedGroupIds.length
+          && groupIds.every((id, index) => id === acceptedGroupIds[index]),
+      )) {
+        acceptedProposalGroupIdsRef.current.push([...acceptedGroupIds]);
+      }
+      clearProposalTerms(
+        acceptedGroupIds,
+        proposalTermsByIdRef.current,
+        outgoingProposalIdsRef.current,
+      );
       const nextGameIds = activeIdsAfterProposalAccepted(
         gameIdsRef.current,
         newId,
@@ -1478,6 +1567,7 @@ export function useGameSession(
         setCachedPeerProposalImmediately(null);
         setReviewPeerProposalImmediately(null);
         clearTrackedProposals();
+        acceptedProposalGroupIdsRef.current = [];
       }
 
       const settledEvent = settledEventForInfo(terminalId, terminalInfo);
@@ -1539,6 +1629,7 @@ export function useGameSession(
           setCachedPeerProposalImmediately(null);
           setReviewPeerProposalImmediately(null);
           clearTrackedProposals();
+          acceptedProposalGroupIdsRef.current = [];
         }
 
         if (terminalInfo.type === 'game-error' || terminalInfo.type === 'ended-cancelled') {
@@ -1701,19 +1792,21 @@ export function useGameSession(
       const ibId = String(ib?.id ?? '');
       log(`[notify] InsufficientBalance id=${ibId} ours=${ib?.our_balance_short} theirs=${ib?.their_balance_short}`);
       const failedIds = proposalGroupIdsByIdRef.current[ibId] ?? [ibId];
-      const failedSet = new Set(failedIds);
-      if (gameIdsRef.current.some(id => failedSet.has(id))) {
-        const remaining = gameIdsRef.current.filter(id => !failedSet.has(id));
-        setGameIds(remaining);
-        gameIdsRef.current = remaining;
-      }
-      const nextCurrentHandIds = currentHandGameIdsRef.current.filter(id => !failedSet.has(id));
-      currentHandGameIdsRef.current = nextCurrentHandIds;
-      setCurrentHandGameIds(nextCurrentHandIds);
-      replaceGameInstances(Object.fromEntries(
-        Object.entries(gameInstancesRef.current).filter(([id]) => !failedSet.has(id))
-      ));
+      const remainingHand = removeProposalGroupFromHand(
+        failedIds,
+        gameIdsRef.current,
+        currentHandGameIdsRef.current,
+        gameInstancesRef.current,
+      );
+      gameIdsRef.current = remainingHand.activeIds;
+      currentHandGameIdsRef.current = remainingHand.currentHandIds;
+      setGameIds(remainingHand.activeIds);
+      setCurrentHandGameIds(remainingHand.currentHandIds);
+      replaceGameInstances(remainingHand.instances);
       clearTrackedProposals(failedIds);
+      acceptedProposalGroupIdsRef.current = acceptedProposalGroupIdsRef.current.filter(
+        groupIds => !groupIds.some(id => failedIds.includes(id)),
+      );
       setHandStatus('ended');
       cancelStalePeerProposals();
       setCachedPeerProposalImmediately(null);
@@ -2032,7 +2125,15 @@ export function useGameSession(
       composeProposalSent,
       newHandRequested,
       outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
-      outgoingProposalTerms: { ...proposalTermsByIdRef.current },
+      outgoingProposalGroupIds: outgoingProposalGroups(
+        outgoingProposalIdsRef.current,
+        proposalGroupIdsByIdRef.current,
+      ),
+      acceptedProposalGroupIds: acceptedProposalGroupIdsRef.current.map(groupIds => [...groupIds]),
+      outgoingProposalTerms: outgoingProposalTerms(
+        outgoingProposalIdsRef.current,
+        proposalTermsByIdRef.current,
+      ),
       pendingRetryTerms,
     },
     history: {

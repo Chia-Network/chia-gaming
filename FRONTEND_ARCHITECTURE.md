@@ -450,7 +450,8 @@ full mid-game session state:
 | `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
 | `betweenHandCachedPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. `groupIds` is always non-empty. |
 | `betweenHandReviewPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. `groupIds` is always non-empty. |
-| `outgoingProposalTerms` | `Record<string, …>?` | Locally originated proposal terms keyed by proposal id. |
+| `outgoingProposalGroupIds` | `string[][]?` | Ordered member IDs for each locally originated factory group. Groups remain distinct; IDs from unrelated proposals are never merged on restore. |
+| `outgoingProposalTerms` | `Record<string, …>?` | Locally originated proposal terms keyed by proposal id. Peer proposal terms are persisted only in the cached/review peer-proposal fields. |
 | `waitingStateEnteredAt` | `bigint?` | Epoch ms when the channel entered an abandon-eligible waiting state. |
 | `cleanShutdownGraceStartedAt` | `bigint?` | Epoch ms when the clean-shutdown grace timer started. |
 
@@ -489,6 +490,19 @@ both JS and WASM state at once.
 `GameSettled` retires only its own game ID from the controller’s active set.
 This allows separate members of an atomic factory group to settle independently
 without removing the still-live member from persistence or presentation.
+
+Pending outgoing factory groups persist their ordered member arrays separately
+from terms. On restore, each array reconstructs its own ID-to-group mapping;
+the frontend must not infer one group from all outgoing IDs. Inbound proposal
+terms remain in the cached/review peer proposal snapshots and are never written
+as outgoing terms. During an acceptance wave, group membership remains available
+until the wave reaches its terminal result, so an `InsufficientBalance` for one
+member clears the entire group from both active and current-hand state.
+Accepted-but-not-yet-terminal groups use a separate persisted ordered array, so
+this cleanup remains atomic across a reload after `ProposalAccepted` has cleared
+outgoing proposal tracking. This changed the save meaning in schema version 10;
+version 9 records are deleted rather than migrated because they conflated
+incoming and outgoing proposal terms and cannot safely recover group ownership.
 
 #### Delivery-critical saves
 

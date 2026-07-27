@@ -2,6 +2,7 @@ import {
   createSessionModel,
   clearDerivedGamePresentation,
   channelStatusModelFromPayload,
+  channelStatusPayloadFromModel,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
   isChannelAbandonable,
@@ -33,6 +34,12 @@ import {
   nextGameTurnAfterLocalTurn,
   isActivelyPlayingOnChain,
   isFinishingGameStatus,
+  clearProposalTerms,
+  clearProposalTracking,
+  outgoingProposalGroups,
+  outgoingProposalTerms,
+  proposalGroupMap,
+  removeProposalGroupFromHand,
   parseGameStatusTerminalInfo,
   setPresentationRef,
   settledEventForInfo,
@@ -40,6 +47,228 @@ import {
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
+  it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
+    const terms = {
+      gameType: 'factory-pair',
+      myContribution: 10n,
+      theirContribution: 10n,
+      gameTimeout: 15n,
+    };
+    const groupIds = ['11', '13'];
+    const termsById = { '11': terms, '13': terms };
+    const groupsById = { '11': groupIds, '13': groupIds };
+    const outgoing = new Set(groupIds);
+
+    // First ProposalAccepted ends proposal terms, but later notifications must
+    // still resolve against the complete factory group.
+    clearProposalTerms(groupIds, termsById, outgoing);
+    expect(groupsById['13']).toEqual(groupIds);
+
+    const remaining = removeProposalGroupFromHand(groupIds, groupIds, groupIds, {
+      '11': {
+        id: '11',
+        amount: '20',
+        coin: { coinHex: null, turnState: 'my-turn' },
+        handStatus: 'active',
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      },
+      '13': {
+        id: '13',
+        amount: '20',
+        coin: { coinHex: null, turnState: 'their-turn' },
+        handStatus: 'active',
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      },
+    });
+    expect(remaining).toEqual({ activeIds: [], currentHandIds: [], instances: {} });
+
+    clearProposalTracking(groupIds, termsById, groupsById, outgoing);
+    expect(groupsById).toEqual({});
+  });
+
+  it('round-trips accepted in-flight groups for a later insufficient-balance cleanup', () => {
+    const model = createSessionModel({
+      game: {
+        activeIds: ['11', '13'],
+        currentHandIds: ['11', '13'],
+        instances: {
+          '11': {
+            id: '11',
+            amount: '20',
+            coin: { coinHex: null, turnState: 'my-turn' },
+            handStatus: 'active',
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
+          '13': {
+            id: '13',
+            amount: '20',
+            coin: { coinHex: null, turnState: 'their-turn' },
+            handStatus: 'active',
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
+        },
+      },
+      betweenHand: {
+        acceptedProposalGroupIds: [['11', '13']],
+      },
+    });
+    const snapshot = snapshotFromSessionModel(model);
+    const restored = sessionModelFromSave({
+      version: 10n,
+      playerId: 'p1',
+      activeGameIds: snapshot.activeGameIds,
+      currentHandGameIds: snapshot.currentHandGameIds,
+      gameInstances: snapshot.gameInstances,
+      gameTurnState: snapshot.gameTurnState,
+      activeGameType: snapshot.activeGameType,
+      acceptedProposalGroupIds: snapshot.acceptedProposalGroupIds,
+    });
+    const restoredGroups = proposalGroupMap(restored.betweenHand.acceptedProposalGroupIds);
+
+    expect(restored.betweenHand.acceptedProposalGroupIds).toEqual([['11', '13']]);
+    expect(restoredGroups['13']).toEqual(['11', '13']);
+    expect(removeProposalGroupFromHand(
+      restoredGroups['13'],
+      restored.game.activeIds,
+      restored.game.currentHandIds,
+      restored.game.instances,
+    )).toEqual({ activeIds: [], currentHandIds: [], instances: {} });
+  });
+
+  it('persists separate outgoing groups without inbound terms or group merging', () => {
+    const firstTerms = {
+      gameType: 'factory-a',
+      myContribution: 10n,
+      theirContribution: 10n,
+      gameTimeout: 15n,
+    };
+    const secondTerms = {
+      gameType: 'factory-b',
+      myContribution: 20n,
+      theirContribution: 20n,
+      gameTimeout: 20n,
+    };
+    const inboundTerms = {
+      gameType: 'peer-factory',
+      myContribution: 30n,
+      theirContribution: 30n,
+      gameTimeout: 25n,
+    };
+    const outgoing = new Set(['11', '13', '17', '19']);
+    const groups = {
+      '11': ['11', '13'],
+      '13': ['11', '13'],
+      '17': ['17', '19'],
+      '19': ['17', '19'],
+      '23': ['23', '29'],
+      '29': ['23', '29'],
+    };
+    const terms = {
+      '11': firstTerms,
+      '13': firstTerms,
+      '17': secondTerms,
+      '19': secondTerms,
+      '23': inboundTerms,
+      '29': inboundTerms,
+    };
+
+    expect(outgoingProposalGroups(outgoing, groups)).toEqual([
+      ['11', '13'],
+      ['17', '19'],
+    ]);
+    expect(outgoingProposalTerms(outgoing, terms)).toEqual({
+      '11': firstTerms,
+      '13': firstTerms,
+      '17': secondTerms,
+      '19': secondTerms,
+    });
+
+    const restored = sessionModelFromSave({
+      version: 9n,
+      playerId: 'p1',
+      activeGameIds: [],
+      outgoingProposalGroupIds: [['11', '13'], ['17', '19']],
+      outgoingProposalTerms: {
+        '11': {
+          my_contribution: '10',
+          their_contribution: '10',
+          game_type: 'factory-a',
+        },
+        '13': {
+          my_contribution: '10',
+          their_contribution: '10',
+          game_type: 'factory-a',
+        },
+        '17': {
+          my_contribution: '20',
+          their_contribution: '20',
+          game_type: 'factory-b',
+        },
+        '19': {
+          my_contribution: '20',
+          their_contribution: '20',
+          game_type: 'factory-b',
+        },
+      },
+      betweenHandReviewPeerProposal: {
+        id: '23',
+        groupIds: ['23', '29'],
+        my_contribution: '30',
+        their_contribution: '30',
+        game_type: 'peer-factory',
+      },
+    });
+    expect(restored.betweenHand.outgoingProposalGroupIds).toEqual([
+      ['11', '13'],
+      ['17', '19'],
+    ]);
+    expect(restored.betweenHand.outgoingProposalIds).toEqual(['11', '13', '17', '19']);
+    expect(restored.betweenHand.outgoingProposalTerms['23']).toBeUndefined();
+    expect(snapshotFromSessionModel(restored)).toMatchObject({
+      outgoingProposalGroupIds: [['11', '13'], ['17', '19']],
+    });
+  });
+
+  it('restores every current-hand member for resolved-unroll lifecycle rows', () => {
+    const model = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        currentHandIds: ['11', '13'],
+        instances: {
+          '11': {
+            id: '11',
+            amount: '20',
+            coin: { coinHex: null, turnState: 'my-turn', onChain: true },
+            handStatus: 'our-turn',
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
+          '13': {
+            id: '13',
+            amount: '20',
+            coin: { coinHex: null, turnState: 'their-turn', onChain: true },
+            handStatus: 'their-turn',
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
+        },
+      },
+    });
+    const snapshot = snapshotFromSessionModel(model);
+    const restored = sessionModelFromSave({
+      version: 9n,
+      playerId: 'p1',
+      activeGameIds: [],
+      currentHandGameIds: snapshot.currentHandGameIds,
+      gameInstances: snapshot.gameInstances,
+      channelStatus: channelStatusPayloadFromModel(model.channel.status),
+    });
+
+    expect(restored.game.currentHandIds).toEqual(['11', '13']);
+    expect(selectGameDashboardView(restored).lifecycleRows).toEqual([
+      { id: '11', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
+      { id: '13', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
+    ]);
+  });
+
   it('clears only derived hand presentation for an abandoned session', () => {
     const model = createSessionModel({
       channel: {

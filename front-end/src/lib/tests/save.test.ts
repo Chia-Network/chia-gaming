@@ -32,6 +32,7 @@ import {
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   SessionSave,
+  CURRENT_VERSION,
   _resetForTests,
   _writeRawState,
 } from '../../hooks/save';
@@ -271,11 +272,31 @@ describe('session persistence', () => {
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 9n,
+      version: CURRENT_VERSION,
       playerId: 'player',
       blockchainType: 'simulator',
     });
     expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
+    expect(hasSavedSessionMarker()).toBe(true);
+  });
+
+  it('rejects v9 session records instead of guessing proposal-group semantics', async () => {
+    localStorage.setItem('appState_savedSession', '1');
+    await writeSessionRecord({
+      version: 9n,
+      playerId: 'player',
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      outgoingProposalTerms: {
+        '11': {
+          my_contribution: '10',
+          their_contribution: '10',
+          game_type: 'factory-pair',
+        },
+      },
+    });
+
+    expect(CURRENT_VERSION).toBe(10n);
+    expect(await peekSession()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
@@ -371,7 +392,7 @@ describe('session persistence', () => {
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 9n,
+      version: CURRENT_VERSION,
       playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
@@ -726,7 +747,7 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadState();
-    expect(state.version).toBe(9n);
+    expect(state.version).toBe(CURRENT_VERSION);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {

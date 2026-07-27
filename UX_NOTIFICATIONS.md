@@ -536,6 +536,11 @@ receiver contributions before accepting any member. A peer must place every
 member acceptance in the same batch; partial acceptance rejects the batch.
 Cancellation likewise expands to the complete group. Consequently the UI must
 never model a factory group as partly pending, partly live, or partly cancelled.
+The UI retains the ordered group membership through the complete
+`ProposalAccepted` notification wave. If the subsequent aggregate preflight
+emits `InsufficientBalance`, it removes every member from active and
+current-hand presentation atomically, even when the notification identifies
+only one member.
 
 ### Rule B — Game lifecycle (bijection)
 

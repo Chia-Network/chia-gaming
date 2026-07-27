@@ -146,6 +146,10 @@ export interface SessionSave {
   betweenHandPendingRetryTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandCachedPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandReviewPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  /** Ordered member IDs for each locally originated factory proposal group. */
+  outgoingProposalGroupIds?: string[][];
+  /** Ordered member IDs for groups accepted but not yet terminally resolved. */
+  acceptedProposalGroupIds?: string[][];
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 
   // Timer persistence (epoch ms timestamps)
@@ -165,7 +169,7 @@ const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
  */
 let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 9n;
+export const CURRENT_VERSION = 10n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app

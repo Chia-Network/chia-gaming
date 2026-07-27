@@ -169,6 +169,8 @@ export interface BetweenHandModel {
   composeProposalSent: boolean;
   newHandRequested: boolean;
   outgoingProposalIds: string[];
+  outgoingProposalGroupIds: string[][];
+  acceptedProposalGroupIds: string[][];
   outgoingProposalTerms: Record<string, HandTermsModel>;
   pendingRetryTerms: HandTermsModel | null;
 }
@@ -480,6 +482,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       composeProposalSent: false,
       newHandRequested: false,
       outgoingProposalIds: [],
+      outgoingProposalGroupIds: [],
+      acceptedProposalGroupIds: [],
       outgoingProposalTerms: {},
       pendingRetryTerms: null,
       ...betweenHand,
@@ -1242,8 +1246,30 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             )
           )
         : {};
-      const outgoingProposalIds = Object.keys(outgoingProposalTerms);
+      if (
+        Object.keys(outgoingProposalTerms).length > 0
+        && save.outgoingProposalGroupIds === undefined
+      ) {
+        throw new Error('Garbled save: outgoing proposal terms missing group IDs');
+      }
+      const outgoingProposalGroupIds = (save.outgoingProposalGroupIds ?? []).map((groupIds, index) => {
+        if (!Array.isArray(groupIds) || groupIds.length === 0) {
+          throw new Error(`Garbled save: outgoing proposal group ${index} missing IDs`);
+        }
+        return [...groupIds];
+      });
+      const groupedOutgoingIds = outgoingProposalGroupIds.flat();
+      const outgoingProposalIds = [
+        ...groupedOutgoingIds,
+        ...Object.keys(outgoingProposalTerms).filter(id => !groupedOutgoingIds.includes(id)),
+      ];
       const hasOutgoing = outgoingProposalIds.length > 0;
+      const acceptedProposalGroupIds = (save.acceptedProposalGroupIds ?? []).map((groupIds, index) => {
+        if (!Array.isArray(groupIds) || groupIds.length === 0) {
+          throw new Error(`Garbled save: accepted proposal group ${index} missing IDs`);
+        }
+        return [...groupIds];
+      });
       return {
         mode,
         cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
@@ -1257,6 +1283,8 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         composeProposalSent: hasOutgoing && mode === 'compose-proposal',
         newHandRequested: hasOutgoing && mode === 'decision',
         outgoingProposalIds,
+        outgoingProposalGroupIds,
+        acceptedProposalGroupIds,
         outgoingProposalTerms,
       };
     })(),
@@ -1355,6 +1383,12 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
           groupIds: model.betweenHand.reviewPeerProposal.groupIds,
           ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
+      : undefined,
+    outgoingProposalGroupIds: model.betweenHand.outgoingProposalGroupIds.length > 0
+      ? model.betweenHand.outgoingProposalGroupIds.map(groupIds => [...groupIds])
+      : undefined,
+    acceptedProposalGroupIds: model.betweenHand.acceptedProposalGroupIds.length > 0
+      ? model.betweenHand.acceptedProposalGroupIds.map(groupIds => [...groupIds])
       : undefined,
     outgoingProposalTerms: Object.keys(model.betweenHand.outgoingProposalTerms).length > 0
       ? Object.fromEntries(
