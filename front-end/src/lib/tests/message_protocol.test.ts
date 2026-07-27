@@ -10,7 +10,14 @@ import {
   NeedCoinSpendRequest,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { restoreSession } from '../../hooks/blobSingleton';
+import {
+  destroySessionController,
+  getOrCreateSessionController,
+  isTransactionPublishNerfed,
+  restoreSession,
+  setTransactionPublishNerfed,
+  subscribeTransactionPublishNerfed,
+} from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import {
   _resetForTests as resetSaveState,
@@ -226,6 +233,10 @@ function flushDeferredWork(blob: SessionController) {
 
 function transactionSubmitQueue(blob: SessionController): Promise<void> {
   return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+}
+
+function submitTransaction(blob: SessionController, tx: SpendBundle): void {
+  (blob as unknown as { submitTransaction: (tx: SpendBundle) => void }).submitTransaction(tx);
 }
 
 async function flushPromiseJobs(): Promise<void> {
@@ -1171,6 +1182,86 @@ describe('terminal protocol cleanup', () => {
 });
 
 describe('transaction submission', () => {
+  it('routes controller nerfs through the singleton policy and notifies subscribers', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const updates: boolean[] = [];
+    const unsubscribe = subscribeTransactionPublishNerfed((nerfed) => updates.push(nerfed));
+    const { sessionController: blob } = getOrCreateSessionController(
+      null,
+      makePeerConn(sentMessages, sentAcks),
+      () => {},
+      'test',
+      100n,
+      100n,
+      true,
+    );
+
+    expect(isTransactionPublishNerfed()).toBe(false);
+    blob.nerf();
+    expect(isTransactionPublishNerfed()).toBe(true);
+    expect(blob.isTransactionPublishNerfed()).toBe(true);
+    setTransactionPublishNerfed(false);
+    expect(isTransactionPublishNerfed()).toBe(false);
+    expect(blob.isTransactionPublishNerfed()).toBe(false);
+    expect(updates).toEqual([false, true, false]);
+
+    unsubscribe();
+    destroySessionController();
+  });
+
+  it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
+    const spend = jest.fn().mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    blob.loadWasm(mockWasmConnection);
+
+    submitTransaction(blob, testSpendBundle('07'));
+    blob.setTransactionPublishNerfed(true);
+    await transactionSubmitQueue(blob);
+    expect(spend).not.toHaveBeenCalled();
+
+    blob.setTransactionPublishNerfed(false);
+    submitTransaction(blob, testSpendBundle('08'));
+    await transactionSubmitQueue(blob);
+    expect(spend).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops queued publishes after controller cleanup without cancelling an in-flight publish', async () => {
+    let resolveFirst: (() => void) | null = null;
+    const spend = jest.fn()
+      .mockImplementationOnce(() => new Promise<string>((resolve) => {
+        resolveFirst = () => resolve('');
+      }))
+      .mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    blob.loadWasm(mockWasmConnection);
+
+    submitTransaction(blob, testSpendBundle('09'));
+    submitTransaction(blob, testSpendBundle('0a'));
+    await flushPromiseJobs();
+    expect(spend).toHaveBeenCalledTimes(1);
+
+    blob.cleanup();
+    resolveFirst?.();
+    await transactionSubmitQueue(blob);
+    expect(spend).toHaveBeenCalledTimes(1);
+    activeBlob = null;
+  });
+
   it('applies watch and unwatch deltas without resampling the cradle snapshot', async () => {
     const queriedNames: string[][] = [];
     const blockchain = new BlockchainPoller(new Proxy(

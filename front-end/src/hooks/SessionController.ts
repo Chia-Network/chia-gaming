@@ -97,6 +97,10 @@ export class SessionController implements PollingGameSession {
   sendAck: (ackMsgno: bigint) => boolean;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
+  private transactionPublishNerfPolicy: ((
+    nerfed: boolean,
+    apply: (nerfed: boolean) => void,
+  ) => void) | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private lastUnackedResendAt = 0;
@@ -150,6 +154,7 @@ export class SessionController implements PollingGameSession {
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
   private protocolStopped = false;
+  private retired = false;
   private terminalHandoff: { id: string; msgno: bigint; sent: boolean; acknowledged: boolean } | null = null;
   activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
@@ -249,6 +254,7 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    this.retired = true;
     this.cleanShutdownCalled = true;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
@@ -574,7 +580,17 @@ export class SessionController implements PollingGameSession {
     // this promise is invisible in CI except as a bare empty-message test
     // failure, which is exactly the symptom we are chasing.
     this.transactionSubmitQueue = this.transactionSubmitQueue
-      .then(() => this.submitTransactionNow(tx))
+      .then(() => {
+        if (this.retired) {
+          log('[wasm] submitTransaction dropped because controller is retired');
+          return;
+        }
+        if (this.transactionPublishNerfed) {
+          log('[wasm] submitTransaction dropped because publishing is nerfed');
+          return;
+        }
+        return this.submitTransactionNow(tx);
+      })
       .catch((e) => { diagStack('transactionSubmitQueue rejected', e); });
   }
 
@@ -1408,8 +1424,33 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  isTransactionPublishNerfed(): boolean {
+    return this.transactionPublishNerfed;
+  }
+
+  setTransactionPublishNerfPolicy(
+    policy: (nerfed: boolean, apply: (nerfed: boolean) => void) => void,
+  ): void {
+    this.transactionPublishNerfPolicy = policy;
+  }
+
+  setTransactionPublishNerfed(nerfed: boolean): void {
+    if (this.transactionPublishNerfPolicy) {
+      this.transactionPublishNerfPolicy(
+        nerfed,
+        (value) => this.applyTransactionPublishNerfed(value),
+      );
+      return;
+    }
+    this.applyTransactionPublishNerfed(nerfed);
+  }
+
+  private applyTransactionPublishNerfed(nerfed: boolean): void {
+    this.transactionPublishNerfed = nerfed;
+    log(`[wasm] transaction publish ${nerfed ? 'nerfed' : 'enabled'}`);
+  }
+
   nerf(): void {
-    this.transactionPublishNerfed = true;
-    log('[wasm] transaction publish nerfed');
+    this.setTransactionPublishNerfed(true);
   }
 }
