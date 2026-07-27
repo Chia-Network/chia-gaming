@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, isValidKrunkStake, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
-import { useCalpokerHand } from '../hooks/useCalpokerHand';
+import { useCalpokerHand } from '../features/calPoker/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
@@ -12,9 +12,9 @@ import Calpoker from '../features/calPoker';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../types/californiaPoker/CaliforniapokerProps';
-import SpacePoker from './SpacePoker';
-import Krunk from './Krunk';
+} from '../features/calPoker/types/CaliforniapokerProps';
+import SpacePoker from '../features/spacePoker/SpacePoker';
+import Krunk from '../features/krunk/Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {

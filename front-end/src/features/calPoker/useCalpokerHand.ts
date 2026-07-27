@@ -3,11 +3,11 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import {
   CalpokerOutcome,
-} from '../types/ChiaGaming';
-import { SessionController } from './SessionController';
-import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
-import { GameplayEvent } from './useGameSession';
-import { type SettlementOutcome } from '../lib/settlement';
+} from '../../types/ChiaGaming';
+import { SessionController } from '../../hooks/SessionController';
+import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from '../../hooks/save';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { type SettlementOutcome } from '../../lib/settlement';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 

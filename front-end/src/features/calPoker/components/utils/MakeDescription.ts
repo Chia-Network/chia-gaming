@@ -1,4 +1,4 @@
-import { OutcomeHandType } from '@/src/types/californiaPoker';
+import { OutcomeHandType } from '../../types';
 
 const FULL_RANKS: Record<number, string> = {
   14: 'Ace',

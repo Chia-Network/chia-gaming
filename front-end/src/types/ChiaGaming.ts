@@ -1,7 +1,7 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
-import { cardIdToRankSuit } from './californiaPoker/cardHelpers';
+import { cardIdToRankSuit } from '../features/calPoker/types/cardHelpers';
 
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 

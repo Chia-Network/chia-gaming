@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from './SessionController';
-import { GameplayEvent } from './useGameSession';
+import { SessionController } from '../../hooks/SessionController';
+import { GameplayEvent } from '../../hooks/useGameSession';
 import {
   krunkSettlementStatus,
   type SettlementOutcome,
-} from '../lib/settlement';
+} from '../../lib/settlement';
 
 // Phase of the krunk state machine. Both roles share the enum -- which
 // transitions fire depends on whether the local player is alice (picks

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import {
   useSpacepokerHand,
   SpHandler,
@@ -9,10 +9,10 @@ import {
   SpTerminalState,
   SpacepokerDisplayMode,
   SpacepokerHandState,
-} from '../hooks/useSpacepokerHand';
-import { GameplayEvent } from '../hooks/useGameSession';
-import { useCheatNerfKeys } from '../hooks/useCheatNerfKeys';
-import { formatAmount } from '../util';
+} from './useSpacepokerHand';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
+import { formatAmount } from '../../util';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',

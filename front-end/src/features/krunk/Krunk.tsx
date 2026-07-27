@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
@@ -12,9 +12,9 @@ import {
   KrunkHandler,
   KrunkGuess,
   KrunkRole,
-} from '../hooks/useKrunkHand';
-import { GameplayEvent } from '../hooks/useGameSession';
-import { formatAmount } from '../util';
+} from './useKrunkHand';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { formatAmount } from '../../util';
 
 export interface KrunkProps {
   gameObject: SessionController;

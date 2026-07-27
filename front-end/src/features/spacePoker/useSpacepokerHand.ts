@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from './SessionController';
-import { GameplayEvent } from './useGameSession';
-import { log } from '../services/log';
-import { PersistedGameState } from './save';
+import { SessionController } from '../../hooks/SessionController';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { log } from '../../services/log';
+import { PersistedGameState } from '../../hooks/save';
 import {
   isForfeitOutcome,
   settlementByUs,
   type SettlementOutcome,
-} from '../lib/settlement';
+} from '../../lib/settlement';
 
 const SPACEPOKER_PERSISTED_STATE_VERSION = 1n;
 const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;

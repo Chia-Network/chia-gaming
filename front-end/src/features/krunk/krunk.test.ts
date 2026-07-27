@@ -9,7 +9,7 @@ import {
   krunkTerminalStatus,
   krunkWinMessage,
   type KrunkGameState,
-} from '../../hooks/useKrunkHand';
+} from './useKrunkHand';
 import {
   activeIdsAfterProposalAccepted,
   clearProposalTracking,
@@ -18,7 +18,7 @@ import {
   isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
-import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from '../../components/Krunk';
+import { formatKrunkHandLog, krunkGameSlots, krunkLetterStatuses } from './Krunk';
 
 describe('Krunk terms', () => {
   it('clears proposal terms, group links, and outgoing refs together', () => {

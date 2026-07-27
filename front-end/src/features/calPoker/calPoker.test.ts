@@ -1,12 +1,12 @@
 import {
   cardIdToRankSuit,
   handValueToDescription,
-} from '../../types/californiaPoker';
+} from './types';
 import {
   shouldAutoFireCalpokerMove,
   shouldProcessCalpokerOpponentMoved,
   calpokerResponderFinishesAtReveal,
-} from '../../hooks/useCalpokerHand';
+} from './useCalpokerHand';
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
