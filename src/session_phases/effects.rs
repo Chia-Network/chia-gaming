@@ -67,6 +67,37 @@ pub struct ChannelStatusSnapshot {
     pub have_potato: Option<bool>,
     #[serde(default)]
     pub zero_payout: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unroll_initiator: Option<UnrollInitiator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_phase: Option<ChannelSemanticPhase>,
+}
+
+/// Which party caused the observed channel-to-unroll transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnrollInitiator {
+    Us,
+    Opponent,
+}
+
+/// Fine-grained progress within the existing on-chain channel lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSemanticPhase {
+    SubmittingChannelSpend,
+    ResolvingOpponentChannelSpend,
+    Preempting,
+    WaitingTimeout,
+    SubmittingTimeoutFinish,
+    Resolving,
+}
+
+/// Context for a timeout spend that the transaction manager has submitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TimeoutClaimSemantic {
+    ChannelTimeoutFinish,
+    GameOpponentTurn { id: GameID },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -109,6 +140,13 @@ pub enum SettlementOutcome {
     OpponentCheated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailedGameAction {
+    MakeMove,
+    AcceptSettlement,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GameStatusOtherParams {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,6 +161,8 @@ pub struct GameStatusOtherParams {
     pub game_finished: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forfeited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submitting_timeout_claim: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -191,6 +231,10 @@ pub enum GameNotification {
     },
 
     ActionFailed {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<GameID>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<FailedGameAction>,
         reason: String,
     },
     MoveRejected {
@@ -211,6 +255,10 @@ pub enum GameNotification {
         have_potato: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         zero_payout: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unroll_initiator: Option<UnrollInitiator>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        semantic_phase: Option<ChannelSemanticPhase>,
     },
 }
 
@@ -289,6 +337,8 @@ pub enum GameSessionEvent {
         /// Eagerly-built spend to submit once this coin reaches its relative
         /// timeout age.  `None` for coins with no timeout claim.
         spend: Option<SpendBundle>,
+        /// Optional UI context emitted only when the manager submits `spend`.
+        semantic: Option<TimeoutClaimSemantic>,
     },
 }
 
@@ -338,6 +388,7 @@ pub enum Effect {
         /// coin reaches its relative timeout age.  `None` when there is no
         /// timeout claim to make for this coin.
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     },
     RequestPuzzleAndSolution(CoinString),
 
@@ -421,8 +472,9 @@ pub fn apply_effects(
                 timeout,
                 name,
                 spend,
+                semantic,
             } => {
-                system.register_coin(&coin, &timeout, name, spend)?;
+                system.register_coin(&coin, &timeout, name, spend, semantic)?;
             }
             Effect::RequestPuzzleAndSolution(coin) => {
                 system.request_puzzle_and_solution(&coin)?;
@@ -457,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn channel_status_without_zero_payout_restores() {
+    fn legacy_channel_status_restores_new_progress_fields_as_unknown() {
         let legacy = LegacyChannelStatusSnapshot {
             state: ChannelStatus::Active,
             advisory: None,
@@ -473,5 +525,7 @@ mod tests {
             bencodex::from_slice(&encoded).expect("restore legacy snapshot");
 
         assert_eq!(restored.zero_payout, None);
+        assert_eq!(restored.unroll_initiator, None);
+        assert_eq!(restored.semantic_phase, None);
     }
 }

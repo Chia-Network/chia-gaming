@@ -90,11 +90,16 @@ Flow:
    `result.events` to the JS `eventQueue`, calls `drain_submissions()` for
    intercepted transaction submissions, and calls `scheduleDrain()`.
 4. `scheduleDrain()` is a no-op if a drain is already scheduled or the queue
-   is empty. Otherwise it schedules a `setTimeout(0)` callback that dispatches
-   **one** event, saves state, and calls `scheduleDrain()` again for the next.
+   is empty. Otherwise it schedules one `setTimeout(0)` callback. That active
+   drain consumes the complete synchronous FIFO, including events appended by a
+   re-entrant active WASM call, before returning. To prevent a re-entrant
+   producer from monopolizing the browser, a drain yields after 100 events and
+   schedules the remaining FIFO for the next macrotask.
 
-Each event is dispatched exactly once by `dispatchEvent()`, in a separate
-macrotask. Event types and their handlers:
+Each event is dispatched exactly once by `dispatchEvent()`, in FIFO order.
+The first active event still begins in a later macrotask; subsequent events in
+the same synchronous drain do not get separate timers. Event types and their
+handlers:
 
 - `OutboundMessage` — send to peer via hub
 - `Notification` — surface game/channel state to the UI
@@ -109,28 +114,24 @@ list because they are intercepted during manager drain. They still originate as
 queued Rust events; they just become manager state/submission buffers and
 polling deltas before JS dispatch.
 
-Why async (one event per macrotask):
+Why the macrotask boundary and quiescent active drain coexist:
 
-- Some event handlers trigger additional WASM calls that produce more
-  `GameSessionEvent`s (for example, a notification handler that calls
-  `proposeGame`, which returns new events). Those events are appended to
-  the queue and drained in subsequent macrotasks.
-- Notification handlers in React check React state (e.g.
-  `gameConnectionState`). React `setState` calls don't flush until the
-  call stack unwinds. If multiple notifications were dispatched in a single
-  synchronous loop, handlers for events 2..N would see stale React state
-  from before event 1's `setState` took effect.
-- By yielding to the macrotask queue between events, React flushes state
-  updates before the next event handler runs. This means notification
-  handlers can rely on React state being current — no special rules about
-  using refs instead of state for guards.
-- Ordering is preserved: events from the first WASM call are queued first;
-  events produced re-entrantly (from a WASM call inside a handler) are
-  appended after. The queue drains in FIFO order.
+- The timer preserves the existing asynchronous host boundary before a normal
+  active result becomes visible.
+- During that timer callback, an event handler can synchronously call WASM and
+  append more active effects. The controller keeps the active-drain marker set,
+  so those effects join the same FIFO transaction instead of scheduling a
+  second visible update.
+- A self-replenishing active source is bounded to 100 events per macrotask.
+  The unprocessed tail remains in FIFO order and is scheduled normally, so it
+  cannot starve rendering or other browser work.
+- A terminal `ManagerDrainDisposition` does not use this path. It clears stale
+  queued presentation/protocol work and performs its existing final flush, so
+  a stale active notification cannot follow terminal presentation.
 
-This makes frontend event processing deterministic and allows notification
-handlers to use ordinary React state without worrying about synchronous
-batching artifacts.
+This makes the controller's active presentation delivery deterministic while
+preserving terminal queue replacement, delivery-critical save failure handling,
+and cooperative terminal-handoff acknowledgement behavior.
 
 ---
 
@@ -183,7 +184,13 @@ notification type for its persistent channel state display. At the WASM
 boundary it is normalized into one `ChannelStatusModel`, containing the real
 channel state, optional local `sessionDisposition`,
 advisory, coin identity and amount, both balances, game allocation,
-`havePotato`, and `zeroPayout`. Banner text, the potato indicator, dashboard
+`havePotato`, `zeroPayout`, and optional on-chain progress context. During an
+unroll, `unrollInitiator` identifies whether we or the opponent caused the
+observed channel spend when that attribution is definitive; a locally queued
+spend or cooperative-close setup alone leaves it unknown. `semanticPhase` refines the existing `GoingOnChain` /
+`Unrolling` state as submitting or resolving the channel spend, preempting,
+waiting for the relative timeout, submitting the timeout finish, or resolving
+the unroll spend. These are display facts, not new lifecycle states. Banner text, the potato indicator, dashboard
 actions, phase selection, persistence, and restore all project from that one
 snapshot instead of maintaining parallel channel-status shapes.
 During a cooperative terminal handoff, Rust sets
@@ -201,6 +208,16 @@ Monotonicity applies across all three lenses:
 - **On-chain lifecycle lens:** coin progression is forward-only
   (`created -> unrolling -> resolved` for channels, and
   `off-chain -> on-chain loop -> terminal` for games).
+
+When a watched timeout spend becomes mature, `TransactionManager` is the sole
+component that queues its submission. Before the host drains the submission
+buffer, it updates the session's canonical status snapshot to
+`submitting_timeout_finish`; the normal `ChannelStatus` notification then
+persists and restores that fact. The UI never infers timeout maturity, submits
+the transaction, or mutates a durable channel snapshot from a transient event.
+If a reorg changes or clears the watched coin's birthday, the manager re-arms
+the relative timeout and restores the canonical phase to `waiting_timeout`
+until the claim becomes mature again.
 
 ---
 
@@ -519,6 +536,11 @@ receiver contributions before accepting any member. A peer must place every
 member acceptance in the same batch; partial acceptance rejects the batch.
 Cancellation likewise expands to the complete group. Consequently the UI must
 never model a factory group as partly pending, partly live, or partly cancelled.
+The UI retains the ordered group membership through the complete
+`ProposalAccepted` notification wave. If the subsequent aggregate preflight
+emits `InsufficientBalance`, it removes every member from active and
+current-hand presentation atomically, even when the notification identifies
+only one member.
 
 ### Rule B — Game lifecycle (bijection)
 

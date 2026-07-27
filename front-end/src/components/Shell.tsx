@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
+import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, HubLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
@@ -52,7 +53,13 @@ import {
   peekAlias,
   setAlias,
 } from '../hooks/save';
-import { sessionController, destroySessionController } from '../hooks/blobSingleton';
+import {
+  sessionController,
+  destroySessionController,
+  isTransactionPublishNerfed,
+  setTransactionPublishNerfed as setTransactionPublishNerf,
+  subscribeTransactionPublishNerfed,
+} from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
@@ -85,6 +92,7 @@ import {
   type SessionModel,
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
+import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { gameDisplayName } from '../lib/gameRegistry';
 import {
   appendRecent,
@@ -204,15 +212,35 @@ function parseSessionAmount(raw: string): bigint {
   }
 }
 
-function SessionBuyIn({ myAmount, theirAmount }: { myAmount: string; theirAmount: string }) {
+function SessionBuyIn({
+  myAmount,
+  theirAmount,
+  channelTimeout,
+  unrollTimeout,
+}: {
+  myAmount: string;
+  theirAmount: string;
+  channelTimeout?: string;
+  unrollTimeout?: string;
+}) {
+  const effectiveChannelTimeout = parseOptionalBigInt(channelTimeout) ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS;
+  const effectiveUnrollTimeout = parseOptionalBigInt(unrollTimeout) ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS;
   if (myAmount === theirAmount) {
-    return <><br />Buy-in: <strong>{myAmount}</strong> mojos</>;
+    return (
+      <>
+        <br />Buy-in: <strong>{myAmount}</strong> mojos
+        <br />Channel timeout: <strong>{effectiveChannelTimeout.toString()}</strong> blocks
+        <br />Unroll timeout: <strong>{effectiveUnrollTimeout.toString()}</strong> blocks
+      </>
+    );
   }
 
   return (
     <>
       <br />Your buy-in: <strong>{myAmount}</strong> mojos
       <br />Their buy-in: <strong>{theirAmount}</strong> mojos
+      <br />Channel timeout: <strong>{effectiveChannelTimeout.toString()}</strong> blocks
+      <br />Unroll timeout: <strong>{effectiveUnrollTimeout.toString()}</strong> blocks
     </>
   );
 }
@@ -274,8 +302,8 @@ function tabForResumedSave(save: SessionSave): TabId | null {
 
 function isValidTimeoutString(v: string | undefined): boolean {
   if (v === undefined) return true;
-  const n = Number(v);
-  return Number.isInteger(n) && n >= MIN_TIMEOUT_BLOCKS && n <= MAX_TIMEOUT_BLOCKS;
+  const n = parseOptionalBigInt(v);
+  return n !== undefined && n >= BigInt(MIN_TIMEOUT_BLOCKS) && n <= BigInt(MAX_TIMEOUT_BLOCKS);
 }
 
 const TRACKER_LIVENESS_LABELS: Record<HubLiveness, string> = {
@@ -532,8 +560,15 @@ const Shell = () => {
   const [sessionConfig, setSessionConfig] = useState<GameSessionParams | null>(null);
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
+  const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [finishedSessionIdentity, setFinishedSessionIdentity] = useState<{
+    myName: string;
+    opponentName?: string;
+    iStarted: boolean;
+    iProposedHand: boolean;
+  } | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -604,6 +639,27 @@ const Shell = () => {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreHubReconciled, setRestoreHubReconciled] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
+  useEffect(() => {
+    setTransactionPublishNerfed(isTransactionPublishNerfed());
+    return subscribeTransactionPublishNerfed(setTransactionPublishNerfed);
+  }, []);
+  const toggleTransactionPublishNerf = useCallback(() => {
+    if (isTransactionPublishNerfed()) {
+      setTransactionPublishNerf(false);
+      setTransactionPublishNerfed(false);
+      return;
+    }
+    setConfirmDialog({
+      title: 'Nerf transaction publishing?',
+      body: 'Dropping transaction publications can leave your game unresolved and may cause you to lose money.',
+      confirmLabel: 'Enable nerfing',
+      onConfirm: () => {
+        setTransactionPublishNerf(true);
+        setTransactionPublishNerfed(true);
+        setConfirmDialog(null);
+      },
+    });
+  }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
@@ -1733,6 +1789,23 @@ const Shell = () => {
   const finishResolvedSessionDisplay = useCallback((hasError: boolean) => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const model = dashboardSessionModelRef.current;
+    const handState = sessionController
+      ? sessionController.handState ?? null
+      : model?.game.handState ?? null;
+    const finishedModel = model && handState !== model.game.handState
+      ? { ...model, game: { ...model.game, handState } }
+      : model;
+    if (finishedModel && finishedModel !== model) {
+      dashboardSessionModelRef.current = finishedModel;
+      setDashboardSessionModel(finishedModel);
+    }
+    const identity = {
+      myName: alias ?? '',
+      opponentName: sessionConfigRef.current?.opponentAlias ?? sessionSaveRef.current?.opponentAlias,
+      iStarted: sessionConfigRef.current?.iStarted ?? sessionSaveRef.current?.iStarted ?? false,
+      iProposedHand: sessionSaveRef.current?.iProposedHand ?? false,
+    };
+    setFinishedSessionIdentity(identity);
     abandonPendingRef.current = false;
     sessionFinishedCleanupRef.current = true;
     sessionPhaseRef.current = 'resolved';
@@ -1748,12 +1821,14 @@ const Shell = () => {
     // Clear only live protocol fields. clearSession() would drop the boot
     // marker and finished channel snapshot — then reload skips Resume while
     // still auto-connecting the saved hub.
-    if (model) {
-      const status = model.channel.status;
+    if (finishedModel) {
+      const status = finishedModel.channel.status;
       void saveTerminalSession({
-        ...snapshotFromSessionModel(model),
+        ...snapshotFromSessionModel(finishedModel),
+        handState,
+        terminalIStarted: identity.iStarted,
         channelStatus: channelStatusPayloadFromModel(status),
-        cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
+        cleanShutdownStarted: finishedModel.channel.cleanShutdownStarted || undefined,
       });
     } else {
       void saveTerminalSession({});
@@ -1769,7 +1844,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-  }, [clearSessionTimers, resetPeerRelayState]);
+  }, [clearSessionTimers, resetPeerRelayState, sessionController]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
@@ -1851,6 +1926,12 @@ const Shell = () => {
     const model = sessionModelFromSave(save);
     dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
+    setFinishedSessionIdentity({
+      myName: save.myAlias ?? peekAlias() ?? '',
+      opponentName: save.opponentAlias,
+      iStarted: save.terminalIStarted ?? false,
+      iProposedHand: save.iProposedHand ?? false,
+    });
     sessionSaveRef.current = save;
     sessionSavePropRef.current = undefined;
     sessionStartedRef.current = false;
@@ -2462,7 +2543,12 @@ const Shell = () => {
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
           <strong>{pendingAdvisory.peer_alias}</strong> would like to play.
-          <SessionBuyIn myAmount={pendingAdvisory.my_amount} theirAmount={pendingAdvisory.their_amount} />
+          <SessionBuyIn
+            myAmount={pendingAdvisory.my_amount}
+            theirAmount={pendingAdvisory.their_amount}
+            channelTimeout={pendingAdvisory.channel_timeout}
+            unrollTimeout={pendingAdvisory.unroll_timeout}
+          />
         </p>
         <div className='flex gap-3 justify-center'>
           <button
@@ -2486,7 +2572,12 @@ const Shell = () => {
         <h2 className='text-lg font-semibold text-canvas-text mb-2'>New Session</h2>
         <p className='text-sm text-canvas-text mb-4'>
           <strong>{pendingProposal.from_alias}</strong> is proposing a session.
-          <SessionBuyIn myAmount={pendingProposal.responder_amount} theirAmount={pendingProposal.proposer_amount} />
+          <SessionBuyIn
+            myAmount={pendingProposal.responder_amount}
+            theirAmount={pendingProposal.proposer_amount}
+            channelTimeout={pendingProposal.channel_timeout}
+            unrollTimeout={pendingProposal.unroll_timeout}
+          />
         </p>
         <div className='flex gap-3 justify-center'>
           <button
@@ -2615,6 +2706,15 @@ const Shell = () => {
 
         {/* Wallet tab */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'wallet' ? 'flex' : 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
+          <Button
+            variant={transactionPublishNerfed ? 'solid' : 'outline'}
+            color={transactionPublishNerfed ? 'primary' : 'neutral'}
+            size='sm'
+            className='absolute right-4 top-4'
+            onClick={toggleTransactionPublishNerf}
+          >
+            Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+          </Button>
           {walletConnected ? (
             <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
               <div className='flex items-center gap-2'>
@@ -2901,12 +3001,21 @@ const Shell = () => {
               <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
                 Restoring session...
               </div>
+            ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
+              <div className='relative w-full h-full'>
+                <FinishedSessionGameView
+                  model={sessionModelForReactProps(dashboardSessionModel)}
+                  myName={finishedSessionIdentity?.myName ?? peekAlias()}
+                  opponentName={finishedSessionIdentity?.opponentName}
+                  iStarted={finishedSessionIdentity?.iStarted ?? false}
+                  iProposedHand={finishedSessionIdentity?.iProposedHand ?? false}
+                />
+                {sessionConsentOverlay}
+              </div>
             ) : (
               <div className='relative w-full h-full'>
                 <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-                  {sessionPhase === 'resolved' && dashboardSessionModel
-                    ? 'Session finished'
-                    : 'No active game session'}
+                  No active game session
                 </div>
                 {sessionConsentOverlay}
               </div>

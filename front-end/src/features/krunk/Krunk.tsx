@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
@@ -12,9 +12,9 @@ import {
   KrunkHandler,
   KrunkGuess,
   KrunkRole,
-} from '../hooks/useKrunkHand';
-import { GameplayEvent } from '../hooks/useGameSession';
-import { formatAmount } from '../util';
+} from './useKrunkHand';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { formatAmount } from '../../util';
 
 export interface KrunkProps {
   gameObject: SessionController;
@@ -70,6 +70,10 @@ export function krunkGameSlots(
     aliceActive: slots.aliceGameId !== null && activeGameIds.includes(slots.aliceGameId),
     bobActive: slots.bobGameId !== null && activeGameIds.includes(slots.bobGameId),
   };
+}
+
+export function newlyResolvedKrunkIndex(resolvedCount: number, previousResolvedCount: number): number | undefined {
+  return resolvedCount > previousResolvedCount ? resolvedCount - 1 : undefined;
 }
 
 const MAX_GUESSES = 5;
@@ -496,11 +500,11 @@ const Krunk: React.FC<KrunkProps> = ({
   const [guessDraft, setGuessDraft] = useState('');
   const [guessQueue, setGuessQueue] = useState<string[]>([]);
 
-  // Track the index of the most recently resolved guess for animation.
-  // Detect new clues synchronously to avoid a flash frame, but persist
-  // the value in state so it survives re-renders while the animation plays.
+  // Resolved cells must receive their delay in the render where they mount:
+  // LetterCell intentionally latches that initial delay.
   const prevResolvedCountRef = useRef(0);
   const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
+  const newlyResolvedIndex = newlyResolvedKrunkIndex(resolvedCount, prevResolvedCountRef.current);
   // Dictionary rejection rolls back the sent guess in gameState; hide any
   // still-queued rows in the same render (don't wait for the clear effect).
   const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error)
@@ -511,16 +515,18 @@ const Krunk: React.FC<KrunkProps> = ({
     displayQueue,
   );
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
-  if (resolvedCount > prevResolvedCountRef.current) {
+  useEffect(() => {
+    if (newlyResolvedIndex === undefined) return;
     prevResolvedCountRef.current = resolvedCount;
-    setAnimateIndex(resolvedCount - 1);
-  }
+    setAnimateIndex(newlyResolvedIndex);
+  }, [newlyResolvedIndex, resolvedCount]);
+  const latestAnimateIndex = newlyResolvedIndex ?? animateIndex;
 
   const bobRevealedWord = bobHand.gameState.revealedWord;
   const bobSolved = bobHand.gameState.guesses.some(g => g.clue.every(v => v === 2));
   const bobMissed = bobRevealedWord != null && !bobSolved;
   const animateBobReveal = bobMissed
-    && animateIndex === bobHand.gameState.guesses.length - 1;
+    && latestAnimateIndex === bobHand.gameState.guesses.length - 1;
   // Wait for the final guess row to finish flipping before mounting the
   // answer row, so its flip starts only after that animation ends.
   const [bobRevealReady, setBobRevealReady] = useState(false);
@@ -592,27 +598,30 @@ const Krunk: React.FC<KrunkProps> = ({
     : (canDraftGuess ? 'guess' : null);
   const activeDraft = keyboardMode === 'pick' ? wordDraft : guessDraft;
   const showGuessDraft = canDraftGuess;
+  const keyboardFocusRef = useRef<HTMLDivElement>(null);
 
   const commitWord = useCallback(() => {
-    if (wordDraft.length !== 5) return;
+    if (wordDraft.length !== 5) return false;
     aliceHand.setSecretWord(wordDraft);
     setWordDraft('');
+    return true;
   }, [wordDraft, aliceHand.setSecretWord]);
 
   const submitGuess = useCallback(() => {
-    if (guessDraft.length !== 5) return;
+    if (guessDraft.length !== 5) return false;
     // Always allow queueing when not in a live send phase (waiting on
     // commit or clue). Send immediately only when it is our guess turn
     // and the queue is empty.
     if (isBobGuessPhase && guessQueue.length === 0) {
       bobHand.submitGuess(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
-      if (filledGuessCount >= MAX_GUESSES) return;
+      if (filledGuessCount >= MAX_GUESSES) return false;
       setGuessQueue(prev => [...prev, guessDraft]);
     } else {
-      return;
+      return false;
     }
     setGuessDraft('');
+    return true;
   }, [
     guessDraft,
     isBobGuessPhase,
@@ -623,8 +632,12 @@ const Krunk: React.FC<KrunkProps> = ({
   ]);
 
   const submitActive = useCallback(() => {
-    if (keyboardMode === 'pick') commitWord();
-    else if (keyboardMode === 'guess') submitGuess();
+    const submitted = keyboardMode === 'pick'
+      ? commitWord()
+      : keyboardMode === 'guess'
+        ? submitGuess()
+        : false;
+    if (submitted) keyboardFocusRef.current?.focus();
   }, [keyboardMode, commitWord, submitGuess]);
 
   const themLabel = opponentName ?? 'Opponent';
@@ -731,6 +744,9 @@ const Krunk: React.FC<KrunkProps> = ({
     : keyboardMode === 'guess'
       && guessDraft.length === 5
       && (isBobGuessPhase || canQueueGuess);
+  const handComplete =
+    bobHand.gameState.handler === KrunkHandler.Terminal
+    && aliceHand.gameState.handler === KrunkHandler.Terminal;
 
   return (
     <div className='flex flex-col gap-4 items-center py-4'>
@@ -744,10 +760,14 @@ const Krunk: React.FC<KrunkProps> = ({
             guesses={displayedBobGuesses}
             draft={guessDraft}
             showDraftRow={showGuessDraft}
-            latestAnimateIndex={animateIndex}
+            latestAnimateIndex={latestAnimateIndex}
           />
           {bobMissed && bobRevealReady && bobRevealedWord ? (
             <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
+          ) : !bobSolved && !handComplete ? (
+            <div className='flex gap-1 mt-2'>
+              {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
+            </div>
           ) : null}
         </div>
 
@@ -770,35 +790,37 @@ const Krunk: React.FC<KrunkProps> = ({
         </div>
       </div>
 
-      <div className='flex flex-col items-center gap-2'>
-        <OnScreenKeyboard
-          statuses={letterStatuses}
-          disabled={keyboardMode === null}
-          onLetter={typeLetter}
-          onBackspace={backspace}
-        />
-        <button
-          type='button'
-          className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-          disabled={!actionEnabled}
-          onClick={submitActive}
-        >
-          {actionLabel}
-        </button>
-        {statusNotice && (
-          <p
-            className={`text-center text-lg mt-1 ${
-              statusNotice.kind === 'error'
-                ? 'text-red-600'
-                : statusNotice.kind === 'win'
-                  ? 'text-2xl font-bold text-canvas-text-contrast'
-                  : 'text-canvas-text-contrast'
-            }`}
+      {!handComplete && (
+        <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
+          <OnScreenKeyboard
+            statuses={letterStatuses}
+            disabled={keyboardMode === null}
+            onLetter={typeLetter}
+            onBackspace={backspace}
+          />
+          <button
+            type='button'
+            className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+            disabled={!actionEnabled}
+            onClick={submitActive}
           >
-            {statusNotice.text}
-          </p>
-        )}
-      </div>
+            {actionLabel}
+          </button>
+        </div>
+      )}
+      {statusNotice && (
+        <p
+          className={`text-center text-lg mt-1 ${
+            statusNotice.kind === 'error'
+              ? 'text-red-600'
+              : statusNotice.kind === 'win'
+                ? 'text-2xl font-bold text-canvas-text-contrast'
+                : 'text-canvas-text-contrast'
+          }`}
+        >
+          {statusNotice.text}
+        </p>
+      )}
     </div>
   );
 };

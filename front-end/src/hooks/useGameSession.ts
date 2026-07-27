@@ -4,7 +4,6 @@ import { Program } from 'clvm-lib';
 import {
   GameConnectionState,
   GameSessionParams,
-  CalpokerOutcome,
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
@@ -14,8 +13,10 @@ import {
   GameStatusPayload,
   GameStatusState,
   MoveRejectedPayload,
+  ActionFailedPayload,
   SessionPhase,
 } from '../types/ChiaGaming';
+import { CalpokerOutcome } from '../features/calPoker/outcome';
 import {
   getOrCreateSessionController,
   initStarted,
@@ -67,7 +68,7 @@ export type GameplayEvent =
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
   | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
-  | { GameError: { gameId: string; reason: string } };
+  | { GameError: { gameId: string; reason: string; source: 'action' | 'terminal'; action?: 'make-move' | 'accept-settlement' } };
 
 function asBytes(value: unknown): Uint8Array | null {
   return coerceToBytes(value);
@@ -83,6 +84,28 @@ export function gameplayEventForMoveRejected(
       message: String(payload.message),
     },
   };
+}
+
+export function gameplayEventForGameActionError(
+  gameId: string,
+  action: 'make-move' | 'accept-settlement',
+  reason: string,
+): GameplayEvent {
+  return { GameError: { gameId, action, reason, source: 'action' } };
+}
+
+export function gameplayEventForActionFailed(
+  payload: ActionFailedPayload,
+): GameplayEvent | null {
+  if (payload.id == null) return null;
+  const action = payload.action === 'make_move'
+    ? 'make-move'
+    : payload.action === 'accept_settlement'
+      ? 'accept-settlement'
+      : null;
+  return action
+    ? gameplayEventForGameActionError(String(payload.id), action, String(payload.reason))
+    : null;
 }
 
 export function settledEventForInfo(
@@ -179,6 +202,16 @@ async function coinIdHex(coin: unknown): Promise<string | null> {
   return bytes ? coinIdFromBytes(bytes) : null;
 }
 
+/** Keep handler-owned presentation facts current before React renders them. */
+export function setPresentationRef<T>(
+  ref: MutableRefObject<T>,
+  value: T,
+  setState: (value: T) => void,
+): void {
+  ref.current = value;
+  setState(value);
+}
+
 export function enqueueWasmNotification(
   queueRef: MutableRefObject<Promise<void>>,
   notification: WasmNotification,
@@ -189,7 +222,7 @@ export function enqueueWasmNotification(
     .then(() => handleNotification(notification))
     .catch(onError);
 }
-export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'finishing' | 'ended';
+export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'submitting-timeout' | 'finishing' | 'ended';
 
 export interface GameCoinInfo {
   coinHex: string | null;
@@ -404,6 +437,75 @@ export function clearProposalTracking(
     delete groupIdsById[id];
     outgoingIds.delete(id);
   }
+}
+
+export function clearProposalTerms(
+  ids: readonly string[],
+  termsById: Record<string, HandTerms>,
+  outgoingIds: Set<string>,
+): void {
+  for (const id of ids) {
+    delete termsById[id];
+    outgoingIds.delete(id);
+  }
+}
+
+export function outgoingProposalGroups(
+  outgoingIds: ReadonlySet<string>,
+  groupIdsById: Record<string, string[]>,
+): string[][] {
+  const groups: string[][] = [];
+  const seen = new Set<string>();
+  for (const id of outgoingIds) {
+    const groupIds = groupIdsById[id] ?? [id];
+    const key = groupIds.join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push([...groupIds]);
+  }
+  return groups;
+}
+
+export function outgoingProposalTerms(
+  outgoingIds: ReadonlySet<string>,
+  termsById: Record<string, HandTerms>,
+): Record<string, HandTerms> {
+  return Object.fromEntries(
+    Array.from(outgoingIds).flatMap(id => {
+      const terms = termsById[id];
+      return terms ? [[id, terms]] : [];
+    }),
+  );
+}
+
+export function proposalGroupMap(
+  groups: readonly (readonly string[])[],
+): Record<string, string[]> {
+  const byId: Record<string, string[]> = {};
+  for (const groupIds of groups) {
+    for (const id of groupIds) byId[id] = [...groupIds];
+  }
+  return byId;
+}
+
+export function removeProposalGroupFromHand(
+  groupIds: readonly string[],
+  activeIds: readonly string[],
+  currentHandIds: readonly string[],
+  instances: Record<string, GameInstanceModel>,
+): {
+  activeIds: string[];
+  currentHandIds: string[];
+  instances: Record<string, GameInstanceModel>;
+} {
+  const failedIds = new Set(groupIds);
+  return {
+    activeIds: activeIds.filter(id => !failedIds.has(id)),
+    currentHandIds: currentHandIds.filter(id => !failedIds.has(id)),
+    instances: Object.fromEntries(
+      Object.entries(instances).filter(([id]) => !failedIds.has(id))
+    ),
+  };
 }
 
 export function isValidKrunkStake(stake: bigint): boolean {
@@ -625,6 +727,7 @@ export function useGameSession(
       restoredModel?.channel.connection
         ?? { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
     );
+  const gameConnectionStateRef = useRef<GameConnectionState>(gameConnectionState);
   const [myRunningBalance, setMyRunningBalance] = useState(() =>
     restoredModel?.myRunningBalance ?? 0n
   );
@@ -793,21 +896,20 @@ export function useGameSession(
     return terms;
   })());
   const proposalGroupIdsByIdRef = useRef<Record<string, string[]>>((() => {
-    const groups: Record<string, string[]> = {};
-    const outgoingIds = restoredModel?.betweenHand.outgoingProposalIds ?? [];
-    for (const id of outgoingIds) groups[id] = outgoingIds;
-    for (const proposal of [
-      restoredModel?.betweenHand.cachedPeerProposal,
-      restoredModel?.betweenHand.reviewPeerProposal,
-    ]) {
-      if (!proposal) continue;
-      const ids = proposal.groupIds;
-      for (const id of ids) groups[id] = ids;
-    }
-    return groups;
+    return proposalGroupMap([
+      ...(restoredModel?.betweenHand.outgoingProposalGroupIds ?? []),
+      ...(restoredModel?.betweenHand.acceptedProposalGroupIds ?? []),
+      ...[
+        restoredModel?.betweenHand.cachedPeerProposal,
+        restoredModel?.betweenHand.reviewPeerProposal,
+      ].flatMap(proposal => proposal ? [proposal.groupIds] : []),
+    ]);
   })());
   const outgoingProposalIdsRef = useRef<Set<string>>(
     new Set(restoredModel?.betweenHand.outgoingProposalIds)
+  );
+  const acceptedProposalGroupIdsRef = useRef<string[][]>(
+    restoredModel?.betweenHand.acceptedProposalGroupIds.map(groupIds => [...groupIds]) ?? [],
   );
   const pendingRetryTermsRef = useRef<HandTerms | null>(
     restoredModel?.betweenHand.pendingRetryTerms ?? null,
@@ -845,6 +947,31 @@ export function useGameSession(
     );
   }, []);
 
+  const setGameConnectionStateImmediately = useCallback((state: GameConnectionState) => {
+    setPresentationRef(gameConnectionStateRef, state, setGameConnectionState);
+  }, []);
+
+  const setBetweenHandModeImmediately = useCallback((mode: BetweenHandMode) => {
+    setPresentationRef(betweenHandModeRef, mode, setBetweenHandMode);
+  }, []);
+
+  const setCachedPeerProposalImmediately = useCallback((proposal: BetweenHandProposal | null) => {
+    setPresentationRef(cachedPeerProposalRef, proposal, setCachedPeerProposal);
+  }, []);
+
+  const setReviewPeerProposalImmediately = useCallback((proposal: BetweenHandProposal | null) => {
+    setPresentationRef(reviewPeerProposalRef, proposal, setReviewPeerProposal);
+  }, []);
+
+  const setRejectedOnceTermsImmediately = useCallback((terms: HandTerms | null) => {
+    setPresentationRef(rejectedOnceTermsRef, terms, setRejectedOnceTerms);
+  }, []);
+
+  const setLastHandTermsImmediately = useCallback((terms: HandTerms) => {
+    setPresentationRef(lastHandTermsRef, terms, setLastHandTerms);
+  }, []);
+
+  gameConnectionStateRef.current = gameConnectionState;
   gameIdsRef.current = gameIds;
   currentHandGameIdsRef.current = currentHandGameIds;
   gameInstancesRef.current = gameInstances;
@@ -954,7 +1081,15 @@ export function useGameSession(
         composeProposalSent,
         newHandRequested,
         outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
-        outgoingProposalTerms: { ...proposalTermsByIdRef.current },
+        outgoingProposalGroupIds: outgoingProposalGroups(
+          outgoingProposalIdsRef.current,
+          proposalGroupIdsByIdRef.current,
+        ),
+        acceptedProposalGroupIds: acceptedProposalGroupIdsRef.current.map(groupIds => [...groupIds]),
+        outgoingProposalTerms: outgoingProposalTerms(
+          outgoingProposalIdsRef.current,
+          proposalTermsByIdRef.current,
+        ),
         pendingRetryTerms,
       },
       history: {
@@ -1168,8 +1303,8 @@ export function useGameSession(
           && dismissedChannelStatusRef.current !== cs.state) {
         pushChannel({ kind: 'channel-state', title: 'Error', message: info.advisory ?? '', payload: info });
       }
-      if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
-        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+      if (cs.state === 'Active' && gameConnectionStateRef.current.stateIdentifier !== 'running') {
+        setGameConnectionStateImmediately({ stateIdentifier: 'running', stateDetail: [] });
       }
       if (cs.state === 'ShuttingDown' || cs.state === 'ShutdownTransactionPending') {
         setCleanShutdownStarted(true);
@@ -1184,11 +1319,11 @@ export function useGameSession(
         // into review instead of opening an empty compose dialog.
         const cached = cachedPeerProposalRef.current;
         if (cached) {
-          setReviewPeerProposal(cached);
-          setCachedPeerProposal(null);
-          setBetweenHandMode('review-incoming-proposal');
+          setReviewPeerProposalImmediately(cached);
+          setCachedPeerProposalImmediately(null);
+          setBetweenHandModeImmediately('review-incoming-proposal');
         } else {
-          setBetweenHandMode('compose-proposal');
+          setBetweenHandModeImmediately('compose-proposal');
         }
       }
       return;
@@ -1225,7 +1360,7 @@ export function useGameSession(
       // the proposal so Active can promote it to review instead of cancelling.
       if (handKeyRef.current === 0) {
         log(`[notify] ProposalMade id=${incoming.id} queued — channel not active yet`);
-        setCachedPeerProposal(incoming);
+        setCachedPeerProposalImmediately(incoming);
         return;
       }
 
@@ -1241,8 +1376,8 @@ export function useGameSession(
             setPendingRetryTerms(null);
             sameTermsRequestedRef.current = false;
             setNewHandRequested(false);
-            setReviewPeerProposal(incoming);
-            setBetweenHandMode('review-incoming-proposal');
+            setReviewPeerProposalImmediately(incoming);
+            setBetweenHandModeImmediately('review-incoming-proposal');
           } else if (matchesLastTerms && sameTermsRequestedRef.current) {
             setPendingRetryTerms(null);
             try {
@@ -1265,8 +1400,8 @@ export function useGameSession(
               cancelProposalOrThrow(id);
             }
             outgoingProposalIdsRef.current.clear();
-            setReviewPeerProposal(incoming);
-            setBetweenHandMode('review-incoming-proposal');
+            setReviewPeerProposalImmediately(incoming);
+            setBetweenHandModeImmediately('review-incoming-proposal');
           } else if (retryTerms) {
             setPendingRetryTerms(null);
             sameTermsRequestedRef.current = false;
@@ -1276,11 +1411,11 @@ export function useGameSession(
               cancelProposalOrThrow(incoming.id);
               proposeNewGame(retryTerms);
             } else {
-              setReviewPeerProposal(incoming);
-              setBetweenHandMode('review-incoming-proposal');
+              setReviewPeerProposalImmediately(incoming);
+              setBetweenHandModeImmediately('review-incoming-proposal');
             }
           } else {
-            setCachedPeerProposal(incoming);
+            setCachedPeerProposalImmediately(incoming);
           }
           break;
         }
@@ -1296,22 +1431,22 @@ export function useGameSession(
               setComposeProposalSent(false);
               sameTermsRequestedRef.current = false;
               setNewHandRequested(false);
-              setReviewPeerProposal(incoming);
-              setBetweenHandMode('review-incoming-proposal');
+              setReviewPeerProposalImmediately(incoming);
+              setBetweenHandModeImmediately('review-incoming-proposal');
             }
           } else if (termsEqual(incoming.terms, rejectedOnceTermsRef.current)) {
             log(`[notify] ProposalMade id=${incoming.id} auto-rejecting one-shot remembered terms`);
             cancelProposalOrThrow(incoming.id);
-            setRejectedOnceTerms(null);
+            setRejectedOnceTermsImmediately(null);
           } else {
-            setReviewPeerProposal(incoming);
-            setBetweenHandMode('review-incoming-proposal');
+            setReviewPeerProposalImmediately(incoming);
+            setBetweenHandModeImmediately('review-incoming-proposal');
           }
           break;
         }
         case 'review-incoming-proposal':
           // Latest inbound proposal replaces currently reviewed one.
-          setReviewPeerProposal(incoming);
+          setReviewPeerProposalImmediately(incoming);
           break;
       }
     } else if ('ProposalAccepted' in n) {
@@ -1326,7 +1461,20 @@ export function useGameSession(
       const weProposed = acceptedGroupIds.some(id => outgoingProposalIdsRef.current.has(id));
       const acceptedTerms = proposalTermsByIdRef.current[newId];
       log(`[notify] ProposalAccepted id=${newId} first=${isFirstGameOfHand} ours=${weProposed}`);
-      clearTrackedProposals(acceptedGroupIds);
+      // Keep group membership through every ProposalAccepted in this wave and
+      // a possible following InsufficientBalance. The terms/outgoing marker
+      // are no longer proposal state once acceptance begins.
+      if (!acceptedProposalGroupIdsRef.current.some(
+        groupIds => groupIds.length === acceptedGroupIds.length
+          && groupIds.every((id, index) => id === acceptedGroupIds[index]),
+      )) {
+        acceptedProposalGroupIdsRef.current.push([...acceptedGroupIds]);
+      }
+      clearProposalTerms(
+        acceptedGroupIds,
+        proposalTermsByIdRef.current,
+        outgoingProposalIdsRef.current,
+      );
       const nextGameIds = activeIdsAfterProposalAccepted(
         gameIdsRef.current,
         newId,
@@ -1366,23 +1514,23 @@ export function useGameSession(
         cancelStalePeerProposals(newId);
         setLastDisplayedGameId(newId);
         if (acceptedTerms) {
-          setLastHandTerms(acceptedTerms);
+          setLastHandTermsImmediately(acceptedTerms);
           setComposePerHandAmount(acceptedTerms.myContribution);
           setComposeGameTimeout(acceptedTerms.gameTimeout);
           setActiveGameType(acceptedTerms.gameType);
         }
         go?.setHandState(null);
         setHandKey(prev => prev + 1);
-        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+        setGameConnectionStateImmediately({ stateIdentifier: 'running', stateDetail: [] });
         turnStateRef.current = startTurn;
         setGameCoin({ coinHex: null, turnState: startTurn });
         setHandStatus('active');
         setGameTerminal(INITIAL_GAME_TERMINAL);
-        setCachedPeerProposal(null);
-        setReviewPeerProposal(null);
-        setRejectedOnceTerms(null);
+        setCachedPeerProposalImmediately(null);
+        setReviewPeerProposalImmediately(null);
+        setRejectedOnceTermsImmediately(null);
         setGameQueue(prev => prev.filter(n => n.kind !== 'proposal-rejected'));
-        setBetweenHandMode('decision');
+        setBetweenHandModeImmediately('decision');
       }
       gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as bigint | number | string } });
     } else if ('GameSettled' in n) {
@@ -1415,10 +1563,11 @@ export function useGameSession(
         setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
         setHandStatus('ended');
         cancelStalePeerProposals();
-        setBetweenHandMode('decision');
-        setCachedPeerProposal(null);
-        setReviewPeerProposal(null);
+        setBetweenHandModeImmediately('decision');
+        setCachedPeerProposalImmediately(null);
+        setReviewPeerProposalImmediately(null);
         clearTrackedProposals();
+        acceptedProposalGroupIdsRef.current = [];
       }
 
       const settledEvent = settledEventForInfo(terminalId, terminalInfo);
@@ -1426,7 +1575,7 @@ export function useGameSession(
         gameplayEventSubject.next(settledEvent);
       } else if (terminalInfo.type === 'game-error') {
         gameplayEventSubject.next({
-          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error' },
+          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error', source: 'terminal' },
         });
       }
       return;
@@ -1476,15 +1625,16 @@ export function useGameSession(
           setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
           setHandStatus('ended');
           cancelStalePeerProposals();
-          setBetweenHandMode('decision');
-          setCachedPeerProposal(null);
-          setReviewPeerProposal(null);
+          setBetweenHandModeImmediately('decision');
+          setCachedPeerProposalImmediately(null);
+          setReviewPeerProposalImmediately(null);
           clearTrackedProposals();
+          acceptedProposalGroupIdsRef.current = [];
         }
 
         if (terminalInfo.type === 'game-error' || terminalInfo.type === 'ended-cancelled') {
           gameplayEventSubject.next({
-            GameError: { gameId: terminalId, reason: terminalInfo.label ?? terminalInfo.type },
+            GameError: { gameId: terminalId, reason: terminalInfo.label ?? terminalInfo.type, source: 'terminal' },
           });
         }
         return;
@@ -1492,6 +1642,7 @@ export function useGameSession(
 
       const statusId = String(gs.id);
       const hasNewCoinIdentity = gs.coin_id != null;
+      const submittingTimeoutClaim = gs.other_params?.submitting_timeout_claim === true;
       const finishing = isFinishingGameStatus(
         status,
         gs.other_params?.game_finished,
@@ -1523,11 +1674,15 @@ export function useGameSession(
             ...instance,
             coin: {
               ...coinIdentity,
-              turnState: finishing ? 'finishing' : 'their-turn',
+              turnState: finishing
+                ? 'finishing'
+                : submittingTimeoutClaim ? 'submitting-timeout' : 'their-turn',
             },
             handStatus: finishing
               ? 'finishing'
-              : status === 'on-chain-their-turn' ? 'their-turn' : 'active',
+              : submittingTimeoutClaim
+                ? 'submitting-timeout'
+                : status === 'on-chain-their-turn' ? 'their-turn' : 'active',
           };
         }
         if (status === 'replaying') {
@@ -1597,12 +1752,14 @@ export function useGameSession(
           }));
           setHandStatus('finishing');
         } else {
-          turnStateRef.current = 'their-turn';
+          turnStateRef.current = submittingTimeoutClaim ? 'submitting-timeout' : 'their-turn';
           setGameCoin(prev => ({
             ...gameCoinIdentityForGameStatus(prev, status, hasNewCoinIdentity),
-            turnState: 'their-turn',
+            turnState: submittingTimeoutClaim ? 'submitting-timeout' : 'their-turn',
           }));
-          setHandStatus(status === 'on-chain-their-turn' ? 'their-turn' : 'active');
+          setHandStatus(submittingTimeoutClaim
+            ? 'submitting-timeout'
+            : status === 'on-chain-their-turn' ? 'their-turn' : 'active');
         }
       } else if (status === 'replaying') {
         turnStateRef.current = 'replaying';
@@ -1642,25 +1799,27 @@ export function useGameSession(
       const ibId = String(ib?.id ?? '');
       log(`[notify] InsufficientBalance id=${ibId} ours=${ib?.our_balance_short} theirs=${ib?.their_balance_short}`);
       const failedIds = proposalGroupIdsByIdRef.current[ibId] ?? [ibId];
-      const failedSet = new Set(failedIds);
-      if (gameIdsRef.current.some(id => failedSet.has(id))) {
-        const remaining = gameIdsRef.current.filter(id => !failedSet.has(id));
-        setGameIds(remaining);
-        gameIdsRef.current = remaining;
-      }
-      const nextCurrentHandIds = currentHandGameIdsRef.current.filter(id => !failedSet.has(id));
-      currentHandGameIdsRef.current = nextCurrentHandIds;
-      setCurrentHandGameIds(nextCurrentHandIds);
-      replaceGameInstances(Object.fromEntries(
-        Object.entries(gameInstancesRef.current).filter(([id]) => !failedSet.has(id))
-      ));
+      const remainingHand = removeProposalGroupFromHand(
+        failedIds,
+        gameIdsRef.current,
+        currentHandGameIdsRef.current,
+        gameInstancesRef.current,
+      );
+      gameIdsRef.current = remainingHand.activeIds;
+      currentHandGameIdsRef.current = remainingHand.currentHandIds;
+      setGameIds(remainingHand.activeIds);
+      setCurrentHandGameIds(remainingHand.currentHandIds);
+      replaceGameInstances(remainingHand.instances);
       clearTrackedProposals(failedIds);
+      acceptedProposalGroupIdsRef.current = acceptedProposalGroupIdsRef.current.filter(
+        groupIds => !groupIds.some(id => failedIds.includes(id)),
+      );
       setHandStatus('ended');
       cancelStalePeerProposals();
-      setCachedPeerProposal(null);
-      setReviewPeerProposal(null);
+      setCachedPeerProposalImmediately(null);
+      setReviewPeerProposalImmediately(null);
       pushGame({ kind: 'insufficient-bal', title: 'Notice', message: 'Insufficient balance for that proposal. The hand could not start.' });
-      setBetweenHandMode('compose-proposal');
+      setBetweenHandModeImmediately('compose-proposal');
     } else if ('ProposalCancelled' in n) {
       const proposalId = String(n.ProposalCancelled?.id ?? '');
       const reason = String((n.ProposalCancelled as Record<string, unknown>)?.reason ?? '');
@@ -1674,12 +1833,12 @@ export function useGameSession(
         clearTrackedProposals(cancelledIds);
         const cachedGroup = cachedPeerProposalRef.current?.groupIds ?? [];
         if (cachedPeerProposalRef.current?.id === proposalId || cachedGroup.includes(proposalId)) {
-          setCachedPeerProposal(null);
+          setCachedPeerProposalImmediately(null);
         }
         const reviewGroup = reviewPeerProposalRef.current?.groupIds ?? [];
         if (reviewPeerProposalRef.current?.id === proposalId || reviewGroup.includes(proposalId)) {
-          setReviewPeerProposal(null);
-          setBetweenHandMode('compose-proposal');
+          setReviewPeerProposalImmediately(null);
+          setBetweenHandModeImmediately('compose-proposal');
         }
       }
 
@@ -1707,7 +1866,7 @@ export function useGameSession(
             expectingCounterProposalRef.current = false;
             setComposePerHandAmount(lastHandTermsRef.current.myContribution);
             setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
-            setBetweenHandMode('compose-proposal');
+            setBetweenHandModeImmediately('compose-proposal');
           }, 300);
         } else {
           pushGame({ kind: 'proposal-rejected', title: 'Notice', message: 'Your proposal was rejected by the other side.' });
@@ -1720,11 +1879,16 @@ export function useGameSession(
       if (!rejection) return;
       gameplayEventSubject.next(gameplayEventForMoveRejected(rejection));
     } else if ('ActionFailed' in n) {
-      const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
+      const actionFailed = n.ActionFailed;
+      const reason = String(actionFailed?.reason ?? 'Unknown error');
       log(`[game] action failed: ${reason}`);
+      if (actionFailed) {
+        const event = gameplayEventForActionFailed(actionFailed);
+        if (event) gameplayEventSubject.next(event);
+      }
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance, appendGameLog]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance, appendGameLog, setGameConnectionStateImmediately, setBetweenHandModeImmediately, setCachedPeerProposalImmediately, setReviewPeerProposalImmediately, setRejectedOnceTermsImmediately, setLastHandTermsImmediately]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -1745,6 +1909,12 @@ export function useGameSession(
             break;
           case 'error':
             pushChannel({ kind: 'infra-error', title: 'Error', message: evt.error });
+            break;
+          case 'game-action-error':
+            gameplayEventSubject.next(
+              gameplayEventForGameActionError(evt.gameId, evt.action, evt.error),
+            );
+            pushChannel({ kind: 'action-failed', title: 'Error', message: evt.error });
             break;
           case 'durability-error':
             pushChannel({
@@ -1809,9 +1979,9 @@ export function useGameSession(
         setNewHandRequested(false);
         return;
       }
-      setReviewPeerProposal(cached);
-      setCachedPeerProposal(null);
-      setBetweenHandMode('review-incoming-proposal');
+      setReviewPeerProposalImmediately(cached);
+      setCachedPeerProposalImmediately(null);
+      setBetweenHandModeImmediately('review-incoming-proposal');
       return;
     }
 
@@ -1825,21 +1995,28 @@ export function useGameSession(
       setComposePerHandAmount(lastTerms.myContribution);
       setComposeGameTimeout(lastTerms.gameTimeout);
       setComposeGameType(lastTerms.gameType);
-      setBetweenHandMode('compose-proposal');
+      setBetweenHandModeImmediately('compose-proposal');
       return;
     }
     sameTermsRequestedRef.current = true;
     setNewHandRequested(true);
     proposeNewGame(lastTerms);
-  }, [channelStatus.ourBalance, channelStatus.theirBalance, proposeNewGame]);
+  }, [
+    channelStatus.ourBalance,
+    channelStatus.theirBalance,
+    proposeNewGame,
+    setReviewPeerProposalImmediately,
+    setCachedPeerProposalImmediately,
+    setBetweenHandModeImmediately,
+  ]);
 
   const chooseDoNotUseCurrentProposal = useCallback(() => {
     const cached = cachedPeerProposalRef.current;
     if (cached) {
       if (!termsEqual(cached.terms, lastHandTermsRef.current)) {
-        setReviewPeerProposal(cached);
-        setCachedPeerProposal(null);
-        setBetweenHandMode('review-incoming-proposal');
+        setReviewPeerProposalImmediately(cached);
+        setCachedPeerProposalImmediately(null);
+        setBetweenHandModeImmediately('review-incoming-proposal');
         return;
       }
       try {
@@ -1847,22 +2024,27 @@ export function useGameSession(
       } catch (e) {
         console.error('cancel_proposal failed:', e);
       }
-      setCachedPeerProposal(null);
+      setCachedPeerProposalImmediately(null);
     }
-    setRejectedOnceTerms(lastHandTermsRef.current);
+    setRejectedOnceTermsImmediately(lastHandTermsRef.current);
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
     setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
-    setBetweenHandMode('compose-proposal');
-  }, []);
+    setBetweenHandModeImmediately('compose-proposal');
+  }, [
+    setReviewPeerProposalImmediately,
+    setCachedPeerProposalImmediately,
+    setRejectedOnceTermsImmediately,
+    setBetweenHandModeImmediately,
+  ]);
 
   const openComposeProposal = useCallback(() => {
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
     setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
     setComposeGameType(lastHandTermsRef.current.gameType);
-    setBetweenHandMode('compose-proposal');
-  }, []);
+    setBetweenHandModeImmediately('compose-proposal');
+  }, [setBetweenHandModeImmediately]);
 
   const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string, gameTimeout: bigint, spacepokerUnitSize?: bigint) => {
     if (perHandAmount <= 0n || gameTimeout <= 0n) return;
@@ -1885,8 +2067,8 @@ export function useGameSession(
     } catch (e) {
       console.error('acceptProposal failed:', e);
     }
-    setBetweenHandMode('decision');
-  }, []);
+    setBetweenHandModeImmediately('decision');
+  }, [setBetweenHandModeImmediately]);
 
   const rejectReviewedProposal = useCallback(() => {
     const review = reviewPeerProposalRef.current;
@@ -1897,10 +2079,10 @@ export function useGameSession(
         console.error('cancel_proposal failed:', e);
       }
     }
-    setReviewPeerProposal(null);
+    setReviewPeerProposalImmediately(null);
     setComposeProposalSent(false);
-    setBetweenHandMode('compose-proposal');
-  }, []);
+    setBetweenHandModeImmediately('compose-proposal');
+  }, [setReviewPeerProposalImmediately, setBetweenHandModeImmediately]);
 
   const startCleanShutdown = useCallback(() => {
     setCleanShutdownStarted(true);
@@ -1950,7 +2132,15 @@ export function useGameSession(
       composeProposalSent,
       newHandRequested,
       outgoingProposalIds: Array.from(outgoingProposalIdsRef.current),
-      outgoingProposalTerms: { ...proposalTermsByIdRef.current },
+      outgoingProposalGroupIds: outgoingProposalGroups(
+        outgoingProposalIdsRef.current,
+        proposalGroupIdsByIdRef.current,
+      ),
+      acceptedProposalGroupIds: acceptedProposalGroupIdsRef.current.map(groupIds => [...groupIds]),
+      outgoingProposalTerms: outgoingProposalTerms(
+        outgoingProposalIdsRef.current,
+        proposalTermsByIdRef.current,
+      ),
       pendingRetryTerms,
     },
     history: {

@@ -18,7 +18,8 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome,
+    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
+    SettlementOutcome,
 };
 use crate::shutdown::get_conditions_with_channel_state;
 use crate::utils::proper_list;
@@ -99,6 +100,10 @@ pub struct OffChainPhase {
     have_potato: PotatoState,
 
     game_action_queue: VecDeque<GameAction>,
+    /// Diagnostic context for an error while draining a local queued action.
+    /// This is transient host state, not protocol or persisted game state.
+    #[serde(skip, default)]
+    last_failed_queued_action: Option<(GameID, FailedGameAction)>,
 
     channel_state: Option<ChannelState>,
 
@@ -307,6 +312,7 @@ impl OffChainPhase {
             have_potato,
             game_types,
             game_action_queue: VecDeque::default(),
+            last_failed_queued_action: None,
             channel_state: Some(channel_state),
             private_keys,
             my_contribution,
@@ -421,11 +427,16 @@ impl OffChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
+        self.last_failed_queued_action = None;
         if !self.has_potato() || self.game_action_queue.is_empty() {
             return Ok(vec![]);
         }
         let (_sent, effects) = self.drain_queue_into_batch(env)?;
         Ok(effects)
+    }
+
+    pub fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
+        self.last_failed_queued_action.take()
     }
 
     pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
@@ -456,7 +467,20 @@ impl OffChainPhase {
             }
         }
 
-        let (sent, batch_effects) = self.drain_queue_into_batch(env)?;
+        let (sent, batch_effects) = match self.drain_queue_into_batch(env) {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some((id, action)) = self.take_failed_queued_action() {
+                    effects.push(Effect::Notify(GameNotification::ActionFailed {
+                        id: Some(id),
+                        action: Some(action),
+                        reason: format!("{error:?}"),
+                    }));
+                    return Ok(effects);
+                }
+                return Err(error);
+            }
+        };
         effects.extend(batch_effects);
         if sent {
             return Ok(effects);
@@ -566,6 +590,7 @@ impl OffChainPhase {
                         moved_by_us: None,
                         game_finished: None,
                         forfeited: None,
+                        submitting_timeout_claim: None,
                     }),
                 }));
             }
@@ -754,6 +779,7 @@ impl OffChainPhase {
                             moved_by_us: None,
                             game_finished: if finished { Some(true) } else { None },
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
                     if !move_result.message.is_empty() {
@@ -999,6 +1025,11 @@ impl OffChainPhase {
         let mut deferred = VecDeque::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
+            self.last_failed_queued_action = match &action {
+                GameAction::Move(id, ..) => Some((*id, FailedGameAction::MakeMove)),
+                GameAction::AcceptSettlement(id) => Some((*id, FailedGameAction::AcceptSettlement)),
+                _ => None,
+            };
             match action {
                 GameAction::Move(game_id, readable_move, new_entropy) => {
                     let ch = self.channel_state_mut()?;
@@ -1184,6 +1215,9 @@ impl OffChainPhase {
         self.game_action_queue = deferred;
 
         if batch_actions.is_empty() && clean_shutdown_data.is_none() {
+            // No batch was packaged; deferred actions remain pending for a
+            // future potato receipt, so this flush has no attributable failure.
+            self.last_failed_queued_action = None;
             return Ok((false, effects));
         }
 
@@ -1212,6 +1246,9 @@ impl OffChainPhase {
             self.pending_clean_shutdown = Some(shutdown_info);
         }
 
+        // Packaging and delivery intent succeeded. Later failures cannot be
+        // attributed to a still-pending local action from this flush.
+        self.last_failed_queued_action = None;
         Ok((true, effects))
     }
 
@@ -1763,6 +1800,9 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn flush_pending_actions(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OffChainPhase::flush_pending_actions(self, env)
     }
+    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
+        OffChainPhase::take_failed_queued_action(self)
+    }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
         self.take_channel_spend_next_phase()
             .map(|h| h as Box<dyn PeerLifecyclePhase>)
@@ -1822,6 +1862,8 @@ impl PeerLifecyclePhase for OffChainPhase {
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
             zero_payout: shutting_down.then(|| ch.has_zero_payout()),
+            unroll_initiator: None,
+            semantic_phase: None,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

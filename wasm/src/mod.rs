@@ -35,7 +35,9 @@ mod gaming_wasm {
     use chia_gaming::transaction_manager::{
         CoinStateRecord, ManagerDrain, TransactionManager,
     };
-    use chia_gaming::session_phases::effects::{GameSessionEvent, GameNotification};
+    use chia_gaming::session_phases::effects::{
+        FailedGameAction, GameSessionEvent, GameNotification,
+    };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::GameProposal;
@@ -880,7 +882,7 @@ mod gaming_wasm {
         } else {
             None
         };
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_action_drain(cid, game_id.clone(), FailedGameAction::MakeMove, move |cradle: &mut JsGameSession| {
             let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.random());
             cradle.cradle.make_move(
                 &mut cradle.allocator,
@@ -1023,7 +1025,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn accept_settlement(cid: i32, id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_action_drain(cid, game_id.clone(), FailedGameAction::AcceptSettlement, move |cradle: &mut JsGameSession| {
             cradle
                 .cradle
                 .accept_settlement(&mut cradle.allocator, &game_id)
@@ -1344,6 +1346,29 @@ mod gaming_wasm {
     where
         F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
     {
+        with_game_drain_context(cid, None, f)
+    }
+
+    fn with_game_action_drain<F>(
+        cid: i32,
+        game_id: GameID,
+        action: FailedGameAction,
+        f: F,
+    ) -> Result<JsValue, JsValue>
+    where
+        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+    {
+        with_game_drain_context(cid, Some((game_id, action)), f)
+    }
+
+    fn with_game_drain_context<F>(
+        cid: i32,
+        action_context: Option<(GameID, FailedGameAction)>,
+        f: F,
+    ) -> Result<JsValue, JsValue>
+    where
+        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+    {
         with_game(cid, move |cradle: &mut JsGameSession| {
             let action_succeeded = match f(cradle) {
                 Ok(()) => true,
@@ -1351,6 +1376,8 @@ mod gaming_wasm {
                     let reason = format!("{e:?}");
                     cradle.cradle.push_event(GameSessionEvent::Notification(
                         GameNotification::ActionFailed {
+                            id: action_context.as_ref().map(|(id, _)| id.clone()),
+                            action: action_context.as_ref().map(|(_, action)| *action),
                             reason,
                         },
                     ));

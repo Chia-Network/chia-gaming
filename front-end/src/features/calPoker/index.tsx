@@ -5,7 +5,7 @@ import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../../types/californiaPoker/CaliforniapokerProps';
+} from './types/CaliforniapokerProps';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcomeView | undefined;

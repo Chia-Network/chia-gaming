@@ -793,6 +793,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                 timeout: Timeout::new(1_000_000),
                 name: Some("channel"),
                 spend: None,
+                semantic: None,
             },
             Effect::PeerHandshakeC(HandshakePayloadC { launcher_coin }),
         ])
@@ -838,6 +839,8 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                     .map(|ch| ch.total_game_allocated()),
                 have_potato: None,
                 zero_payout: None,
+                unroll_initiator: None,
+                semantic_phase: None,
             });
         }
         // The channel-creation expiry -> Failed signal now lives in the
@@ -867,6 +870,8 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                     .map(|ch| ch.total_game_allocated()),
                 have_potato: None,
                 zero_payout: None,
+                unroll_initiator: None,
+                semantic_phase: None,
             });
         }
         let state = match &self.state {
@@ -910,6 +915,8 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             game_allocated,
             have_potato: None,
             zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

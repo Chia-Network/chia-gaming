@@ -18,7 +18,7 @@ use crate::referee::types::{
 use crate::referee::Referee;
 use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome,
+    GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome, TimeoutClaimSemantic,
 };
 use crate::session_phases::types::{GameAction, PotatoState};
 
@@ -537,6 +537,40 @@ impl OnChainPhase {
         }))
     }
 
+    fn opponent_timeout_claim_semantic(
+        game_id: GameID,
+        our_turn: bool,
+        game_finished: bool,
+    ) -> Option<TimeoutClaimSemantic> {
+        (!our_turn && !game_finished)
+            .then_some(TimeoutClaimSemantic::GameOpponentTurn { id: game_id })
+    }
+
+    pub fn timeout_claim_status(
+        &self,
+        game_id: GameID,
+        submitting_timeout_claim: bool,
+    ) -> Option<GameNotification> {
+        let (coin, state) = self
+            .game_map
+            .iter()
+            .find(|(_, state)| state.game_id == game_id)?;
+        if state.our_turn || state.game_finished {
+            return None;
+        }
+        Some(GameNotification::GameStatus {
+            id: game_id,
+            status: GameStatusKind::OnChainTheirTurn,
+            my_reward: None,
+            coin_id: Some(coin.clone()),
+            reason: None,
+            other_params: Some(GameStatusOtherParams {
+                submitting_timeout_claim: Some(submitting_timeout_claim),
+                ..Default::default()
+            }),
+        })
+    }
+
     /// Register every current game coin with the wallet, attaching an eager
     /// timeout claim for each coin we are entitled to claim on timeout.  Used
     /// when first transitioning to on-chain play so the transaction manager owns
@@ -545,19 +579,28 @@ impl OnChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        let coins: Vec<(CoinString, GameID, Timeout)> = self
+        let coins: Vec<(CoinString, GameID, Timeout, bool, bool)> = self
             .game_map
             .iter()
-            .map(|(coin, st)| (coin.clone(), st.game_id, st.game_timeout.clone()))
+            .map(|(coin, st)| {
+                (
+                    coin.clone(),
+                    st.game_id,
+                    st.game_timeout.clone(),
+                    st.our_turn,
+                    st.game_finished,
+                )
+            })
             .collect();
         let mut effects = Vec::new();
-        for (coin, game_id, gt) in coins {
+        for (coin, game_id, gt, our_turn, game_finished) in coins {
             let claim = self.build_timeout_claim(env, &game_id, &coin)?;
             effects.push(Effect::RegisterCoin {
                 coin,
                 timeout: gt,
                 name: Some("game coin"),
                 spend: claim,
+                semantic: Self::opponent_timeout_claim_semantic(game_id, our_turn, game_finished),
             });
         }
         Ok(effects)
@@ -647,6 +690,7 @@ impl OnChainPhase {
                             moved_by_us: Some(true),
                             game_finished: if game_over { Some(true) } else { None },
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
                     let claim = self.build_timeout_claim(env, &pending.game_id, &new_coin)?;
@@ -655,6 +699,11 @@ impl OnChainPhase {
                         timeout: gt,
                         name: Some("our on-chain move confirmed"),
                         spend: claim,
+                        semantic: Self::opponent_timeout_claim_semantic(
+                            pending.game_id,
+                            false,
+                            game_over,
+                        ),
                     });
                     effects.extend(self.process_queued_action(env)?);
                     return Ok((effects, None));
@@ -883,6 +932,11 @@ impl OnChainPhase {
                             timeout: gt,
                             name: Some("timeout-claim-armed game coin advanced by redo"),
                             spend: claim,
+                            semantic: Self::opponent_timeout_claim_semantic(
+                                old_definition.game_id,
+                                !old_definition.our_turn,
+                                old_definition.game_finished,
+                            ),
                         });
                     }
                 }
@@ -1044,6 +1098,9 @@ impl OnChainPhase {
                             "expected spend - their turn"
                         }),
                         spend: claim,
+                        semantic: Self::opponent_timeout_claim_semantic(
+                            game_id, is_my_turn, terminal,
+                        ),
                     });
                     if auto_settle {
                         self.game_action_queue
@@ -1189,6 +1246,7 @@ impl OnChainPhase {
                             moved_by_us: None,
                             game_finished: finished_flag,
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
 
@@ -1205,6 +1263,7 @@ impl OnChainPhase {
                             moved_by_us: None,
                             game_finished: finished_flag,
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
                     let claim = self.build_timeout_claim(env, &game_id, &new_coin_string)?;
@@ -1213,6 +1272,7 @@ impl OnChainPhase {
                         timeout: gt,
                         name: Some("coin gives my turn"),
                         spend: claim,
+                        semantic: None,
                     });
                     if auto_settle {
                         self.game_action_queue
@@ -1261,6 +1321,7 @@ impl OnChainPhase {
                                 moved_by_us: None,
                                 game_finished: None,
                                 forfeited: None,
+                                submitting_timeout_claim: None,
                             }),
                         }));
                         self.game_map.insert(
@@ -1277,6 +1338,7 @@ impl OnChainPhase {
                             timeout: gt,
                             name: Some("pending slash"),
                             spend: None,
+                            semantic: None,
                         });
                     }
                     SlashOutcome::NoReward => {
@@ -1293,6 +1355,7 @@ impl OnChainPhase {
                                 moved_by_us: None,
                                 game_finished: None,
                                 forfeited: None,
+                                submitting_timeout_claim: None,
                             }),
                         }));
                         if let Some(eff) = self.try_emit_terminal(
@@ -1558,6 +1621,7 @@ impl OnChainPhase {
                         timeout: gt,
                         name: Some("timeout claim"),
                         spend: Some(claim),
+                        semantic: None,
                     });
                 }
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
@@ -1796,6 +1860,8 @@ impl PeerLifecyclePhase for OnChainPhase {
             game_allocated: None,
             have_potato: None,
             zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
         })
     }
 

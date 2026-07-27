@@ -1,6 +1,6 @@
 use crate::channel_state::types::ChannelEnv;
 use crate::common::types::{CoinString, Error, Program, PuzzleHash, SpendBundle, Timeout};
-use crate::session_phases::effects::{Effect, ResyncInfo};
+use crate::session_phases::effects::{Effect, ResyncInfo, TimeoutClaimSemantic};
 
 /// Async interface implemented by Peer to receive notifications about wallet
 /// state.
@@ -67,6 +67,7 @@ pub trait WalletSpendInterface {
         timeout: &Timeout,
         name: Option<&'static str>,
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error>;
 
     /// Request the puzzle and solution for a spent coin

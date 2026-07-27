@@ -1,12 +1,13 @@
 import {
   cardIdToRankSuit,
   handValueToDescription,
-} from '../../types/californiaPoker';
+} from './types';
 import {
   shouldAutoFireCalpokerMove,
   shouldProcessCalpokerOpponentMoved,
   calpokerResponderFinishesAtReveal,
-} from '../../hooks/useCalpokerHand';
+  shouldRestoreCalpokerSelection,
+} from './useCalpokerHand';
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
@@ -38,5 +39,21 @@ describe('Calpoker bigint domain helpers', () => {
     // iStarted === true is the responder ("Bob"), who gives up and must not
     // send a phantom sixth move.
     expect(calpokerResponderFinishesAtReveal(true)).toBe(true);
+  });
+
+  it('preserves a terminal snapshot at move 1', () => {
+    expect(shouldRestoreCalpokerSelection(
+      '1',
+      false,
+      true,
+    )).toBe(false);
+  });
+
+  it('restores an active move-1 hand to card selection', () => {
+    expect(shouldRestoreCalpokerSelection(
+      '1',
+      false,
+      false,
+    )).toBe(true);
   });
 });

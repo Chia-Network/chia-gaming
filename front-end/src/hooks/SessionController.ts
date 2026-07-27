@@ -63,6 +63,8 @@ const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
+/** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
+const ACTIVE_DRAIN_EVENT_BUDGET = 100;
 
 function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
   return status === 'Active'
@@ -108,6 +110,10 @@ export class SessionController implements PollingGameSession {
   sendAck: (ackMsgno: bigint) => boolean;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
+  private transactionPublishNerfPolicy: ((
+    nerfed: boolean,
+    apply: (nerfed: boolean) => void,
+  ) => void) | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private lastUnackedResendAt = 0;
@@ -162,6 +168,7 @@ export class SessionController implements PollingGameSession {
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
   private protocolStopped = false;
+  private retired = false;
   private terminalHandoff: { id: string; msgno: bigint; sent: boolean; acknowledged: boolean } | null = null;
   activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
@@ -262,7 +269,19 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    this.retired = true;
     this.cleanShutdownCalled = true;
+    // Retirement is not a manager terminal disposition: detach this session
+    // without stopping a shared poller, but make any in-flight active drain
+    // inert immediately.
+    this.protocolStopped = true;
+    this.terminalHandoff = null;
+    this.eventQueue = [];
+    this.pendingOutboundSends = [];
+    this.pendingAcks = [];
+    this.unackedMessages = [];
+    this.reorderQueue.clear();
+    this.needsImmediateDurability = false;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
@@ -280,7 +299,6 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    this.drainScheduled = false;
     void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
@@ -594,7 +612,17 @@ export class SessionController implements PollingGameSession {
     // this promise is invisible in CI except as a bare empty-message test
     // failure, which is exactly the symptom we are chasing.
     this.transactionSubmitQueue = this.transactionSubmitQueue
-      .then(() => this.submitTransactionNow(tx))
+      .then(() => {
+        if (this.retired) {
+          log('[wasm] submitTransaction dropped because controller is retired');
+          return;
+        }
+        if (this.transactionPublishNerfed) {
+          log('[wasm] submitTransaction dropped because publishing is nerfed');
+          return;
+        }
+        return this.submitTransactionNow(tx);
+      })
       .catch((e) => { diagStack('transactionSubmitQueue rejected', e); });
   }
 
@@ -691,10 +719,35 @@ export class SessionController implements PollingGameSession {
     this.drainScheduled = true;
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
-      this.drainScheduled = false;
-      this.drainOneEvent();
-      this.scheduleDrain();
+      this.drainActiveEventsToQuiescence();
     }, 0);
+  }
+
+  /**
+   * Preserve the macrotask boundary before a normal drain, then consume every
+   * synchronously appended active event in that same task. Keeping
+   * `drainScheduled` set while dispatching makes re-entrant active
+   * `processResult()` calls append to this FIFO rather than schedule a second
+   * task. Terminal results retain their separate queue-clearing flush path.
+   */
+  private drainActiveEventsToQuiescence(): void {
+    try {
+      let drained = 0;
+      while (
+        this.eventQueue.length > 0
+        && !this.protocolStopped
+        && !this.retired
+        && drained < ACTIVE_DRAIN_EVENT_BUDGET
+      ) {
+        this.drainOneEvent();
+        drained += 1;
+      }
+    } finally {
+      this.drainScheduled = false;
+    }
+    if (this.eventQueue.length > 0 && !this.protocolStopped && !this.retired) {
+      this.scheduleDrain();
+    }
   }
 
   private drainOneEvent(): void {
@@ -706,7 +759,9 @@ export class SessionController implements PollingGameSession {
       diagStack('dispatchEvent error', e);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
-    this.scheduleSave();
+    if (!this.retired) {
+      this.scheduleSave();
+    }
   }
 
   flushDeferredWork(): void {
@@ -805,6 +860,10 @@ export class SessionController implements PollingGameSession {
           this.activeGameIds = this.activeGameIds.filter(id => id !== endedId);
         }
       }
+      if (tag === 'GameSettled' && n.GameSettled) {
+        const settledId = String(n.GameSettled.id);
+        this.activeGameIds = this.activeGameIds.filter(id => id !== settledId);
+      }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
         jsonStringify(n),
@@ -866,6 +925,7 @@ export class SessionController implements PollingGameSession {
   // --- Inbound events ---
 
   deliverMessage(msgno: bigint, msg: Uint8Array) {
+    if (this.retired) return;
     // Terminal Rust state must not consume peer protocol messages, but the host
     // still acknowledges their transport delivery so the peer can retire them.
     if (this.protocolStopped) {
@@ -931,6 +991,7 @@ export class SessionController implements PollingGameSession {
   }
 
   receiveAck(ackMsgno: bigint) {
+    if (this.retired) return;
     this.notePeerActivity();
     const terminalCommand = this.terminalHandoff;
     const terminalAcknowledged = terminalCommand
@@ -1352,7 +1413,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'game-action-error', gameId, action: 'make-move', error: msg });
     }
   }
 
@@ -1364,7 +1425,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'game-action-error', gameId, action: 'accept-settlement', error: msg });
     }
   }
 
@@ -1428,8 +1489,33 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  isTransactionPublishNerfed(): boolean {
+    return this.transactionPublishNerfed;
+  }
+
+  setTransactionPublishNerfPolicy(
+    policy: (nerfed: boolean, apply: (nerfed: boolean) => void) => void,
+  ): void {
+    this.transactionPublishNerfPolicy = policy;
+  }
+
+  setTransactionPublishNerfed(nerfed: boolean): void {
+    if (this.transactionPublishNerfPolicy) {
+      this.transactionPublishNerfPolicy(
+        nerfed,
+        (value) => this.applyTransactionPublishNerfed(value),
+      );
+      return;
+    }
+    this.applyTransactionPublishNerfed(nerfed);
+  }
+
+  private applyTransactionPublishNerfed(nerfed: boolean): void {
+    this.transactionPublishNerfed = nerfed;
+    log(`[wasm] transaction publish ${nerfed ? 'nerfed' : 'enabled'}`);
+  }
+
   nerf(): void {
-    this.transactionPublishNerfed = true;
-    log('[wasm] transaction publish nerfed');
+    this.setTransactionPublishNerfed(true);
   }
 }

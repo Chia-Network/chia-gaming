@@ -599,6 +599,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "on_chain_1move_p1 p0",
@@ -657,6 +660,9 @@ mod sim_tests {
                         ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                             ChannelStatus::ResolvedUnrolled,
                         )),
+                        ExpectedEvent::Notification(
+                            ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                        ),
                         ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                     ],
                     "on_chain_1move_p0_lost p0",
@@ -712,6 +718,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "on_chain_1move_p0 p0",
@@ -794,6 +803,9 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "on_chain_2moves_p0 p1",
@@ -851,6 +863,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "on_chain_2moves_p1 p1",

@@ -24,6 +24,7 @@ export type GameTurnState =
   | 'playing-on-chain'
   | 'replaying'
   | 'opponent-illegal-move'
+  | 'submitting-timeout'
   | 'finishing'
   | 'ended';
 
@@ -35,6 +36,7 @@ export type HandStatus =
   | 'playing-move'
   | 'replaying-move'
   | 'slashing'
+  | 'submitting-timeout'
   | 'finishing'
   | 'ended';
 
@@ -66,6 +68,8 @@ export interface ChannelStatusModel {
   gameAllocated: string | null;
   havePotato: boolean | null;
   zeroPayout: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase: ChannelStatusPayload['semantic_phase'] | null;
 }
 
 export interface GameCoinModel {
@@ -167,6 +171,8 @@ export interface BetweenHandModel {
   composeProposalSent: boolean;
   newHandRequested: boolean;
   outgoingProposalIds: string[];
+  outgoingProposalGroupIds: string[][];
+  acceptedProposalGroupIds: string[][];
   outgoingProposalTerms: Record<string, HandTermsModel>;
   pendingRetryTerms: HandTermsModel | null;
 }
@@ -253,6 +259,8 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   gameAllocated: null,
   havePotato: null,
   zeroPayout: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
 
 function parseChannelAmount(coin: unknown): string | null {
@@ -289,6 +297,8 @@ export function channelStatusModelFromPayload(status: ChannelStatusPayload): Cha
     gameAllocated: parseChannelAmountValue(status.game_allocated),
     havePotato: status.have_potato ?? null,
     zeroPayout: status.zero_payout ?? null,
+    unrollInitiator: status.unroll_initiator ?? null,
+    semanticPhase: status.semantic_phase ?? null,
   };
 }
 
@@ -303,6 +313,8 @@ export function channelStatusPayloadFromModel(status: ChannelStatusModel): Chann
     game_allocated: status.gameAllocated,
     have_potato: status.havePotato,
     zero_payout: status.zeroPayout,
+    unroll_initiator: status.unrollInitiator,
+    semantic_phase: status.semanticPhase,
   };
 }
 
@@ -346,6 +358,16 @@ export const ON_CHAIN_CHANNEL_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
+  'ResolvedUnrolled',
+  'ResolvedStale',
+]);
+
+/**
+ * Per-game on-chain classifications become authoritative only once the unroll
+ * result can no longer be preempted. This branch reports that boundary as a
+ * resolved unroll, not as a separate "done unrolling" lifecycle state.
+ */
+const UNROLL_COMPLETED_HAND_STATES = new Set<ChannelStatus>([
   'ResolvedUnrolled',
   'ResolvedStale',
 ]);
@@ -406,6 +428,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'playing-move': 'Playing move',
   'replaying-move': 'Replaying move',
   slashing: 'Slashing cheater',
+  'submitting-timeout': 'Submitting timeout claim',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -462,6 +485,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       composeProposalSent: false,
       newHandRequested: false,
       outgoingProposalIds: [],
+      outgoingProposalGroupIds: [],
+      acceptedProposalGroupIds: [],
       outgoingProposalTerms: {},
       pendingRetryTerms: null,
       ...betweenHand,
@@ -570,12 +595,23 @@ export function selectBetweenHands(model: SessionModel): boolean {
   return model.game.handKey > 0 && model.game.activeIds.length === 0;
 }
 
-export function selectHideGameInterfaceForBetweenHandDialog(
+/**
+ * A compose/review dialog leaves the completed hand mounted beneath it so the
+ * terminal presentation remains visible and preserves its local state. The
+ * background must be inert while the modal owns interaction and focus.
+ */
+export function selectInertGameInterfaceForBetweenHandDialog(
   betweenHands: boolean,
   betweenHandMode: BetweenHandModeModel,
+  hasReviewPeerProposal: boolean,
+  overlayIsActive: boolean,
 ): boolean {
-  return betweenHands
-    && (betweenHandMode === 'compose-proposal' || betweenHandMode === 'review-incoming-proposal');
+  return overlayIsActive
+    && betweenHands
+    && (
+      betweenHandMode === 'compose-proposal'
+      || (betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
+    );
 }
 
 export interface ShellViewModel {
@@ -638,6 +674,30 @@ export interface GameDashboardSelectorOptions {
 
 function channelStatusDetail(model: SessionModel): string | null {
   const channel = model.channel.status;
+  if (channel.sessionDisposition === 'Abandoned') {
+    return channel.advisory ?? 'Session abandoned';
+  }
+  if (channel.sessionDisposition === 'AwaitOutboundTerminal') {
+    return channel.advisory ?? 'Waiting for peer to acknowledge close';
+  }
+  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
+    submitting_channel_spend: 'Submitting channel spend',
+    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
+    preempting: 'Preempting unroll',
+    waiting_timeout: 'Waiting for timeout',
+    submitting_timeout_finish: 'Submitting timeout finish',
+    resolving: 'Resolving',
+  };
+  if (channel.semanticPhase) {
+    const phase = phaseLabels[channel.semanticPhase];
+    const initiator = channel.unrollInitiator === 'us'
+      ? ' (initiated by you)'
+      : channel.unrollInitiator === 'opponent'
+        ? ' (initiated by opponent)'
+        : '';
+    const detail = `${phase}${initiator}`;
+    return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
+  }
   switch (channel.state) {
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
@@ -656,10 +716,10 @@ function selectHandStatus(model: SessionModel): HandStatus {
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
-  // `onChain` distinguishes a pending game-coin id from an off-chain game.
-  // Older saved models did not persist it, so a known coin id remains the
-  // compatibility signal for those snapshots.
-  if (coin.onChain !== true && !coin.coinHex) {
+  // The unroll commitment can still be preempted while GoingOnChain or
+  // Unrolling. Per-game coin/turn classifications are not authoritative until
+  // the unroll coin resolves, irrespective of asynchronous coin-id enrichment.
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return 'active';
   }
   if (ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)) {
@@ -670,6 +730,8 @@ function selectHandStatus(model: SessionModel): HandStatus {
       // the slash; surface that explicitly rather than a generic "our turn".
       case 'opponent-illegal-move':
         return 'slashing';
+      case 'submitting-timeout':
+        return 'submitting-timeout';
       case 'their-turn':
         return 'their-turn';
       case 'playing-on-chain':
@@ -711,8 +773,7 @@ function instanceTerminalDetail(instance: GameInstanceModel): string | null {
 }
 
 function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
-  if (!ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)
-      || model.channel.status.state === 'ResolvedClean') {
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return [];
   }
   const multiple = model.game.currentHandIds.length > 1;
@@ -858,8 +919,7 @@ export function selectStatusBarBalances(
 
   const channel = model.channel.status;
 
-  const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
-  if (channelFailed) {
+  if (channel.state === 'Failed') {
     return [
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },
@@ -1191,8 +1251,30 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             )
           )
         : {};
-      const outgoingProposalIds = Object.keys(outgoingProposalTerms);
+      if (
+        Object.keys(outgoingProposalTerms).length > 0
+        && save.outgoingProposalGroupIds === undefined
+      ) {
+        throw new Error('Garbled save: outgoing proposal terms missing group IDs');
+      }
+      const outgoingProposalGroupIds = (save.outgoingProposalGroupIds ?? []).map((groupIds, index) => {
+        if (!Array.isArray(groupIds) || groupIds.length === 0) {
+          throw new Error(`Garbled save: outgoing proposal group ${index} missing IDs`);
+        }
+        return [...groupIds];
+      });
+      const groupedOutgoingIds = outgoingProposalGroupIds.flat();
+      const outgoingProposalIds = [
+        ...groupedOutgoingIds,
+        ...Object.keys(outgoingProposalTerms).filter(id => !groupedOutgoingIds.includes(id)),
+      ];
       const hasOutgoing = outgoingProposalIds.length > 0;
+      const acceptedProposalGroupIds = (save.acceptedProposalGroupIds ?? []).map((groupIds, index) => {
+        if (!Array.isArray(groupIds) || groupIds.length === 0) {
+          throw new Error(`Garbled save: accepted proposal group ${index} missing IDs`);
+        }
+        return [...groupIds];
+      });
       return {
         mode,
         cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
@@ -1206,6 +1288,8 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         composeProposalSent: hasOutgoing && mode === 'compose-proposal',
         newHandRequested: hasOutgoing && mode === 'decision',
         outgoingProposalIds,
+        outgoingProposalGroupIds,
+        acceptedProposalGroupIds,
         outgoingProposalTerms,
       };
     })(),
@@ -1247,6 +1331,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,
     activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,
+    handState: model.game.handState,
     currentHandGameIds: model.game.currentHandIds.length > 0
       ? model.game.currentHandIds
       : undefined,
@@ -1303,6 +1388,12 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
           groupIds: model.betweenHand.reviewPeerProposal.groupIds,
           ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
+      : undefined,
+    outgoingProposalGroupIds: model.betweenHand.outgoingProposalGroupIds.length > 0
+      ? model.betweenHand.outgoingProposalGroupIds.map(groupIds => [...groupIds])
+      : undefined,
+    acceptedProposalGroupIds: model.betweenHand.acceptedProposalGroupIds.length > 0
+      ? model.betweenHand.acceptedProposalGroupIds.map(groupIds => [...groupIds])
       : undefined,
     outgoingProposalTerms: Object.keys(model.betweenHand.outgoingProposalTerms).length > 0
       ? Object.fromEntries(

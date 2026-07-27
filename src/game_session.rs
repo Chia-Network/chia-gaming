@@ -20,8 +20,9 @@ use crate::common::types::{
     Timeout, ToQuotedProgram,
 };
 use crate::session_phases::effects::{
-    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameSessionEvent, GameSessionEventQueue, ResyncInfo, SessionDisposition,
+    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
+    GameNotification, GameSessionEvent, GameSessionEventQueue, ResyncInfo, SessionDisposition,
+    TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
@@ -178,6 +179,9 @@ pub trait PeerLifecyclePhase {
     }
     fn flush_pending_actions(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
+    }
+    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
+        None
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         Err(Error::StrErr(
@@ -375,12 +379,14 @@ impl WalletSpendInterface for GameSessionState {
         timeout: &Timeout,
         _name: Option<&'static str>,
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.events.push_back(GameSessionEvent::WatchCoin {
             coin_name: coin_id.to_coin_id(),
             coin_string: coin_id.clone(),
             timeout: timeout.clone(),
             spend,
+            semantic,
         });
 
         Ok(())
@@ -852,8 +858,11 @@ impl GameSession {
         match res {
             Some(Ok(effects)) => self.process_effects(effects, allocator)?,
             Some(Err(e)) => {
+                let action_context = self.peer.take_failed_queued_action();
                 self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
+                        id: action_context.as_ref().map(|(id, _)| *id),
+                        action: action_context.map(|(_, action)| action),
                         reason: format!("{e:?}"),
                     },
                 ));
@@ -904,6 +913,13 @@ impl GameSession {
         {
             return true;
         }
+        if new.as_ref().and_then(|snapshot| snapshot.unroll_initiator)
+            != old.as_ref().and_then(|snapshot| snapshot.unroll_initiator)
+            || new.as_ref().and_then(|snapshot| snapshot.semantic_phase)
+                != old.as_ref().and_then(|snapshot| snapshot.semantic_phase)
+        {
+            return true;
+        }
         // In Active state, re-emit on balance changes (potato firings).
         // In other states, suppress same-state re-emissions (e.g. coin
         // changes within Unrolling).
@@ -921,6 +937,8 @@ impl GameSession {
             game_allocated: snap.game_allocated.clone(),
             have_potato: snap.have_potato,
             zero_payout: snap.zero_payout,
+            unroll_initiator: snap.unroll_initiator,
+            semantic_phase: snap.semantic_phase,
         }
     }
 
@@ -944,6 +962,8 @@ impl GameSession {
                     game_allocated: None,
                     have_potato: None,
                     zero_payout: None,
+                    unroll_initiator: None,
+                    semantic_phase: None,
                 });
             snapshot.session_disposition = Some(session_disposition);
             Some(snapshot)
@@ -978,6 +998,72 @@ impl GameSession {
         }
     }
 
+    pub(crate) fn timeout_claim_submitted(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<(), Error> {
+        use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
+
+        match semantic {
+            TimeoutClaimSemantic::ChannelTimeoutFinish => {
+                let changed = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<SpendChannelCoinPhase>()
+                    .is_some_and(|phase| phase.timeout_claim_submitted(semantic));
+                if changed {
+                    self.emit_channel_status_if_changed();
+                }
+            }
+            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+                let notification = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
+                    .and_then(|phase| phase.timeout_claim_status(id, true));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn timeout_claim_rearmed(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<(), Error> {
+        use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
+
+        match semantic {
+            TimeoutClaimSemantic::ChannelTimeoutFinish => {
+                let changed = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<SpendChannelCoinPhase>()
+                    .is_some_and(|phase| phase.timeout_claim_rearmed(semantic));
+                if changed {
+                    self.emit_channel_status_if_changed();
+                }
+            }
+            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+                let notification = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
+                    .and_then(|phase| phase.timeout_claim_status(id, false));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn check_channel_creation_expiry(&mut self, height: u64, observations: &[CoinObservation]) {
         if self.state.channel_expired || self.state.channel_established {
             return;
@@ -1008,6 +1094,8 @@ impl GameSession {
             game_allocated: None,
             have_potato: None,
             zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
         };
         self.state.events.push_back(GameSessionEvent::Notification(
             Self::make_channel_status_notification(&snapshot),
@@ -1674,6 +1762,42 @@ mod sequencing_tests {
     use crate::common::types::CoinID;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    fn unrolling_snapshot(
+        initiator: Option<crate::session_phases::effects::UnrollInitiator>,
+        phase: Option<crate::session_phases::effects::ChannelSemanticPhase>,
+    ) -> Option<ChannelStatusSnapshot> {
+        Some(ChannelStatusSnapshot {
+            state: ChannelStatus::Unrolling,
+            session_disposition: None,
+            advisory: None,
+            coin: None,
+            our_balance: None,
+            their_balance: None,
+            game_allocated: None,
+            have_potato: None,
+            zero_payout: None,
+            unroll_initiator: initiator,
+            semantic_phase: phase,
+        })
+    }
+
+    #[test]
+    fn unrolling_progress_changes_emit_channel_status() {
+        use crate::session_phases::effects::{ChannelSemanticPhase, UnrollInitiator};
+
+        assert!(GameSession::should_emit_status(
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::WaitingTimeout)),
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::SubmittingTimeoutFinish)),
+        ));
+        assert!(GameSession::should_emit_status(
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::WaitingTimeout)),
+            &unrolling_snapshot(
+                Some(UnrollInitiator::Opponent),
+                Some(ChannelSemanticPhase::WaitingTimeout),
+            ),
+        ));
+    }
 
     #[derive(Default)]
     struct Recorder {

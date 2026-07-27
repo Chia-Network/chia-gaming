@@ -7,7 +7,7 @@ import {
   MovingCardData,
   cardIdToRankSuit,
   handValueToDescription,
-} from '../../../types/californiaPoker';
+} from '../types';
 // Constants
 import {
   GAME_STATES,
@@ -18,17 +18,18 @@ import {
 // Utils
 import { formatHandDescription, makeDescription, formatCardsForLog, formatOrderedCardsForLog, orderUsedCardsForLog } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
+import { SuitName } from '../types/CardValueSuit';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../../../types/californiaPoker/CaliforniapokerProps';
+} from '../types/CaliforniapokerProps';
 import GameBottomBar from './components/GameBottomBar';
 import {
   calpokerSettlementVerb,
   calpokerTimeoutBadge,
   settlementByUs,
 } from '../../../lib/settlement';
+import { shouldRestoreCalpokerSelection } from '../useCalpokerHand';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -563,9 +564,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   useEffect(() => {
     if (initialSnapshot) {
       const snap = initialSnapshot;
-      const restoredGameState = moveNumber === '1' && !outcome
-        ? GAME_STATES.SELECTING
-        : snap.gameState;
+      const restoredGameState = shouldRestoreCalpokerSelection(
+        moveNumber,
+        !!outcome,
+        settlementOutcome != null,
+      ) ? GAME_STATES.SELECTING : snap.gameState;
       setGameState(restoredGameState);
       setWinner(snap.winner);
       setPlayerHaloCardIds(snap.playerHaloCardIds);
@@ -691,7 +694,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         </div>
 
         {/* Action bar — only during active gameplay */}
-        {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP) && !outcome && (
+        {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP)
+          && !outcome
+          && settlementOutcome == null && (
           <div className='flex-shrink-0 w-full h-12 relative flex items-center justify-center'>
             {gameState === GAME_STATES.SELECTING && moveNumber === '1' && (
               <GameBottomBar

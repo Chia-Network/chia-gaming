@@ -10,7 +10,14 @@ import {
   NeedCoinSpendRequest,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { restoreSession } from '../../hooks/blobSingleton';
+import {
+  destroySessionController,
+  getOrCreateSessionController,
+  isTransactionPublishNerfed,
+  restoreSession,
+  setTransactionPublishNerfed,
+  subscribeTransactionPublishNerfed,
+} from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import {
   _resetForTests as resetSaveState,
@@ -228,11 +235,116 @@ function transactionSubmitQueue(blob: SessionController): Promise<void> {
   return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
 }
 
+function submitTransaction(blob: SessionController, tx: SpendBundle): void {
+  (blob as unknown as { submitTransaction: (tx: SpendBundle) => void }).submitTransaction(tx);
+}
+
 async function flushPromiseJobs(): Promise<void> {
   await Promise.resolve();
 }
 
 describe('in-order delivery', () => {
+  it('drains an active result to quiescence in one macrotask', async () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type === 'notification' && event.data.ActionFailed) {
+        reasons.push(String(event.data.ActionFailed.reason));
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        { Notification: { ActionFailed: { reason: 'first' } } },
+        { Notification: { ActionFailed: { reason: 'second' } } },
+      ],
+    });
+
+    expect(reasons).toEqual([]);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reasons).toEqual(['first', 'second']);
+  });
+
+  it('includes re-entrant active results in that drain', async () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      const reason = String(event.data.ActionFailed.reason);
+      reasons.push(reason);
+      if (reason === 'first') {
+        blob.processResult({
+          disposition: { kind: 'active' },
+          events: [{ Notification: { ActionFailed: { reason: 'second' } } }],
+        });
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reasons).toEqual(['first', 'second']);
+  });
+
+  it('yields a self-replenishing active FIFO after the event budget', async () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    let delivered = 0;
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      delivered += 1;
+      if (delivered < 101) {
+        blob.processResult({
+          disposition: { kind: 'active' },
+          events: [{ Notification: { ActionFailed: { reason: String(delivered) } } }],
+        });
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(delivered).toBe(100);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(delivered).toBe(101);
+  });
+
+  it('stops active delivery when an observer retires the controller', async () => {
+    const { blob, sentMessages } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      reasons.push(String(event.data.ActionFailed.reason));
+      blob.cleanup();
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        { Notification: { ActionFailed: { reason: 'first' } } },
+        { OutboundMessage: enc('must not send') },
+        { Notification: { ActionFailed: { reason: 'second' } } },
+      ],
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reasons).toEqual(['first']);
+    expect(sentMessages).toEqual([]);
+    expect((blob as any).eventQueue).toEqual([]);
+    expect((blob as any).protocolStopped).toBe(true);
+  });
+
   it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;
@@ -253,6 +365,46 @@ describe('in-order delivery', () => {
   });
 });
 
+describe('active game tracking', () => {
+  it('retires only the settled member of an atomic hand', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    blob.activeGameIds = ['1', '3'];
+
+    blob.processResult({
+      events: [{
+        Notification: {
+          GameSettled: {
+            id: '1',
+            outcome: 'accept_settlement',
+            on_chain: false,
+            our_share: '100',
+            coin_id: null,
+          },
+        },
+      }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.activeGameIds).toEqual(['3']);
+
+    blob.processResult({
+      events: [{
+        Notification: {
+          GameSettled: {
+            id: '3',
+            outcome: 'accept_settlement',
+            on_chain: false,
+            our_share: '100',
+            coin_id: null,
+          },
+        },
+      }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.activeGameIds).toEqual([]);
+  });
+});
+
 describe('lifecycle flush', () => {
   it('drains transient handshake events before resolving the save flush', async () => {
     const outbound = enc('next-handshake-message');
@@ -269,6 +421,41 @@ describe('lifecycle flush', () => {
     expect(saved?.remoteNumber).toBe(1n);
     expect(saved?.messageNumber).toBe(2n);
     expect(saved?.unackedMessages).toEqual([{ msgno: 1n, msg: outbound }]);
+  });
+});
+
+describe('game action failure events', () => {
+  it('scopes failed terminal submissions to their game and action', () => {
+    const { blob, cradle } = createReadyBlob();
+    (cradle as unknown as {
+      make_move: (gameId: string, readable: Uint8Array) => WasmResult;
+    }).make_move = () => {
+      throw new Error('cannot reveal');
+    };
+    (cradle as unknown as {
+      acceptSettlement: (gameId: string) => WasmResult;
+    }).acceptSettlement = () => {
+      throw new Error('cannot accept settlement');
+    };
+    const events: import('../../types/ChiaGaming').WasmEvent[] = [];
+    const subscription = blob.getObservable().subscribe(event => events.push(event));
+
+    blob.makeMove('41', null);
+    blob.acceptSettlement('42');
+    subscription.unsubscribe();
+
+    expect(events).toContainEqual({
+      type: 'game-action-error',
+      gameId: '41',
+      action: 'make-move',
+      error: 'cannot reveal',
+    });
+    expect(events).toContainEqual({
+      type: 'game-action-error',
+      gameId: '42',
+      action: 'accept-settlement',
+      error: 'cannot accept settlement',
+    });
   });
 });
 
@@ -1174,9 +1361,111 @@ describe('terminal protocol cleanup', () => {
 
     expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Active', session_disposition: 'Abandoned' });
   });
+
+  it('persists canonical timeout-submission channel progress from WASM', async () => {
+    const { blob } = createReadyBlob();
+    blob.processResult({
+      events: [{
+        Notification: {
+          ChannelStatus: {
+            state: 'Unrolling',
+            unroll_initiator: 'opponent',
+            semantic_phase: 'submitting_timeout_finish',
+          },
+        },
+      }],
+    });
+    await blob.flushPendingWork();
+
+    expect((blob as any).lastChannelStatus).toMatchObject({
+      state: 'Unrolling',
+      unroll_initiator: 'opponent',
+      semantic_phase: 'submitting_timeout_finish',
+    });
+  });
 });
 
 describe('transaction submission', () => {
+  it('routes controller nerfs through the singleton policy and notifies subscribers', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const updates: boolean[] = [];
+    const unsubscribe = subscribeTransactionPublishNerfed((nerfed) => updates.push(nerfed));
+    const { sessionController: blob } = getOrCreateSessionController(
+      null,
+      makePeerConn(sentMessages, sentAcks),
+      () => {},
+      'test',
+      100n,
+      100n,
+      true,
+    );
+
+    expect(isTransactionPublishNerfed()).toBe(false);
+    blob.nerf();
+    expect(isTransactionPublishNerfed()).toBe(true);
+    expect(blob.isTransactionPublishNerfed()).toBe(true);
+    setTransactionPublishNerfed(false);
+    expect(isTransactionPublishNerfed()).toBe(false);
+    expect(blob.isTransactionPublishNerfed()).toBe(false);
+    expect(updates).toEqual([false, true, false]);
+
+    unsubscribe();
+    destroySessionController();
+  });
+
+  it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
+    const spend = jest.fn().mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    blob.loadWasm(mockWasmConnection);
+
+    submitTransaction(blob, testSpendBundle('07'));
+    blob.setTransactionPublishNerfed(true);
+    await transactionSubmitQueue(blob);
+    expect(spend).not.toHaveBeenCalled();
+
+    blob.setTransactionPublishNerfed(false);
+    submitTransaction(blob, testSpendBundle('08'));
+    await transactionSubmitQueue(blob);
+    expect(spend).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops queued publishes after controller cleanup without cancelling an in-flight publish', async () => {
+    let resolveFirst: (() => void) | null = null;
+    const spend = jest.fn()
+      .mockImplementationOnce(() => new Promise<string>((resolve) => {
+        resolveFirst = () => resolve('');
+      }))
+      .mockResolvedValue('');
+    const blockchain = new BlockchainPoller({
+      ...mockRpc,
+      spend,
+    } as InternalBlockchainInterface, 60000);
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    blob.loadWasm(mockWasmConnection);
+
+    submitTransaction(blob, testSpendBundle('09'));
+    submitTransaction(blob, testSpendBundle('0a'));
+    await flushPromiseJobs();
+    expect(spend).toHaveBeenCalledTimes(1);
+
+    blob.cleanup();
+    resolveFirst?.();
+    await transactionSubmitQueue(blob);
+    expect(spend).toHaveBeenCalledTimes(1);
+    activeBlob = null;
+  });
+
   it('applies watch and unwatch deltas without resampling the cradle snapshot', async () => {
     const queriedNames: string[][] = [];
     const blockchain = new BlockchainPoller(new Proxy(
