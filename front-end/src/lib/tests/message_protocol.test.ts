@@ -33,8 +33,10 @@ import {
 } from '../session/historyLimits';
 
 const testIndexedDb = indexedDB;
-const mockRpc = new Proxy({} as InternalBlockchainInterface, {
-  get: () => () => Promise.resolve(undefined),
+const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
+  get: (target, property) => property in target
+    ? Reflect.get(target, property)
+    : () => Promise.resolve(undefined),
 });
 const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
