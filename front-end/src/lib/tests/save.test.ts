@@ -36,7 +36,7 @@ import {
   _resetForTests,
   _writeRawState,
 } from '../../hooks/save';
-import { SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
+import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -113,7 +113,7 @@ afterEach(() => {
 });
 
 describe('session persistence', () => {
-  it('atomically round-trips one raw binary/bigint record through IndexedDB', async () => {
+  it('obfuscates and round-trips one raw binary/bigint record through IndexedDB', async () => {
     const rawBuffer = Uint8Array.from([9, 8, 7]).buffer;
     saveSession({
       ...sampleSession,
@@ -121,7 +121,7 @@ describe('session persistence', () => {
     } as Partial<SessionSave>);
     await flushSessionSave();
 
-    const stored = await new Promise<{ count: number; record: SessionSave & { rawBuffer: ArrayBuffer } }>(
+    const stored = await new Promise<{ count: number; record: unknown }>(
       (resolve, reject) => {
         const open = indexedDB.open(SESSION_DB_NAME, 1);
         open.onerror = () => reject(open.error);
@@ -136,7 +136,7 @@ describe('session persistence', () => {
             db.close();
             resolve({
               count: count.result,
-              record: record.result as SessionSave & { rawBuffer: ArrayBuffer },
+              record: record.result,
             });
           };
         };
@@ -144,10 +144,8 @@ describe('session persistence', () => {
     );
 
     expect(stored.count).toBe(1);
-    expect(stored.record.serializedGameSession).toBeInstanceOf(Uint8Array);
-    expect(stored.record.rawBuffer).toBeInstanceOf(ArrayBuffer);
-    expect(new Uint8Array(stored.record.rawBuffer)).toEqual(new Uint8Array([9, 8, 7]));
-    expect(typeof stored.record.messageNumber).toBe('bigint');
+    expect(stored.record).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(stored.record as Uint8Array)).not.toContain('serializedGameSession');
 
     _resetForTests();
     const loaded = await peekSession() as (SessionSave & { rawBuffer: ArrayBuffer }) | null;
@@ -510,20 +508,8 @@ describe('flat state', () => {
     await flushSessionSave();
 
     // Drop sessionId from the IDB record only; preferences still hold sid.
-    const record = await new Promise<SessionSave>((resolve, reject) => {
-      const open = indexedDB.open(SESSION_DB_NAME, 1);
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const db = open.result;
-        const tx = db.transaction('session', 'readonly');
-        const get = tx.objectStore('session').get('current');
-        tx.oncomplete = () => {
-          db.close();
-          resolve(get.result as SessionSave);
-        };
-        tx.onerror = () => reject(tx.error);
-      };
-    });
+    const record = await readSessionRecord();
+    if (!record) throw new Error('Expected a persisted session record');
     delete record.sessionId;
     await writeSessionRecord(record);
 
