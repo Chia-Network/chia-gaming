@@ -17,7 +17,8 @@ use crate::common::types::{
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
-    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind, SettlementOutcome,
+    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind,
+    SettlementOutcome,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -45,7 +46,6 @@ pub struct SimulatedPeer {
     outbound_transactions: Vec<SpendBundle>,
 
     messages: Vec<ReadableMove>,
-
 }
 
 impl MessagePeerQueue for SimulatedPeer {

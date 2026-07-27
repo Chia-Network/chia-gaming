@@ -1051,11 +1051,17 @@ mod tests {
         let observations = &mgr.cradle().seen_observations;
         assert_eq!(observations.len(), 3);
         // Block 10: created only.
-        assert_eq!(observations[0].1, vec![CoinObservation::Created(coin.clone())]);
+        assert_eq!(
+            observations[0].1,
+            vec![CoinObservation::Created(coin.clone())]
+        );
         // Block 12: nothing new.
         assert!(observations[1].1.is_empty());
         // Block 20: deleted only.
-        assert_eq!(observations[2].1, vec![CoinObservation::Spent(coin.clone())]);
+        assert_eq!(
+            observations[2].1,
+            vec![CoinObservation::Spent(coin.clone())]
+        );
         assert_eq!(mgr.last_height(), 20);
     }
 
@@ -1475,7 +1481,10 @@ mod tests {
 
         let observations = &mgr.cradle().seen_observations;
         // Block 12: created.
-        assert_eq!(observations[0].1, vec![CoinObservation::Created(coin.clone())]);
+        assert_eq!(
+            observations[0].1,
+            vec![CoinObservation::Created(coin.clone())]
+        );
         // Block 8 (reorg): neither created nor deleted -- the vanish is
         // suppressed from the forwarded observations.
         assert_eq!(observations[1], (8, vec![]));
@@ -1652,7 +1661,9 @@ mod tests {
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
         assert!(mgr.snapshot_watched_coins().is_empty());
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain eviction");
+        let drain = mgr
+            .flush_and_collect(&mut allocator)
+            .expect("drain eviction");
         assert_eq!(drain.unwatch_coins, vec![coin]);
         assert!(mgr
             .flush_and_collect(&mut allocator)

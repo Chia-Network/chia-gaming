@@ -1305,7 +1305,6 @@ impl GameSession {
     pub fn channel_puzzle_hash(&self) -> Option<PuzzleHash> {
         self.state.channel_puzzle_hash.clone()
     }
-
 }
 
 impl GameSession {
@@ -1786,14 +1785,18 @@ mod sequencing_tests {
         };
 
         // Created phase: the handshake handler builds its replacement.
-        handshake.coin_created(&mut env, &coin).expect("created phase");
+        handshake
+            .coin_created(&mut env, &coin)
+            .expect("created phase");
         // Transition checkpoint (what detect_phase_transition does inside
         // process_effects between the two phases).
         let mut replacement = handshake
             .take_next_phase()
             .expect("coin_created must trigger the transition");
         // Spent phase: delivered to the post-transition handler.
-        replacement.coin_spent(&mut env, &coin).expect("spent phase");
+        replacement
+            .coin_spent(&mut env, &coin)
+            .expect("spent phase");
 
         assert!(
             handshake_rec.borrow().spent.is_empty(),
