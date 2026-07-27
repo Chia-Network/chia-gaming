@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
+import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, InternalBlockchainInterface, ConnectionSetup, HubLiveness, SessionPhase, PeerLiveness, CoinOfInterestEntry } from '../types/ChiaGaming';
@@ -85,6 +86,7 @@ import {
   type SessionModel,
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
+import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { gameDisplayName } from '../lib/gameRegistry';
 import {
   appendRecent,
@@ -534,6 +536,12 @@ const Shell = () => {
   sessionConfigRef.current = sessionConfig;
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [finishedSessionIdentity, setFinishedSessionIdentity] = useState<{
+    myName: string;
+    opponentName?: string;
+    iStarted: boolean;
+    iProposedHand: boolean;
+  } | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1720,6 +1728,23 @@ const Shell = () => {
   const finishResolvedSessionDisplay = useCallback((hasError: boolean) => {
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const model = dashboardSessionModelRef.current;
+    const handState = sessionController
+      ? sessionController.handState ?? null
+      : model?.game.handState ?? null;
+    const finishedModel = model && handState !== model.game.handState
+      ? { ...model, game: { ...model.game, handState } }
+      : model;
+    if (finishedModel && finishedModel !== model) {
+      dashboardSessionModelRef.current = finishedModel;
+      setDashboardSessionModel(finishedModel);
+    }
+    const identity = {
+      myName: alias ?? '',
+      opponentName: sessionConfigRef.current?.opponentAlias ?? sessionSaveRef.current?.opponentAlias,
+      iStarted: sessionConfigRef.current?.iStarted ?? sessionSaveRef.current?.iStarted ?? false,
+      iProposedHand: sessionSaveRef.current?.iProposedHand ?? false,
+    };
+    setFinishedSessionIdentity(identity);
     sessionFinishedCleanupRef.current = true;
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');
@@ -1734,12 +1759,14 @@ const Shell = () => {
     // Clear only live protocol fields. clearSession() would drop the boot
     // marker and finished channel snapshot — then reload skips Resume while
     // still auto-connecting the saved hub.
-    if (model) {
-      const status = model.channel.status;
+    if (finishedModel) {
+      const status = finishedModel.channel.status;
       void saveTerminalSession({
-        ...snapshotFromSessionModel(model),
+        ...snapshotFromSessionModel(finishedModel),
+        handState,
+        terminalIStarted: identity.iStarted,
         channelStatus: channelStatusPayloadFromModel(status),
-        cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
+        cleanShutdownStarted: finishedModel.channel.cleanShutdownStarted || undefined,
       });
     } else {
       void saveTerminalSession({});
@@ -1755,7 +1782,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-  }, [clearSessionTimers, resetPeerRelayState]);
+  }, [clearSessionTimers, resetPeerRelayState, sessionController]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
@@ -1837,6 +1864,12 @@ const Shell = () => {
     const model = sessionModelFromSave(save);
     dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
+    setFinishedSessionIdentity({
+      myName: save.myAlias ?? peekAlias() ?? '',
+      opponentName: save.opponentAlias,
+      iStarted: save.terminalIStarted ?? false,
+      iProposedHand: save.iProposedHand ?? false,
+    });
     sessionSaveRef.current = save;
     sessionSavePropRef.current = undefined;
     sessionStartedRef.current = false;
@@ -2887,12 +2920,21 @@ const Shell = () => {
               <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
                 Restoring session...
               </div>
+            ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
+              <div className='relative w-full h-full'>
+                <FinishedSessionGameView
+                  model={sessionModelForReactProps(dashboardSessionModel)}
+                  myName={finishedSessionIdentity?.myName ?? peekAlias()}
+                  opponentName={finishedSessionIdentity?.opponentName}
+                  iStarted={finishedSessionIdentity?.iStarted ?? false}
+                  iProposedHand={finishedSessionIdentity?.iProposedHand ?? false}
+                />
+                {sessionConsentOverlay}
+              </div>
             ) : (
               <div className='relative w-full h-full'>
                 <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-                  {sessionPhase === 'resolved' && dashboardSessionModel
-                    ? 'Session finished'
-                    : 'No active game session'}
+                  No active game session
                 </div>
                 {sessionConsentOverlay}
               </div>

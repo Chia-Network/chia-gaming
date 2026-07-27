@@ -1026,6 +1026,15 @@ and stops the `BlockchainPoller` and keepalive timer. Its retained
 `resolved`, persists the final dashboard snapshot, and tears down the peer
 relay and hub busy state.
 
+**Finished-hand display.** After that terminal boundary, Shell may remount a
+validated, persisted game hand as a display-only view. The remount receives a
+frozen controller whose action methods cannot reach the protocol, and it never
+restarts polling, peer delivery, or WASM. The terminal save retains only
+presentation payloads needed by supported game-specific rehydrators; an absent,
+unsupported, or stale payload renders the terminal summary instead. This keeps
+Rust authoritative for terminal lifecycle while preserving the last hand for
+the user.
+
 ### WalletConnect BigInt Serialization
 
 WalletConnect's internal JSON handling (`@walletconnect/safe-json`) uses a

@@ -39,6 +39,7 @@ export interface CalpokerHandState {
   isPlayerTurn: boolean;
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+  settlementOutcome?: import('../lib/settlement').SettlementOutcome | null;
 }
 
 export interface PersistedGameState<T = unknown> {
@@ -85,6 +86,8 @@ export interface SessionSave {
   messageNumber?: bigint;
   remoteNumber?: bigint;
   iStarted?: boolean;
+  /** Display-only role retained after terminal protocol state is cleared. */
+  terminalIStarted?: boolean;
   myContribution?: string;
   theirContribution?: string;
   perGameAmount?: string;

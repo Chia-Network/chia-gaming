@@ -419,7 +419,7 @@ function stringifyCalpokerOutcome(outcome: CalpokerOutcome | undefined): Calpoke
   };
 }
 
-function CalpokerHand({
+export function CalpokerHand({
   gameObject,
   gameId,
   iStarted,
@@ -519,7 +519,7 @@ interface SpacePokerHandProps {
   opponentName?: string;
 }
 
-function SpacePokerHand({
+export function SpacePokerHand({
   gameObject,
   gameId,
   iStarted,
@@ -574,7 +574,7 @@ interface KrunkHandProps {
   opponentName?: string;
 }
 
-function KrunkHand({
+export function KrunkHand({
   gameObject,
   currentHandGameIds,
   activeGameIds,

@@ -594,6 +594,7 @@ export function useSpacepokerHand(
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     if (!go || !gid) return;
+    if (!go.isChannelReady()) return;
 
     if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) {
       try {

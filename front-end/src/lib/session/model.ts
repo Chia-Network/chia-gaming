@@ -1247,6 +1247,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,
     activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,
+    handState: model.game.handState,
     currentHandGameIds: model.game.currentHandIds.length > 0
       ? model.game.currentHandIds
       : undefined,
