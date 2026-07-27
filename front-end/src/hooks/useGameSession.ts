@@ -4,7 +4,6 @@ import { Program } from 'clvm-lib';
 import {
   GameConnectionState,
   GameSessionParams,
-  CalpokerOutcome,
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
@@ -16,6 +15,7 @@ import {
   MoveRejectedPayload,
   SessionPhase,
 } from '../types/ChiaGaming';
+import { CalpokerOutcome } from '../features/calPoker/outcome';
 import {
   getOrCreateSessionController,
   initStarted,

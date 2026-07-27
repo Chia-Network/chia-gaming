@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import {
-  CalpokerOutcome,
-} from '../../types/ChiaGaming';
+import { CalpokerOutcome } from './outcome';
 import { SessionController } from '../../hooks/SessionController';
 import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from '../../hooks/save';
 import { GameplayEvent } from '../../hooks/useGameSession';
