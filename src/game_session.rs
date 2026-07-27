@@ -861,7 +861,7 @@ impl GameSession {
                 let action_context = self.peer.take_failed_queued_action();
                 self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
-                        id: action_context.as_ref().map(|(id, _)| id.clone()),
+                        id: action_context.as_ref().map(|(id, _)| *id),
                         action: action_context.map(|(_, action)| action),
                         reason: format!("{e:?}"),
                     },

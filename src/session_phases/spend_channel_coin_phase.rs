@@ -213,7 +213,10 @@ impl SpendChannelCoinPhase {
 
     pub fn timeout_claim_submitted(&mut self, semantic: TimeoutClaimSemantic) -> bool {
         if matches!(semantic, TimeoutClaimSemantic::ChannelTimeoutFinish)
-            && matches!(self.state, SpendChannelCoinState::UnrollTimeoutOrSpend { .. })
+            && matches!(
+                self.state,
+                SpendChannelCoinState::UnrollTimeoutOrSpend { .. }
+            )
             && !self.timeout_finish_submitted
         {
             self.timeout_finish_submitted = true;
@@ -1179,7 +1182,11 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 } else {
                     ChannelStatus::GoingOnChain
                 };
-                (s, Some(channel_coin.clone()), Some(ChannelSemanticPhase::SubmittingChannelSpend))
+                (
+                    s,
+                    Some(channel_coin.clone()),
+                    Some(ChannelSemanticPhase::SubmittingChannelSpend),
+                )
             }
             SpendChannelCoinState::ChannelConditions { channel_coin } => {
                 let s = if self.expected_clean_shutdown_solution.is_some() {
@@ -1360,7 +1367,10 @@ mod tests {
             None,
         );
         assert_eq!(
-            locally_started.channel_status_snapshot().unwrap().unroll_initiator,
+            locally_started
+                .channel_status_snapshot()
+                .unwrap()
+                .unroll_initiator,
             None
         );
 
@@ -1375,7 +1385,10 @@ mod tests {
             None,
         );
         assert_eq!(
-            clean_shutdown.channel_status_snapshot().unwrap().unroll_initiator,
+            clean_shutdown
+                .channel_status_snapshot()
+                .unwrap()
+                .unroll_initiator,
             None
         );
     }
@@ -1398,7 +1411,9 @@ mod tests {
 
         let mut allocator = AllocEncoder::new();
         let mut env = ChannelEnv::new(&mut allocator).expect("channel environment");
-        phase.coin_spent(&mut env, &test_coin()).expect("observe channel spend");
+        phase
+            .coin_spent(&mut env, &test_coin())
+            .expect("observe channel spend");
         assert_eq!(
             phase.channel_status_snapshot().unwrap().semantic_phase,
             Some(ChannelSemanticPhase::Resolving)

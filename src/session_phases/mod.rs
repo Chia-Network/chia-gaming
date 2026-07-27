@@ -1024,10 +1024,8 @@ impl OffChainPhase {
 
         while let Some(action) = self.game_action_queue.pop_front() {
             self.last_failed_queued_action = match &action {
-                GameAction::Move(id, ..) => Some((id.clone(), FailedGameAction::MakeMove)),
-                GameAction::AcceptSettlement(id) => {
-                    Some((id.clone(), FailedGameAction::AcceptSettlement))
-                }
+                GameAction::Move(id, ..) => Some((*id, FailedGameAction::MakeMove)),
+                GameAction::AcceptSettlement(id) => Some((*id, FailedGameAction::AcceptSettlement)),
                 _ => None,
             };
             match action {

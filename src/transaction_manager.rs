@@ -30,7 +30,9 @@ use crate::common::types::{
     AllocEncoder, CoinCondition, CoinID, CoinString, Error, SpendBundle, Timeout,
 };
 use crate::game_session::{CoinObservation, DrainResult, GameSession};
-use crate::session_phases::effects::{GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic};
+use crate::session_phases::effects::{
+    GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic,
+};
 
 /// Raw per-coin chain state as reported by the polling layer for a single
 /// watched coin.  `created_height`/`spent_height` are `None` until the coin is
@@ -460,7 +462,7 @@ impl<C> TransactionManager<C> {
                 w.timeout_blocks = timeout.clone();
                 if spend.is_some() {
                     w.timeout_spend = spend.clone();
-                    w.timeout_claim_semantic = semantic.clone();
+                    w.timeout_claim_semantic = semantic;
                 }
             })
             .or_insert_with(|| {
@@ -514,8 +516,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         }
         let reorg = height < self.last_height;
         self.last_height = height;
-        if let Some(rearmed) = self.invalidate_timeout_claims_for_rollback_epoch(height, reorg)
-        {
+        if let Some(rearmed) = self.invalidate_timeout_claims_for_rollback_epoch(height, reorg) {
             self.report_timeout_claim_rearms(rearmed)?;
         }
         self.reconcile_timeout_claim_status()?;
@@ -1448,7 +1449,8 @@ mod tests {
         );
         assert!(mgr.drain_submissions().unwrap().is_empty());
 
-        mgr.report_height(&mut allocator, 15).expect("recover maturity");
+        mgr.report_height(&mut allocator, 15)
+            .expect("recover maturity");
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
     }
 
@@ -1530,7 +1532,10 @@ mod tests {
             }],
         )
         .expect("confirm timeout spend");
-        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(16));
+        assert_eq!(
+            mgr.watched_coin(&coin).unwrap().spent_confirmed_at,
+            Some(16)
+        );
 
         mgr.report_coin_states(&mut allocator, 14, &live)
             .expect("rollback confirmed spend");
