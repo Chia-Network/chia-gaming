@@ -1280,7 +1280,9 @@ impl OffChainPhase {
         match incoming_result {
             Ok(effects) => Ok(effects),
             Err(error) => Ok(vec![
-                Effect::Log(format!("[going-on-chain] error processing peer message: {error:?}")),
+                Effect::Log(format!(
+                    "[going-on-chain] error processing peer message: {error:?}"
+                )),
                 Effect::GoOnChainAfterPeerError,
             ]),
         }

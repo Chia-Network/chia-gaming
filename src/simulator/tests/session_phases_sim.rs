@@ -1366,8 +1366,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         step_start = std::time::Instant::now();
 
         let should_end = cradles.iter().enumerate().all(|(i, c)| {
-            c.is_fully_resolved()
-                && local_uis[i].all_accepted_games_have_terminal_notification()
+            c.is_fully_resolved() && local_uis[i].all_accepted_games_have_terminal_notification()
         }) && ending.is_none();
         if should_end {
             ending = Some(10);
