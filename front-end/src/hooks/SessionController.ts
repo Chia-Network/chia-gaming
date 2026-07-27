@@ -66,6 +66,17 @@ const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
 const ACTIVE_DRAIN_EVENT_BUDGET = 100;
 
+function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
+  return status === 'Active'
+    || status === 'ShuttingDown'
+    || status === 'ShutdownTransactionPending'
+    || status === 'GoingOnChain'
+    || status === 'Unrolling'
+    || status === 'ResolvedClean'
+    || status === 'ResolvedUnrolled'
+    || status === 'ResolvedStale';
+}
+
 function extractErrorMessage(e: unknown): string {
   if (e instanceof Error) {
     try {
@@ -111,6 +122,7 @@ export class SessionController implements PollingGameSession {
   cradle: ChiaGame | undefined;
   uniqueId: string;
   pairingToken: string;
+  channelReady: boolean;
   iStarted: boolean;
   storedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
@@ -200,6 +212,7 @@ export class SessionController implements PollingGameSession {
     this.theirContribution = theirContribution;
     this.perGameAmount = 0n;
     this.iStarted = false;
+    this.channelReady = false;
     this.storedMessages = [];
     this.cleanShutdownCalled = false;
     this.onChain = false;
@@ -328,7 +341,14 @@ export class SessionController implements PollingGameSession {
 
   getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
-  isChannelReady(): boolean { return this.lastChannelStatus?.state === 'Active'; }
+  isChannelReady(): boolean { return this.channelReady; }
+
+  isOffChainActive(): boolean { return this.lastChannelStatus?.state === 'Active'; }
+
+  restoreChannelStatus(status: ChannelStatusPayload | null): void {
+    this.lastChannelStatus = status;
+    this.channelReady = status !== null && isActivatedChannelStatus(status.state);
+  }
 
   getObservable() {
     return this.rxjsMessageSingleton;
@@ -822,6 +842,9 @@ export class SessionController implements PollingGameSession {
           // array (exempt from the save-time number check, stored losslessly as
           // $bytes) rather than a degraded plain array/object of numbers.
           this.lastChannelStatus = { ...cs, coin: coerceToBytes(cs.coin) } as unknown as ChannelStatusPayload;
+          if (cs.state === 'Active') {
+            this.channelReady = true;
+          }
         }
       }
       if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
@@ -1450,7 +1473,8 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.go_on_chain();
-    const startedOnChain = result?.disposition?.kind === 'active';
+      const startedOnChain = result?.actionSucceeded === true
+        && result.disposition?.kind === 'active';
       this.onChain = startedOnChain;
       this.processResult(result);
       return startedOnChain;

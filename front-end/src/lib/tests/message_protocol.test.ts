@@ -1075,6 +1075,29 @@ describe('abandon calls Rust through cradle', () => {
 });
 
 describe('go-on-chain terminal remap', () => {
+  it('keeps the channel ready for on-chain moves after leaving Active', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
+
+    blob.processResult({
+      events: [{ Notification: { ChannelStatus: { state: 'Active' } } }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.isChannelReady()).toBe(true);
+    expect(blob.isOffChainActive()).toBe(true);
+
+    blob.processResult({
+      events: [{ Notification: { ChannelStatus: { state: 'Unrolling' } } }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.isChannelReady()).toBe(true);
+    expect(blob.isOffChainActive()).toBe(false);
+  });
+
   it('reports a successful go-on-chain transition before its notification drains', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
@@ -1083,6 +1106,7 @@ describe('go-on-chain terminal remap', () => {
     const cradle = {
       ...makeMockCradle(),
       go_on_chain: jest.fn(() => ({
+        actionSucceeded: true,
         disposition: { kind: 'active' },
         events: [],
       } as WasmResult)),
@@ -1107,6 +1131,28 @@ describe('go-on-chain terminal remap', () => {
           Notification: {
             ChannelStatus: { state: 'ShuttingDown', session_disposition: 'Abandoned' },
           },
+        }],
+      } as WasmResult)),
+    } as unknown as ChiaGame;
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    expect(blob.goOnChain()).toBe(false);
+    expect((blob as any).onChain).toBe(false);
+  });
+
+  it('does not enter on-chain mode when the action fails in an active drain', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    const cradle = {
+      ...makeMockCradle(),
+      go_on_chain: jest.fn(() => ({
+        actionSucceeded: false,
+        disposition: { kind: 'active' },
+        events: [{
+          Notification: { ActionFailed: { reason: 'no channel coin spend info cached' } },
         }],
       } as WasmResult)),
     } as unknown as ChiaGame;

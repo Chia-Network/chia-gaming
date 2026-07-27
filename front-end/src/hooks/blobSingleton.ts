@@ -161,9 +161,9 @@ export async function restoreSession(
   }
   sc.activeGameIds = [...save.activeGameIds];
   sc.handState = save.handState ?? null;
-  sc.lastChannelStatus = save.channelStatus
+  sc.restoreChannelStatus(save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
-    : null;
+    : null);
   sc.myAlias = save.myAlias;
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;

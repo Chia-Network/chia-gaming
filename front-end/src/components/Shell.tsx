@@ -576,6 +576,7 @@ const Shell = () => {
   const abandonEnabledRef = useRef(false);
   abandonEnabledRef.current = abandonEnabled;
   const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abandonPendingRef = useRef(false);
   const waitingEnteredAtRef = useRef<bigint | null>(null);
   const waitingStateRef = useRef<SessionModel['channel']['status']['state'] | null>(null);
 
@@ -1042,6 +1043,7 @@ const Shell = () => {
 
   const cancelAttemptedSession = useCallback((options?: { error?: boolean }) => {
     sessionStartEpochRef.current += 1;
+    abandonPendingRef.current = false;
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
     resetPeerRelayState();
@@ -1417,7 +1419,11 @@ const Shell = () => {
               log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
               markPeerDead();
               const channelState = dashboardSessionModelRef.current?.channel.status.state;
-              if (shouldCancelOnPeerUnreachable(sessionPhaseRef.current, channelState)) {
+              if (shouldCancelOnPeerUnreachable(
+                sessionPhaseRef.current,
+                channelState,
+                abandonPendingRef.current,
+              )) {
                 cancelAttemptedSession({ error: true });
               }
             }
@@ -1428,7 +1434,11 @@ const Shell = () => {
           const ps = peerSessionRef.current;
           if (!ps || to !== ps.peerId) return;
           const channelState = dashboardSessionModelRef.current?.channel.status.state;
-          if (shouldCancelOnPeerUnreachable(sessionPhaseRef.current, channelState)) {
+          if (shouldCancelOnPeerUnreachable(
+            sessionPhaseRef.current,
+            channelState,
+            abandonPendingRef.current,
+          )) {
             // Matchmaking / channel setup: abandon the attempt.
             markPeerDead();
             cancelAttemptedSession();
@@ -1457,6 +1467,7 @@ const Shell = () => {
             && shouldCancelOnPeerUnreachable(
               sessionPhaseRef.current,
               dashboardSessionModelRef.current?.channel.status.state,
+              abandonPendingRef.current,
             )
           ) {
             console.warn(
@@ -1729,6 +1740,7 @@ const Shell = () => {
 
   const cancelDashboardSession = useCallback((options?: { retainFinishedGuard?: boolean }) => {
     sessionStartEpochRef.current += 1;
+    abandonPendingRef.current = false;
     const alias = sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
     // Terminal/clean finish must not send session_reject — that signal means
@@ -1759,6 +1771,7 @@ const Shell = () => {
   }, [clearSessionPreservingHistory, clearSessionTimers, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const abandonActiveChannel = useCallback(() => {
+    abandonPendingRef.current = true;
     const state = dashboardSessionModelRef.current?.channel.status.state;
     if (state && PRE_ACTIVE_CHANNEL_STATES.has(state)) {
       const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
@@ -1793,6 +1806,7 @@ const Shell = () => {
       iProposedHand: sessionSaveRef.current?.iProposedHand ?? false,
     };
     setFinishedSessionIdentity(identity);
+    abandonPendingRef.current = false;
     sessionFinishedCleanupRef.current = true;
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');

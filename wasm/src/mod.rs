@@ -1297,6 +1297,7 @@ mod gaming_wasm {
         drain: &ManagerDrain,
         pending_terminal: Option<TerminalHandoffCommand>,
         terminal: bool,
+        action_succeeded: bool,
     ) -> Result<JsValue, types::Error> {
         let events = collect_drain_events(drain)?;
         let watch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.watch_coins))
@@ -1307,6 +1308,11 @@ mod gaming_wasm {
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
         let _ = js_sys::Reflect::set(&obj, &"unwatchCoins".into(), &unwatch_coins);
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"actionSucceeded".into(),
+            &action_succeeded.into(),
+        );
         let disposition = js_sys::Object::new();
         match pending_terminal {
             None if !terminal => {
@@ -1364,20 +1370,24 @@ mod gaming_wasm {
         F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
     {
         with_game(cid, move |cradle: &mut JsGameSession| {
-            if let Err(e) = f(cradle) {
-                let reason = format!("{e:?}");
-                cradle.cradle.push_event(GameSessionEvent::Notification(
-                    GameNotification::ActionFailed {
-                        id: action_context.as_ref().map(|(id, _)| id.clone()),
-                        action: action_context.as_ref().map(|(_, action)| *action),
-                        reason,
-                    },
-                ));
-            }
+            let action_succeeded = match f(cradle) {
+                Ok(()) => true,
+                Err(e) => {
+                    let reason = format!("{e:?}");
+                    cradle.cradle.push_event(GameSessionEvent::Notification(
+                        GameNotification::ActionFailed {
+                            id: action_context.as_ref().map(|(id, _)| id.clone()),
+                            action: action_context.as_ref().map(|(_, action)| *action),
+                            reason,
+                        },
+                    ));
+                    false
+                }
+            };
             let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
             let pending_terminal = cradle.cradle.pending_terminal_handoff();
             let terminal = cradle.cradle.is_fully_resolved();
-            manager_drain_to_js(&dr, pending_terminal, terminal)
+            manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)
         })
     }
 
