@@ -457,6 +457,47 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it('discards a stale coin registration before reconnect polling resumes', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const firstRegistration = deferred<void>();
+    const registerCoins = jest.fn()
+      .mockReturnValueOnce(firstRegistration.promise)
+      .mockResolvedValueOnce(undefined);
+    const rpc = {
+      getHeightInfo: jest.fn().mockResolvedValue(100n),
+      registerCoins,
+      getCoinRecordsByNames: jest.fn().mockResolvedValue([]),
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => { onConnectionChange = undefined; };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+    poller.start();
+
+    await advanceLane(0);
+    expect(registerCoins).toHaveBeenCalledTimes(1);
+
+    connected = false;
+    onConnectionChange?.(false);
+    connected = true;
+    onConnectionChange?.(true);
+    firstRegistration.resolve();
+
+    await advanceLane(0);
+    expect(registerCoins).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
   it('does not resume coin polling while the wallet session is disconnected', async () => {
     jest.useFakeTimers();
     let onConnectionChange: ((next: boolean) => void) | undefined;
@@ -517,6 +558,8 @@ describe('BlockchainPoller', () => {
     connected = false;
     onConnectionChange?.(false);
     await expect(walletRequest).rejects.toThrow('RPC request discarded during disconnect: selectCoins');
+    await expect(poller.rpc.selectCoins('wallet', 1n))
+      .rejects.toThrow('RPC request discarded during disconnect: selectCoins');
     expect(selectCoins).not.toHaveBeenCalled();
 
     height.resolve(100n);

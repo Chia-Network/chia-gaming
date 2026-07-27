@@ -1271,6 +1271,7 @@ describe('transaction submission', () => {
     const blockchain = new BlockchainPoller({
       ...mockRpc,
       spend,
+      isConnected: () => true,
       getHeightInfo: () => Promise.resolve(1n),
       registerCoins: () => Promise.resolve(),
       getCoinRecordsByNames: () => Promise.resolve([]),
@@ -1358,6 +1359,7 @@ describe('transaction submission', () => {
     const blockchain = new BlockchainPoller({
       ...mockRpc,
       spend,
+      isConnected: () => true,
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
@@ -1422,6 +1424,7 @@ describe('transaction submission', () => {
     const blockchain = new BlockchainPoller({
       ...mockRpc,
       spend,
+      isConnected: () => true,
     } as InternalBlockchainInterface, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
