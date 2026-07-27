@@ -8,6 +8,7 @@ import {
   calpokerResponderFinishesAtReveal,
   shouldRestoreCalpokerSelection,
 } from './useCalpokerHand';
+import { calpokerTimeoutBadge } from '../../lib/settlement';
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
@@ -55,5 +56,17 @@ describe('Calpoker bigint domain helpers', () => {
       false,
       false,
     )).toBe(true);
+  });
+
+  it('does not describe an off-chain settlement as a timeout', () => {
+    expect(calpokerTimeoutBadge('accept_settlement', 'ours')).toBeNull();
+    expect(calpokerTimeoutBadge('accept_settlement', 'theirs')).toBeNull();
+    expect(calpokerTimeoutBadge('timed_out_waiting_for_our_move', 'ours')).toBe('timeout');
+    expect(calpokerTimeoutBadge('opponent_timed_out', 'ours')).toBe('winner');
+  });
+
+  it('does not show a timeout badge after a completed hand settles on-chain', () => {
+    expect(calpokerTimeoutBadge('timed_out_waiting_for_our_move', 'ours', true)).toBeNull();
+    expect(calpokerTimeoutBadge('opponent_timed_out', 'theirs', true)).toBeNull();
   });
 });

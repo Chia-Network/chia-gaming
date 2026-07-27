@@ -17,9 +17,10 @@ function parseHubUrl(raw: string): string | null {
 
 interface HubPickerProps {
   onConnect: (origin: string) => void;
+  connectionError?: string | null;
 }
 
-export function HubPicker({ onConnect }: HubPickerProps) {
+export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
   const [customUrl, setCustomUrl] = useState('');
   const [error, setError] = useState('');
 
@@ -55,7 +56,7 @@ export function HubPicker({ onConnect }: HubPickerProps) {
               Connect
             </Button>
           </div>
-          {error && <p className='text-xs text-alert-text'>{error}</p>}
+          {(error || connectionError) && <p className='text-xs text-alert-text'>{error || connectionError}</p>}
         </div>
 
         <button

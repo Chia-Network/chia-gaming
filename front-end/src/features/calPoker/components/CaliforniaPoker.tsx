@@ -77,6 +77,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [rememberedOutcome, setRememberedOutcome] = useState<
     CalpokerOutcomeView | undefined
   >(undefined);
+  const handCompleted = !!(outcome || rememberedOutcome);
   const rememberedCardsRef = useRef<CardValueSuit[][]>([[], []]);
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
@@ -651,7 +652,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 formatHandDescription={formatHandDescription}
                 selectedCards={[]}
-                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'theirs') : null}
+                timeoutBadge={settlementOutcome
+                  ? calpokerTimeoutBadge(settlementOutcome, 'theirs', handCompleted)
+                  : null}
               />
             </div>
           </div>
@@ -687,7 +690,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                 formatHandDescription={formatHandDescription}
-                timeoutBadge={settlementOutcome ? calpokerTimeoutBadge(settlementOutcome, 'ours') : null}
+                timeoutBadge={settlementOutcome
+                  ? calpokerTimeoutBadge(settlementOutcome, 'ours', handCompleted)
+                  : null}
               />
             </div>
           </div>

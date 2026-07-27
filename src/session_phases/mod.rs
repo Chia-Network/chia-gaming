@@ -467,6 +467,13 @@ impl OffChainPhase {
             }
         }
 
+        if send_back
+            && self.channel_state()?.get_their_current_share() == Amount::default()
+            && !self.channel_state()?.has_active_games()
+        {
+            self.game_action_queue.push_back(GameAction::CleanShutdown);
+        }
+
         let (sent, batch_effects) = match self.drain_queue_into_batch(env) {
             Ok(result) => result,
             Err(error) => {

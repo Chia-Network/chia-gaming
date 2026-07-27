@@ -36,16 +36,14 @@
             wasm.type = 'module';
             wasm.textContent = [
               'import * as cg from "./chia_gaming_wasm.js";',
-              'const intervalId = setInterval(() => {',
-              '  if (window.loadWasm) {',
-              '    clearInterval(intervalId);',
-              '    window.loadWasm(cg.default, cg);',
-              '  }',
-              '}, 500);'
+              'const deliver = () => window.loadWasm(cg.default, cg);',
+              'if (window.loadWasm) deliver();',
+              'else window.addEventListener("chia-gaming-wasm-loader-ready", deliver, { once: true });'
             ].join('\n');
             document.body.appendChild(wasm);
 
             var app = document.createElement('script');
+            app.type = 'module';
             app.src = 'index.js';
             document.body.appendChild(app);
           })

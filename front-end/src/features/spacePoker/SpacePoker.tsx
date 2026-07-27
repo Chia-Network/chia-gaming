@@ -432,6 +432,7 @@ interface ActionBarProps {
   coinTossIOpen: boolean | null;
   lastRaiseUnits: string;
   maxRaiseUnits: string;
+  forcedAuto: boolean;
   formatBet: (units: bigint) => string;
   handleCheck: () => void;
   handleRaise: (units: bigint) => void;
@@ -446,6 +447,7 @@ function ActionBar({
   coinTossIOpen,
   lastRaiseUnits,
   maxRaiseUnits,
+  forcedAuto,
   formatBet,
   handleCheck,
   handleRaise,
@@ -458,7 +460,7 @@ function ActionBar({
   const raiseAmountInput = Math.min(raiseAmount, maxRaiseInput);
   const isBeginRound = handler === SpHandler.BeginRound;
   const autoPong = isBeginRound && round === '4' && coinTossIOpen === false;
-  const actionsEnabled = myTurn && inBetting && !autoPong;
+  const actionsEnabled = myTurn && inBetting && !autoPong && !forcedAuto;
   const checkCallLabel = handler === SpHandler.MidRound && lastRaiseUnits !== '0' ? 'Call' : 'Check';
 
   useEffect(() => {
@@ -601,6 +603,7 @@ export default function SpacePoker({
 
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
   const maxRaise = sp.playerStack - (sp.lastRaise > 0n ? sp.lastRaise : 0n);
+  const forcedAuto = inBetting && sp.lastRaise === 0n && sp.playerStack <= 0n;
   const historyRows = buildHistoryRows(sp.handHistory, sp.formatBet);
   const showdownOutcome = sp.outcome;
   const hasShowdownOutcome = !!showdownOutcome;
@@ -806,6 +809,7 @@ export default function SpacePoker({
             coinTossIOpen={sp.coinTossIOpen}
             lastRaiseUnits={String(sp.lastRaise)}
             maxRaiseUnits={String(maxRaise)}
+            forcedAuto={forcedAuto}
             formatBet={sp.formatBet}
             handleCheck={sp.handleCheck}
             handleRaise={sp.handleRaise}

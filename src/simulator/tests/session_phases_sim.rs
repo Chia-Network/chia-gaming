@@ -1366,7 +1366,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         step_start = std::time::Instant::now();
 
         let should_end = cradles.iter().enumerate().all(|(i, c)| {
-            c.channel_status_terminal()
+            c.is_fully_resolved()
                 && local_uis[i].all_accepted_games_have_terminal_notification()
         }) && ending.is_none();
         if should_end {
@@ -3819,6 +3819,47 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         }
 
         assert!(result2.is_ok());
+    }));
+
+    res.push(("test_zero_payout_settlement_auto_clean_shutdown", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Alice's move leaves Bob, the next mover, with no settlement share.
+        // Bob accepts the result, then Alice sees the zero peer payout and
+        // initiates the cooperative close. Bob must hand off the completed
+        // clean-close spend before abandoning locally.
+        let moves = [DebugGameTestMove::new(0, 0)];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|_, cradles| cradles[0].channel_status_terminal() && cradles[1].is_abandoned()),
+            None,
+        )
+        .expect("zero-payout settlement should cleanly close");
+
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "winner should observe the clean shutdown"
+        );
+        assert!(
+            outcome.cradles[1].is_abandoned(),
+            "zero-payout responder must abandon only after handing off the completed close"
+        );
     }));
 
     res.push(("test_calpoker_shutdown_nerf_alice", &|| {

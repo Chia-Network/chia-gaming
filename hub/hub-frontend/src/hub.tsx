@@ -60,6 +60,7 @@ const HubScreen = () => {
     challengeSent,
     isConnected,
     isReconnecting,
+    initialConnectionFailed,
     reconnectBlocked,
     savedAlias,
     aliasLoaded,
@@ -167,6 +168,17 @@ const HubScreen = () => {
   }
 
   const timeoutsValid = isTimeoutInRange(challengeChannelTimeout) && isTimeoutInRange(challengeUnrollTimeout);
+
+  if (initialConnectionFailed) {
+    return (
+      <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex items-center justify-center">
+        <div className="w-full max-w-sm space-y-3 text-center">
+          <h2 className="text-xl font-bold text-canvas-text-contrast">Unable to connect to hub</h2>
+          <p className="text-sm text-canvas-text">Check the hub URL and its availability. Retrying automatically…</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!aliasLoaded) {
     return (

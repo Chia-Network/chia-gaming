@@ -199,6 +199,25 @@ export interface SpacepokerHandState {
   displayMode: SpacepokerDisplayMode;
 }
 
+export function acceptedSettlementFromOpponent(handler: SpHandler): {
+  action: 'fold' | 'concede';
+  terminalState: SpTerminalState;
+  nextHandler: SpHandler;
+} {
+  if (handler === SpHandler.End) {
+    return {
+      action: 'concede',
+      terminalState: 'conceded-by-opponent',
+      nextHandler: SpHandler.Showdown,
+    };
+  }
+  return {
+    action: 'fold',
+    terminalState: 'folded-by-opponent',
+    nextHandler: SpHandler.Folded,
+  };
+}
+
 function clvmListToBigints(prog: Program): bigint[] {
   try {
     return prog.toList().map(p => p.toBigInt());

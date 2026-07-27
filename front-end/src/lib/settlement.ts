@@ -99,7 +99,18 @@ export function settlementByUs(outcome: SettlementOutcome): boolean | null {
 export function calpokerTimeoutBadge(
   outcome: SettlementOutcome,
   side: 'ours' | 'theirs',
+  handCompleted = false,
 ): 'winner' | 'timeout' | 'forfeit' | null {
+  if (handCompleted && !isForfeitOutcome(outcome)) {
+    return null;
+  }
+  if (
+    outcome === 'accept_settlement'
+    || outcome === 'we_accepted'
+    || outcome === 'settled_cleanly'
+  ) {
+    return null;
+  }
   const byUs = settlementByUs(outcome);
   if (byUs == null) return null;
   if (side === 'ours') {

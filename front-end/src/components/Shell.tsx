@@ -1340,12 +1340,14 @@ const Shell = () => {
   }, [activeBlockchainPoller, blockchainType, startBalancePolling]);
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
+  const [hubConnectionError, setHubConnectionError] = useState<string | null>(null);
 
   // Connect to a hub by origin URL. Creates the hub iframe + game relay WebSocket.
   const connectToHub = useCallback((rawOrigin: string, options: { resetSession?: boolean } = {}) => {
     const origin = normalizeHubOrigin(rawOrigin);
     hubConnRef.current?.disconnect();
     hubConnRef.current = null;
+    setHubConnectionError(null);
     if (options.resetSession) {
       clearSessionId();
     }
@@ -1508,6 +1510,7 @@ const Shell = () => {
           hubWsUpRef.current = false;
           markPeerInactive();
           setHubLiveness('disconnected');
+          setHubConnectionError(`Unable to connect to hub at ${origin}.`);
         },
         onHubDisconnected: () => {
           hubWsUpRef.current = false;
@@ -1547,6 +1550,8 @@ const Shell = () => {
       saveHubUrl(undefined);
       setHubOrigin(null);
       setIframeUrl('about:blank');
+      setHubLiveness(null);
+      setHubConnectionError(err instanceof Error ? err.message : `Unable to connect to hub at ${origin}.`);
       return;
     }
     hubConnRef.current = conn;
@@ -2397,12 +2402,20 @@ const Shell = () => {
   }, [blockchainType, connecting, handleConnect]);
 
   if (bootState.kind === 'loading') {
-    return null;
+    return (
+      <div className='min-h-screen flex items-center justify-center bg-canvas-bg-subtle text-canvas-text'>
+        <p className='text-sm'>Loading Chia Gaming…</p>
+      </div>
+    );
   }
 
-  // Auto-resume before hydrate finishes: stay blank.
+  // Auto-resume before hydrate finishes: do not mount interactive session UI.
   if (bootState.kind === 'autoResuming' && !sessionConfig) {
-    return null;
+    return (
+      <div className='min-h-screen flex items-center justify-center bg-canvas-bg-subtle text-canvas-text'>
+        <p className='text-sm'>Restoring your session…</p>
+      </div>
+    );
   }
 
   // --- Tab dead (user chose to yield to another tab) ---
@@ -2931,14 +2944,31 @@ const Shell = () => {
           {hubOrigin ? (
             <>
               <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
-                <span>Connected to {hubOrigin}</span>
-                <button
-                  onClick={handleDisconnectHub}
-                  className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
-                >
-                  Disconnect
-                </button>
+                <span>
+                  {hubLiveness === 'connected'
+                    ? `Connected to ${hubOrigin}`
+                    : `${TRACKER_LIVENESS_LABELS[hubLiveness ?? 'disconnected']} from ${hubOrigin}`}
+                </span>
+                <div className='flex items-center gap-2'>
+                  {hubLiveness === 'disconnected' && (
+                    <button
+                      onClick={() => connectToHub(hubOrigin)}
+                      className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium border border-canvas-border hover:bg-canvas-solid transition-colors'
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    onClick={handleDisconnectHub}
+                    className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+                  >
+                    Disconnect
+                  </button>
+                </div>
               </div>
+              {hubConnectionError && (
+                <p className='px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle'>{hubConnectionError}</p>
+              )}
               <iframe
                 id='hub-iframe'
                 className='bg-canvas-bg-subtle'
@@ -2947,7 +2977,7 @@ const Shell = () => {
               />
             </>
           ) : (
-            <HubPicker onConnect={requestHubConnect} />
+            <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
           )}
         </div>
 

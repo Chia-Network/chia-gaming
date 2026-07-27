@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, isValidKrunkStake, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../features/calPoker/useCalpokerHand';
@@ -9,13 +9,10 @@ import { SessionPhase } from '../types/ChiaGaming';
 import { CalpokerOutcome } from '../features/calPoker/outcome';
 import { SessionController, RestoreStatus } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import Calpoker from '../features/calPoker';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
 } from '../features/calPoker/types/CaliforniapokerProps';
-import SpacePoker from '../features/spacePoker/SpacePoker';
-import Krunk from '../features/krunk/Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
@@ -40,6 +37,9 @@ import { Button } from './button';
 import { AmountInput } from './AmountInput';
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const Calpoker = lazy(() => import('../features/calPoker'));
+const SpacePoker = lazy(() => import('../features/spacePoker/SpacePoker'));
+const Krunk = lazy(() => import('../features/krunk/Krunk'));
 
 interface ErrorBoundaryProps { children: ReactNode; }
 interface ErrorBoundaryState {
@@ -1139,59 +1139,61 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
             >
-              {gameSpecificView.gameType === 'calpoker' ? (
-                <CalpokerHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                  iStarted={session.iStarted}
-                  playerNumber={session.playerNumber}
-                  gameplayEvent$={session.gameplayEvent$}
-                  onOutcome={session.onHandOutcome}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  perGameAmount={session.currentHandAmount}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : gameSpecificView.gameType === 'spacepoker' ? (
-                <SpacePokerHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                  iStarted={session.iStarted}
-                  gameplayEvent$={session.gameplayEvent$}
-                  betSize={String(session.currentHandAmount)}
-                  unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
-                    ? String(session.lastHandTerms.spacepokerUnitSize)
-                    : undefined}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  perGameAmount={session.currentHandAmount}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : gameSpecificView.gameType === 'krunk' ? (
-                <KrunkHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  currentHandGameIds={session.currentHandGameIds}
-                  activeGameIds={session.activeGameIds}
-                  iProposedHand={session.iProposedHand}
-                  gameplayEvent$={session.gameplayEvent$}
-                  betSize={session.currentHandAmount}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : (
-                <div className='flex items-center justify-center py-20'>
-                  <p className='text-canvas-text'>
-                    Game not supported: {gameDisplayName(gameSpecificView.gameType)}
-                  </p>
-                </div>
-              )}
+              <Suspense fallback={<div className='flex items-center justify-center py-20 text-canvas-text'>Loading game…</div>}>
+                {gameSpecificView.gameType === 'calpoker' ? (
+                  <CalpokerHand
+                    key={session.handKey}
+                    gameObject={session.sessionController}
+                    gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                    iStarted={session.iStarted}
+                    playerNumber={session.playerNumber}
+                    gameplayEvent$={session.gameplayEvent$}
+                    onOutcome={session.onHandOutcome}
+                    onTurnChanged={session.onTurnChanged}
+                    appendGameLog={session.appendGameLog}
+                    perGameAmount={session.currentHandAmount}
+                    myName={params.myAlias}
+                    opponentName={params.opponentAlias}
+                  />
+                ) : gameSpecificView.gameType === 'spacepoker' ? (
+                  <SpacePokerHand
+                    key={session.handKey}
+                    gameObject={session.sessionController}
+                    gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                    iStarted={session.iStarted}
+                    gameplayEvent$={session.gameplayEvent$}
+                    betSize={String(session.currentHandAmount)}
+                    unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
+                      ? String(session.lastHandTerms.spacepokerUnitSize)
+                      : undefined}
+                    onTurnChanged={session.onTurnChanged}
+                    appendGameLog={session.appendGameLog}
+                    perGameAmount={session.currentHandAmount}
+                    myName={params.myAlias}
+                    opponentName={params.opponentAlias}
+                  />
+                ) : gameSpecificView.gameType === 'krunk' ? (
+                  <KrunkHand
+                    key={session.handKey}
+                    gameObject={session.sessionController}
+                    currentHandGameIds={session.currentHandGameIds}
+                    activeGameIds={session.activeGameIds}
+                    iProposedHand={session.iProposedHand}
+                    gameplayEvent$={session.gameplayEvent$}
+                    betSize={session.currentHandAmount}
+                    onTurnChanged={session.onTurnChanged}
+                    appendGameLog={session.appendGameLog}
+                    myName={params.myAlias}
+                    opponentName={params.opponentAlias}
+                  />
+                ) : (
+                  <div className='flex items-center justify-center py-20'>
+                    <p className='text-canvas-text'>
+                      Game not supported: {gameDisplayName(gameSpecificView.gameType)}
+                    </p>
+                  </div>
+                )}
+              </Suspense>
             </GameAreaErrorBoundary>
           )}
 
