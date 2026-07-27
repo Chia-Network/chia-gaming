@@ -58,7 +58,9 @@ export function shouldReportSessionPhase(
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
   channelState: string | null | undefined,
+  abandoning = false,
 ): boolean {
+  if (abandoning) return false;
   const isPreActive = isPreActiveChannelStatus(channelState);
   return sessionPhase === 'none' || isPreActive;
 }

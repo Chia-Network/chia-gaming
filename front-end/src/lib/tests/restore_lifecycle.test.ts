@@ -51,6 +51,7 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OurWalletMakingOffer')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent', true)).toBe(false);
   });
 
   it('awaits a pending clean-shutdown transaction instead of escalating on-chain', () => {
