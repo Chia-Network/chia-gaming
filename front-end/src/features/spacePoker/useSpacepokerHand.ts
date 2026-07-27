@@ -860,16 +860,21 @@ export function useSpacepokerHand(
         previousGameState: gs,
       };
       pendingTerminalActionRef.current = pending;
-      if (action === 'reveal') {
-        terminalActionByUsRef.current = 'reveal';
-        setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
-        setTerminalState('revealed');
-        go.makeMove(gid, null);
-      } else {
-        terminalActionByUsRef.current = 'concede';
-        setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
-        setTerminalState('conceded-by-you');
-        go.acceptSettlement(gid);
+      try {
+        if (action === 'reveal') {
+          terminalActionByUsRef.current = 'reveal';
+          setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
+          setTerminalState('revealed');
+          go.makeMove(gid, null);
+        } else {
+          terminalActionByUsRef.current = 'concede';
+          setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
+          setTerminalState('conceded-by-you');
+          go.acceptSettlement(gid);
+        }
+      } catch {
+        rollbackPendingTerminalAction(pending.submission);
+        return;
       }
       if (pendingTerminalActionRef.current !== pending) return;
       transition({ handler: SpHandler.Showdown, myTurn: false, N });
