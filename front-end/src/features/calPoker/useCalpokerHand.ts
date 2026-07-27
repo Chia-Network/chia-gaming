@@ -77,6 +77,14 @@ export function shouldProcessCalpokerOpponentMoved(
   return !handFinished || !hasOutcome;
 }
 
+export function shouldRestoreCalpokerSelection(
+  moveNumber: string,
+  hasOutcome: boolean,
+  hasSettlementOutcome: boolean,
+): boolean {
+  return moveNumber === '1' && !hasOutcome && !hasSettlementOutcome;
+}
+
 // At the endgame reveal (currentMove >= 2) exactly one player still owes a
 // terminal move: the first mover, whose initial turn is `!iStarted`
 // (iStarted === false) — this is "Alice" in CalpokerOutcome terms. She has just
