@@ -1020,15 +1020,12 @@ impl GameSession {
                     .peer
                     .as_any_mut()
                     .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
-                    .ok_or_else(|| {
-                        Error::StrErr(
-                            "game timeout claim submitted outside the on-chain phase".to_string(),
-                        )
-                    })?
-                    .timeout_claim_status(id, true)?;
-                self.state
-                    .events
-                    .push_back(GameSessionEvent::Notification(notification));
+                    .and_then(|phase| phase.timeout_claim_status(id, true));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
             }
         }
         Ok(())
@@ -1056,15 +1053,12 @@ impl GameSession {
                     .peer
                     .as_any_mut()
                     .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
-                    .ok_or_else(|| {
-                        Error::StrErr(
-                            "game timeout claim rearmed outside the on-chain phase".to_string(),
-                        )
-                    })?
-                    .timeout_claim_status(id, false)?;
-                self.state
-                    .events
-                    .push_back(GameSessionEvent::Notification(notification));
+                    .and_then(|phase| phase.timeout_claim_status(id, false));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
             }
         }
         Ok(())

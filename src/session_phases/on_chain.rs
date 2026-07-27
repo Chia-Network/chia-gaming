@@ -550,24 +550,15 @@ impl OnChainPhase {
         &self,
         game_id: GameID,
         submitting_timeout_claim: bool,
-    ) -> Result<GameNotification, Error> {
+    ) -> Option<GameNotification> {
         let (coin, state) = self
             .game_map
             .iter()
-            .find(|(_, state)| state.game_id == game_id)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "timeout claim status: no on-chain game for {:?}",
-                    game_id
-                ))
-            })?;
+            .find(|(_, state)| state.game_id == game_id)?;
         if state.our_turn || state.game_finished {
-            return Err(Error::StrErr(format!(
-                "timeout claim status: game {:?} is not awaiting an opponent timeout",
-                game_id
-            )));
+            return None;
         }
-        Ok(GameNotification::GameStatus {
+        Some(GameNotification::GameStatus {
             id: game_id,
             status: GameStatusKind::OnChainTheirTurn,
             my_reward: None,
