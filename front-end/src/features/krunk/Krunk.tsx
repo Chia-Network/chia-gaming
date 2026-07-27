@@ -76,6 +76,10 @@ export function newlyResolvedKrunkIndex(resolvedCount: number, previousResolvedC
   return resolvedCount > previousResolvedCount ? resolvedCount - 1 : undefined;
 }
 
+export function krunkActionSlotPresentation(handComplete: boolean): { showControls: boolean } {
+  return { showControls: !handComplete };
+}
+
 const MAX_GUESSES = 5;
 const WORD_LEN = 5;
 const TILE = 'w-12 h-12 text-xl';
@@ -747,6 +751,7 @@ const Krunk: React.FC<KrunkProps> = ({
   const handComplete =
     bobHand.gameState.handler === KrunkHandler.Terminal
     && aliceHand.gameState.handler === KrunkHandler.Terminal;
+  const actionSlot = krunkActionSlotPresentation(handComplete);
 
   return (
     <div className='flex flex-col gap-4 items-center py-4'>
@@ -790,24 +795,26 @@ const Krunk: React.FC<KrunkProps> = ({
         </div>
       </div>
 
-      {!handComplete && (
-        <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
-          <OnScreenKeyboard
-            statuses={letterStatuses}
-            disabled={keyboardMode === null}
-            onLetter={typeLetter}
-            onBackspace={backspace}
-          />
-          <button
-            type='button'
-            className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-            disabled={!actionEnabled}
-            onClick={submitActive}
-          >
-            {actionLabel}
-          </button>
-        </div>
-      )}
+      <div className='flex min-h-[13rem] flex-col items-center justify-center'>
+        {actionSlot.showControls && (
+          <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
+            <OnScreenKeyboard
+              statuses={letterStatuses}
+              disabled={keyboardMode === null}
+              onLetter={typeLetter}
+              onBackspace={backspace}
+            />
+            <button
+              type='button'
+              className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+              disabled={!actionEnabled}
+              onClick={submitActive}
+            >
+              {actionLabel}
+            </button>
+          </div>
+        )}
+      </div>
       {statusNotice && (
         <p
           className={`text-center text-lg mt-1 ${

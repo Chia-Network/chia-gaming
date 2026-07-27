@@ -7001,8 +7001,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ..
                 } if params.readable.is_some()
                     && params.mover_share == Some(Amount::default())
+                    && params.game_finished == Some(true)
             )),
-            "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
+            "Bob should receive Alice's terminal move readable, mover_share, and finishing metadata, got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs.iter().any(|n| matches!(

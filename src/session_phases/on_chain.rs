@@ -464,6 +464,7 @@ impl OnChainPhase {
                 other_params: Some(GameStatusOtherParams {
                     readable: Some(readable),
                     mover_share: Some(mover_share),
+                    game_finished: Some(true),
                     ..Default::default()
                 }),
             }));

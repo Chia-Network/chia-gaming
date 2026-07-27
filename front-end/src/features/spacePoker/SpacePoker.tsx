@@ -3,6 +3,7 @@ import { Observable } from 'rxjs';
 import { SessionController } from '../../hooks/SessionController';
 import {
   useSpacepokerHand,
+  isTerminalSpacepokerHandler,
   SpHandler,
   SpHandEntry,
   SpOutcome,
@@ -425,6 +426,16 @@ function HandHistoryPanel({ rows }: { rows: [string | null, string | null][] }) 
   );
 }
 
+export function spacePokerFooterPresentation(handler: SpHandler, turnLine: string): {
+  showControls: boolean;
+  status: string;
+} {
+  if (isTerminalSpacepokerHandler(handler)) {
+    return { showControls: false, status: '' };
+  }
+  return { showControls: true, status: turnLine };
+}
+
 interface ActionBarProps {
   handler: SpHandler;
   myTurn: boolean;
@@ -685,6 +696,7 @@ export default function SpacePoker({
   } else if (!myTurn && inBetting) {
     turnLine = 'Waiting for opponent\u2026';
   }
+  const footer = spacePokerFooterPresentation(handler, turnLine);
 
   return (
     <div className='relative flex flex-col items-center gap-1.5 py-0 w-full max-w-lg mx-auto text-canvas-text'>
@@ -787,8 +799,9 @@ export default function SpacePoker({
         <p className='text-xs text-canvas-text-contrast text-center'>{settlementNote}</p>
       )}
 
-      {!finished && (
-        <>
+      <div className='flex min-h-[4.5rem] flex-col justify-center gap-2'>
+        {footer.showControls && (
+          <>
           {sp.terminalRecovery && (
             <div className='flex flex-col items-center gap-1'>
               <p className='text-sm text-alert-text'>Final {sp.terminalRecovery} was not submitted.</p>
@@ -816,11 +829,10 @@ export default function SpacePoker({
             handleCall={sp.handleCall}
             handleFold={sp.handleFold}
           />
-
-          {/* Turn indicator */}
-          <p className='text-sm text-canvas-text-contrast font-medium text-center min-h-5'>{turnLine}</p>
-        </>
-      )}
+          </>
+        )}
+        <p className='text-sm text-canvas-text-contrast font-medium text-center min-h-5'>{footer.status}</p>
+      </div>
 
       {/* Hand history */}
       <HandHistoryPanel rows={historyRows} />

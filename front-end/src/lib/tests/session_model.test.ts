@@ -371,13 +371,15 @@ describe('session model selectors', () => {
       },
     })).handStatusLabel).toBe('Replaying move');
 
-    expect(selectGameDashboardView(createSessionModel({
+    const timeoutClaimView = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
         activeIds: ['7'],
         coin: { coinHex: null, onChain: true, turnState: 'submitting-timeout' },
       },
-    })).handStatusLabel).toBe('Submitting timeout claim');
+    }));
+    expect(timeoutClaimView.handStatusLabel).toBe('Submitting timeout claim');
+    expect(timeoutClaimView.lifecycleRows).toEqual([]);
   });
 
   it('waits for terminal reward enrichment before terminal channel teardown', async () => {
@@ -1833,8 +1835,9 @@ describe('session model selectors', () => {
     expect(selectComposeAmountAfterGameTypeChoice('krunk', 'calpoker', 300n)).toBe(300n);
   });
 
-  it('does not regress an ended hand when a local turn callback arrives late', () => {
+  it('does not regress terminal hand status when a local turn callback arrives late', () => {
     expect(nextGameTurnAfterLocalTurn('ended', false, 'Unrolling')).toBe('ended');
+    expect(nextGameTurnAfterLocalTurn('finishing', true, 'ResolvedUnrolled')).toBe('finishing');
     expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Unrolling')).toBe('playing-on-chain');
     expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Active')).toBe('their-turn');
   });
@@ -1852,11 +1855,12 @@ describe('session model selectors', () => {
     expect(isActivelyPlayingOnChain('ended')).toBe(false);
   });
 
-  it('marks either side of a terminal on-chain coin as finishing', () => {
+  it('marks terminal moves as finishing regardless of their wire turn status', () => {
     expect(isFinishingGameStatus('on-chain-my-turn', true)).toBe(true);
     expect(isFinishingGameStatus('on-chain-their-turn', true)).toBe(true);
+    expect(isFinishingGameStatus('my-turn', true)).toBe(true);
+    expect(isFinishingGameStatus('their-turn', true)).toBe(true);
     expect(isFinishingGameStatus('on-chain-my-turn', false)).toBe(false);
-    expect(isFinishingGameStatus('my-turn', true)).toBe(false);
   });
 
   it('orders readable gameplay events before the Settled marker', () => {

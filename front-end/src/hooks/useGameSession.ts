@@ -304,8 +304,8 @@ export function nextGameTurnAfterLocalTurn(
   isMyTurn: boolean,
   channelState: ChannelStatus,
 ): GameTurnState {
-  if (current === 'ended') {
-    return 'ended';
+  if (current === 'ended' || current === 'finishing') {
+    return current;
   }
   if (isMyTurn) {
     return 'my-turn';
@@ -323,7 +323,7 @@ export function nextGameInstanceAfterLocalTurn(
     isMyTurn,
     channelState,
   );
-  if (turnState === 'ended') {
+  if (turnState === 'ended' || turnState === 'finishing') {
     return instance;
   }
   return {
@@ -351,7 +351,12 @@ export function isFinishingGameStatus(
   gameFinished: boolean | undefined,
 ): boolean {
   return gameFinished === true
-    && (status === 'on-chain-my-turn' || status === 'on-chain-their-turn');
+    && (
+      status === 'my-turn'
+      || status === 'their-turn'
+      || status === 'on-chain-my-turn'
+      || status === 'on-chain-their-turn'
+    );
 }
 
 const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([

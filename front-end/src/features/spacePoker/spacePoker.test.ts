@@ -11,6 +11,7 @@ import {
   retainsVoluntaryTerminalPresentation,
   voluntarySpacepokerSettlementAction,
 } from './useSpacepokerHand';
+import { spacePokerFooterPresentation } from './SpacePoker';
 import {
   gameplayEventForActionFailed,
   gameplayEventForGameActionError,
@@ -48,6 +49,21 @@ describe('Space Poker terminal UX', () => {
     expect(isTerminalSpacepokerHandler(SpHandler.Folded)).toBe(true);
     expect(isTerminalSpacepokerHandler(SpHandler.Showdown)).toBe(true);
     expect(isTerminalSpacepokerHandler(SpHandler.End)).toBe(false);
+  });
+
+  it('keeps a blank fixed footer when a hand enters showdown', () => {
+    expect(spacePokerFooterPresentation(SpHandler.End, 'Your turn')).toEqual({
+      showControls: true,
+      status: 'Your turn',
+    });
+    expect(spacePokerFooterPresentation(SpHandler.Showdown, 'Your turn')).toEqual({
+      showControls: false,
+      status: '',
+    });
+    expect(spacePokerFooterPresentation(SpHandler.Folded, 'Waiting for opponent…')).toEqual({
+      showControls: false,
+      status: '',
+    });
   });
 
   it('forwards a scoped terminal action failure to gameplay', () => {

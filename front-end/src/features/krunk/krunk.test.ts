@@ -22,6 +22,7 @@ import {
   formatKrunkHandLog,
   krunkGameSlots,
   krunkLetterStatuses,
+  krunkActionSlotPresentation,
   newlyResolvedKrunkIndex,
 } from './Krunk';
 
@@ -89,6 +90,11 @@ describe('Krunk first guess drafting', () => {
       aliceActive: true,
       bobActive: false,
     });
+  });
+
+  it('reserves the keyboard action slot after both games finish', () => {
+    expect(krunkActionSlotPresentation(false)).toEqual({ showControls: true });
+    expect(krunkActionSlotPresentation(true)).toEqual({ showControls: false });
   });
 
   it('allows drafting after our word commit while their commit is pending', () => {
