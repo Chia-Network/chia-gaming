@@ -546,6 +546,40 @@ impl OnChainPhase {
             .then_some(TimeoutClaimSemantic::GameOpponentTurn { id: game_id })
     }
 
+    pub fn timeout_claim_status(
+        &self,
+        game_id: GameID,
+        submitting_timeout_claim: bool,
+    ) -> Result<GameNotification, Error> {
+        let (coin, state) = self
+            .game_map
+            .iter()
+            .find(|(_, state)| state.game_id == game_id)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "timeout claim status: no on-chain game for {:?}",
+                    game_id
+                ))
+            })?;
+        if state.our_turn || state.game_finished {
+            return Err(Error::StrErr(format!(
+                "timeout claim status: game {:?} is not awaiting an opponent timeout",
+                game_id
+            )));
+        }
+        Ok(GameNotification::GameStatus {
+            id: game_id,
+            status: GameStatusKind::OnChainTheirTurn,
+            my_reward: None,
+            coin_id: Some(coin.clone()),
+            reason: None,
+            other_params: Some(GameStatusOtherParams {
+                submitting_timeout_claim: Some(submitting_timeout_claim),
+                ..Default::default()
+            }),
+        })
+    }
+
     /// Register every current game coin with the wallet, attaching an eager
     /// timeout claim for each coin we are entitled to claim on timeout.  Used
     /// when first transitioning to on-chain play so the transaction manager owns
@@ -665,6 +699,7 @@ impl OnChainPhase {
                             moved_by_us: Some(true),
                             game_finished: if game_over { Some(true) } else { None },
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
                     let claim = self.build_timeout_claim(env, &pending.game_id, &new_coin)?;
@@ -1220,6 +1255,7 @@ impl OnChainPhase {
                             moved_by_us: None,
                             game_finished: finished_flag,
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
 
@@ -1236,6 +1272,7 @@ impl OnChainPhase {
                             moved_by_us: None,
                             game_finished: finished_flag,
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
                     let claim = self.build_timeout_claim(env, &game_id, &new_coin_string)?;
@@ -1293,6 +1330,7 @@ impl OnChainPhase {
                                 moved_by_us: None,
                                 game_finished: None,
                                 forfeited: None,
+                                submitting_timeout_claim: None,
                             }),
                         }));
                         self.game_map.insert(
@@ -1326,6 +1364,7 @@ impl OnChainPhase {
                                 moved_by_us: None,
                                 game_finished: None,
                                 forfeited: None,
+                                submitting_timeout_claim: None,
                             }),
                         }));
                         if let Some(eff) = self.try_emit_terminal(

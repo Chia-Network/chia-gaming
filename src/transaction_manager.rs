@@ -1693,7 +1693,7 @@ mod tests {
     }
 
     #[test]
-    fn mature_game_timeout_claim_emits_semantic_notification() {
+    fn mature_game_timeout_claim_records_game_submission_semantic() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(12);
         let game_id = crate::common::types::GameID(42);
@@ -1716,17 +1716,10 @@ mod tests {
             .expect("mature claim");
 
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
-        let drain = mgr
-            .flush_and_collect(&mut allocator)
-            .expect("drain notification");
-        assert!(matches!(
-            drain.events.as_slices(),
-            ([GameSessionEvent::Notification(
-                GameNotification::TimeoutClaimSubmitted(
-                    TimeoutClaimSemantic::GameOpponentTurn { id }
-                )
-            )], []) if *id == game_id
-        ));
+        assert_eq!(
+            mgr.cradle().submitted_timeout_claims,
+            vec![TimeoutClaimSemantic::GameOpponentTurn { id: game_id }]
+        );
     }
 
     #[test]
