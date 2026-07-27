@@ -244,6 +244,107 @@ async function flushPromiseJobs(): Promise<void> {
 }
 
 describe('in-order delivery', () => {
+  it('drains an active result to quiescence in one macrotask', async () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type === 'notification' && event.data.ActionFailed) {
+        reasons.push(String(event.data.ActionFailed.reason));
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        { Notification: { ActionFailed: { reason: 'first' } } },
+        { Notification: { ActionFailed: { reason: 'second' } } },
+      ],
+    });
+
+    expect(reasons).toEqual([]);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reasons).toEqual(['first', 'second']);
+  });
+
+  it('includes re-entrant active results in that drain', async () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      const reason = String(event.data.ActionFailed.reason);
+      reasons.push(reason);
+      if (reason === 'first') {
+        blob.processResult({
+          disposition: { kind: 'active' },
+          events: [{ Notification: { ActionFailed: { reason: 'second' } } }],
+        });
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reasons).toEqual(['first', 'second']);
+  });
+
+  it('yields a self-replenishing active FIFO after the event budget', async () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    let delivered = 0;
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      delivered += 1;
+      if (delivered < 101) {
+        blob.processResult({
+          disposition: { kind: 'active' },
+          events: [{ Notification: { ActionFailed: { reason: String(delivered) } } }],
+        });
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(delivered).toBe(100);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(delivered).toBe(101);
+  });
+
+  it('stops active delivery when an observer retires the controller', async () => {
+    const { blob, sentMessages } = createReadyBlob();
+    activeBlob = blob;
+    const reasons: string[] = [];
+    blob.getObservable().subscribe(event => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      reasons.push(String(event.data.ActionFailed.reason));
+      blob.cleanup();
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        { Notification: { ActionFailed: { reason: 'first' } } },
+        { OutboundMessage: enc('must not send') },
+        { Notification: { ActionFailed: { reason: 'second' } } },
+      ],
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reasons).toEqual(['first']);
+    expect(sentMessages).toEqual([]);
+    expect((blob as any).eventQueue).toEqual([]);
+    expect((blob as any).protocolStopped).toBe(true);
+  });
+
   it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     activeBlob = blob;

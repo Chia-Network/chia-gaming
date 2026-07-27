@@ -34,6 +34,7 @@ import {
   isActivelyPlayingOnChain,
   isFinishingGameStatus,
   parseGameStatusTerminalInfo,
+  setPresentationRef,
   settledEventForInfo,
   terminalInfoFromGameSettled,
 } from '../../hooks/useGameSession';
@@ -182,6 +183,34 @@ describe('session model selectors', () => {
     finishCoinEnrichment();
     await queue.current;
     expect(processed).toEqual(['settled', 'settled-coin', 'channel']);
+  });
+
+  it('makes same-batch handlers observe updated presentation refs', async () => {
+    const queue = { current: Promise.resolve() };
+    const mode = { current: 'decision' };
+    const observedModes: string[] = [];
+
+    const handle = (notification: Parameters<typeof enqueueWasmNotification>[1]) => {
+      if ('ProposalMade' in notification) {
+        setPresentationRef(mode, 'review-incoming-proposal', () => {});
+      } else {
+        observedModes.push(mode.current);
+      }
+    };
+
+    enqueueWasmNotification(queue, {
+      ProposalMade: { id: '7', group_ids: ['7'] },
+    }, handle, error => {
+      throw error;
+    });
+    enqueueWasmNotification(queue, {
+      ActionFailed: { reason: 'later event' },
+    }, handle, error => {
+      throw error;
+    });
+
+    await queue.current;
+    expect(observedModes).toEqual(['review-incoming-proposal']);
   });
 
   it('recognizes terminal model and persisted channel snapshots consistently', () => {

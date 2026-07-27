@@ -202,6 +202,16 @@ async function coinIdHex(coin: unknown): Promise<string | null> {
   return bytes ? coinIdFromBytes(bytes) : null;
 }
 
+/** Keep handler-owned presentation facts current before React renders them. */
+export function setPresentationRef<T>(
+  ref: MutableRefObject<T>,
+  value: T,
+  setState: (value: T) => void,
+): void {
+  ref.current = value;
+  setState(value);
+}
+
 export function enqueueWasmNotification(
   queueRef: MutableRefObject<Promise<void>>,
   notification: WasmNotification,
@@ -648,6 +658,7 @@ export function useGameSession(
       restoredModel?.channel.connection
         ?? { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
     );
+  const gameConnectionStateRef = useRef<GameConnectionState>(gameConnectionState);
   const [myRunningBalance, setMyRunningBalance] = useState(() =>
     restoredModel?.myRunningBalance ?? 0n
   );
@@ -868,6 +879,31 @@ export function useGameSession(
     );
   }, []);
 
+  const setGameConnectionStateImmediately = useCallback((state: GameConnectionState) => {
+    setPresentationRef(gameConnectionStateRef, state, setGameConnectionState);
+  }, []);
+
+  const setBetweenHandModeImmediately = useCallback((mode: BetweenHandMode) => {
+    setPresentationRef(betweenHandModeRef, mode, setBetweenHandMode);
+  }, []);
+
+  const setCachedPeerProposalImmediately = useCallback((proposal: BetweenHandProposal | null) => {
+    setPresentationRef(cachedPeerProposalRef, proposal, setCachedPeerProposal);
+  }, []);
+
+  const setReviewPeerProposalImmediately = useCallback((proposal: BetweenHandProposal | null) => {
+    setPresentationRef(reviewPeerProposalRef, proposal, setReviewPeerProposal);
+  }, []);
+
+  const setRejectedOnceTermsImmediately = useCallback((terms: HandTerms | null) => {
+    setPresentationRef(rejectedOnceTermsRef, terms, setRejectedOnceTerms);
+  }, []);
+
+  const setLastHandTermsImmediately = useCallback((terms: HandTerms) => {
+    setPresentationRef(lastHandTermsRef, terms, setLastHandTerms);
+  }, []);
+
+  gameConnectionStateRef.current = gameConnectionState;
   gameIdsRef.current = gameIds;
   currentHandGameIdsRef.current = currentHandGameIds;
   gameInstancesRef.current = gameInstances;
@@ -1191,8 +1227,8 @@ export function useGameSession(
           && dismissedChannelStatusRef.current !== cs.state) {
         pushChannel({ kind: 'channel-state', title: 'Error', message: info.advisory ?? '', payload: info });
       }
-      if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
-        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+      if (cs.state === 'Active' && gameConnectionStateRef.current.stateIdentifier !== 'running') {
+        setGameConnectionStateImmediately({ stateIdentifier: 'running', stateDetail: [] });
       }
       if (cs.state === 'ShuttingDown' || cs.state === 'ShutdownTransactionPending') {
         setCleanShutdownStarted(true);
@@ -1207,11 +1243,11 @@ export function useGameSession(
         // into review instead of opening an empty compose dialog.
         const cached = cachedPeerProposalRef.current;
         if (cached) {
-          setReviewPeerProposal(cached);
-          setCachedPeerProposal(null);
-          setBetweenHandMode('review-incoming-proposal');
+          setReviewPeerProposalImmediately(cached);
+          setCachedPeerProposalImmediately(null);
+          setBetweenHandModeImmediately('review-incoming-proposal');
         } else {
-          setBetweenHandMode('compose-proposal');
+          setBetweenHandModeImmediately('compose-proposal');
         }
       }
       return;
@@ -1248,7 +1284,7 @@ export function useGameSession(
       // the proposal so Active can promote it to review instead of cancelling.
       if (handKeyRef.current === 0) {
         log(`[notify] ProposalMade id=${incoming.id} queued — channel not active yet`);
-        setCachedPeerProposal(incoming);
+        setCachedPeerProposalImmediately(incoming);
         return;
       }
 
@@ -1264,8 +1300,8 @@ export function useGameSession(
             setPendingRetryTerms(null);
             sameTermsRequestedRef.current = false;
             setNewHandRequested(false);
-            setReviewPeerProposal(incoming);
-            setBetweenHandMode('review-incoming-proposal');
+            setReviewPeerProposalImmediately(incoming);
+            setBetweenHandModeImmediately('review-incoming-proposal');
           } else if (matchesLastTerms && sameTermsRequestedRef.current) {
             setPendingRetryTerms(null);
             try {
@@ -1288,8 +1324,8 @@ export function useGameSession(
               cancelProposalOrThrow(id);
             }
             outgoingProposalIdsRef.current.clear();
-            setReviewPeerProposal(incoming);
-            setBetweenHandMode('review-incoming-proposal');
+            setReviewPeerProposalImmediately(incoming);
+            setBetweenHandModeImmediately('review-incoming-proposal');
           } else if (retryTerms) {
             setPendingRetryTerms(null);
             sameTermsRequestedRef.current = false;
@@ -1299,11 +1335,11 @@ export function useGameSession(
               cancelProposalOrThrow(incoming.id);
               proposeNewGame(retryTerms);
             } else {
-              setReviewPeerProposal(incoming);
-              setBetweenHandMode('review-incoming-proposal');
+              setReviewPeerProposalImmediately(incoming);
+              setBetweenHandModeImmediately('review-incoming-proposal');
             }
           } else {
-            setCachedPeerProposal(incoming);
+            setCachedPeerProposalImmediately(incoming);
           }
           break;
         }
@@ -1319,22 +1355,22 @@ export function useGameSession(
               setComposeProposalSent(false);
               sameTermsRequestedRef.current = false;
               setNewHandRequested(false);
-              setReviewPeerProposal(incoming);
-              setBetweenHandMode('review-incoming-proposal');
+              setReviewPeerProposalImmediately(incoming);
+              setBetweenHandModeImmediately('review-incoming-proposal');
             }
           } else if (termsEqual(incoming.terms, rejectedOnceTermsRef.current)) {
             log(`[notify] ProposalMade id=${incoming.id} auto-rejecting one-shot remembered terms`);
             cancelProposalOrThrow(incoming.id);
-            setRejectedOnceTerms(null);
+            setRejectedOnceTermsImmediately(null);
           } else {
-            setReviewPeerProposal(incoming);
-            setBetweenHandMode('review-incoming-proposal');
+            setReviewPeerProposalImmediately(incoming);
+            setBetweenHandModeImmediately('review-incoming-proposal');
           }
           break;
         }
         case 'review-incoming-proposal':
           // Latest inbound proposal replaces currently reviewed one.
-          setReviewPeerProposal(incoming);
+          setReviewPeerProposalImmediately(incoming);
           break;
       }
     } else if ('ProposalAccepted' in n) {
@@ -1389,23 +1425,23 @@ export function useGameSession(
         cancelStalePeerProposals(newId);
         setLastDisplayedGameId(newId);
         if (acceptedTerms) {
-          setLastHandTerms(acceptedTerms);
+          setLastHandTermsImmediately(acceptedTerms);
           setComposePerHandAmount(acceptedTerms.myContribution);
           setComposeGameTimeout(acceptedTerms.gameTimeout);
           setActiveGameType(acceptedTerms.gameType);
         }
         go?.setHandState(null);
         setHandKey(prev => prev + 1);
-        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+        setGameConnectionStateImmediately({ stateIdentifier: 'running', stateDetail: [] });
         turnStateRef.current = startTurn;
         setGameCoin({ coinHex: null, turnState: startTurn });
         setHandStatus('active');
         setGameTerminal(INITIAL_GAME_TERMINAL);
-        setCachedPeerProposal(null);
-        setReviewPeerProposal(null);
-        setRejectedOnceTerms(null);
+        setCachedPeerProposalImmediately(null);
+        setReviewPeerProposalImmediately(null);
+        setRejectedOnceTermsImmediately(null);
         setGameQueue(prev => prev.filter(n => n.kind !== 'proposal-rejected'));
-        setBetweenHandMode('decision');
+        setBetweenHandModeImmediately('decision');
       }
       gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as bigint | number | string } });
     } else if ('GameSettled' in n) {
@@ -1438,9 +1474,9 @@ export function useGameSession(
         setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
         setHandStatus('ended');
         cancelStalePeerProposals();
-        setBetweenHandMode('decision');
-        setCachedPeerProposal(null);
-        setReviewPeerProposal(null);
+        setBetweenHandModeImmediately('decision');
+        setCachedPeerProposalImmediately(null);
+        setReviewPeerProposalImmediately(null);
         clearTrackedProposals();
       }
 
@@ -1499,9 +1535,9 @@ export function useGameSession(
           setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
           setHandStatus('ended');
           cancelStalePeerProposals();
-          setBetweenHandMode('decision');
-          setCachedPeerProposal(null);
-          setReviewPeerProposal(null);
+          setBetweenHandModeImmediately('decision');
+          setCachedPeerProposalImmediately(null);
+          setReviewPeerProposalImmediately(null);
           clearTrackedProposals();
         }
 
@@ -1680,10 +1716,10 @@ export function useGameSession(
       clearTrackedProposals(failedIds);
       setHandStatus('ended');
       cancelStalePeerProposals();
-      setCachedPeerProposal(null);
-      setReviewPeerProposal(null);
+      setCachedPeerProposalImmediately(null);
+      setReviewPeerProposalImmediately(null);
       pushGame({ kind: 'insufficient-bal', title: 'Notice', message: 'Insufficient balance for that proposal. The hand could not start.' });
-      setBetweenHandMode('compose-proposal');
+      setBetweenHandModeImmediately('compose-proposal');
     } else if ('ProposalCancelled' in n) {
       const proposalId = String(n.ProposalCancelled?.id ?? '');
       const reason = String((n.ProposalCancelled as Record<string, unknown>)?.reason ?? '');
@@ -1697,12 +1733,12 @@ export function useGameSession(
         clearTrackedProposals(cancelledIds);
         const cachedGroup = cachedPeerProposalRef.current?.groupIds ?? [];
         if (cachedPeerProposalRef.current?.id === proposalId || cachedGroup.includes(proposalId)) {
-          setCachedPeerProposal(null);
+          setCachedPeerProposalImmediately(null);
         }
         const reviewGroup = reviewPeerProposalRef.current?.groupIds ?? [];
         if (reviewPeerProposalRef.current?.id === proposalId || reviewGroup.includes(proposalId)) {
-          setReviewPeerProposal(null);
-          setBetweenHandMode('compose-proposal');
+          setReviewPeerProposalImmediately(null);
+          setBetweenHandModeImmediately('compose-proposal');
         }
       }
 
@@ -1730,7 +1766,7 @@ export function useGameSession(
             expectingCounterProposalRef.current = false;
             setComposePerHandAmount(lastHandTermsRef.current.myContribution);
             setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
-            setBetweenHandMode('compose-proposal');
+            setBetweenHandModeImmediately('compose-proposal');
           }, 300);
         } else {
           pushGame({ kind: 'proposal-rejected', title: 'Notice', message: 'Your proposal was rejected by the other side.' });
@@ -1752,7 +1788,7 @@ export function useGameSession(
       }
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance, appendGameLog]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance, appendGameLog, setGameConnectionStateImmediately, setBetweenHandModeImmediately, setCachedPeerProposalImmediately, setReviewPeerProposalImmediately, setRejectedOnceTermsImmediately, setLastHandTermsImmediately]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -1843,9 +1879,9 @@ export function useGameSession(
         setNewHandRequested(false);
         return;
       }
-      setReviewPeerProposal(cached);
-      setCachedPeerProposal(null);
-      setBetweenHandMode('review-incoming-proposal');
+      setReviewPeerProposalImmediately(cached);
+      setCachedPeerProposalImmediately(null);
+      setBetweenHandModeImmediately('review-incoming-proposal');
       return;
     }
 
@@ -1859,21 +1895,28 @@ export function useGameSession(
       setComposePerHandAmount(lastTerms.myContribution);
       setComposeGameTimeout(lastTerms.gameTimeout);
       setComposeGameType(lastTerms.gameType);
-      setBetweenHandMode('compose-proposal');
+      setBetweenHandModeImmediately('compose-proposal');
       return;
     }
     sameTermsRequestedRef.current = true;
     setNewHandRequested(true);
     proposeNewGame(lastTerms);
-  }, [channelStatus.ourBalance, channelStatus.theirBalance, proposeNewGame]);
+  }, [
+    channelStatus.ourBalance,
+    channelStatus.theirBalance,
+    proposeNewGame,
+    setReviewPeerProposalImmediately,
+    setCachedPeerProposalImmediately,
+    setBetweenHandModeImmediately,
+  ]);
 
   const chooseDoNotUseCurrentProposal = useCallback(() => {
     const cached = cachedPeerProposalRef.current;
     if (cached) {
       if (!termsEqual(cached.terms, lastHandTermsRef.current)) {
-        setReviewPeerProposal(cached);
-        setCachedPeerProposal(null);
-        setBetweenHandMode('review-incoming-proposal');
+        setReviewPeerProposalImmediately(cached);
+        setCachedPeerProposalImmediately(null);
+        setBetweenHandModeImmediately('review-incoming-proposal');
         return;
       }
       try {
@@ -1881,22 +1924,27 @@ export function useGameSession(
       } catch (e) {
         console.error('cancel_proposal failed:', e);
       }
-      setCachedPeerProposal(null);
+      setCachedPeerProposalImmediately(null);
     }
-    setRejectedOnceTerms(lastHandTermsRef.current);
+    setRejectedOnceTermsImmediately(lastHandTermsRef.current);
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
     setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
-    setBetweenHandMode('compose-proposal');
-  }, []);
+    setBetweenHandModeImmediately('compose-proposal');
+  }, [
+    setReviewPeerProposalImmediately,
+    setCachedPeerProposalImmediately,
+    setRejectedOnceTermsImmediately,
+    setBetweenHandModeImmediately,
+  ]);
 
   const openComposeProposal = useCallback(() => {
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
     setComposeGameTimeout(lastHandTermsRef.current.gameTimeout);
     setComposeGameType(lastHandTermsRef.current.gameType);
-    setBetweenHandMode('compose-proposal');
-  }, []);
+    setBetweenHandModeImmediately('compose-proposal');
+  }, [setBetweenHandModeImmediately]);
 
   const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string, gameTimeout: bigint, spacepokerUnitSize?: bigint) => {
     if (perHandAmount <= 0n || gameTimeout <= 0n) return;
@@ -1919,8 +1967,8 @@ export function useGameSession(
     } catch (e) {
       console.error('acceptProposal failed:', e);
     }
-    setBetweenHandMode('decision');
-  }, []);
+    setBetweenHandModeImmediately('decision');
+  }, [setBetweenHandModeImmediately]);
 
   const rejectReviewedProposal = useCallback(() => {
     const review = reviewPeerProposalRef.current;
@@ -1931,10 +1979,10 @@ export function useGameSession(
         console.error('cancel_proposal failed:', e);
       }
     }
-    setReviewPeerProposal(null);
+    setReviewPeerProposalImmediately(null);
     setComposeProposalSent(false);
-    setBetweenHandMode('compose-proposal');
-  }, []);
+    setBetweenHandModeImmediately('compose-proposal');
+  }, [setReviewPeerProposalImmediately, setBetweenHandModeImmediately]);
 
   const startCleanShutdown = useCallback(() => {
     setCleanShutdownStarted(true);

@@ -63,6 +63,8 @@ const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
+/** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
+const ACTIVE_DRAIN_EVENT_BUDGET = 100;
 
 function extractErrorMessage(e: unknown): string {
   if (e instanceof Error) {
@@ -256,6 +258,17 @@ export class SessionController implements PollingGameSession {
   cleanup() {
     this.retired = true;
     this.cleanShutdownCalled = true;
+    // Retirement is not a manager terminal disposition: detach this session
+    // without stopping a shared poller, but make any in-flight active drain
+    // inert immediately.
+    this.protocolStopped = true;
+    this.terminalHandoff = null;
+    this.eventQueue = [];
+    this.pendingOutboundSends = [];
+    this.pendingAcks = [];
+    this.unackedMessages = [];
+    this.reorderQueue.clear();
+    this.needsImmediateDurability = false;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
@@ -273,7 +286,6 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    this.drainScheduled = false;
     void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
@@ -687,10 +699,35 @@ export class SessionController implements PollingGameSession {
     this.drainScheduled = true;
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
-      this.drainScheduled = false;
-      this.drainOneEvent();
-      this.scheduleDrain();
+      this.drainActiveEventsToQuiescence();
     }, 0);
+  }
+
+  /**
+   * Preserve the macrotask boundary before a normal drain, then consume every
+   * synchronously appended active event in that same task. Keeping
+   * `drainScheduled` set while dispatching makes re-entrant active
+   * `processResult()` calls append to this FIFO rather than schedule a second
+   * task. Terminal results retain their separate queue-clearing flush path.
+   */
+  private drainActiveEventsToQuiescence(): void {
+    try {
+      let drained = 0;
+      while (
+        this.eventQueue.length > 0
+        && !this.protocolStopped
+        && !this.retired
+        && drained < ACTIVE_DRAIN_EVENT_BUDGET
+      ) {
+        this.drainOneEvent();
+        drained += 1;
+      }
+    } finally {
+      this.drainScheduled = false;
+    }
+    if (this.eventQueue.length > 0 && !this.protocolStopped && !this.retired) {
+      this.scheduleDrain();
+    }
   }
 
   private drainOneEvent(): void {
@@ -702,7 +739,9 @@ export class SessionController implements PollingGameSession {
       diagStack('dispatchEvent error', e);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
-    this.scheduleSave();
+    if (!this.retired) {
+      this.scheduleSave();
+    }
   }
 
   flushDeferredWork(): void {
@@ -863,6 +902,7 @@ export class SessionController implements PollingGameSession {
   // --- Inbound events ---
 
   deliverMessage(msgno: bigint, msg: Uint8Array) {
+    if (this.retired) return;
     // Terminal Rust state must not consume peer protocol messages, but the host
     // still acknowledges their transport delivery so the peer can retire them.
     if (this.protocolStopped) {
@@ -928,6 +968,7 @@ export class SessionController implements PollingGameSession {
   }
 
   receiveAck(ackMsgno: bigint) {
+    if (this.retired) return;
     this.notePeerActivity();
     const terminalCommand = this.terminalHandoff;
     const terminalAcknowledged = terminalCommand

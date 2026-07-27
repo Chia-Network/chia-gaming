@@ -1174,7 +1174,12 @@ individual hands). The `useGameSession` hook owns:
   `getOrCreateSessionController`. The singleton persists across hands within a session.
 - **Notification dispatch** — subscribes to `SessionController`'s observable and
   routes notifications to scoped notification queues (channel-scope and
-  game-scope) or to the gameplay event stream (gameplay events).
+  game-scope) or to the gameplay event stream (gameplay events). The controller
+  waits for its normal macrotask boundary, then drains one active FIFO to
+  quiescence so synchronously re-entrant active WASM effects are delivered in
+  the same presentation transaction. A self-replenishing source yields after
+  100 events and resumes its FIFO in a later macrotask. Terminal manager
+  dispositions retain their separate queue-clearing/final-flush path.
 - **Session-level state** — channel coin lifecycle, game coin lifecycle, running
   balance, hand counter, between-hand overlay.
 - **Game proposal flow** — the initiator proposes on `ChannelCreated`; the
