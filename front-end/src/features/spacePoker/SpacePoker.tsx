@@ -13,6 +13,7 @@ import {
 import { GameplayEvent } from '../../hooks/useGameSession';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import { formatAmount } from '../../util';
+import { settlementLabel } from '../../lib/settlement';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',
@@ -619,14 +620,11 @@ export default function SpacePoker({
   const finished = handler === SpHandler.Showdown || handler === SpHandler.Folded;
   let playerIndicator = '';
   let oppIndicator = '';
-  if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
-    playerIndicator = showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
-    oppIndicator = showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
-  } else if (sp.terminalState === 'conceded-by-opponent') {
+  if (sp.terminalState === 'conceded-by-opponent') {
     playerIndicator = ' \u2705';
-    oppIndicator = ' \u274C';
+    oppIndicator = ' \u{1F3F3}\uFE0F';
   } else if (sp.terminalState === 'conceded-by-you') {
-    playerIndicator = ' \u274C';
+    playerIndicator = ' \u{1F3F3}\uFE0F';
     oppIndicator = ' \u2705';
   } else if (sp.terminalState === 'folded-by-you') {
     playerIndicator = ' \u274C';
@@ -634,12 +632,17 @@ export default function SpacePoker({
   } else if (sp.terminalState === 'folded-by-opponent') {
     playerIndicator = ' \u2705';
     oppIndicator = ' \u274C';
+  } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
+    playerIndicator = showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
+    oppIndicator = showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
   }
 
   const settlementNote =
-    hasShowdownOutcome
-      ? ''
-      : sp.terminalState === 'conceded-by-opponent'
+    sp.terminalState === 'settled' && sp.settlementOutcome
+      ? settlementLabel(sp.settlementOutcome)
+      : hasShowdownOutcome
+        ? ''
+        : sp.terminalState === 'conceded-by-opponent'
         ? 'You revealed first and the opponent conceded.'
         : sp.terminalState === 'conceded-by-you'
           ? 'The opponent revealed first and you conceded.'
@@ -649,7 +652,15 @@ export default function SpacePoker({
   // hole cards.
   let playerBanner: HoleCardsBannerKind = null;
   let oppBanner: HoleCardsBannerKind = null;
-  if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
+  if (sp.terminalState === 'conceded-by-you') {
+    oppBanner = 'win';
+  } else if (sp.terminalState === 'conceded-by-opponent') {
+    playerBanner = 'win';
+  } else if (sp.terminalState === 'folded-by-you') {
+    playerBanner = 'fold';
+  } else if (sp.terminalState === 'folded-by-opponent') {
+    oppBanner = 'fold';
+  } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
     if (showdownOutcome.result > 0n) {
       playerBanner = 'win';
     } else if (showdownOutcome.result < 0n) {
@@ -658,14 +669,6 @@ export default function SpacePoker({
       playerBanner = 'tie';
       oppBanner = 'tie';
     }
-  } else if (sp.terminalState === 'conceded-by-you') {
-    playerBanner = 'concede';
-  } else if (sp.terminalState === 'conceded-by-opponent') {
-    oppBanner = 'concede';
-  } else if (sp.terminalState === 'folded-by-you') {
-    playerBanner = 'fold';
-  } else if (sp.terminalState === 'folded-by-opponent') {
-    oppBanner = 'fold';
   }
 
   let turnLine = '';
@@ -783,6 +786,18 @@ export default function SpacePoker({
 
       {!finished && (
         <>
+          {sp.terminalRecovery && (
+            <div className='flex flex-col items-center gap-1'>
+              <p className='text-sm text-alert-text'>Final {sp.terminalRecovery} was not submitted.</p>
+              <button
+                type='button'
+                className='px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover'
+                onClick={sp.retryTerminalAction}
+              >
+                Retry
+              </button>
+            </div>
+          )}
           {/* Action bar */}
           <ActionBar
             handler={handler}

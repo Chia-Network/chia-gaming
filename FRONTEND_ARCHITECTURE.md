@@ -1196,6 +1196,26 @@ type. `front-end/src/lib/gameRegistry.ts` currently exposes California Poker
 `CalpokerHand` receives gameplay events via an RxJS observable and sends moves
 back through `SessionController`.
 
+Space Poker keeps its hand history and terminal presentation inside
+`useSpacepokerHand`. A betting-round fold, a showdown no-reveal concession, and
+a revealed showdown remain distinct displays. The hook attributes a terminal
+opponent action only when the current readable handler proves it; a
+`GameSettled` notification alone does not imply that either player folded. Its
+terminal reveal, concession, and fold entries are optimistic, but are removed
+and the playable hand restored only when the matching game-scoped
+`MoveRejected`, `game-action-error`, or context-bearing Rust `ActionFailed`
+event reports that `makeMove` or `acceptSettlement` failed. Rust preserves that
+context when a potato-gated queued move or settlement fails during a later
+flush; unscoped failures are never attributed to a hand. A failed automatic
+reveal or concession enters an explicit recovery state and waits for a user retry
+or authoritative update; it never resubmits on a React effect rerun. Generic
+terminal errors and non-voluntary settlements replace optimistic terminal state
+with the authoritative generic presentation. A revealed presentation survives
+only its voluntary settlement acknowledgement, never a timeout, slash, or other
+settlement outcome. This is UI state only: the session
+controller and Rust `GameSettled` outcome remain the authority, and the game
+component never observes the chain itself.
+
 The `useCalpokerHand` hook manages the five-step protocol:
 
 - **Move 0** (auto) — nil move to initiate commit-reveal

@@ -186,16 +186,24 @@ export interface MoveRejectedPayload {
   message: string;
 }
 
+export interface ActionFailedPayload {
+  id?: bigint | number | string;
+  action?: 'make_move' | 'accept_settlement';
+  reason: string;
+}
+
 export type WasmNotification = {
-  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected'>]?: Record<string, unknown>;
+  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'>]?: Record<string, unknown>;
 } & {
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
+  ActionFailed?: ActionFailedPayload;
 };
 
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
+  | { type: 'game-action-error'; gameId: string; action: 'make-move' | 'accept-settlement'; error: string }
   | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string };

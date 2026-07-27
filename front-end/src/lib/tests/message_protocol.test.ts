@@ -323,6 +323,41 @@ describe('lifecycle flush', () => {
   });
 });
 
+describe('game action failure events', () => {
+  it('scopes failed terminal submissions to their game and action', () => {
+    const { blob, cradle } = createReadyBlob();
+    (cradle as unknown as {
+      make_move: (gameId: string, readable: Uint8Array) => WasmResult;
+    }).make_move = () => {
+      throw new Error('cannot reveal');
+    };
+    (cradle as unknown as {
+      acceptSettlement: (gameId: string) => WasmResult;
+    }).acceptSettlement = () => {
+      throw new Error('cannot accept settlement');
+    };
+    const events: import('../../types/ChiaGaming').WasmEvent[] = [];
+    const subscription = blob.getObservable().subscribe(event => events.push(event));
+
+    blob.makeMove('41', null);
+    blob.acceptSettlement('42');
+    subscription.unsubscribe();
+
+    expect(events).toContainEqual({
+      type: 'game-action-error',
+      gameId: '41',
+      action: 'make-move',
+      error: 'cannot reveal',
+    });
+    expect(events).toContainEqual({
+      type: 'game-action-error',
+      gameId: '42',
+      action: 'accept-settlement',
+      error: 'cannot accept settlement',
+    });
+  });
+});
+
 describe('duplicate detection', () => {
   it('delivers once but ACKs twice after pending durability flush', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();

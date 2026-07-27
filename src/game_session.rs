@@ -21,7 +21,7 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameSessionEvent, GameSessionEventQueue, ResyncInfo, SessionDisposition,
+    FailedGameAction, GameSessionEvent, GameSessionEventQueue, ResyncInfo, SessionDisposition,
 };
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
@@ -178,6 +178,9 @@ pub trait PeerLifecyclePhase {
     }
     fn flush_pending_actions(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
+    }
+    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
+        None
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         Err(Error::StrErr(
@@ -852,8 +855,11 @@ impl GameSession {
         match res {
             Some(Ok(effects)) => self.process_effects(effects, allocator)?,
             Some(Err(e)) => {
+                let action_context = self.peer.take_failed_queued_action();
                 self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
+                        id: action_context.as_ref().map(|(id, _)| id.clone()),
+                        action: action_context.map(|(_, action)| action),
                         reason: format!("{e:?}"),
                     },
                 ));

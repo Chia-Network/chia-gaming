@@ -109,6 +109,13 @@ pub enum SettlementOutcome {
     OpponentCheated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailedGameAction {
+    MakeMove,
+    AcceptSettlement,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GameStatusOtherParams {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,6 +198,10 @@ pub enum GameNotification {
     },
 
     ActionFailed {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<GameID>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<FailedGameAction>,
         reason: String,
     },
     MoveRejected {

@@ -1349,7 +1349,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'game-action-error', gameId, action: 'make-move', error: msg });
     }
   }
 
@@ -1361,7 +1361,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'game-action-error', gameId, action: 'accept-settlement', error: msg });
     }
   }
 

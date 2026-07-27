@@ -13,6 +13,7 @@ import {
   GameStatusPayload,
   GameStatusState,
   MoveRejectedPayload,
+  ActionFailedPayload,
   SessionPhase,
 } from '../types/ChiaGaming';
 import { CalpokerOutcome } from '../features/calPoker/outcome';
@@ -67,7 +68,7 @@ export type GameplayEvent =
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
   | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
-  | { GameError: { gameId: string; reason: string } };
+  | { GameError: { gameId: string; reason: string; source: 'action' | 'terminal'; action?: 'make-move' | 'accept-settlement' } };
 
 function asBytes(value: unknown): Uint8Array | null {
   return coerceToBytes(value);
@@ -83,6 +84,28 @@ export function gameplayEventForMoveRejected(
       message: String(payload.message),
     },
   };
+}
+
+export function gameplayEventForGameActionError(
+  gameId: string,
+  action: 'make-move' | 'accept-settlement',
+  reason: string,
+): GameplayEvent {
+  return { GameError: { gameId, action, reason, source: 'action' } };
+}
+
+export function gameplayEventForActionFailed(
+  payload: ActionFailedPayload,
+): GameplayEvent | null {
+  if (payload.id == null) return null;
+  const action = payload.action === 'make_move'
+    ? 'make-move'
+    : payload.action === 'accept_settlement'
+      ? 'accept-settlement'
+      : null;
+  return action
+    ? gameplayEventForGameActionError(String(payload.id), action, String(payload.reason))
+    : null;
 }
 
 export function settledEventForInfo(
@@ -1426,7 +1449,7 @@ export function useGameSession(
         gameplayEventSubject.next(settledEvent);
       } else if (terminalInfo.type === 'game-error') {
         gameplayEventSubject.next({
-          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error' },
+          GameError: { gameId: terminalId, reason: terminalInfo.label ?? 'settlement error', source: 'terminal' },
         });
       }
       return;
@@ -1484,7 +1507,7 @@ export function useGameSession(
 
         if (terminalInfo.type === 'game-error' || terminalInfo.type === 'ended-cancelled') {
           gameplayEventSubject.next({
-            GameError: { gameId: terminalId, reason: terminalInfo.label ?? terminalInfo.type },
+            GameError: { gameId: terminalId, reason: terminalInfo.label ?? terminalInfo.type, source: 'terminal' },
           });
         }
         return;
@@ -1720,8 +1743,13 @@ export function useGameSession(
       if (!rejection) return;
       gameplayEventSubject.next(gameplayEventForMoveRejected(rejection));
     } else if ('ActionFailed' in n) {
-      const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
+      const actionFailed = n.ActionFailed;
+      const reason = String(actionFailed?.reason ?? 'Unknown error');
       log(`[game] action failed: ${reason}`);
+      if (actionFailed) {
+        const event = gameplayEventForActionFailed(actionFailed);
+        if (event) gameplayEventSubject.next(event);
+      }
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
   }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, clearTrackedProposals, cancelStalePeerProposals, cancelProposalOrThrow, replaceGameInstances, updateGameInstance, appendGameLog]);
@@ -1745,6 +1773,12 @@ export function useGameSession(
             break;
           case 'error':
             pushChannel({ kind: 'infra-error', title: 'Error', message: evt.error });
+            break;
+          case 'game-action-error':
+            gameplayEventSubject.next(
+              gameplayEventForGameActionError(evt.gameId, evt.action, evt.error),
+            );
+            pushChannel({ kind: 'action-failed', title: 'Error', message: evt.error });
             break;
           case 'durability-error':
             pushChannel({
