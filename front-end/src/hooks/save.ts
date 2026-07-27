@@ -84,7 +84,6 @@ export interface SessionSave {
   gameSessionId?: string;
   messageNumber?: bigint;
   remoteNumber?: bigint;
-  channelReady?: boolean;
   iStarted?: boolean;
   myContribution?: string;
   theirContribution?: string;
@@ -96,9 +95,7 @@ export interface SessionSave {
   humanHistory?: string[];
   wasmNotificationHistory?: string[];
   diagnosticLog?: string[];
-  historicalUnrollCount?: bigint;
   durabilityWarning?: string;
-  activeGameId?: string | null;
   activeGameIds?: string[];
   currentHandGameIds?: string[];
   gameInstances?: Record<string, {
@@ -106,6 +103,7 @@ export interface SessionSave {
     amount: string;
     coinHex: string | null;
     turnState: string;
+    onChain?: boolean;
     handStatus: string;
     terminal: {
       type: string;
@@ -124,6 +122,7 @@ export interface SessionSave {
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
   gameCoinHex?: string | null;
   gameTurnState?: string;
+  gameOnChain?: boolean;
   gameHandStatus?: string;
   gameTerminalType?: string;
   gameTerminalOutcome?: string;
@@ -134,7 +133,6 @@ export interface SessionSave {
   channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   dismissedChannelStatus?: string;
-  goOnChainPressed?: boolean;
   cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
@@ -884,6 +882,32 @@ export function getBlockchainType(): BlockchainType | undefined {
 export function saveSession(fields: Partial<SessionSave>): Promise<void> {
   return mutate(s => {
     Object.assign(s, fields);
+    capPersistedHistories(s);
+  });
+}
+
+/**
+ * Persist a terminal channel snapshot without any state that could restart its
+ * protocol. Display/history fields supplied by the caller are retained.
+ */
+export function saveTerminalSession(fields: Partial<SessionSave>): Promise<void> {
+  return mutate(s => {
+    Object.assign(s, fields, {
+      serializedGameSession: undefined,
+      gameSessionSchemaVersion: undefined,
+      pairingToken: undefined,
+      sessionPeerId: undefined,
+      gameSessionId: undefined,
+      messageNumber: undefined,
+      remoteNumber: undefined,
+      iStarted: undefined,
+      myContribution: undefined,
+      theirContribution: undefined,
+      perGameAmount: undefined,
+      channelTimeout: undefined,
+      unrollTimeout: undefined,
+      unackedMessages: undefined,
+    });
     capPersistedHistories(s);
   });
 }

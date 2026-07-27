@@ -36,6 +36,15 @@ export interface CoinStateRecord {
   spent_height: bigint | null;
 }
 
+/** Wallet funding request emitted by the WASM game-session boundary. */
+export interface NeedCoinSpendRequest {
+  /** Exact decimal u64 emitted by WASM; never an IEEE-754 number. */
+  amount: string;
+  conditions: Array<{ opcode: bigint | number; args: string[] }>;
+  coin_id?: string;
+  max_height?: bigint | number;
+}
+
 export type GameSessionEvent =
   | { OutboundMessage: Uint8Array }
   | { OutboundTransaction: SpendBundle }
@@ -43,17 +52,13 @@ export type GameSessionEvent =
   | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
-  | { NeedCoinSpend: {
-      amount: bigint;
-      conditions: Array<{ opcode: bigint; args: string[] }>;
-      coin_id?: string;
-      max_height?: bigint;
-    } }
+  | { NeedCoinSpend: NeedCoinSpendRequest }
   | { NeedLauncherCoin: boolean };
 
 export interface WasmResult {
   events?: GameSessionEvent[];
   watchCoins?: Array<{ coin_name: string; coin_string: string }>;
+  unwatchCoins?: Array<{ coin_name: string; coin_string: string }>;
   ids?: string[];
   disposition?: WasmDisposition;
 }
@@ -236,6 +241,7 @@ export interface WasmConnection {
     removals: string[],
   ) => WasmResult | undefined;
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult | undefined;
+  report_height: (cid: number, height: bigint) => WasmResult | undefined;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
   resubmit_submitted: (cid: number) => void;
@@ -465,16 +471,9 @@ export class ChiaGame {
     return this.wasm.report_coin_states(this.session, height, jsonStringify(records));
   }
 
-  /**
-   * Advance to `height` with no coin-state change (an empty created/deleted
-   * delta).  Lets the host deliver a height tick promptly -- driving the
-   * handshake's `new_block(height)` -- without waiting on the slower full
-   * coin-records snapshot reported via `report_coin_states`.  Safe regardless of
-   * which coins exist on chain: an empty delta forwards no coin changes, so it
-   * can never be misread as a coin deletion.
-   */
-  new_block(height: bigint): WasmResult | undefined {
-    return this.wasm.new_block(this.session, height, [], []);
+  /** Advance protocol clocks without treating absent coin data as a snapshot. */
+  report_height(height: bigint): WasmResult | undefined {
+    return this.wasm.report_height(this.session, height);
   }
 
   /** Durable watched-coin snapshot used to seed host polling after attach/restore. */

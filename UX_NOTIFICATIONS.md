@@ -6,8 +6,18 @@ peer message reliability, and reconnect reconciliation, see
 `FRONTEND_ARCHITECTURE.md`. For the authoritative settlement outcome glossary
 (off-chain accept + on-chain #1–#11), see
 [`NAMING_AUDIT.md` — Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux). The frontend supports full page reload — game state
-is continuously saved to localStorage and restored on reload with a fresh RNG
+is continuously saved to IndexedDB and restored on reload with a fresh RNG
 seed.
+
+## Authority vs projection
+
+Rust notifications are protocol facts. JavaScript renders and persists their
+browser envelope, but does not infer settlement, channel lifecycle, or
+protocol validity from display data. A UI action is an intent sent to Rust; its
+result becomes authoritative only when Rust emits the corresponding
+notification. The sole JS exception is explicit client capability policy, such
+as declining a second concurrent proposal group while still supporting each
+independently progressing game within an accepted group.
 
 The UI layer receives events via the `ToLocalUI` trait callbacks and
 `GameNotification` variants (delivered through `game_notification`).

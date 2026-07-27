@@ -2,11 +2,10 @@
 //! cradle.
 //!
 //! The manager owns the blockchain-facing bookkeeping that previously lived
-//! partly in JavaScript (`CoinStateMonitor`/`BlockchainPoller`) and partly in
-//! the cradle (`FullCoinSetAdapter`/`filter_coin_report`):
+//! partly in JavaScript (`CoinStateMonitor`/`BlockchainPoller`):
 //!
 //! - It computes the created/deleted coin diff from raw per-coin chain state
-//!   (`report_coin_states`) instead of receiving a pre-computed `WatchReport`.
+//!   (`report_coin_states`) and emits ordered observations to the cradle.
 //! - It captures outbound transactions the cradle wants submitted
 //!   (`drain_submissions`) so the hosting layer becomes a thin RPC proxy.
 //! - It tracks watched coins (`snapshot_watched_coins` exposes a durable snapshot).
@@ -30,10 +29,8 @@ use serde::{Deserialize, Serialize};
 use crate::common::types::{
     AllocEncoder, CoinCondition, CoinID, CoinString, Error, SpendBundle, Timeout,
 };
-use crate::game_session::{DrainResult, GameSession, WatchReport};
-use crate::session_phases::effects::{
-    ChannelStatus, GameNotification, GameSessionEvent, GameSessionEventQueue,
-};
+use crate::game_session::{CoinObservation, DrainResult, GameSession};
+use crate::session_phases::effects::{GameSessionEvent, GameSessionEventQueue};
 
 /// Raw per-coin chain state as reported by the polling layer for a single
 /// watched coin.  `created_height`/`spent_height` are `None` until the coin is
@@ -144,42 +141,26 @@ impl WatchedCoin {
     }
 }
 
-/// Result of draining the manager: the events the hosting layer still needs to
-/// act on (notifications, outbound messages, coin-solution requests, launcher
-/// and coin-spend requests), the watch registrations intercepted during this
-/// drain, plus any resync signal. Outbound transactions are intercepted by the
-/// manager and are not present here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalHandoffCommand {
-    pub id: u64,
-    pub message: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum ManagerDrainDisposition {
-    #[default]
-    Active,
-    AwaitOutboundTerminal(TerminalHandoffCommand),
-    Terminal,
-}
-
 #[derive(Default)]
 pub struct ManagerDrain {
     pub events: GameSessionEventQueue,
     pub watch_coins: Vec<CoinString>,
+    pub unwatch_coins: Vec<CoinString>,
     pub resync: Option<(usize, bool)>,
-    pub disposition: ManagerDrainDisposition,
 }
 
 /// The minimal interface the [`TransactionManager`] needs from the cradle it
 /// wraps.  Implemented by [`GameSession`] in production and by
 /// `MockGameSession` in unit tests.
 pub trait ManagedGameSession {
-    fn session_new_block(
+    /// Receive a manager-ordered coin observation batch. `None` advances
+    /// protocol clocks from a trusted height without treating an unavailable
+    /// snapshot as an authoritative empty coin set.
+    fn session_observe(
         &mut self,
         allocator: &mut AllocEncoder,
         height: u64,
-        report: &WatchReport,
+        observations: Option<&[CoinObservation]>,
     ) -> Result<(), Error>;
 
     fn session_flush_and_collect(
@@ -187,32 +168,23 @@ pub trait ManagedGameSession {
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error>;
 
-    fn is_terminal(&self) -> bool {
-        false
-    }
-
     fn is_abandoned(&self) -> bool {
         false
     }
-
-    fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "no cooperative terminal handoff is pending".to_string(),
-        ))
-    }
-
-    fn abandon(&mut self) -> Result<(), Error>;
 }
 
 impl ManagedGameSession for GameSession {
-    fn session_new_block(
+    fn session_observe(
         &mut self,
         allocator: &mut AllocEncoder,
         height: u64,
-        report: &WatchReport,
+        observations: Option<&[CoinObservation]>,
     ) -> Result<(), Error> {
         use crate::game_session::GameSession;
-        GameSession::new_block(self, allocator, height, report)
+        match observations {
+            Some(observations) => GameSession::new_block(self, allocator, height, observations),
+            None => GameSession::new_block_height_only(self, allocator, height),
+        }
     }
 
     fn session_flush_and_collect(
@@ -222,21 +194,8 @@ impl ManagedGameSession for GameSession {
         GameSession::flush_and_collect(self, allocator)
     }
 
-    fn is_terminal(&self) -> bool {
-        self.is_fully_resolved()
-    }
-
     fn is_abandoned(&self) -> bool {
         GameSession::is_abandoned(self)
-    }
-
-    fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
-        GameSession::complete_outbound_terminal_handoff(self)
-    }
-
-    fn abandon(&mut self) -> Result<(), Error> {
-        GameSession::abandon(self);
-        Ok(())
     }
 }
 
@@ -258,19 +217,23 @@ pub struct TransactionManager<C> {
     /// these as deltas; restore still seeds from the durable watched set.
     #[serde(skip)]
     pending_watch_coins: Vec<CoinString>,
+    /// Watch removals intercepted from semantic manager eviction. Runtime hosts
+    /// consume these as deltas; the durable watched set remains authoritative.
+    #[serde(skip)]
+    pending_unwatch_coins: Vec<CoinString>,
     /// Resync signal observed during draining, surfaced to the hosting layer.
     #[serde(skip)]
     pending_resync: Option<(usize, bool)>,
-    /// The one tagged message that must cross the durable outbound boundary
-    /// before the manager may finalize local abandonment.
-    #[serde(default)]
-    pending_outbound_terminal: Option<TerminalHandoffCommand>,
-    #[serde(default)]
-    next_terminal_handoff_id: u64,
     /// How many blocks a coin must remain confirmed-spent before eviction.
     confirmation_depth: u64,
     /// Most recent height reported via `report_coin_states`.
     last_height: u64,
+    /// Most recent height accompanied by a complete, authoritative coin
+    /// snapshot. Kept separately from `last_height`: a height-only observation
+    /// must advance protocol clocks without masking a later reorg from the
+    /// snapshot reconciliation path.
+    #[serde(default)]
+    last_snapshot_height: u64,
     /// Watched coins that left the live set without a confirmed spend (e.g.
     /// reorged out before their creating transaction re-confirmed).  Surfaced to
     /// the resubmission layer so the creating transaction can be replayed.
@@ -283,30 +246,16 @@ pub struct TransactionManager<C> {
     /// the created/deleted set difference, exactly mirroring the previous
     /// `FullCoinSetAdapter`.  Includes coins not (yet) watched so that a coin
     /// which appears one block before the manager learns to watch it is still
-    /// reported as created at its true appearance height (the inner cradle
-    /// filters the diff to the coins it actually watches).
+    /// emitted as a creation at its true appearance height.
     present_coins: std::collections::HashSet<CoinString>,
-    /// Set once a coin created by the channel-creation transaction is observed
-    /// confirmed.  Durable: the channel coin can later be spent and evicted, but
-    /// having once been established means the funding deadline can never fail
-    /// (mirrors the handlers' `waiting_to_start`, which never flips back).
-    #[serde(default)]
-    channel_established: bool,
-    /// Set once the channel-creation transaction's expiry height is reached
-    /// without the channel coin ever confirming.  Drives the `Failed` channel
-    /// status the manager now owns (formerly computed by the handshake handlers).
-    #[serde(default)]
-    channel_expired: bool,
 }
 
 /// Default confirmation depth.  Chosen to be far deeper than any plausible
 /// Chia reorg.
 pub const DEFAULT_CONFIRMATION_DEPTH: u64 = 32;
 
-/// Extra blocks past the funding transaction's `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
-/// deadline before declaring the channel failed.  Ensures a real coin-record
-/// report at/past the deadline has been processed (since `check_channel_expiry`
-/// only runs inside `report_coin_states`, not the height-only `new_block` path).
+/// Extra blocks after an absolute transaction expiry before a reorg replay is
+/// no longer viable.
 pub const CHANNEL_EXPIRY_BUFFER: u64 = 6;
 
 /// Upper bound on any height reported to the manager.  Real Chia heights are in
@@ -344,16 +293,14 @@ impl<C> TransactionManager<C> {
             pending_submissions: Vec::new(),
             pending_events: GameSessionEventQueue::default(),
             pending_watch_coins: Vec::new(),
+            pending_unwatch_coins: Vec::new(),
             pending_resync: None,
-            pending_outbound_terminal: None,
-            next_terminal_handoff_id: 0,
             confirmation_depth: DEFAULT_CONFIRMATION_DEPTH,
             last_height: 0,
+            last_snapshot_height: 0,
             present_coins: std::collections::HashSet::new(),
             vanished_coins: std::collections::HashSet::new(),
             submitted: Vec::new(),
-            channel_established: false,
-            channel_expired: false,
         }
     }
 
@@ -434,13 +381,13 @@ impl<C> TransactionManager<C> {
         Ok(out.into_iter().map(|(bundle, _)| bundle).collect())
     }
 
-    /// Re-queue every retained submission for resubmission.  Used on reload: a
-    /// transaction drained to the host before a reload may not have reached the
-    /// network, and the manager's reorg-vanish path only replays a transaction
-    /// once one of its outputs is observed and then rolled back.  Conflicting
-    /// local intents are pruned as soon as another spend of the same input is
-    /// observed to win, so the retained set is the set still valid to replay.
+    /// Re-queue retained, unexpired submissions after the host has supplied a
+    /// fresh chain height. A transaction drained before reload may not have
+    /// reached the network; an absolute-expiry transaction cannot become valid
+    /// again and is discarded rather than repeatedly offered to the wallet.
     pub fn requeue_submitted(&mut self) {
+        self.submitted
+            .retain(|tx| !matches!(tx.expiry, Some(expiry) if self.last_height >= expiry));
         for tx in self.submitted.iter() {
             self.pending_submissions
                 .push((tx.bundle.clone(), tx.expiry));
@@ -483,18 +430,6 @@ impl<C> TransactionManager<C> {
                     self.pending_watch_coins.push(coin_string.clone());
                     self.register_watch(coin_string, timeout, spend);
                 }
-                GameSessionEvent::OutboundTerminalMessage(message) => {
-                    assert!(
-                        self.pending_outbound_terminal.is_none(),
-                        "only one terminal outbound handoff may be pending"
-                    );
-                    let command = TerminalHandoffCommand {
-                        id: self.next_terminal_handoff_id,
-                        message,
-                    };
-                    self.next_terminal_handoff_id += 1;
-                    self.pending_outbound_terminal = Some(command);
-                }
                 other => {
                     self.pending_events.push_back(other);
                 }
@@ -503,58 +438,31 @@ impl<C> TransactionManager<C> {
     }
 }
 
-impl TransactionManager<GameSession> {
-    /// Whether the channel has failed.  True if the manager observed the
-    /// channel-creation transaction expire (the deadline it now owns) or if the
-    /// inner cradle reports a failure of its own (e.g. an on-chain failure).
-    /// Shadows the inner `is_failed` reachable via `Deref`.
-    pub fn is_failed(&self) -> bool {
-        self.channel_expired || self.cradle.is_failed()
-    }
-
-    /// Whether the channel has reached a terminal status.  ORs the manager's
-    /// own channel-creation expiry into the inner cradle's terminal check, since
-    /// the manager (not the inner cradle) now owns the expiry `Failed` signal.
-    pub fn channel_status_terminal(&self) -> bool {
-        self.channel_expired || self.cradle.channel_status_terminal()
-    }
-
-    /// Trigger on-chain resolution. The cradle owns the zero-payout decision;
-    /// the manager only clears retained work when that decision abandons.
-    pub fn go_on_chain(
+impl<C: ManagedGameSession> TransactionManager<C> {
+    /// Report a trusted chain height when the watched-coin snapshot is not
+    /// available or is known partial. This advances handshake protocol clocks
+    /// through the manager without inventing coin creations/deletions or
+    /// evaluating channel-creation expiry from absent coin data.
+    pub fn report_height(
         &mut self,
         allocator: &mut AllocEncoder,
-        got_error: bool,
+        height: u64,
     ) -> Result<(), Error> {
-        self.cradle.go_on_chain(allocator, got_error)?;
-        if self.cradle.is_abandoned() {
-            self.discard_local_artifacts();
+        if height > MAX_REPORTED_HEIGHT {
+            return Err(Error::StrErr(format!(
+                "report_height: height {height} exceeds MAX_REPORTED_HEIGHT {MAX_REPORTED_HEIGHT}"
+            )));
         }
-        Ok(())
-    }
-}
-
-impl<C: ManagedGameSession> TransactionManager<C> {
-    pub fn terminal_disposition(&self) -> ManagerDrainDisposition {
-        if let Some(command) = self.pending_outbound_terminal.clone() {
-            ManagerDrainDisposition::AwaitOutboundTerminal(command)
-        } else if self.channel_expired || self.cradle.is_terminal() {
-            ManagerDrainDisposition::Terminal
-        } else {
-            ManagerDrainDisposition::Active
-        }
-    }
-
-    pub fn pending_terminal_handoff(&self) -> Option<TerminalHandoffCommand> {
-        self.pending_outbound_terminal.clone()
+        self.last_height = height;
+        self.cradle.session_observe(allocator, height, None)
     }
 
     fn discard_local_artifacts(&mut self) {
         self.pending_submissions.clear();
         self.pending_events.clear();
         self.pending_watch_coins.clear();
+        self.pending_unwatch_coins.clear();
         self.pending_resync = None;
-        self.pending_outbound_terminal = None;
         self.watched_coins.clear();
         self.submitted.clear();
         self.vanished_coins.clear();
@@ -595,8 +503,9 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         // may never reappear, or reappear at a different height.  Clear those
         // confirmations so this report re-derives them from the rolled-back
         // chain state.
-        let reorg = height < self.last_height;
+        let reorg = height < self.last_snapshot_height;
         self.last_height = height;
+        self.last_snapshot_height = height;
         let mut newly_vanished: Vec<CoinString> = Vec::new();
         if reorg {
             for (coin, watched) in self.watched_coins.iter_mut() {
@@ -696,11 +605,8 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         }
 
         // Created/deleted are the symmetric difference against the previous
-        // report.  We pass the full diff to the inner cradle, which filters it
-        // to the coins it actually watches.  This is what lets a coin that was
-        // registered the same block it appears still be reported created at the
-        // correct height: the inner cradle already watches it even though the
-        // manager only intercepts its watch registration after this report.
+        // report. The resulting observations are ordered as every creation,
+        // then every spend, before the cradle receives the height callback.
         let mut created_watched: std::collections::HashSet<CoinString> = present_now
             .difference(&self.present_coins)
             .cloned()
@@ -791,15 +697,16 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         self.pending_submissions
             .extend(to_submit.into_iter().map(|spend| (spend, None)));
 
-        let report = WatchReport {
-            created_watched,
-            deleted_watched,
-        };
+        let observations = created_watched
+            .into_iter()
+            .map(CoinObservation::Created)
+            .chain(deleted_watched.into_iter().map(CoinObservation::Spent))
+            .collect::<Vec<_>>();
 
-        self.cradle.session_new_block(allocator, height, &report)?;
+        self.cradle
+            .session_observe(allocator, height, Some(&observations))?;
 
         self.evict_confirmed_spends(height);
-        self.check_channel_expiry(height);
         Ok(())
     }
 
@@ -857,63 +764,8 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             let coin_id = coin.to_coin_id();
             self.submitted
                 .retain(|tx| !tx.spent_coin_ids.contains(&coin_id));
+            self.pending_unwatch_coins.push(coin);
         }
-    }
-
-    /// Detect the channel-creation transaction expiring before the channel coin
-    /// confirms.  The funding transaction is the single retained submission that
-    /// carries an expiry (only channel creation threads one); the channel is
-    /// "established" once a watched coin created by that transaction (its parent
-    /// is one of the funding spends) has a confirmed birthday.  When the expiry
-    /// height is reached without establishment, emit a terminal `Failed` channel
-    /// status (the signal the handshake handlers used to compute themselves) and
-    /// stop resubmitting the dead funding transaction.
-    fn check_channel_expiry(&mut self, height: u64) {
-        if self.channel_expired || self.channel_established {
-            return;
-        }
-        let funding = match self
-            .submitted
-            .iter()
-            .find(|tx| tx.expiry.is_some())
-            .map(|tx| (tx.expiry.unwrap(), tx.spent_coin_ids.clone()))
-        {
-            Some(funding) => funding,
-            None => return,
-        };
-        let (expiry, spent_coin_ids) = funding;
-        // The channel is established once a coin created by the funding
-        // transaction (its parent is one of the funding spends) has confirmed.
-        // Record it durably: the coin may later be spent and evicted, but once
-        // established the deadline can no longer fail.
-        let established = self.watched_coins.iter().any(|(coin, w)| {
-            w.birthday.is_some()
-                && matches!(coin.to_parts(), Some((parent, _, _)) if spent_coin_ids.contains(&parent))
-        });
-        if established {
-            self.channel_established = true;
-            return;
-        }
-        if height < expiry + CHANNEL_EXPIRY_BUFFER {
-            return;
-        }
-        self.channel_expired = true;
-        self.submitted
-            .retain(|tx| tx.spent_coin_ids != spent_coin_ids);
-        self.pending_events
-            .push_back(GameSessionEvent::Notification(
-                GameNotification::ChannelStatus {
-                    state: ChannelStatus::Failed,
-                    session_disposition: None,
-                    advisory: Some("channel coin not confirmed in time".to_string()),
-                    coin: None,
-                    our_balance: None,
-                    their_balance: None,
-                    game_allocated: None,
-                    have_potato: None,
-                    zero_payout: None,
-                },
-            ));
     }
 
     /// Coins that vanished (reorged out) without a confirmed spend, whose
@@ -936,39 +788,12 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             self.discard_local_artifacts();
         }
         self.absorb_events(result.events);
-        let disposition = self.terminal_disposition();
         Ok(ManagerDrain {
             events: std::mem::take(&mut self.pending_events),
             watch_coins: std::mem::take(&mut self.pending_watch_coins),
+            unwatch_coins: std::mem::take(&mut self.pending_unwatch_coins),
             resync: self.pending_resync.take(),
-            disposition,
         })
-    }
-
-    /// Complete a cooperative zero-payout shutdown once the host has handed
-    /// the signed close spend to the peer, then discard every remaining local
-    /// manager artifact.
-    pub fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
-        if self.pending_outbound_terminal.is_none() {
-            return Err(Error::StrErr(
-                "no cooperative terminal handoff is pending".to_string(),
-            ));
-        }
-        self.cradle.complete_outbound_terminal_handoff()?;
-        self.discard_local_artifacts();
-        Ok(())
-    }
-
-    /// Discard unsubmitted local work and transition the wrapped session to its
-    /// local abandonment terminal.
-    pub fn abandon(&mut self) -> Result<(), Error> {
-        if self.pending_outbound_terminal.is_some() {
-            return Err(Error::StrErr(
-                "cannot abandon while the terminal handoff awaits peer acknowledgement".to_string(),
-            ));
-        }
-        self.discard_local_artifacts();
-        self.cradle.abandon()
     }
 }
 
@@ -1027,7 +852,7 @@ mod tests {
     #[derive(Default)]
     struct MockGameSession {
         /// Reports seen via `session_new_block`, for assertions.
-        seen_reports: Vec<(u64, WatchReport)>,
+        seen_observations: Vec<(u64, Vec<CoinObservation>)>,
         /// Pre-scripted drains, returned in order.
         scripted_drains: std::collections::VecDeque<DrainResult>,
         abandoned: bool,
@@ -1054,13 +879,14 @@ mod tests {
     }
 
     impl ManagedGameSession for MockGameSession {
-        fn session_new_block(
+        fn session_observe(
             &mut self,
             _allocator: &mut AllocEncoder,
             height: u64,
-            report: &WatchReport,
+            observations: Option<&[CoinObservation]>,
         ) -> Result<(), Error> {
-            self.seen_reports.push((height, report.clone()));
+            self.seen_observations
+                .push((height, observations.unwrap_or_default().to_vec()));
             Ok(())
         }
 
@@ -1071,90 +897,20 @@ mod tests {
             Ok(self.scripted_drains.pop_front().unwrap_or_default())
         }
 
-        fn is_terminal(&self) -> bool {
-            self.abandoned
-        }
-
         fn is_abandoned(&self) -> bool {
             self.abandoned
         }
-
-        fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
-            self.abandoned = true;
-            Ok(())
-        }
-
-        fn abandon(&mut self) -> Result<(), Error> {
-            self.abandoned = true;
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn abandon_discards_pending_protocol_work_and_is_terminal() {
-        let mut allocator = AllocEncoder::new();
-        let coin = test_coin(90);
-        let mut mock = MockGameSession::default();
-        mock.queue_drain(vec![
-            watch_event(&coin, 50),
-            GameSessionEvent::OutboundTransaction(test_bundle("pending"), None),
-        ]);
-        let mut manager = TransactionManager::new(mock);
-        manager
-            .flush_and_collect(&mut allocator)
-            .expect("initial drain");
-        assert_eq!(manager.snapshot_watched_coins(), vec![coin]);
-
-        manager.abandon().expect("abandon");
-        let drain = manager
-            .flush_and_collect(&mut allocator)
-            .expect("terminal drain");
-
-        assert_eq!(drain.disposition, ManagerDrainDisposition::Terminal);
-        assert!(drain.watch_coins.is_empty());
-        assert!(manager.snapshot_watched_coins().is_empty());
-        assert!(manager.drain_submissions().expect("submissions").is_empty());
-    }
-
-    #[test]
-    fn cooperative_terminal_handoff_stays_non_terminal_until_completed() {
-        let mut allocator = AllocEncoder::new();
-        let mut mock = MockGameSession::default();
-        mock.queue_drain(vec![GameSessionEvent::OutboundTerminalMessage(vec![
-            1, 2, 3,
-        ])]);
-        let mut manager = TransactionManager::new(mock);
-
-        let drain = manager
-            .flush_and_collect(&mut allocator)
-            .expect("handoff drain");
-        assert_eq!(
-            drain.disposition,
-            ManagerDrainDisposition::AwaitOutboundTerminal(TerminalHandoffCommand {
-                id: 0,
-                message: vec![1, 2, 3],
-            })
-        );
-        assert!(drain.events.is_empty());
-
-        manager
-            .complete_outbound_terminal_handoff()
-            .expect("complete handoff");
-        let terminal = manager
-            .flush_and_collect(&mut allocator)
-            .expect("terminal drain");
-        assert_eq!(terminal.disposition, ManagerDrainDisposition::Terminal);
     }
 
     #[derive(Default, Serialize, Deserialize)]
     struct PersistableMockGameSession;
 
     impl ManagedGameSession for PersistableMockGameSession {
-        fn session_new_block(
+        fn session_observe(
             &mut self,
             _allocator: &mut AllocEncoder,
             _height: u64,
-            _report: &WatchReport,
+            _observations: Option<&[CoinObservation]>,
         ) -> Result<(), Error> {
             Ok(())
         }
@@ -1164,10 +920,6 @@ mod tests {
             _allocator: &mut AllocEncoder,
         ) -> Result<DrainResult, Error> {
             Ok(DrainResult::default())
-        }
-
-        fn abandon(&mut self) -> Result<(), Error> {
-            Ok(())
         }
     }
 
@@ -1242,6 +994,7 @@ mod tests {
         mgr.pending_events
             .push_back(GameSessionEvent::Log("transient".to_string()));
         mgr.pending_watch_coins.push(coin);
+        mgr.pending_unwatch_coins.push(test_coin(3));
         mgr.pending_resync = Some((7, true));
 
         let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
@@ -1250,6 +1003,7 @@ mod tests {
 
         assert!(decoded.pending_events.is_empty());
         assert!(decoded.pending_watch_coins.is_empty());
+        assert!(decoded.pending_unwatch_coins.is_empty());
         assert_eq!(decoded.pending_resync, None);
     }
 
@@ -1294,22 +1048,54 @@ mod tests {
             Some(20)
         );
 
-        let reports = &mgr.cradle().seen_reports;
-        assert_eq!(reports.len(), 3);
+        let observations = &mgr.cradle().seen_observations;
+        assert_eq!(observations.len(), 3);
         // Block 10: created only.
-        assert!(reports[0].1.created_watched.contains(&coin));
-        assert!(reports[0].1.deleted_watched.is_empty());
+        assert_eq!(observations[0].1, vec![CoinObservation::Created(coin.clone())]);
         // Block 12: nothing new.
-        assert!(reports[1].1.created_watched.is_empty());
-        assert!(reports[1].1.deleted_watched.is_empty());
+        assert!(observations[1].1.is_empty());
         // Block 20: deleted only.
-        assert!(reports[2].1.created_watched.is_empty());
-        assert!(reports[2].1.deleted_watched.contains(&coin));
+        assert_eq!(observations[2].1, vec![CoinObservation::Spent(coin.clone())]);
         assert_eq!(mgr.last_height(), 20);
     }
 
     #[test]
-    fn does_not_track_unwatched_coins_but_passes_diff_through() {
+    fn height_only_observation_preserves_snapshot_reorg_detection() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(13);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![watch_event(&coin, 50)]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        mgr.report_coin_states(
+            &mut allocator,
+            10,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
+        )
+        .expect("authoritative snapshot");
+        assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(10));
+
+        // A trusted peak can advance handler clocks while the coin snapshot is
+        // unavailable. It must not become the baseline that hides a later
+        // rollback in the next authoritative snapshot.
+        mgr.report_height(&mut allocator, 15)
+            .expect("height-only observation");
+        assert_eq!(mgr.last_height(), 15);
+        assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(10));
+
+        mgr.report_coin_states(&mut allocator, 8, &[])
+            .expect("rolled-back snapshot");
+        assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, None);
+        assert!(mgr.vanished_coins().contains(&coin));
+    }
+
+    #[test]
+    fn does_not_track_unwatched_coins_but_forwards_observation() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(3);
         let mut mgr = TransactionManager::new(MockGameSession::default());
@@ -1323,12 +1109,11 @@ mod tests {
             .expect("report");
 
         // The manager does not add bookkeeping for coins it was not told to
-        // watch, but it still forwards the created transition so the inner
-        // cradle (which owns the watch set in phase 1) can filter it.
+        // watch, but still forwards the raw creation observation. The cradle
+        // has no duplicate watch registry; its active phase decides relevance.
         assert!(mgr.watched_coin(&coin).is_none());
-        let reports = &mgr.cradle().seen_reports;
-        assert_eq!(reports.len(), 1);
-        assert!(reports[0].1.created_watched.contains(&coin));
+        let observations = &mgr.cradle().seen_observations;
+        assert_eq!(observations, &[(5, vec![CoinObservation::Created(coin)])]);
     }
 
     #[test]
@@ -1527,132 +1312,6 @@ mod tests {
         assert!(!poll_set.contains(&untracked_child));
     }
 
-    /// Build a funding transaction spending `parent` and the channel coin it
-    /// creates (its parent is the funding spend).
-    fn funding_setup() -> (CoinString, CoinString, SpendBundle) {
-        use crate::common::types::{CoinSpend, Spend};
-        let parent = test_coin(30);
-        let channel_coin = CoinString::from_parts(
-            &parent.to_coin_id(),
-            &PuzzleHash::from_bytes([31; 32]),
-            &Amount::new(1),
-        );
-        let funding_tx = SpendBundle {
-            name: Some("channel-create".to_string()),
-            spends: vec![CoinSpend {
-                coin: parent.clone(),
-                bundle: Spend::default(),
-            }],
-        };
-        (parent, channel_coin, funding_tx)
-    }
-
-    fn count_failed_notifications(drain: &ManagerDrain) -> usize {
-        drain
-            .events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e,
-                    GameSessionEvent::Notification(GameNotification::ChannelStatus {
-                        state: ChannelStatus::Failed,
-                        ..
-                    })
-                )
-            })
-            .count()
-    }
-
-    #[test]
-    fn channel_creation_expiry_emits_failed_when_coin_never_confirms() {
-        let mut allocator = AllocEncoder::new();
-        let (_parent, channel_coin, funding_tx) = funding_setup();
-
-        let mut mock = MockGameSession::default();
-        // Watch the channel coin and submit the funding tx with expiry 100.
-        mock.queue_drain(vec![
-            watch_event(&channel_coin, 1_000_000),
-            GameSessionEvent::OutboundTransaction(funding_tx, Some(100)),
-        ]);
-        let mut mgr = TransactionManager::new(mock);
-        mgr.flush_and_collect(&mut allocator).expect("register");
-        // Drain so the funding tx is retained with its expiry.
-        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
-
-        // Before the deadline: no failure even though the coin is absent.
-        mgr.report_coin_states(&mut allocator, 99, &[])
-            .expect("report");
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(count_failed_notifications(&drain), 0);
-
-        // At the deadline: still no failure because the buffer hasn't elapsed.
-        mgr.report_coin_states(&mut allocator, 100, &[])
-            .expect("report");
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(count_failed_notifications(&drain), 0);
-
-        // Within the buffer window (expiry + 5): still no failure.
-        mgr.report_coin_states(&mut allocator, 105, &[])
-            .expect("report");
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(count_failed_notifications(&drain), 0);
-
-        // Past the buffer (expiry + 6): Failed fires once, and the dead
-        // funding tx is pruned.
-        mgr.report_coin_states(&mut allocator, 106, &[])
-            .expect("report");
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(count_failed_notifications(&drain), 1);
-
-        // A later report does not re-emit the terminal signal.
-        mgr.report_coin_states(&mut allocator, 107, &[])
-            .expect("report");
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(count_failed_notifications(&drain), 0);
-    }
-
-    #[test]
-    fn channel_creation_does_not_fail_when_coin_confirms_before_deadline() {
-        let mut allocator = AllocEncoder::new();
-        let (_parent, channel_coin, funding_tx) = funding_setup();
-
-        let mut mock = MockGameSession::default();
-        mock.queue_drain(vec![
-            watch_event(&channel_coin, 1_000_000),
-            GameSessionEvent::OutboundTransaction(funding_tx, Some(100)),
-        ]);
-        let mut mgr = TransactionManager::new(mock);
-        mgr.flush_and_collect(&mut allocator).expect("register");
-        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
-
-        // Channel coin confirms (gets a birthday) before the deadline.
-        mgr.report_coin_states(
-            &mut allocator,
-            50,
-            &[CoinStateRecord {
-                coin: channel_coin.clone(),
-                created_height: Some(50),
-                spent_height: None,
-            }],
-        )
-        .expect("report");
-        mgr.flush_and_collect(&mut allocator).expect("drain");
-
-        // Past the deadline: the channel is established, so no failure.
-        mgr.report_coin_states(
-            &mut allocator,
-            150,
-            &[CoinStateRecord {
-                coin: channel_coin.clone(),
-                created_height: Some(50),
-                spent_height: None,
-            }],
-        )
-        .expect("report");
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(count_failed_notifications(&drain), 0);
-    }
-
     #[test]
     fn out_of_range_height_is_rejected_without_touching_state() {
         let mut allocator = AllocEncoder::new();
@@ -1808,20 +1467,18 @@ mod tests {
 
         // Reorg below the creation height: the coin vanishes from the feed.  It
         // was un-created, not spent, so it must NOT be forwarded to the inner
-        // cradle as deleted_watched (which maps to coin_spent and would drive a
+        // cradle as a spend observation (which would drive a
         // spurious EndedError for a tracked game coin).
         mgr.report_coin_states(&mut allocator, 8, &[])
             .expect("report");
         assert!(mgr.vanished_coins().contains(&coin));
 
-        let reports = &mgr.cradle().seen_reports;
+        let observations = &mgr.cradle().seen_observations;
         // Block 12: created.
-        assert!(reports[0].1.created_watched.contains(&coin));
+        assert_eq!(observations[0].1, vec![CoinObservation::Created(coin.clone())]);
         // Block 8 (reorg): neither created nor deleted -- the vanish is
-        // suppressed from the forwarded report.
-        assert_eq!(reports[1].0, 8);
-        assert!(reports[1].1.deleted_watched.is_empty());
-        assert!(reports[1].1.created_watched.is_empty());
+        // suppressed from the forwarded observations.
+        assert_eq!(observations[1], (8, vec![]));
         // The coin's spend was not recorded either.
         assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
     }
@@ -1872,16 +1529,16 @@ mod tests {
 
         // Forward progress: the coin is now genuinely spent (drops off the
         // full-coin-set feed).  Since it is no longer flagged vanished, the spend
-        // must be forwarded as deleted_watched and recorded.
+        // must be forwarded as a spend observation and recorded.
         mgr.report_coin_states(&mut allocator, 9, &[])
             .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(9));
-        let spend_report = mgr.cradle().seen_reports.last().expect("spend report");
-        assert_eq!(spend_report.0, 9);
-        assert!(
-            spend_report.1.deleted_watched.contains(&coin),
-            "a genuine spend must be forwarded, not suppressed by a stale vanished flag"
-        );
+        let spend_observations = mgr
+            .cradle()
+            .seen_observations
+            .last()
+            .expect("spend observations");
+        assert_eq!(spend_observations, &(9, vec![CoinObservation::Spent(coin)]));
     }
 
     #[test]
@@ -1943,19 +1600,19 @@ mod tests {
         )
         .expect("report");
 
-        let report = mgr.cradle().seen_reports.last().expect("a report");
-        assert_eq!(report.0, 12);
-        assert!(
-            report.1.deleted_watched.contains(&coin),
-            "a watched coin first observed already-spent must be forwarded as a spend, got: {:?}",
-            report.1
-        );
-        assert!(
-            report.1.created_watched.contains(&coin),
-            "a watched coin first observed already-spent must also be forwarded as a creation \
-             so creation-only subscribers (handshake handlers) transition before the spend, \
-             got: {:?}",
-            report.1
+        let observations = mgr
+            .cradle()
+            .seen_observations
+            .last()
+            .expect("an observation batch");
+        assert_eq!(observations.0, 12);
+        assert_eq!(
+            observations.1,
+            vec![
+                CoinObservation::Created(coin.clone()),
+                CoinObservation::Spent(coin.clone()),
+            ],
+            "a coin first seen already-spent must be emitted created then spent"
         );
         assert_eq!(
             mgr.watched_coin(&coin).unwrap().spent_confirmed_at,
@@ -1995,6 +1652,13 @@ mod tests {
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
         assert!(mgr.snapshot_watched_coins().is_empty());
+        let drain = mgr.flush_and_collect(&mut allocator).expect("drain eviction");
+        assert_eq!(drain.unwatch_coins, vec![coin]);
+        assert!(mgr
+            .flush_and_collect(&mut allocator)
+            .expect("second drain")
+            .unwatch_coins
+            .is_empty());
     }
 
     #[test]
@@ -2033,6 +1697,24 @@ mod tests {
         let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].name.as_deref(), Some("tx-a"));
+    }
+
+    #[test]
+    fn requeue_submitted_discards_expired_transactions() {
+        let mut allocator = AllocEncoder::new();
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            test_bundle("expired"),
+            Some(10),
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+
+        mgr.last_height = 10;
+        mgr.requeue_submitted();
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert!(mgr.submitted.is_empty());
     }
 
     #[test]

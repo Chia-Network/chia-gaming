@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -9,21 +9,15 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
 use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
-use crate::common::standard_coin::{
-    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
-};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, PrivateKey,
-    Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::game_session::{
-    report_coin_changes_to_peer, CoinReportPhase, FullCoinSetAdapter, GameSession,
-    GameSessionConfig, MessagePeerQueue, MessagePipe, PeerLifecyclePhase, WatchEntry, WatchReport,
-};
+use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
-    apply_effects, CancelReason, ChannelStatus, Effect, GameNotification, GameSessionEvent,
-    GameStatusKind, SettlementOutcome,
+    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind, SettlementOutcome,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -31,22 +25,14 @@ use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
-use crate::session_phases::OffChainPhase;
-use crate::transaction_manager::{ManagerDrainDisposition, TransactionManager};
+use crate::transaction_manager::TransactionManager;
 use crate::utils::proper_list;
 
 use crate::simulator::Simulator;
 use crate::test_support::calpoker_sim::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{make_debug_games, DebugGameCurry};
-use crate::test_support::peer::peer_harness::run_move;
 use crate::test_support::sim_script::{ProposeTrigger, SimScriptAction};
 use crate::utils::pair_of_array_mut;
-
-// potato handler tests with simulator.
-#[derive(Default)]
-struct SimulatedWalletSpend {
-    watching_coins: HashMap<CoinString, WatchEntry>,
-}
 
 #[derive(Default)]
 pub struct SimulatedPeer {
@@ -60,7 +46,6 @@ pub struct SimulatedPeer {
 
     messages: Vec<ReadableMove>,
 
-    simulated_wallet_spend: SimulatedWalletSpend,
 }
 
 impl MessagePeerQueue for SimulatedPeer {
@@ -76,91 +61,6 @@ impl MessagePeerQueue for SimulatedPeer {
     fn get_unfunded_offer(&self) -> Option<SpendBundle> {
         self.unfunded_offer.clone()
     }
-}
-
-/// Check the reported coins vs the current coin set and report changes.
-pub fn update_and_report_coins<'a>(
-    allocator: &mut AllocEncoder,
-    coinset_adapter: &mut FullCoinSetAdapter,
-    peers: &mut [OffChainPhase; 2],
-    pipes: &'a mut [SimulatedPeer; 2],
-    simulator: &'a mut Simulator,
-) -> Result<WatchReport, Error> {
-    let current_height = simulator.get_current_height();
-    let current_coins = simulator.get_all_coins()?;
-    let watch_report =
-        coinset_adapter.make_report_from_coin_set_update(current_height as u64, &current_coins)?;
-
-    for who in 0..=1 {
-        {
-            let mut env = ChannelEnv::new(allocator).expect("should work");
-            let mut reported_effects = report_coin_changes_to_peer(
-                &mut env,
-                &mut peers[who],
-                &watch_report,
-                CoinReportPhase::Created,
-            )?;
-            reported_effects.extend(report_coin_changes_to_peer(
-                &mut env,
-                &mut peers[who],
-                &watch_report,
-                CoinReportPhase::Spent,
-            )?);
-            apply_effects(reported_effects, allocator, &mut pipes[who])?;
-        }
-    }
-
-    Ok(watch_report)
-}
-
-fn handle_received_channel_puzzle_hash(
-    env: &mut ChannelEnv<'_>,
-    identity: &ChiaIdentity,
-    peer: &mut OffChainPhase,
-    parent: &CoinString,
-    channel_handler_puzzle_hash: &PuzzleHash,
-) -> Result<Vec<Effect>, Error> {
-    let ch = peer.channel_state()?;
-    let channel_coin = ch.channel_coin();
-    let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
-        amt
-    } else {
-        return Err(Error::StrErr("no channel coin".to_string()));
-    };
-
-    let conditions_clvm = [(
-        CREATE_COIN,
-        (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
-    )]
-    .to_clvm(env.allocator)
-    .into_gen()?;
-
-    let spend = standard_solution_partial(
-        env.allocator,
-        &identity.synthetic_private_key,
-        &parent.to_coin_id(),
-        conditions_clvm,
-        &identity.synthetic_public_key,
-        &env.agg_sig_me_additional_data,
-        false,
-    )
-    .expect("ssp 1");
-
-    peer.channel_offer(
-        env,
-        SpendBundle {
-            name: None,
-            spends: vec![CoinSpend {
-                coin: parent.clone(),
-                bundle: Spend {
-                    puzzle: identity.puzzle.clone(),
-                    solution: spend.solution.clone(),
-                    signature: spend.signature.clone(),
-                },
-            }],
-        },
-    )
-    .map(|effect| effect.into_iter().collect::<Vec<_>>())
 }
 
 fn build_wallet_bundle_for_request(
@@ -265,27 +165,6 @@ impl PacketSender for SimulatedPeer {
     }
 }
 
-impl SimulatedWalletSpend {
-    /// Coin should report its lifecycle until it gets spent, then should be
-    /// de-registered.
-    fn register_coin(
-        &mut self,
-        coin_id: &CoinString,
-        timeout: &Timeout,
-        opt_name: Option<&'static str>,
-    ) -> Result<(), Error> {
-        let name: Option<String> = opt_name.map(str::to_string);
-        self.watching_coins.insert(
-            coin_id.clone(),
-            WatchEntry {
-                timeout_blocks: timeout.clone(),
-                name,
-            },
-        );
-        Ok(())
-    }
-}
-
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(
@@ -296,17 +175,14 @@ impl WalletSpendInterface for SimulatedPeer {
         self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
-    /// Coin should report its lifecycle until it gets spent, then should be
-    /// de-registered.
     fn register_coin(
         &mut self,
-        coin_id: &CoinString,
-        timeout: &Timeout,
-        name: Option<&'static str>,
+        _coin_id: &CoinString,
+        _timeout: &Timeout,
+        _name: Option<&'static str>,
         _spend: Option<SpendBundle>,
     ) -> Result<(), Error> {
-        self.simulated_wallet_spend
-            .register_coin(coin_id, timeout, name)
+        Ok(())
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
@@ -357,99 +233,6 @@ impl ToLocalUI for SimulatedPeer {
             _ => Ok(()),
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn handshake(
-    allocator: &mut AllocEncoder,
-    _amount: Amount,
-    coinset_adapter: &mut FullCoinSetAdapter,
-    identities: &[ChiaIdentity; 2],
-    peers: &mut [OffChainPhase; 2],
-    pipes: &mut [SimulatedPeer; 2],
-    parent_coins: &[CoinString],
-    simulator: &mut Simulator,
-) -> Result<(), Error> {
-    let mut i = 0;
-    let mut steps = 0;
-
-    while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
-        let who = i % 2;
-        steps += 1;
-        assert!(steps < 50);
-
-        run_move(allocator, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
-
-        if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
-            pipes[who].channel_puzzle_hash = None;
-            let reported_effects = {
-                let mut env = ChannelEnv::new(allocator).expect("should work");
-                handle_received_channel_puzzle_hash(
-                    &mut env,
-                    &identities[who],
-                    &mut peers[who],
-                    &parent_coins[who],
-                    &ph,
-                )?
-            };
-            apply_effects(reported_effects, allocator, &mut pipes[who])?;
-        }
-
-        if let Some(u) = pipes[who].unfunded_offer.clone() {
-            let reported_effect = {
-                let mut env = ChannelEnv::new(allocator).expect("should work");
-                peers[who].channel_transaction_completion(&mut env, &u)?
-            };
-            if let Some(effect) = reported_effect {
-                apply_effects(vec![effect], allocator, &mut pipes[who])?;
-            }
-
-            let env = ChannelEnv::new(allocator).expect("should work");
-            let mut spends = u.clone();
-            // Create no coins.  The target is already created in the partially funded
-            // transaction.
-            //
-            // XXX break this code out
-            let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
-            let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
-            let solution = solution_for_conditions(env.allocator, empty_conditions)?;
-            let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
-            let signature = sign_agg_sig_me(
-                &identities[who].synthetic_private_key,
-                quoted_empty_hash.bytes(),
-                &parent_coins[who].to_coin_id(),
-                &env.agg_sig_me_additional_data,
-            );
-            spends.spends.push(CoinSpend {
-                coin: parent_coins[who].clone(),
-                bundle: Spend {
-                    puzzle: identities[who].puzzle.clone(),
-                    solution: Program::from_nodeptr(env.allocator, solution)?.into(),
-                    signature,
-                },
-            });
-            let included_result = simulator.push_transactions(env.allocator, &spends.spends)?;
-
-            pipes[who].unfunded_offer = None;
-            assert_eq!(included_result.code, 1);
-
-            simulator.farm_block(&identities[who].puzzle_hash);
-            simulator.farm_block(&identities[who].puzzle_hash);
-
-            update_and_report_coins(allocator, coinset_adapter, peers, pipes, simulator)?;
-        }
-
-        if !pipes[who].outbound_transactions.is_empty() {
-            panic!(
-                "unexpected outbound transactions during handshake for peer {who}: {:?}",
-                pipes[who].outbound_transactions
-            );
-        }
-
-        i += 1;
-    }
-
-    Ok(())
 }
 
 #[derive(Debug)]
@@ -1346,12 +1129,9 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             {
                 let result = cradles[i].flush_and_collect(allocator)?;
-                let mut terminal_command = match result.disposition {
-                    ManagerDrainDisposition::Active | ManagerDrainDisposition::Terminal => None,
-                    ManagerDrainDisposition::AwaitOutboundTerminal(command) => {
-                        Some(command.message)
-                    }
-                };
+                let mut terminal_command = cradles[i]
+                    .pending_terminal_handoff()
+                    .map(|command| command.message);
 
                 // Collect coin solution requests, launcher/coin-spend
                 // requests from this flush and all subsequent flushes they
@@ -1513,12 +1293,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     let follow_up = cradles[i].flush_and_collect(allocator)?;
-                    terminal_command = match follow_up.disposition {
-                        ManagerDrainDisposition::Active | ManagerDrainDisposition::Terminal => None,
-                        ManagerDrainDisposition::AwaitOutboundTerminal(command) => {
-                            Some(command.message)
-                        }
-                    };
+                    terminal_command = cradles[i]
+                        .pending_terminal_handoff()
+                        .map(|command| command.message);
                     pending_events = follow_up.events;
                 }
 

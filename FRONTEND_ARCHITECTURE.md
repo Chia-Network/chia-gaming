@@ -986,9 +986,9 @@ backends. All other connection logic is shared.
 After a wallet backend is active, the player app uses `BlockchainPoller` as the
 host-side coordinator for chain observations. It separates three concerns:
 
-1. **Polling interest** — `SessionController`/`TransactionManager` know the
-   semantic meaning of watched coins. The frontend poller only receives the
-   transport-level projection: coin name plus full coin string. Runtime
+1. **Polling interest** — `TransactionManager` is the sole owner of watched
+   coin meaning and lifetime. The frontend poller only receives the transport
+   projection: coin name plus full coin string. Runtime
    additions arrive as `watchCoins` deltas from WASM drain results.
    `snapshot_watched_coins()` is only the restore/attach snapshot of the durable
    WASM interest set, not the per-sweep source of truth.
@@ -1003,18 +1003,18 @@ host-side coordinator for chain observations. It separates three concerns:
    registration shape, but it does not own scheduling or coin lifecycle
    semantics.
 
-Coin polling reports raw coin-state observations upward every successful sweep.
-The transaction manager computes semantic create/spend/reorg transitions from
-those observations. The scheduler may stop querying a coin after it has reported
-the coin spent and the spend is buried by the confirmation depth; this is generic
-poll-retention cleanup, not game/channel interpretation.
+Coin polling reports raw height and coin-state observations upward every
+successful sweep. The transaction manager computes ordered semantic
+create/spend/reorg transitions and confirmation-depth retention from those
+observations. The browser never decides that a watch has become terminal.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
 `TransactionManager` already contains the semantic watch set, so
 `BlockchainPoller.attachGameSession()` seeds itself once from `snapshot_watched_coins()`
-without replaying old events. Future explicit unwatch/abandon events should flow
-as deltas too.
+without replaying old events. When manager-owned confirmation-depth eviction
+ends an interest, WASM emits an `unwatchCoins` delta and the poller removes only
+that transport registration.
 
 **Polling Termination.** `ManagerDrainDisposition` is the sole host lifecycle
 boundary: `active`, `await-outbound-terminal(command)`, or `terminal`. WASM

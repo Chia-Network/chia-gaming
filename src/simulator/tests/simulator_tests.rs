@@ -12,7 +12,7 @@ use crate::common::types::{
     PrivateKey, Program, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
     ToQuotedProgram,
 };
-use crate::game_session::{DrainResult, WatchReport};
+use crate::game_session::{CoinObservation, DrainResult};
 use crate::session_phases::effects::GameSessionEvent;
 use crate::simulator::Simulator;
 use crate::transaction_manager::{ManagedGameSession, TransactionManager};
@@ -32,11 +32,11 @@ impl ScriptedGameSession {
 }
 
 impl ManagedGameSession for ScriptedGameSession {
-    fn session_new_block(
+    fn session_observe(
         &mut self,
         _allocator: &mut AllocEncoder,
         _height: u64,
-        _report: &WatchReport,
+        _observations: Option<&[CoinObservation]>,
     ) -> Result<(), crate::common::types::Error> {
         Ok(())
     }
@@ -54,10 +54,6 @@ impl ManagedGameSession for ScriptedGameSession {
                 .collect(),
             resync: None,
         })
-    }
-
-    fn abandon(&mut self) -> Result<(), crate::common::types::Error> {
-        Ok(())
     }
 }
 

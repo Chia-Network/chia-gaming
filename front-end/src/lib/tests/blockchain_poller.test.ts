@@ -83,9 +83,9 @@ describe('BlockchainPoller', () => {
     const rpc = makeRpc([100n, 90n]);
     const reportedPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
-      snapshotWatchedCoins: () => [],
-      reportCoinStates: () => {},
-      reportNewBlock: (peak) => {
+      snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
+      reportNewBlock: () => {},
+      reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
       },
     };
@@ -120,12 +120,15 @@ describe('BlockchainPoller', () => {
       },
     );
     const reportedPeaks: bigint[] = [];
+    const heightOnlyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
       reportCoinStates: (peak) => {
         reportedPeaks.push(peak);
       },
-      reportNewBlock: () => {},
+      reportNewBlock: (peak) => {
+        heightOnlyPeaks.push(peak);
+      },
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
@@ -134,11 +137,31 @@ describe('BlockchainPoller', () => {
     // Registration fails: no report (a partial snapshot would be misread).
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(reportedPeaks).toEqual([]);
+    expect(heightOnlyPeaks).toEqual([100n]);
 
     // Registration succeeds on the retry: the cradle is reported.
     registerOk = true;
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     expect(reportedPeaks).toEqual([100n]);
+    expect(heightOnlyPeaks).toEqual([100n, 100n]);
+  });
+
+  it('advances a session with no watched coins through height-only observations', async () => {
+    const rpc = makeRpc([100n]);
+    const heightOnlyPeaks: bigint[] = [];
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [],
+      reportNewBlock: (peak) => {
+        heightOnlyPeaks.push(peak);
+      },
+      reportCoinStates: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(heightOnlyPeaks).toEqual([100n]);
   });
 
   it('uses attach-time snapshots and runtime watch deltas instead of resampling every sweep', async () => {
@@ -386,7 +409,7 @@ describe('BlockchainPoller', () => {
     expect(registered).toEqual([['aa'], ['aa']]);
   });
 
-  it('reports a spent-and-buried coin before removing it from later sweeps', async () => {
+  it('keeps reporting spent coins for the transaction manager to retain or release', async () => {
     const record = makeCoinRecord(9);
     record.spent = true;
     record.spentBlockIndex = 10n;
@@ -411,12 +434,15 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const heightOnlyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-buried' }],
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
       },
-      reportNewBlock: () => {},
+      reportNewBlock: (peak) => {
+        heightOnlyPeaks.push(peak);
+      },
     };
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
@@ -424,11 +450,18 @@ describe('BlockchainPoller', () => {
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
-    expect(reports).toEqual([{
-      peak: 100n,
-      records: [{ coin: 'coin-buried', created_height: 10n, spent_height: 10n }],
-    }]);
-    expect(queriedNames).toEqual([[name]]);
+    expect(reports).toEqual([
+      {
+        peak: 100n,
+        records: [{ coin: 'coin-buried', created_height: 10n, spent_height: 10n }],
+      },
+      {
+        peak: 100n,
+        records: [{ coin: 'coin-buried', created_height: 10n, spent_height: 10n }],
+      },
+    ]);
+    expect(heightOnlyPeaks).toEqual([100n, 100n]);
+    expect(queriedNames).toEqual([[name], [name]]);
   });
 
   it('skips transient partial snapshots for coins that were previously observed', async () => {
@@ -467,6 +500,7 @@ describe('BlockchainPoller', () => {
       },
     );
     const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const heightOnlyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [
         { coin_name: nameA!, coin_string: 'coin-a' },
@@ -475,7 +509,9 @@ describe('BlockchainPoller', () => {
       reportCoinStates: (peak, records) => {
         reports.push({ peak, records });
       },
-      reportNewBlock: () => {},
+      reportNewBlock: (peak) => {
+        heightOnlyPeaks.push(peak);
+      },
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
@@ -493,6 +529,7 @@ describe('BlockchainPoller', () => {
     }];
     try {
       expect(reports).toEqual(expectedReports);
+      expect(heightOnlyPeaks).toEqual([100n, 100n]);
     } catch (e) {
       // DBG_POLLER_FLAKE: dump everything needed to tell apart the failure
       // modes -- 0 reports (skip mis-fired / coins absent), 1 wrong report,

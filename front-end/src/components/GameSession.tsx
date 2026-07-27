@@ -22,6 +22,7 @@ import {
   gameplayEventNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
+import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   PRE_ACTIVE_CHANNEL_STATES,
@@ -900,9 +901,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     return () => onCoinsProviderChange(null);
   }, [session.sessionController, onCoinsProviderChange]);
 
+  const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {
-    if (!onSessionPhaseChange || suppressPhaseReporting) return;
     const phase = session.sessionPhase;
+    if (
+      !onSessionPhaseChange
+      || !shouldReportSessionPhase(
+        phase,
+        !!suppressPhaseReporting,
+        resolvedPhaseReportedRef.current,
+      )
+    ) {
+      return;
+    }
     const settledOutcome = session.gameTerminal.outcome;
     const hasError =
       session.channelStatus.state === 'Failed' ||
@@ -911,6 +922,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       (session.gameTerminal.type === 'settled'
         && settledOutcome != null
         && isErrorSettlementOutcome(settledOutcome));
+    if (phase === 'resolved') {
+      resolvedPhaseReportedRef.current = true;
+    }
     onSessionPhaseChange(phase, hasError);
   }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.outcome, onSessionPhaseChange, suppressPhaseReporting]);
 

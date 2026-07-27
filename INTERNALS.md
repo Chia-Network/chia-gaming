@@ -94,6 +94,10 @@ a watched coin's birthday changes, retains submitted transactions across
 restore, and resubmits transactions whose output coins vanished because their
 creation was rolled back. Handler-level logic should not receive repeated
 semantic events merely because a reorg made the same transaction need replaying.
+It is also the sole watch registry: handlers emit `WatchCoin` intents, while the
+manager converts authoritative raw snapshots into ordered `Created`, `Spent`,
+then height observations for `GameSession`. The session never maintains or
+filters a second watch set.
 
 **Retained transaction replay.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
@@ -171,9 +175,10 @@ resubmits them in a reorg-aware way. Coverage:
 whose very first observation already carries a spend height (an opponent's coin
 that was published and spent before our first poll of it) never enters the live
 set, so the present→absent diff cannot surface it. The manager captures these
-`first_seen_spent` coins and merges them into the spend report anyway; without
-this a handler waiting on such a coin — e.g. an opponent-published unroll coin —
-never receives `coin_spent` and stalls forever
+`first_seen_spent` coins and emits an ordered `Created` then `Spent` pair; without
+the creation first, a handshake handler cannot transition before the spend is
+delivered, and without the spend, a handler waiting on an
+opponent-published unroll coin stalls forever
 (`coin_first_seen_already_spent_is_forwarded_as_spend`). Those records already
 carry `created_height` (birthday) and `spent_height` (`spent_confirmed_at`).
 

@@ -113,7 +113,6 @@ export async function restoreSession(
 
   sc.messageNumber = requireBigIntCounter(save.messageNumber, 'messageNumber');
   sc.remoteNumber = requireBigIntCounter(save.remoteNumber, 'remoteNumber');
-  sc.channelReady = requireBoolean(save.channelReady, 'channelReady');
   sc.iStarted = requireBoolean(save.iStarted, 'iStarted');
   sc.pairingToken = requireString(save.pairingToken, 'pairingToken');
   if (!Array.isArray(save.unackedMessages)) {
@@ -133,7 +132,6 @@ export async function restoreSession(
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
   sc.activeGameIds = [...save.activeGameIds];
-  sc.activeGameId = save.activeGameIds[0] ?? save.activeGameId ?? null;
   sc.handState = save.handState ?? null;
   sc.lastChannelStatus = save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }

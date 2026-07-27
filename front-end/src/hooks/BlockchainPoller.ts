@@ -11,7 +11,6 @@ import {
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
-export const COIN_EVICTION_CONFIRMATION_DEPTH = 32n;
 
 /**
  * A cradle that the poller drives with raw chain state.  The transaction
@@ -24,12 +23,9 @@ export type CoinPollInterest = { coin_name: string; coin_string: string };
 
 export interface PollingGameSession {
   snapshotWatchedCoins(): CoinPollInterest[];
-  reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
-  // Advance to `peak` with no coin-state change.  Lets the poller deliver a
-  // height tick as soon as the height is known, before the (possibly slow) coin
-  // record lookup, so height-only progress (e.g. handshake new_block) isn't
-  // gated on the coin-records RPC.
+  /** Advance protocol clocks without asserting a complete coin snapshot. */
   reportNewBlock(peak: bigint): void;
+  reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
 }
 
 type BalanceCallbacks = {
@@ -176,9 +172,12 @@ export class BlockchainPoller {
     this.refreshCoinInterest();
   }
 
-  snapshotGameSessionCoinInterest(cradle: PollingGameSession): void {
+  snapshotGameSessionCoinInterest(
+    cradle: PollingGameSession,
+    watchedCoins = cradle.snapshotWatchedCoins(),
+  ): void {
     if (!this.sessions.has(cradle)) return;
-    this.sessionCoins.set(cradle, cradle.snapshotWatchedCoins());
+    this.sessionCoins.set(cradle, watchedCoins);
     this.refreshCoinInterest();
   }
 
@@ -189,6 +188,15 @@ export class BlockchainPoller {
     );
     byName.set(coin.coin_name, coin);
     this.sessionCoins.set(cradle, [...byName.values()]);
+    this.refreshCoinInterest();
+  }
+
+  unwatchCoin(cradle: PollingGameSession, coin: CoinPollInterest): void {
+    if (!this.sessions.has(cradle)) return;
+    const remaining = (this.sessionCoins.get(cradle) ?? []).filter(
+      (existing) => existing.coin_name !== coin.coin_name,
+    );
+    this.sessionCoins.set(cradle, remaining);
     this.refreshCoinInterest();
   }
 
@@ -274,10 +282,9 @@ export class BlockchainPoller {
       const height = await this.adapter.getHeightInfo();
       this.previousPeakForCoinReport = previousPeak;
       this.peak = height;
-
-      // Deliver the height tick immediately, before the (potentially slow) coin
-      // record lookup. A cradle's new_block only needs the height, so cradles
-      // whose watched coins aren't on chain yet can advance right away.
+      // Advance every session as soon as a height is available, independently
+      // of the slower watched-coin lookup. This is deliberately a
+      // manager-owned height-only observation, not an empty coin snapshot.
       for (const { c } of this.collectGameSessionCoins()) {
         c.reportNewBlock(height);
       }
@@ -315,8 +322,7 @@ export class BlockchainPoller {
       const records = namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
       const recordByName = await this.recordMap(records);
       if (recordByName) {
-        const reportedNames = this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
-        this.evictBuriedSpentCoins(recordByName, reportedNames);
+        this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
       }
       this.consecutiveFailures = 0;
     } catch (e) {
@@ -325,29 +331,6 @@ export class BlockchainPoller {
       diagStack('blockchain-poller coin poll failed', e);
       log(`[blockchain-poller] coin poll failed: ${String(e)}`);
     }
-  }
-
-  private evictBuriedSpentCoins(
-    recordByName: Map<string, CoinRecord>,
-    reportedNames: Set<string>,
-  ): void {
-    const evictedNames = new Set<string>();
-    for (const name of reportedNames) {
-      const rec = recordByName.get(name);
-      if (!rec) continue;
-      const spentHeight = rec.spent || rec.spentBlockIndex > 0n ? rec.spentBlockIndex : null;
-      if (spentHeight !== null && this.peak >= spentHeight + COIN_EVICTION_CONFIRMATION_DEPTH) {
-        evictedNames.add(name);
-      }
-    }
-    if (evictedNames.size === 0) return;
-    for (const [cradle, coins] of this.sessionCoins) {
-      this.sessionCoins.set(
-        cradle,
-        coins.filter(({ coin_name }) => !evictedNames.has(coin_name)),
-      );
-    }
-    this.refreshCoinInterest();
   }
 
   private async runBalancePoll(): Promise<void> {
@@ -385,14 +368,7 @@ export class BlockchainPoller {
     recordByName: Map<string, CoinRecord>,
     height: bigint,
     previousPeak: bigint,
-  ): Set<string> {
-    const interestCounts = new Map<string, number>();
-    const reportedCounts = new Map<string, number>();
-    for (const { coins } of perSession) {
-      for (const { coin_name } of coins) {
-        interestCounts.set(coin_name, (interestCounts.get(coin_name) ?? 0) + 1);
-      }
-    }
+  ): void {
     for (const { c, coins } of perSession) {
       if (coins.length === 0) {
         continue;
@@ -431,16 +407,10 @@ export class BlockchainPoller {
         const created = rec.confirmedBlockIndex;
         const spent = rec.spent || rec.spentBlockIndex > 0n ? rec.spentBlockIndex : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
-        reportedCounts.set(coin_name, (reportedCounts.get(coin_name) ?? 0) + 1);
       }
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
       c.reportCoinStates(height, csr);
     }
-    const fullyReportedNames = new Set<string>();
-    for (const [name, count] of reportedCounts) {
-      if (count === interestCounts.get(name)) fullyReportedNames.add(name);
-    }
-    return fullyReportedNames;
   }
 
   private currentBackoffMs(): number {

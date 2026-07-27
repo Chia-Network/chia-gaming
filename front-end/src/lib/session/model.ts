@@ -47,7 +47,6 @@ export type GameTerminalType =
 
 export type NotificationKind =
   | 'channel-state'
-  | 'session-over'
   | 'action-failed'
   | 'infra-error'
   | 'durability-error'
@@ -72,6 +71,8 @@ export interface ChannelStatusModel {
 export interface GameCoinModel {
   coinHex: string | null;
   turnState: GameTurnState;
+  /** Latest GameStatus is on-chain; exact coin id may still be enriching. */
+  onChain?: boolean;
 }
 
 export interface GameTerminalModel {
@@ -135,7 +136,6 @@ export interface PeerModel {
 export interface ChannelModel {
   status: ChannelStatusModel;
   connection: GameConnectionState;
-  goOnChainPressed: boolean;
   cleanShutdownStarted: boolean;
   dismissedChannelStatus: ChannelStatus | null;
   queue: QueuedNotificationModel[];
@@ -431,7 +431,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     channel: {
       status: INITIAL_CHANNEL_STATUS_MODEL,
       connection: { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
-      goOnChainPressed: false,
       cleanShutdownStarted: false,
       dismissedChannelStatus: null,
       queue: [],
@@ -478,11 +477,37 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
   };
 }
 
+/**
+ * Abandonment is a terminal session disposition, not a per-game outcome. Keep
+ * the authoritative channel snapshot but discard local game/hand presentation
+ * that cannot receive a corresponding terminal game event.
+ */
+export function clearDerivedGamePresentation(model: SessionModel): SessionModel {
+  return {
+    ...model,
+    game: {
+      ...model.game,
+      coin: { coinHex: null, turnState: 'my-turn' },
+      handStatus: 'none',
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+      handKey: 0,
+      activeIds: [],
+      currentHandIds: [],
+      instances: {},
+      lastDisplayedId: null,
+      handState: null,
+    },
+  };
+}
+
 export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
   return WINDING_DOWN_CHANNEL_STATES.has(state);
 }
 
-export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
+export function selectSessionPhase(
+  model: SessionModel,
+  hostOnChain = false,
+): Exclude<SessionPhase, 'none'> {
   if (model.channel.status.sessionDisposition === 'Abandoned') return 'resolved';
   if (model.channel.status.sessionDisposition === 'AwaitOutboundTerminal') return 'off-chain';
   if (
@@ -493,8 +518,13 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
     return 'on-chain';
   }
   if (isTerminalChannelSnapshot(model.channel.status)) return 'resolved';
+  // `go_on_chain` reports success synchronously, but the authoritative
+  // GoingOnChain notification follows through the asynchronous event queue.
+  // The controller-only result prevents that gap from downgrading Shell back
+  // to off-chain; it is intentionally never persisted.
+  if (hostOnChain) return 'on-chain';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
-  if (model.channel.goOnChainPressed || isWindingDownChannelStatus(model.channel.status.state)) {
+  if (isWindingDownChannelStatus(model.channel.status.state)) {
     return 'on-chain';
   }
   return 'off-chain';
@@ -529,6 +559,11 @@ export function selectComposeAmountAfterGameTypeChoice(
 
 export function selectDisplayGameId(model: SessionModel): string | null {
   return model.game.activeIds[0] ?? model.game.lastDisplayedId;
+}
+
+function selectDisplayedGameInstance(model: SessionModel): GameInstanceModel | null {
+  const id = selectDisplayGameId(model);
+  return id === null ? null : model.game.instances[id] ?? null;
 }
 
 export function selectBetweenHands(model: SessionModel): boolean {
@@ -612,17 +647,23 @@ function channelStatusDetail(model: SessionModel): string | null {
 }
 
 function selectHandStatus(model: SessionModel): HandStatus {
-  if (model.game.terminal.type !== 'none' || model.game.coin.turnState === 'ended') {
+  const displayed = selectDisplayedGameInstance(model);
+  const terminal = displayed?.terminal ?? model.game.terminal;
+  const coin = displayed?.coin ?? model.game.coin;
+  if (terminal.type !== 'none' || coin.turnState === 'ended') {
     return 'ended';
   }
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
-  if (!model.game.coin.coinHex) {
+  // `onChain` distinguishes a pending game-coin id from an off-chain game.
+  // Older saved models did not persist it, so a known coin id remains the
+  // compatibility signal for those snapshots.
+  if (coin.onChain !== true && !coin.coinHex) {
     return 'active';
   }
   if (ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)) {
-    switch (model.game.coin.turnState) {
+    switch (coin.turnState) {
       case 'my-turn':
         return 'our-turn';
       // We detected the opponent's illegal on-chain move and are now resolving
@@ -647,7 +688,7 @@ function collapsedHandStatusLabel(model: SessionModel): string {
 }
 
 function collapsedHandDetail(model: SessionModel): string | null {
-  const terminal = model.game.terminal;
+  const terminal = selectDisplayedGameInstance(model)?.terminal ?? model.game.terminal;
   if (terminal.type === 'none') {
     return null;
   }
@@ -696,9 +737,10 @@ export function isChannelAbandonable(
   status: ChannelStatusModel | null | undefined,
   abandonEnabled: boolean,
 ): boolean {
-  return (status?.state === 'ShuttingDown' && status.zeroPayout === true)
+  return status?.sessionDisposition !== 'AwaitOutboundTerminal'
+    && ((status?.state === 'ShuttingDown' && status.zeroPayout === true)
     || (abandonEnabled && status !== null && status !== undefined
-      && ABANDON_WAITING_STATES.has(status.state));
+      && ABANDON_WAITING_STATES.has(status.state)));
 }
 
 function dashboardActionFor(
@@ -708,6 +750,9 @@ function dashboardActionFor(
 ): Pick<GameDashboardViewModel, 'actionLabel' | 'actionEnabled' | 'actionKind'> {
   if (isTerminalChannelSnapshot(model.channel.status)) {
     return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
+  }
+  if (model.channel.status.sessionDisposition === 'AwaitOutboundTerminal') {
+    return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
   }
   switch (model.channel.status.state) {
     case 'Handshaking':
@@ -894,10 +939,11 @@ export interface GameSessionViewModel {
 }
 
 export function selectGameSessionView(model: SessionModel): GameSessionViewModel {
+  const displayed = selectDisplayedGameInstance(model);
   return {
     channelStatus: model.channel.status,
-    gameCoin: model.game.coin,
-    gameTerminal: model.game.terminal,
+    gameCoin: displayed?.coin ?? model.game.coin,
+    gameTerminal: displayed?.terminal ?? model.game.terminal,
     currentHandAmount: model.betweenHand.lastTerms.myContribution,
     activeGameId: model.game.activeIds[0] ?? null,
     activeGameIds: model.game.activeIds,
@@ -918,12 +964,13 @@ export interface GameSpecificViewModel {
 }
 
 export function selectGameSpecificView(model: SessionModel): GameSpecificViewModel {
+  const displayed = selectDisplayedGameInstance(model);
   return {
     gameType: model.game.activeGameType,
     displayGameId: selectDisplayGameId(model),
     handState: model.game.handState,
-    turnState: model.game.coin.turnState,
-    terminal: model.game.terminal,
+    turnState: displayed?.coin.turnState ?? model.game.coin.turnState,
+    terminal: displayed?.terminal ?? model.game.terminal,
   };
 }
 
@@ -1045,14 +1092,16 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  if (save.activeGameIds === undefined) {
+  const activeIds = save.activeGameIds
+    ?? (isTerminalChannelSnapshot(save.channelStatus) ? [] : undefined);
+  if (activeIds === undefined) {
     throw new Error('Garbled save: missing activeGameIds');
   }
-  if (!Array.isArray(save.activeGameIds)) {
+  if (!Array.isArray(activeIds)) {
     throw new Error('Garbled save: invalid activeGameIds');
   }
-  const activeIds = [...save.activeGameIds];
-  const currentHandIds = save.currentHandGameIds ?? activeIds;
+  const restoredActiveIds = [...activeIds];
+  const currentHandIds = save.currentHandGameIds ?? restoredActiveIds;
   const instances: Record<string, GameInstanceModel> = Object.fromEntries(
     Object.entries(save.gameInstances ?? {}).map(([id, instance]) => [
       id,
@@ -1062,6 +1111,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         coin: {
           coinHex: instance.coinHex,
           turnState: instance.turnState as GameTurnState,
+          onChain: instance.onChain,
         },
         handStatus: instance.handStatus as HandStatus,
         terminal: {
@@ -1086,24 +1136,11 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     },
     channel: {
       status: save.channelStatus
-        ? {
-            state: save.channelStatus.state,
-            sessionDisposition: save.channelStatus.session_disposition ?? null,
-            advisory: save.channelStatus.advisory ?? null,
-            coin: coerceToBytes(save.channelStatus.coin),
-            coinHex: null,
-            coinAmount: parseChannelAmount(save.channelStatus.coin),
-            ourBalance: save.channelStatus.our_balance == null ? null : String(save.channelStatus.our_balance),
-            theirBalance: save.channelStatus.their_balance == null ? null : String(save.channelStatus.their_balance),
-            gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
-            havePotato: save.channelStatus.have_potato ?? null,
-            zeroPayout: save.channelStatus.zero_payout ?? null,
-          }
+        ? channelStatusModelFromPayload(save.channelStatus)
         : INITIAL_CHANNEL_STATUS_MODEL,
       connection: save.channelStatus
         ? { stateIdentifier: 'running', stateDetail: [] }
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
-      goOnChainPressed: save.goOnChainPressed ?? false,
       cleanShutdownStarted: save.cleanShutdownStarted ?? false,
       dismissedChannelStatus: (save.dismissedChannelStatus as ChannelStatus | undefined) ?? null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
@@ -1113,11 +1150,12 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         coinHex: save.gameCoinHex ?? null,
         turnState: (() => {
           if (save.gameTurnState === undefined || save.gameTurnState === null) {
-            if (activeIds.length === 0) return 'my-turn' as GameTurnState;
+            if (restoredActiveIds.length === 0) return 'my-turn' as GameTurnState;
             throw new Error('Garbled save: missing gameTurnState');
           }
           return save.gameTurnState as GameTurnState;
         })(),
+        onChain: save.gameOnChain,
       },
       handStatus: (save.gameHandStatus as HandStatus | undefined) ?? 'none',
       terminal: save.gameTerminalType && save.gameTerminalType !== 'none'
@@ -1131,14 +1169,14 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             rewardCoinHex: save.gameTerminalRewardCoin ?? null,
           }
         : INITIAL_GAME_TERMINAL_MODEL,
-      handKey: (activeIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
-      activeIds,
+      handKey: (restoredActiveIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
+      activeIds: restoredActiveIds,
       currentHandIds,
       instances,
-      lastDisplayedId: activeIds[0] ?? null,
+      lastDisplayedId: restoredActiveIds[0] ?? null,
       activeGameType: (() => {
         if (save.activeGameType) return save.activeGameType;
-        if (activeIds.length === 0) return 'calpoker';
+        if (restoredActiveIds.length === 0) return 'calpoker';
         throw new Error('Garbled save: missing activeGameType');
       })(),
       handState: save.handState ?? null,
@@ -1205,7 +1243,10 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
       : undefined,
     gameCoinHex: model.game.coin.coinHex,
     gameTurnState: model.game.coin.turnState,
+    gameOnChain: model.game.coin.onChain ?? undefined,
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,
+    activeGameIds: model.game.activeIds,
+    activeGameType: model.game.activeGameType,
     currentHandGameIds: model.game.currentHandIds.length > 0
       ? model.game.currentHandIds
       : undefined,
@@ -1218,6 +1259,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
             amount: instance.amount,
             coinHex: instance.coin.coinHex,
             turnState: instance.coin.turnState,
+            onChain: instance.coin.onChain ?? undefined,
             handStatus: instance.handStatus,
             terminal: instance.terminal,
           }]];
@@ -1236,7 +1278,6 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
       ? model.game.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
       : undefined,
     dismissedChannelStatus: model.channel.dismissedChannelStatus ?? undefined,
-    goOnChainPressed: model.channel.goOnChainPressed || undefined,
     cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
     betweenHandMode: model.betweenHand.mode,
     betweenHandComposePerHand: model.betweenHand.composePerHandAmount.toString(),

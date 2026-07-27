@@ -36,6 +36,20 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
 }
 
 /**
+ * Phase reports are terminal lifecycle inputs to Shell. A restored save is only
+ * a persisted projection until WASM restoration and hub reconciliation finish,
+ * so it must not cause terminal cleanup. Once unblocked, a resolved phase is
+ * reported once from the current session projection.
+ */
+export function shouldReportSessionPhase(
+  sessionPhase: Exclude<SessionPhase, 'none'>,
+  restoreBlocked: boolean,
+  resolvedReported: boolean,
+): boolean {
+  return !restoreBlocked && (sessionPhase !== 'resolved' || !resolvedReported);
+}
+
+/**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
  * Active (or further), delivery_failure only degrades peer liveness — the peer

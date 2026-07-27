@@ -756,6 +756,29 @@ but there is no one-to-one mapping between handler types and state values.
 All three lenses are monotonic in lifecycle direction (forward progression,
 with same-level repeats for updates), even though they use different names.
 
+### Runtime Ownership: Rust Engine vs JavaScript Host
+
+Rust is the sole authority for protocol facts and business lifecycle: channel
+and game validation, potato ownership, proposal legality, settlement, on-chain
+transitions, watch registration and ordering, and spend intent. `GameSession`
+and its phases emit protocol intents and interpret ordered observations;
+`TransactionManager` durably owns watch lifecycle and raw-chain reconciliation.
+Neither the browser nor a wallet adapter may infer or override a protocol
+outcome.
+
+JavaScript is the browser host. It transports opaque peer bytes, persists and
+replays transport state, adapts wallet and chain APIs, forwards raw chain
+observations, and projects Rust facts into UI. It may enforce explicit product
+capability policy—for example, this client currently starts at most one
+concurrent proposal group—but proposal groups are atomic only at formation and
+acceptance: Krunk's paired games still progress and settle independently.
+
+| Concern | Owner |
+| --- | --- |
+| Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |
+| Raw peer bytes, ACK durability, wallet RPC, chain polling | JavaScript host |
+| UI projection, notification presentation, client capability constraints | JavaScript UI |
+
 ### Handlers
 
 | Handler | File | Role |

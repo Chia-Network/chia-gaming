@@ -19,6 +19,7 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
+  saveTerminalSession,
   flushSessionSave,
   clearSession,
   hardReset,
@@ -257,7 +258,6 @@ function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolea
 
 function savedChannelStatus(save: SessionSave): SessionModel['channel']['status']['state'] | null {
   if (save.channelStatus) return save.channelStatus.state;
-  if (save.channelReady) return 'Active';
   return null;
 }
 
@@ -1736,25 +1736,13 @@ const Shell = () => {
     // still auto-connecting the saved hub.
     if (model) {
       const status = model.channel.status;
-      void saveSession({
+      void saveTerminalSession({
         ...snapshotFromSessionModel(model),
-        serializedGameSession: undefined,
-        gameSessionSchemaVersion: undefined,
-        pairingToken: undefined,
-        sessionPeerId: undefined,
-        gameSessionId: undefined,
-        channelReady: false,
         channelStatus: channelStatusPayloadFromModel(status),
         cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
       });
     } else {
-      void saveSession({
-        serializedGameSession: undefined,
-        gameSessionSchemaVersion: undefined,
-        pairingToken: undefined,
-        sessionPeerId: undefined,
-        gameSessionId: undefined,
-      });
+      void saveTerminalSession({});
     }
     markSavedSession();
 
@@ -2258,10 +2246,6 @@ const Shell = () => {
     hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
-    setDashboardSessionModel(prev => prev
-      ? { ...prev, channel: { ...prev.channel, goOnChainPressed: true } }
-      : prev
-    );
   }, [syncPeerLiveness]);
 
   const requestDashboardGoOnChain = useCallback(() => {

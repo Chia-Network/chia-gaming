@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import {
   saveSession,
+  saveTerminalSession,
   peekSession,
   clearSession,
   clearGameSessionPreservingHistory,
@@ -79,7 +80,6 @@ const sampleSession: Partial<SessionSave> = {
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
-  channelReady: true,
   iStarted: true,
   activeGameIds: [],
   myContribution: '60',
@@ -304,6 +304,68 @@ describe('session persistence', () => {
     expect(loaded?.channelStatus?.state).toBe('ResolvedClean');
     expect(loaded?.blockchainType).toBe('simulator');
     expect(hasSavedSessionMarker()).toBe(true);
+  });
+
+  it('atomically replaces a live session with a nonresumable abandoned snapshot', async () => {
+    saveSession({
+      ...sampleSession,
+      sessionPeerId: 'peer-1',
+      gameSessionId: 'game-1',
+      channelTimeout: '100',
+      unrollTimeout: '50',
+      channelStatus: {
+        state: 'Active',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: true,
+      },
+    });
+    await flushSessionSave();
+
+    saveTerminalSession({
+      channelStatus: {
+        state: 'ShutdownTransactionPending',
+        session_disposition: 'Abandoned',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: false,
+      },
+      humanHistory: ['terminal display retained'],
+      myAlias: 'Alice',
+      opponentAlias: 'Bob',
+    });
+    await flushSessionSave();
+
+    _resetForTests();
+    const loaded = await peekSession();
+    expect(loaded?.channelStatus).toMatchObject({
+      state: 'ShutdownTransactionPending',
+      session_disposition: 'Abandoned',
+    });
+    expect(loaded?.humanHistory).toEqual(['terminal display retained']);
+    expect(loaded?.myAlias).toBe('Alice');
+    expect(loaded?.opponentAlias).toBe('Bob');
+    expect(loaded?.serializedGameSession).toBeUndefined();
+    expect(loaded?.gameSessionSchemaVersion).toBeUndefined();
+    expect(loaded?.pairingToken).toBeUndefined();
+    expect(loaded?.unackedMessages).toBeUndefined();
+    expect(loaded?.sessionPeerId).toBeUndefined();
+    expect(loaded?.gameSessionId).toBeUndefined();
+    expect(loaded?.messageNumber).toBeUndefined();
+    expect(loaded?.remoteNumber).toBeUndefined();
+    expect(loaded?.iStarted).toBeUndefined();
+    expect(loaded?.myContribution).toBeUndefined();
+    expect(loaded?.theirContribution).toBeUndefined();
+    expect(loaded?.perGameAmount).toBeUndefined();
+    expect(loaded?.channelTimeout).toBeUndefined();
+    expect(loaded?.unrollTimeout).toBeUndefined();
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
   });
 
   it('clears the marker for a present but empty IndexedDB record', async () => {

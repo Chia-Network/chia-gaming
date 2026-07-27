@@ -5,6 +5,7 @@ import {
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
+  shouldReportSessionPhase,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -24,6 +25,16 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('none', false)).toBe(true);
     expect(shouldAdvertiseAvailable('resolved', false)).toBe(true);
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
+  });
+
+  it('defers a persisted resolved phase until restoration is authoritative', () => {
+    // The first resolved projection comes from the save and must not tear down
+    // the live controller before both restore and hub reconciliation complete.
+    expect(shouldReportSessionPhase('resolved', true, false)).toBe(false);
+
+    // Once the restore gate opens, report the current authoritative phase once.
+    expect(shouldReportSessionPhase('resolved', false, false)).toBe(true);
+    expect(shouldReportSessionPhase('resolved', false, true)).toBe(false);
   });
 
   it('keeps hub presence busy until the session is resolved', () => {
