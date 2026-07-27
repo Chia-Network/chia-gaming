@@ -8,6 +8,7 @@ import {
   SpHandler,
   terminalAutoSubmissionAllowed,
   terminalRecoveryAfterOpponentMove,
+  retainsVoluntaryTerminalPresentation,
   voluntarySpacepokerSettlementAction,
 } from './useSpacepokerHand';
 import {
@@ -144,6 +145,28 @@ describe('Space Poker terminal UX', () => {
     )).toBe(false);
     // A late action error cannot roll back after the acknowledgement cleared pending.
     expect(pendingTerminalActionMatchesFailure(null, 'make-move')).toBe(false);
+  });
+
+  it('retains restored fold and concede UI only for voluntary settlement acknowledgement', () => {
+    for (const terminalState of [
+      'folded-by-you',
+      'folded-by-opponent',
+      'conceded-by-you',
+      'conceded-by-opponent',
+    ] as const) {
+      expect(retainsVoluntaryTerminalPresentation(
+        terminalState, 'accept_settlement',
+      )).toBe(true);
+      expect(retainsVoluntaryTerminalPresentation(
+        terminalState, 'we_accepted',
+      )).toBe(true);
+      expect(retainsVoluntaryTerminalPresentation(
+        terminalState, 'opponent_timed_out',
+      )).toBe(false);
+      expect(retainsVoluntaryTerminalPresentation(
+        terminalState, 'slashed_opponent',
+      )).toBe(false);
+    }
   });
 
   it('keeps concede separate and clears its showdown data', () => {

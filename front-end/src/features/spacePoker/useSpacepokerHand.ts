@@ -116,6 +116,20 @@ export function retainsRevealedTerminalPresentation(
     && (pending?.action === 'reveal' || terminalState === 'revealed');
 }
 
+export function retainsVoluntaryTerminalPresentation(
+  terminalState: SpTerminalState,
+  outcome: SettlementOutcome,
+): boolean {
+  const voluntaryAcknowledgement =
+    outcome === 'accept_settlement' || outcome === 'we_accepted';
+  return voluntaryAcknowledgement && (
+    terminalState === 'folded-by-you'
+    || terminalState === 'folded-by-opponent'
+    || terminalState === 'conceded-by-you'
+    || terminalState === 'conceded-by-opponent'
+  );
+}
+
 export function clearsShowdownForTerminalAction(
   action: 'fold' | 'concede' | 'reveal',
 ): boolean {
@@ -506,10 +520,7 @@ export function useSpacepokerHand(
 
     if (
       retainsRevealedTerminalPresentation(null, terminalStateRef.current, outcome)
-      || terminalStateRef.current === 'folded-by-you'
-      || terminalStateRef.current === 'folded-by-opponent'
-      || terminalStateRef.current === 'conceded-by-you'
-      || terminalStateRef.current === 'conceded-by-opponent'
+      || retainsVoluntaryTerminalPresentation(terminalStateRef.current, outcome)
     ) {
       handFinishedRef.current = true;
       setTerminalRecovery(null);
