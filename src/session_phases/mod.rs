@@ -1277,20 +1277,13 @@ impl OffChainPhase {
             self.incoming_messages.push_back(Rc::new(msg_envelope));
             self.process_queued_message(env)
         };
-        let mut effects = Vec::new();
         match incoming_result {
-            Ok(incoming_effects) => {
-                effects.extend(incoming_effects);
-            }
-            Err(e) => {
-                effects.push(Effect::Log(format!(
-                    "[going-on-chain] error processing peer message: {e:?}"
-                )));
-                effects.extend(self.go_on_chain(env, true)?);
-                return Ok(effects);
-            }
+            Ok(effects) => Ok(effects),
+            Err(error) => Ok(vec![
+                Effect::Log(format!("[going-on-chain] error processing peer message: {error:?}")),
+                Effect::GoOnChainAfterPeerError,
+            ]),
         }
-        Ok(effects)
     }
 
     pub fn process_queued_message(
@@ -1374,6 +1367,14 @@ impl OffChainPhase {
                     .pending_clean_shutdown
                     .take()
                     .map(|(_, solution)| solution);
+                if self
+                    .channel_state
+                    .as_ref()
+                    .is_some_and(|channel| channel.has_zero_payout())
+                    && expected_clean_shutdown_solution.is_none()
+                {
+                    return Ok((true, vec![log_effect, Effect::CompleteZeroPayoutShutdown]));
+                }
                 let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_at_channel_conditions(
                     self.channel_state.take(),
                     channel_coin,

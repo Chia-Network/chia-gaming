@@ -369,9 +369,12 @@ pub enum Effect {
     /// A durable host-owned clean-shutdown handoff. This is intercepted by
     /// `GameSession`; it must never flow through ordinary packet delivery.
     QueueTerminalHandoff(CoinSpend),
-    /// The peer has already received every close artifact it needs, so this
-    /// zero-payout local session can terminate without submitting a spend.
+    /// This zero-payout local session has no remaining claim to pursue, so it
+    /// can terminate without submitting a channel or unroll spend.
     CompleteZeroPayoutShutdown,
+    /// Escalate a peer protocol failure through `GameSession`, which owns the
+    /// zero-payout abandonment policy.
+    GoOnChainAfterPeerError,
     PeerRequestPotato,
     PeerGameMessage(GameID, Vec<u8>),
 
@@ -458,6 +461,11 @@ pub fn apply_effects(
                 ));
             }
             Effect::CompleteZeroPayoutShutdown => {}
+            Effect::GoOnChainAfterPeerError => {
+                return Err(crate::common::types::Error::StrErr(
+                    "peer-error escalation must be intercepted by GameSession".to_string(),
+                ));
+            }
             Effect::PeerRequestPotato => {
                 system.send_message(&PeerMessage::RequestPotato(()))?;
             }

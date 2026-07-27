@@ -1118,6 +1118,9 @@ impl GameSession {
         let complete_zero_payout_shutdown = effects
             .iter()
             .any(|effect| matches!(effect, Effect::CompleteZeroPayoutShutdown));
+        let go_on_chain_after_peer_error = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::GoOnChainAfterPeerError));
         let mut passthrough = Vec::new();
         for effect in effects {
             if let Effect::QueueTerminalHandoff(coin_spend) = effect {
@@ -1142,6 +1145,9 @@ impl GameSession {
                 self.state
                     .events
                     .push_back(GameSessionEvent::NeedCoinSpend(req));
+            } else if matches!(effect, Effect::GoOnChainAfterPeerError) {
+                // `go_on_chain` below owns this transition so the exhausted
+                // side can abandon instead of constructing an unroll spend.
             } else {
                 passthrough.push(effect);
             }
@@ -1150,6 +1156,10 @@ impl GameSession {
         self.detect_phase_transition();
         if complete_zero_payout_shutdown {
             self.mark_abandoned();
+            return Ok(());
+        }
+        if go_on_chain_after_peer_error {
+            self.go_on_chain(allocator, true)?;
             return Ok(());
         }
 
