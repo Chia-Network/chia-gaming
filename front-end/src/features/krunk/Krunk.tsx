@@ -76,10 +76,6 @@ export function newlyResolvedKrunkIndex(resolvedCount: number, previousResolvedC
   return resolvedCount > previousResolvedCount ? resolvedCount - 1 : undefined;
 }
 
-export function krunkActionSlotPresentation(handComplete: boolean): { showControls: boolean } {
-  return { showControls: !handComplete };
-}
-
 const MAX_GUESSES = 5;
 const WORD_LEN = 5;
 const TILE = 'w-12 h-12 text-xl';
@@ -650,11 +646,13 @@ const Krunk: React.FC<KrunkProps> = ({
     bobHand.gameState.handler === KrunkHandler.Terminal
     && bobHand.gameState.outcome === 'win'
     && bobHand.gameState.settlementOutcome === null;
+  const handComplete =
+    bobHand.gameState.handler === KrunkHandler.Terminal
+    && aliceHand.gameState.handler === KrunkHandler.Terminal;
 
-  const statusNotice = useMemo((): { text: string; kind: 'error' | 'win' | 'info' } | null => {
-    if (aliceHand.gameState.error) {
-      return { text: aliceHand.gameState.error, kind: 'error' };
-    }
+  type KrunkNotice = { text: string; kind: 'error' | 'win' | 'info' };
+
+  const bobBoardNotice = useMemo((): KrunkNotice | null => {
     if (bobHand.gameState.error) {
       return { text: bobHand.gameState.error, kind: 'error' };
     }
@@ -663,8 +661,20 @@ const Krunk: React.FC<KrunkProps> = ({
     }
     const bobTerminal = krunkTerminalStatus(bobHand.gameState, themLabel);
     if (bobTerminal !== null) return { text: bobTerminal, kind: 'info' };
+    return null;
+  }, [bobHand.gameState, bobWon, themLabel]);
+
+  const aliceBoardNotice = useMemo((): KrunkNotice | null => {
+    if (aliceHand.gameState.error) {
+      return { text: aliceHand.gameState.error, kind: 'error' };
+    }
     const aliceTerminal = krunkTerminalStatus(aliceHand.gameState, themLabel);
     if (aliceTerminal !== null) return { text: aliceTerminal, kind: 'info' };
+    return null;
+  }, [aliceHand.gameState, themLabel]);
+
+  const sharedStatusNotice = useMemo((): KrunkNotice => {
+    if (handComplete) return { text: '', kind: 'info' };
     if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
     if (displayQueue.length > 0) {
       return {
@@ -685,9 +695,8 @@ const Krunk: React.FC<KrunkProps> = ({
     }
     return { text: `Waiting for ${themLabel}…`, kind: 'info' };
   }, [
-    aliceHand.gameState,
     bobHand.gameState,
-    bobWon,
+    handComplete,
     wordCommitted,
     displayQueue.length,
     themLabel,
@@ -748,11 +757,6 @@ const Krunk: React.FC<KrunkProps> = ({
     : keyboardMode === 'guess'
       && guessDraft.length === 5
       && (isBobGuessPhase || canQueueGuess);
-  const handComplete =
-    bobHand.gameState.handler === KrunkHandler.Terminal
-    && aliceHand.gameState.handler === KrunkHandler.Terminal;
-  const actionSlot = krunkActionSlotPresentation(handComplete);
-
   return (
     <div className='flex flex-col gap-4 items-center py-4'>
       <div className='flex gap-6 items-start justify-center'>
@@ -769,11 +773,20 @@ const Krunk: React.FC<KrunkProps> = ({
           />
           {bobMissed && bobRevealReady && bobRevealedWord ? (
             <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
-          ) : !bobSolved && !handComplete ? (
+          ) : (
             <div className='flex gap-1 mt-2'>
               {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
             </div>
-          ) : null}
+          )}
+          <p className={`min-h-5 max-w-60 text-center text-xs ${
+            bobBoardNotice?.kind === 'error'
+              ? 'text-red-600'
+              : bobBoardNotice?.kind === 'win'
+                ? 'font-semibold text-canvas-text-contrast'
+                : 'text-canvas-text-contrast'
+          }`}>
+            {bobBoardNotice?.text ?? ''}
+          </p>
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}
@@ -792,42 +805,33 @@ const Krunk: React.FC<KrunkProps> = ({
           ) : aliceHand.gameState.secretWord ? (
             <TargetRow word={aliceHand.gameState.secretWord} />
           ) : null}
+          <p className={`min-h-5 max-w-60 text-center text-xs ${
+            aliceBoardNotice?.kind === 'error'
+              ? 'text-red-600'
+              : 'text-canvas-text-contrast'
+          }`}>
+            {aliceBoardNotice?.text ?? ''}
+          </p>
         </div>
       </div>
 
-      <div className='flex min-h-[13rem] flex-col items-center justify-center'>
-        {actionSlot.showControls && (
-          <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
-            <OnScreenKeyboard
-              statuses={letterStatuses}
-              disabled={keyboardMode === null}
-              onLetter={typeLetter}
-              onBackspace={backspace}
-            />
-            <button
-              type='button'
-              className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
-              disabled={!actionEnabled}
-              onClick={submitActive}
-            >
-              {actionLabel}
-            </button>
-          </div>
-        )}
-      </div>
-      {statusNotice && (
-        <p
-          className={`text-center text-lg mt-1 ${
-            statusNotice.kind === 'error'
-              ? 'text-red-600'
-              : statusNotice.kind === 'win'
-                ? 'text-2xl font-bold text-canvas-text-contrast'
-                : 'text-canvas-text-contrast'
-          }`}
+      <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
+        <OnScreenKeyboard
+          statuses={letterStatuses}
+          disabled={keyboardMode === null || handComplete}
+          onLetter={typeLetter}
+          onBackspace={backspace}
+        />
+        <button
+          type='button'
+          className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+          disabled={!actionEnabled || handComplete}
+          onClick={submitActive}
         >
-          {statusNotice.text}
-        </p>
-      )}
+          {actionLabel}
+        </button>
+      </div>
+      <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>{sharedStatusNotice.text}</p>
     </div>
   );
 };

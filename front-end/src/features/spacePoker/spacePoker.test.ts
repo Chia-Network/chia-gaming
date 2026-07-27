@@ -2,7 +2,6 @@ import {
   isTerminalSpacepokerHandler,
   opponentTerminalAction,
   pendingTerminalActionMatchesFailure,
-  clearsShowdownForTerminalAction,
   retainsRevealedTerminalPresentation,
   rollbackOptimisticTerminalHistory,
   SpHandler,
@@ -185,14 +184,11 @@ describe('Space Poker terminal UX', () => {
     }
   });
 
-  it('keeps concede separate and clears its showdown data', () => {
+  it('keeps concede separate from a showdown reveal', () => {
     expect(voluntarySpacepokerSettlementAction(
       'accept_settlement',
       { handler: SpHandler.End, myTurn: true, N: 1n },
     )).toEqual({ player: 'you', action: 'concede' });
-    expect(clearsShowdownForTerminalAction('concede')).toBe(true);
-    expect(clearsShowdownForTerminalAction('fold')).toBe(false);
-    expect(clearsShowdownForTerminalAction('reveal')).toBe(false);
   });
 
   it('blocks automatic retry until a user retry or authoritative update', () => {

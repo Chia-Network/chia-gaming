@@ -130,12 +130,6 @@ export function retainsVoluntaryTerminalPresentation(
   );
 }
 
-export function clearsShowdownForTerminalAction(
-  action: 'fold' | 'concede' | 'reveal',
-): boolean {
-  return action === 'concede';
-}
-
 export function terminalAutoSubmissionAllowed(
   recovery: 'fold' | 'concede' | 'reveal' | null,
 ): boolean {
@@ -487,8 +481,6 @@ export function useSpacepokerHand(
 
   function clearShowdownData() {
     recordOutcome(null);
-    setOpponentHoleCards(null);
-    setOpponentBoost(null);
   }
 
   function replaceWithGenericTerminalClosure(
@@ -525,9 +517,6 @@ export function useSpacepokerHand(
       if (
         (outcome === 'accept_settlement' || outcome === 'we_accepted')
       ) {
-        if (clearsShowdownForTerminalAction(pending.action)) {
-          clearShowdownData();
-        }
         handFinishedRef.current = true;
         setTerminalRecovery(null);
         return;
@@ -557,9 +546,6 @@ export function useSpacepokerHand(
       } else {
         terminalActionByUsRef.current = voluntaryAction.action;
         setHandHistory(prev => [...prev, { player: 'you', action: voluntaryAction.action }]);
-      }
-      if (clearsShowdownForTerminalAction(voluntaryAction.action)) {
-        clearShowdownData();
       }
       setTerminalState(terminalStateFor(voluntaryAction.player, voluntaryAction.action));
       transition(terminalGameStateFor(voluntaryAction.action, cur));

@@ -1089,6 +1089,25 @@ describe('session model selectors', () => {
     expect(view.handDetail).toBe('Opponent timed out');
   });
 
+  it('keeps each timeout side’s ended detail distinct', () => {
+    const timedOut = selectGameDashboardView(createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: {
+        coin: { coinHex: null, turnState: 'ended' },
+        terminal: {
+          type: 'settled',
+          outcome: 'timed_out_waiting_for_our_move',
+          label: 'Timed out waiting for our move',
+          myReward: '0',
+          rewardCoinHex: null,
+        },
+      },
+    }));
+
+    expect(timedOut.handStatusLabel).toBe('Ended');
+    expect(timedOut.handDetail).toBe('Timed out waiting for our move');
+  });
+
   it('shows settled cleanly as an ended detail', () => {
     const view = selectGameDashboardView(createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },

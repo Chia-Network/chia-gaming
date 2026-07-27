@@ -4379,15 +4379,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert_reward_coin_consistency(p0_notifs, "our_turn_timeout p0");
         assert_reward_coin_consistency(p1_notifs, "our_turn_timeout p1");
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::TimedOutWaitingForOurMove,
+                    ..
+                }
+            )),
             "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
         );
         assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::OpponentTimedOut,
+                    ..
+                }
+            )),
             "player 0 should get OpponentTimedOut, got: {p0_notifs:?}"
         );
 
@@ -4408,9 +4416,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(
-                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
-                ),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusSubmittingTimeoutClaim),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "our_turn_timeout p0",
