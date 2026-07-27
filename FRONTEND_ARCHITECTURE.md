@@ -379,15 +379,15 @@ localStorage holds only small preferences, the resumable-session marker, and
 tab/reset coordination keys. This storage is not encrypted and remains inside
 the same-origin trust model described above.
 
-The current schema version is `9`; because the project is still alpha, older
-versions are wiped rather than migrated. The `version` field is kept as a future
-migration hook for when there is an installed base to preserve. All game-specific
-fields are optional — a save may contain only pre-game connection state or the
-full mid-game session state:
+The current schema version is `10`; because the project is still alpha,
+incompatible versions are discarded rather than migrated. The `version` field is
+kept as a future migration hook for when there is an installed base to preserve.
+All game-specific fields are optional — a save may contain only pre-game
+connection state or the full mid-game session state:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `bigint` | Save schema version; currently `9`. |
+| `version` | `bigint` | Save schema version; currently `10`. |
 | `playerId` | `string` | Stable local hub/player identity for this browser state. |
 | `sessionId` | `string?` | Stable token linking the hub iframe and game-channel WebSocket. |
 | `alias` | `string?` | Local hub display alias preference. |
@@ -451,6 +451,7 @@ full mid-game session state:
 | `betweenHandCachedPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. `groupIds` is always non-empty. |
 | `betweenHandReviewPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. `groupIds` is always non-empty. |
 | `outgoingProposalGroupIds` | `string[][]?` | Ordered member IDs for each locally originated factory group. Groups remain distinct; IDs from unrelated proposals are never merged on restore. |
+| `acceptedProposalGroupIds` | `string[][]?` | Ordered member IDs for factory groups retained through successful acceptance. Each group remains distinct so restore can preserve group ownership; it is cleared independently on `InsufficientBalance`, or when all hand membership has settled. |
 | `outgoingProposalTerms` | `Record<string, …>?` | Locally originated proposal terms keyed by proposal id. Peer proposal terms are persisted only in the cached/review peer-proposal fields. |
 | `waitingStateEnteredAt` | `bigint?` | Epoch ms when the channel entered an abandon-eligible waiting state. |
 | `cleanShutdownGraceStartedAt` | `bigint?` | Epoch ms when the clean-shutdown grace timer started. |
@@ -498,11 +499,14 @@ terms remain in the cached/review peer proposal snapshots and are never written
 as outgoing terms. During an acceptance wave, group membership remains available
 until the wave reaches its terminal result, so an `InsufficientBalance` for one
 member clears the entire group from both active and current-hand state.
-Accepted-but-not-yet-terminal groups use a separate persisted ordered array, so
-this cleanup remains atomic across a reload after `ProposalAccepted` has cleared
-outgoing proposal tracking. This changed the save meaning in schema version 10;
-version 9 records are deleted rather than migrated because they conflated
-incoming and outgoing proposal terms and cannot safely recover group ownership.
+Accepted groups use `acceptedProposalGroupIds`, a separate persisted ordered
+array, so their membership survives every successful `ProposalAccepted` in the
+acceptance wave after outgoing proposal tracking has been cleared. An
+`InsufficientBalance` clears only its affected group; when every member of the
+hand has settled, the accepted-group membership is cleared. This changed the
+save meaning in schema version 10; under the alpha no-migration policy, version
+9 records are deleted rather than migrated because they conflated incoming and
+outgoing proposal terms and cannot safely recover group ownership.
 
 #### Delivery-critical saves
 
