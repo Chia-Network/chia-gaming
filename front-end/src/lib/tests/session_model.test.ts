@@ -13,7 +13,7 @@ import {
   selectStatusBarBalances,
   selectGameSessionView,
   selectGameSpecificView,
-  selectHideGameInterfaceForBetweenHandDialog,
+  selectInertGameInterfaceForBetweenHandDialog,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
   selectSessionPhase,
@@ -1514,13 +1514,13 @@ describe('session model selectors', () => {
     expect(selectShouldAdvertiseAvailable(failed, 'resolved')).toBe(true);
   });
 
-  it('hides completed hand UI only while a between-hand dialog has content', () => {
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'decision', false, false)).toBe(false);
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, true)).toBe(true);
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', true, true)).toBe(true);
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', false, true)).toBe(false);
-    expect(selectHideGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, false)).toBe(false);
-    expect(selectHideGameInterfaceForBetweenHandDialog(false, 'compose-proposal', false, true)).toBe(false);
+  it('makes the completed hand inert only while a between-hand dialog has content', () => {
+    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'decision', false, false)).toBe(false);
+    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, true)).toBe(true);
+    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', true, true)).toBe(true);
+    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', false, true)).toBe(false);
+    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, false)).toBe(false);
+    expect(selectInertGameInterfaceForBetweenHandDialog(false, 'compose-proposal', false, true)).toBe(false);
   });
 
   it('parses saved session amounts through a shared bigint adapter', () => {

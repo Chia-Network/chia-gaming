@@ -1187,8 +1187,10 @@ individual hands). The `useGameSession` hook owns:
   "play again". Each call supplies one `{ game_type, parameters, timeout }`
   group request. WASM runs that game's deterministic factory and returns all
   generated IDs (one for Calpoker/Space Poker, two for Krunk).
-- **Between-game UX** — an overlay showing the final result of each hand, with
-  "Play Another Hand" and "End Session" buttons.
+- **Between-game UX** — compose/review overlays retain the completed hand beneath
+  the modal rather than unmounting it. The hand subtree is `inert` while the
+  modal owns interaction and focus, preserving terminal presentation and local
+  game-view state without changing session lifecycle or proposal flow.
 - **History** and **Log** — append-only text areas managed by the Shell,
   with callbacks passed down.
 

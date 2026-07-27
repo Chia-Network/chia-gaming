@@ -28,7 +28,7 @@ import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
   PRE_ACTIVE_CHANNEL_STATES,
   selectComposeAmountAfterGameTypeChoice,
-  selectHideGameInterfaceForBetweenHandDialog,
+  selectInertGameInterfaceForBetweenHandDialog,
   type ChannelStatusModel,
   type SessionModel,
 } from '../lib/session/model';
@@ -924,7 +924,7 @@ function BetweenHandOverlay({
       role='dialog'
       aria-modal='true'
       aria-labelledby='between-hand-dialog-title'
-      className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg p-4 focus:outline-none'
+      className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg/90 p-4 focus:outline-none'
     >
       <h2 id='between-hand-dialog-title' className='sr-only'>Between-hand proposal</h2>
       {children}
@@ -1097,14 +1097,14 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       session.betweenHandMode === 'compose-proposal'
       || (session.betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
     );
-  const hideGameInterfaceForBetweenHandDialog = selectHideGameInterfaceForBetweenHandDialog(
+  const gameInterfaceIsInertForBetweenHandDialog = selectInertGameInterfaceForBetweenHandDialog(
     session.betweenHands,
     session.betweenHandMode,
     hasReviewPeerProposal,
     showBetweenHandOverlay,
   );
   const gameSpecificView = session.gameSpecificView;
-  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
+  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState);
 
   if (suppressPhaseReporting) {
     return (
@@ -1129,7 +1129,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
-          <div ref={gameAreaRef} tabIndex={-1} className='relative overflow-hidden z-0 focus:outline-none'>
+          <div
+            ref={gameAreaRef}
+            tabIndex={-1}
+            inert={gameInterfaceIsInertForBetweenHandDialog}
+            className='relative overflow-hidden z-0 focus:outline-none'
+          >
           {showGameInterface && (
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
@@ -1201,7 +1206,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
             </div>
           )}
 
-        </div>
+          </div>
 
         {/* Between-hand session controls — only when the channel is Active */}
         {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (

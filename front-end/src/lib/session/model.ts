@@ -588,7 +588,12 @@ export function selectBetweenHands(model: SessionModel): boolean {
   return model.game.handKey > 0 && model.game.activeIds.length === 0;
 }
 
-export function selectHideGameInterfaceForBetweenHandDialog(
+/**
+ * A compose/review dialog leaves the completed hand mounted beneath it so the
+ * terminal presentation remains visible and preserves its local state. The
+ * background must be inert while the modal owns interaction and focus.
+ */
+export function selectInertGameInterfaceForBetweenHandDialog(
   betweenHands: boolean,
   betweenHandMode: BetweenHandModeModel,
   hasReviewPeerProposal: boolean,
