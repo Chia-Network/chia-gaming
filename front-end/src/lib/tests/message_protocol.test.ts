@@ -888,6 +888,29 @@ describe('abandon calls Rust through cradle', () => {
 });
 
 describe('go-on-chain terminal remap', () => {
+  it('keeps the channel ready for on-chain moves after leaving Active', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    activeBlob = blob;
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
+
+    blob.processResult({
+      events: [{ Notification: { ChannelStatus: { state: 'Active' } } }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.isChannelReady()).toBe(true);
+    expect(blob.isOffChainActive()).toBe(true);
+
+    blob.processResult({
+      events: [{ Notification: { ChannelStatus: { state: 'Unrolling' } } }],
+    });
+    blob.flushDeferredWork();
+    expect(blob.isChannelReady()).toBe(true);
+    expect(blob.isOffChainActive()).toBe(false);
+  });
+
   it('reports a successful go-on-chain transition before its notification drains', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];

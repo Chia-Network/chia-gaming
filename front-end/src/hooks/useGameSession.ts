@@ -1026,7 +1026,7 @@ export function useGameSession(
 
   const proposeNewGame = useCallback((terms: HandTerms) => {
     const go = scRef.current;
-    if (!go || !go.isChannelReady()) return;
+    if (!go || !go.isOffChainActive()) return;
     if (
       terms.gameType === 'krunk'
       && (
