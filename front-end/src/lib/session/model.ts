@@ -24,6 +24,7 @@ export type GameTurnState =
   | 'playing-on-chain'
   | 'replaying'
   | 'opponent-illegal-move'
+  | 'submitting-timeout'
   | 'finishing'
   | 'ended';
 
@@ -35,6 +36,7 @@ export type HandStatus =
   | 'playing-move'
   | 'replaying-move'
   | 'slashing'
+  | 'submitting-timeout'
   | 'finishing'
   | 'ended';
 
@@ -426,6 +428,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'playing-move': 'Playing move',
   'replaying-move': 'Replaying move',
   slashing: 'Slashing cheater',
+  'submitting-timeout': 'Submitting timeout claim',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -727,6 +730,8 @@ function selectHandStatus(model: SessionModel): HandStatus {
       // the slash; surface that explicitly rather than a generic "our turn".
       case 'opponent-illegal-move':
         return 'slashing';
+      case 'submitting-timeout':
+        return 'submitting-timeout';
       case 'their-turn':
         return 'their-turn';
       case 'playing-on-chain':

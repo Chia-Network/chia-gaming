@@ -1004,13 +1004,29 @@ impl GameSession {
     ) -> Result<(), Error> {
         use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
 
-        let changed = self
-            .peer
-            .as_any_mut()
-            .downcast_mut::<SpendChannelCoinPhase>()
-            .is_some_and(|phase| phase.timeout_claim_submitted(semantic));
-        if changed {
-            self.emit_channel_status_if_changed();
+        match semantic {
+            TimeoutClaimSemantic::ChannelTimeoutFinish => {
+                let changed = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<SpendChannelCoinPhase>()
+                    .is_some_and(|phase| phase.timeout_claim_submitted(semantic));
+                if changed {
+                    self.emit_channel_status_if_changed();
+                }
+            }
+            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+                let notification = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
+                    .and_then(|phase| phase.timeout_claim_status(id, true));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
+            }
         }
         Ok(())
     }
@@ -1021,13 +1037,29 @@ impl GameSession {
     ) -> Result<(), Error> {
         use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
 
-        let changed = self
-            .peer
-            .as_any_mut()
-            .downcast_mut::<SpendChannelCoinPhase>()
-            .is_some_and(|phase| phase.timeout_claim_rearmed(semantic));
-        if changed {
-            self.emit_channel_status_if_changed();
+        match semantic {
+            TimeoutClaimSemantic::ChannelTimeoutFinish => {
+                let changed = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<SpendChannelCoinPhase>()
+                    .is_some_and(|phase| phase.timeout_claim_rearmed(semantic));
+                if changed {
+                    self.emit_channel_status_if_changed();
+                }
+            }
+            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+                let notification = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
+                    .and_then(|phase| phase.timeout_claim_status(id, false));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
+            }
         }
         Ok(())
     }

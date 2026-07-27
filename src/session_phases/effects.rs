@@ -94,12 +94,10 @@ pub enum ChannelSemanticPhase {
 }
 
 /// Context for a timeout spend that the transaction manager has submitted.
-///
-/// This is intentionally limited to the channel timeout finish: game timeout
-/// progress continues to be represented by the existing game-status protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TimeoutClaimSemantic {
     ChannelTimeoutFinish,
+    GameOpponentTurn { id: GameID },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -163,6 +161,8 @@ pub struct GameStatusOtherParams {
     pub game_finished: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forfeited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submitting_timeout_claim: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -590,6 +590,7 @@ impl OffChainPhase {
                         moved_by_us: None,
                         game_finished: None,
                         forfeited: None,
+                        submitting_timeout_claim: None,
                     }),
                 }));
             }
@@ -778,6 +779,7 @@ impl OffChainPhase {
                             moved_by_us: None,
                             game_finished: if finished { Some(true) } else { None },
                             forfeited: None,
+                            submitting_timeout_claim: None,
                         }),
                     }));
                     if !move_result.message.is_empty() {

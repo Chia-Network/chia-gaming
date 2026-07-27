@@ -949,7 +949,7 @@ mod tests {
     use crate::common::types::{
         Amount, CoinID, CoinSpend, Hash, Program, Puzzle, PuzzleHash, Spend, ToQuotedProgram,
     };
-    use crate::session_phases::effects::GameSessionEvent;
+    use crate::session_phases::effects::{GameSessionEvent, TimeoutClaimSemantic};
     use clvm_traits::ToClvm;
 
     fn test_coin(tag: u8) -> CoinString {
@@ -1139,6 +1139,21 @@ mod tests {
             timeout: Timeout::new(timeout),
             spend: Some(spend),
             semantic: None,
+        }
+    }
+
+    fn watch_event_with_timeout_semantic(
+        coin: &CoinString,
+        timeout: u64,
+        spend: SpendBundle,
+        semantic: TimeoutClaimSemantic,
+    ) -> GameSessionEvent {
+        GameSessionEvent::WatchCoin {
+            coin_name: coin.to_coin_id(),
+            coin_string: coin.clone(),
+            timeout: Timeout::new(timeout),
+            spend: Some(spend),
+            semantic: Some(semantic),
         }
     }
 
@@ -1675,6 +1690,36 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 15, &record)
             .expect("re-mature");
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mature_game_timeout_claim_records_game_submission_semantic() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(12);
+        let game_id = crate::common::types::GameID(42);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![watch_event_with_timeout_semantic(
+            &coin,
+            5,
+            test_bundle("timeout-claim"),
+            TimeoutClaimSemantic::GameOpponentTurn { id: game_id },
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        let live = vec![CoinStateRecord {
+            coin,
+            created_height: Some(10),
+            spent_height: None,
+        }];
+        mgr.report_coin_states(&mut allocator, 15, &live)
+            .expect("mature claim");
+
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+        assert_eq!(
+            mgr.cradle().submitted_timeout_claims,
+            vec![TimeoutClaimSemantic::GameOpponentTurn { id: game_id }]
+        );
     }
 
     #[test]

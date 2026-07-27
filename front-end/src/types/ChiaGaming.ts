@@ -137,6 +137,7 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
+  submitting_timeout_claim?: boolean;
 }
 
 export interface GameStatusPayload {
