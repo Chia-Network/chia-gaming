@@ -73,10 +73,30 @@ interface GameConnMeta {
   busy?: boolean;
 }
 
+interface RateLimit {
+  maxMessages: number;
+  maxBytes: number;
+}
+
+interface RateBudget {
+  windowStartedAt: number;
+  messages: number;
+  bytes: number;
+}
+
 const HUB_DISCONNECT_GRACE_MS = 3000;
 const CONNECTION_TTL_MS = 60_000;
 const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
 const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
+const RATE_WINDOW_MS = readPositiveIntegerEnv('HUB_RATE_WINDOW_MS', 10_000);
+const HUB_RATE_LIMIT: RateLimit = {
+  maxMessages: readPositiveIntegerEnv('HUB_MAX_MESSAGES_PER_WINDOW', 100),
+  maxBytes: readPositiveIntegerEnv('HUB_MAX_BYTES_PER_WINDOW', 1_000_000),
+};
+const GAME_RATE_LIMIT: RateLimit = {
+  maxMessages: readPositiveIntegerEnv('GAME_MAX_MESSAGES_PER_WINDOW', 1000),
+  maxBytes: readPositiveIntegerEnv('GAME_MAX_BYTES_PER_WINDOW', 10_000_000),
+};
 const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
 const hubWsServer = new WebSocketServer({ noServer: true });
 const gameWsServer = new WebSocketServer({ noServer: true });
@@ -186,6 +206,7 @@ const knownAliases = new Map<string, string>();
 const wsLastActivity = new WeakMap<WebSocket, number>();
 const wsIds = new WeakMap<WebSocket, number>();
 const wsKeepaliveTimers = new WeakMap<WebSocket, ReturnType<typeof setInterval>>();
+const rateBudgets = new WeakMap<WebSocket, RateBudget>();
 let nextWsId = 1;
 
 function wsId(ws: WebSocket): number {
@@ -204,6 +225,37 @@ function logHub(event: string, fields?: Record<string, unknown>): void {
 function logHubVerbose(event: string, fields?: Record<string, unknown>): void {
   if (!verbose) return;
   logHub(event, fields);
+}
+
+function rawDataByteLength(message: RawData): number {
+  if (Array.isArray(message)) {
+    return message.reduce((total, part) => total + part.byteLength, 0);
+  }
+  return message.byteLength;
+}
+
+function isOverRateLimit(ws: WebSocket, bytes: number, limit: RateLimit): boolean {
+  const now = Date.now();
+  let budget = rateBudgets.get(ws);
+  if (!budget || now - budget.windowStartedAt >= RATE_WINDOW_MS) {
+    budget = { windowStartedAt: now, messages: 0, bytes: 0 };
+    rateBudgets.set(ws, budget);
+  }
+  budget.messages += 1;
+  budget.bytes += bytes;
+  return budget.messages > limit.maxMessages || budget.bytes > limit.maxBytes;
+}
+
+function closeIfRateLimited(
+  ws: WebSocket,
+  bytes: number,
+  limit: RateLimit,
+  channel: 'hub' | 'game',
+): boolean {
+  if (!isOverRateLimit(ws, bytes, limit)) return false;
+  logHub('ws_rate_limited', { ws_id: wsId(ws), channel, bytes });
+  ws.close(4008, 'rate_limited');
+  return true;
 }
 
 function randomPublicId(): string {
@@ -1075,6 +1127,7 @@ hubWsServer.on('connection', (ws) => {
 
   ws.on('message', (message) => {
     wsLastActivity.set(ws, Date.now());
+    if (closeIfRateLimited(ws, rawDataByteLength(message), HUB_RATE_LIMIT, 'hub')) return;
     const text = typeof message === 'string' ? message : message.toString();
     const parsed = parseHubInbound(text);
     if (!parsed) {
@@ -1158,6 +1211,7 @@ gameWsServer.on('connection', (ws) => {
 
   ws.on('message', (message, isBinary) => {
     wsLastActivity.set(ws, Date.now());
+    if (closeIfRateLimited(ws, rawDataByteLength(message), GAME_RATE_LIMIT, 'game')) return;
     const buf = rawDataToBuffer(message);
 
     if (isBinary && buf[0] !== 0x64) {

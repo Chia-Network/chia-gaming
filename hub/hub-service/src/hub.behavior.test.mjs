@@ -37,6 +37,11 @@ async function startHub(env = {}) {
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
         HUB_TRUST_PROXY: '0',
+        HUB_RATE_WINDOW_MS: '10000',
+        HUB_MAX_MESSAGES_PER_WINDOW: '100',
+        HUB_MAX_BYTES_PER_WINDOW: '1000000',
+        GAME_MAX_MESSAGES_PER_WINDOW: '1000',
+        GAME_MAX_BYTES_PER_WINDOW: '10000000',
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -151,6 +156,14 @@ async function closeWs(ws) {
     ws.once('close', () => {
       clearTimeout(timer);
       resolve(undefined);
+    });
+  });
+}
+
+async function nextClose(ws) {
+  return new Promise((resolve) => {
+    ws.once('close', (code, reason) => {
+      resolve({ code, reason: reason.toString() });
     });
   });
 }
@@ -550,6 +563,40 @@ test('per-IP connection cap ignores forwarded addresses from untrusted clients',
     );
 
     await closeWs(first);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('hub message flood closes the connection with a distinct rate-limit code', async () => {
+  const hub = await startHub({ HUB_MAX_MESSAGES_PER_WINDOW: '2' });
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const closed = nextClose(ws);
+
+    sendJson(ws, { type: 'keepalive' });
+    sendJson(ws, { type: 'keepalive' });
+    sendJson(ws, { type: 'keepalive' });
+
+    assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('game binary relay flood is limited by its cumulative byte budget', async () => {
+  const hub = await startHub({ GAME_MAX_BYTES_PER_WINDOW: '100' });
+  try {
+    const ws = await openWs(hub.origin, '/ws/game');
+    const closed = nextClose(ws);
+    const frame = Buffer.alloc(80);
+    frame.writeUInt32BE(1, 0);
+    frame.write('x', 4);
+
+    ws.send(frame);
+    ws.send(frame);
+
+    assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
   } finally {
     await hub.stop();
   }
