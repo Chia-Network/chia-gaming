@@ -186,9 +186,13 @@ export class AsyncPollingScheduler {
           if (this.target.getNextIntervalMs) {
             this.timer.intervalMs = this.target.getNextIntervalMs();
           }
-          scheduleGapTimer(this.timer, () => {
-            if (generation === this.generation) this.enqueueIfIdle();
-          }, this.interested);
+          scheduleGapTimer(
+            this.timer,
+            () => {
+              if (generation === this.generation) this.enqueueIfIdle();
+            },
+            this.interested,
+          );
         }
       },
     });

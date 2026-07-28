@@ -1,7 +1,4 @@
-import {
-  cardIdToRankSuit,
-  handValueToDescription,
-} from './types';
+import { cardIdToRankSuit, handValueToDescription } from './types';
 import {
   shouldAutoFireCalpokerMove,
   shouldProcessCalpokerOpponentMoved,
@@ -43,19 +40,11 @@ describe('Calpoker bigint domain helpers', () => {
   });
 
   it('preserves a terminal snapshot at move 1', () => {
-    expect(shouldRestoreCalpokerSelection(
-      '1',
-      false,
-      true,
-    )).toBe(false);
+    expect(shouldRestoreCalpokerSelection('1', false, true)).toBe(false);
   });
 
   it('restores an active move-1 hand to card selection', () => {
-    expect(shouldRestoreCalpokerSelection(
-      '1',
-      false,
-      false,
-    )).toBe(true);
+    expect(shouldRestoreCalpokerSelection('1', false, false)).toBe(true);
   });
 
   it('does not describe an off-chain settlement as a timeout', () => {

@@ -8,23 +8,23 @@ import { memo } from 'react';
 // Spinner component with smooth appearance animation
 const Spinner = () => (
   <svg
-    className='h-4 w-4 animate-spin'
-    xmlns='http://www.w3.org/2000/svg'
-    fill='none'
-    viewBox='0 0 24 24'
+    className="h-4 w-4 animate-spin"
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
   >
     <circle
-      className='opacity-25'
-      cx='12'
-      cy='12'
-      r='10'
-      stroke='currentColor'
-      strokeWidth='4'
+      className="opacity-25"
+      cx="12"
+      cy="12"
+      r="10"
+      stroke="currentColor"
+      strokeWidth="4"
     ></circle>
     <path
-      className='opacity-75'
-      fill='currentColor'
-      d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'
+      className="opacity-75"
+      fill="currentColor"
+      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
     ></path>
   </svg>
 );
@@ -47,8 +47,7 @@ const buttonVariants = cva(
         surface: '',
         outline: '',
         ghost: '',
-        destructive:
-          'bg-alert-solid text-alert-on-alert hover:bg-alert-solid-hover',
+        destructive: 'bg-alert-solid text-alert-on-alert hover:bg-alert-solid-hover',
       },
       size: {
         sm: 'px-5 h-8 text-sm',
@@ -128,8 +127,7 @@ const buttonVariants = cva(
       {
         color: 'neutral',
         variant: 'outline',
-        class:
-          'border border-canvas-border text-canvas-text hover:border-canvas-border-hover',
+        class: 'border border-canvas-border text-canvas-text hover:border-canvas-border-hover',
       },
       {
         color: 'neutral',
@@ -184,14 +182,12 @@ const buttonVariants = cva(
       {
         color: 'link',
         variant: 'solid',
-        class:
-          'text-primary-solid hover:text-primary-solid-hover bg-transparent',
+        class: 'text-primary-solid hover:text-primary-solid-hover bg-transparent',
       },
       {
         color: 'link',
         variant: 'ghost',
-        class:
-          'text-primary-solid hover:text-primary-solid-hover bg-transparent',
+        class: 'text-primary-solid hover:text-primary-solid-hover bg-transparent',
       },
 
       // Icon buttons
@@ -277,7 +273,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <Comp
         ref={ref}
-        type='button'
+        type="button"
         className={buttonVariants({
           color,
           variant,
@@ -296,7 +292,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {/* Loading State with Text */}
         {isLoading && !iconOnly && (
           <>
-            <span className='mr-2'>
+            <span className="mr-2">
               <Spinner />
             </span>
             {loadingText || children}
@@ -309,9 +305,9 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {/* Normal Button with Text */}
         {!isLoading && !iconOnly && (
           <>
-            {leadingIcon && <span className='mr-2'>{leadingIcon}</span>}
+            {leadingIcon && <span className="mr-2">{leadingIcon}</span>}
             {children}
-            {trailingIcon && <span className='ml-2'>{trailingIcon}</span>}
+            {trailingIcon && <span className="ml-2">{trailingIcon}</span>}
           </>
         )}
       </Comp>

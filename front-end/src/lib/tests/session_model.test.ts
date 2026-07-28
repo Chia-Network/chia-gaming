@@ -128,12 +128,14 @@ describe('session model selectors', () => {
 
     expect(restored.betweenHand.acceptedProposalGroupIds).toEqual([['11', '13']]);
     expect(restoredGroups['13']).toEqual(['11', '13']);
-    expect(removeProposalGroupFromHand(
-      restoredGroups['13'],
-      restored.game.activeIds,
-      restored.game.currentHandIds,
-      restored.game.instances,
-    )).toEqual({ activeIds: [], currentHandIds: [], instances: {} });
+    expect(
+      removeProposalGroupFromHand(
+        restoredGroups['13'],
+        restored.game.activeIds,
+        restored.game.currentHandIds,
+        restored.game.instances,
+      ),
+    ).toEqual({ activeIds: [], currentHandIds: [], instances: {} });
   });
 
   it('persists separate outgoing groups without inbound terms or group merging', () => {
@@ -188,7 +190,10 @@ describe('session model selectors', () => {
       version: 9n,
       playerId: 'p1',
       activeGameIds: [],
-      outgoingProposalGroupIds: [['11', '13'], ['17', '19']],
+      outgoingProposalGroupIds: [
+        ['11', '13'],
+        ['17', '19'],
+      ],
       outgoingProposalTerms: {
         '11': {
           my_contribution: '10',
@@ -226,7 +231,10 @@ describe('session model selectors', () => {
     expect(restored.betweenHand.outgoingProposalIds).toEqual(['11', '13', '17', '19']);
     expect(restored.betweenHand.outgoingProposalTerms['23']).toBeUndefined();
     expect(snapshotFromSessionModel(restored)).toMatchObject({
-      outgoingProposalGroupIds: [['11', '13'], ['17', '19']],
+      outgoingProposalGroupIds: [
+        ['11', '13'],
+        ['17', '19'],
+      ],
     });
   });
 
@@ -359,26 +367,36 @@ describe('session model selectors', () => {
   it('marks a new on-chain game coin pending without retaining its predecessor', () => {
     const previous = { coinHex: 'old-coin', turnState: 'their-turn' as const, onChain: true };
 
-    expect(gameCoinIdentityForGameStatus(previous, 'on-chain-their-turn', true))
-      .toEqual({ coinHex: null, onChain: true });
-    expect(gameCoinIdentityForGameStatus(previous, 'replaying', true))
-      .toEqual({ coinHex: null, onChain: true });
+    expect(gameCoinIdentityForGameStatus(previous, 'on-chain-their-turn', true)).toEqual({
+      coinHex: null,
+      onChain: true,
+    });
+    expect(gameCoinIdentityForGameStatus(previous, 'replaying', true)).toEqual({
+      coinHex: null,
+      onChain: true,
+    });
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: null, onChain: true, turnState: 'replaying' },
-      },
-    })).handStatusLabel).toBe('Replaying move');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: null, onChain: true, turnState: 'replaying' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Replaying move');
 
-    const timeoutClaimView = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: null, onChain: true, turnState: 'submitting-timeout' },
-      },
-    }));
+    const timeoutClaimView = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: {
+          activeIds: ['7'],
+          coin: { coinHex: null, onChain: true, turnState: 'submitting-timeout' },
+        },
+      }),
+    );
     expect(timeoutClaimView.handStatusLabel).toBe('Submitting timeout claim');
     expect(timeoutClaimView.lifecycleRows).toEqual([]);
   });
@@ -387,7 +405,7 @@ describe('session model selectors', () => {
     const queue = { current: Promise.resolve() };
     const processed: string[] = [];
     let finishCoinEnrichment!: () => void;
-    const coinEnrichment = new Promise<void>(resolve => {
+    const coinEnrichment = new Promise<void>((resolve) => {
       finishCoinEnrichment = resolve;
     });
     const handle = (notification: Parameters<typeof enqueueWasmNotification>[1]) => {
@@ -400,23 +418,33 @@ describe('session model selectors', () => {
       }
     };
 
-    enqueueWasmNotification(queue, {
-      GameSettled: { id: '7', outcome: 'settled_cleanly', our_share: '20' },
-    }, handle, error => {
-      throw error;
-    });
-    enqueueWasmNotification(queue, {
-      ChannelStatus: {
-        state: 'ResolvedUnrolled',
-        advisory: null,
-        coin: null,
-        our_balance: null,
-        their_balance: null,
-        game_allocated: null,
+    enqueueWasmNotification(
+      queue,
+      {
+        GameSettled: { id: '7', outcome: 'settled_cleanly', our_share: '20' },
       },
-    }, handle, error => {
-      throw error;
-    });
+      handle,
+      (error) => {
+        throw error;
+      },
+    );
+    enqueueWasmNotification(
+      queue,
+      {
+        ChannelStatus: {
+          state: 'ResolvedUnrolled',
+          advisory: null,
+          coin: null,
+          our_balance: null,
+          their_balance: null,
+          game_allocated: null,
+        },
+      },
+      handle,
+      (error) => {
+        throw error;
+      },
+    );
 
     await Promise.resolve();
     expect(processed).toEqual(['settled']);
@@ -438,38 +466,56 @@ describe('session model selectors', () => {
       }
     };
 
-    enqueueWasmNotification(queue, {
-      ProposalMade: { id: '7', group_ids: ['7'] },
-    }, handle, error => {
-      throw error;
-    });
-    enqueueWasmNotification(queue, {
-      ActionFailed: { reason: 'later event' },
-    }, handle, error => {
-      throw error;
-    });
+    enqueueWasmNotification(
+      queue,
+      {
+        ProposalMade: { id: '7', group_ids: ['7'] },
+      },
+      handle,
+      (error) => {
+        throw error;
+      },
+    );
+    enqueueWasmNotification(
+      queue,
+      {
+        ActionFailed: { reason: 'later event' },
+      },
+      handle,
+      (error) => {
+        throw error;
+      },
+    );
 
     await queue.current;
     expect(observedModes).toEqual(['review-incoming-proposal']);
   });
 
   it('recognizes terminal model and persisted channel snapshots consistently', () => {
-    expect(isTerminalChannelSnapshot({
-      state: 'Active',
-      sessionDisposition: 'Abandoned',
-    })).toBe(true);
-    expect(isTerminalChannelSnapshot({
-      state: 'Active',
-      session_disposition: 'Abandoned',
-    })).toBe(true);
-    expect(isTerminalChannelSnapshot({
-      state: 'ResolvedClean',
-      session_disposition: null,
-    })).toBe(true);
-    expect(isTerminalChannelSnapshot({
-      state: 'Active',
-      session_disposition: null,
-    })).toBe(false);
+    expect(
+      isTerminalChannelSnapshot({
+        state: 'Active',
+        sessionDisposition: 'Abandoned',
+      }),
+    ).toBe(true);
+    expect(
+      isTerminalChannelSnapshot({
+        state: 'Active',
+        session_disposition: 'Abandoned',
+      }),
+    ).toBe(true);
+    expect(
+      isTerminalChannelSnapshot({
+        state: 'ResolvedClean',
+        session_disposition: null,
+      }),
+    ).toBe(true);
+    expect(
+      isTerminalChannelSnapshot({
+        state: 'Active',
+        session_disposition: null,
+      }),
+    ).toBe(false);
   });
 
   it('keeps an acknowledged terminal handoff session live until Rust abandons it', () => {
@@ -501,65 +547,96 @@ describe('session model selectors', () => {
       actionKind: 'none',
     });
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OurWalletMakingOffer' } },
-    }))).toMatchObject({
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OurWalletMakingOffer' } },
+        }),
+      ),
+    ).toMatchObject({
       actionLabel: 'Cancel',
       actionEnabled: true,
       actionKind: 'cancel',
     });
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OfferSent' } },
-    }))).toMatchObject({
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'OfferSent' } },
+        }),
+      ),
+    ).toMatchObject({
       actionLabel: 'Waiting',
       actionEnabled: false,
       actionKind: 'none',
     });
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: { activeIds: [] },
-    }))).toMatchObject({
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+          game: { activeIds: [] },
+        }),
+      ),
+    ).toMatchObject({
       channelStatusLabel: 'Active',
       handStatusLabel: 'No hand',
       actionLabel: 'Clean Shutdown',
       actionEnabled: true,
       actionKind: 'clean-shutdown',
     });
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true } },
-      game: { activeIds: [] },
-    }))).toMatchObject({ channelStatusLabel: 'Active', havePotato: true });
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: { activeIds: [] },
-    }), { cleanShutdownGraceActive: true })).toMatchObject({
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: {
+            status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true },
+          },
+          game: { activeIds: [] },
+        }),
+      ),
+    ).toMatchObject({ channelStatusLabel: 'Active', havePotato: true });
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+          game: { activeIds: [] },
+        }),
+        { cleanShutdownGraceActive: true },
+      ),
+    ).toMatchObject({
       actionLabel: 'Waiting',
       actionEnabled: false,
       actionKind: 'none',
     });
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: { activeIds: ['7'] },
-    }))).toMatchObject({
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+          game: { activeIds: ['7'] },
+        }),
+      ),
+    ).toMatchObject({
       handStatusLabel: 'Active',
       actionLabel: 'Go On-Chain',
       actionEnabled: true,
       actionKind: 'go-on-chain',
     });
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'ResolvedClean',
-          ourBalance: '60',
-          theirBalance: '40',
-        },
-      },
-    }))).toMatchObject({
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: {
+            status: {
+              ...INITIAL_CHANNEL_STATUS_MODEL,
+              state: 'ResolvedClean',
+              ourBalance: '60',
+              theirBalance: '40',
+            },
+          },
+        }),
+      ),
+    ).toMatchObject({
       channelStatusLabel: 'Resolved Clean',
       actionLabel: 'Done',
       actionEnabled: false,
@@ -567,34 +644,40 @@ describe('session model selectors', () => {
       channelDetail: null,
     });
     // Resolved display keeps Me/Opp balances (not wiped to "No Session").
-    expect(selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'ResolvedClean',
-          ourBalance: '60',
-          theirBalance: '40',
-        },
-      },
-    }))).toEqual([
+    expect(
+      selectStatusBarBalances(
+        createSessionModel({
+          channel: {
+            status: {
+              ...INITIAL_CHANNEL_STATUS_MODEL,
+              state: 'ResolvedClean',
+              ourBalance: '60',
+              theirBalance: '40',
+            },
+          },
+        }),
+      ),
+    ).toEqual([
       { label: 'Me', value: '60' },
       { label: 'Opp', value: '40' },
     ]);
   });
 
   it('normalizes Rust channel status once for persistence and presentation', async () => {
-    expect(channelStatusModelFromPayload({
-      state: 'ShuttingDown',
-      advisory: 'closing',
-      coin: null,
-      our_balance: { Amount: '0' },
-      their_balance: { Amount: '100' },
-      game_allocated: { Amount: '0' },
-      have_potato: true,
-      zero_payout: true,
-      unroll_initiator: 'opponent',
-      semantic_phase: 'waiting_timeout',
-    })).toMatchObject({
+    expect(
+      channelStatusModelFromPayload({
+        state: 'ShuttingDown',
+        advisory: 'closing',
+        coin: null,
+        our_balance: { Amount: '0' },
+        their_balance: { Amount: '100' },
+        game_allocated: { Amount: '0' },
+        have_potato: true,
+        zero_payout: true,
+        unroll_initiator: 'opponent',
+        semantic_phase: 'waiting_timeout',
+      }),
+    ).toMatchObject({
       state: 'ShuttingDown',
       advisory: 'closing',
       ourBalance: '0',
@@ -608,87 +691,97 @@ describe('session model selectors', () => {
   });
 
   it('shows semantic progress alongside the authoritative channel advisory', () => {
-    const view = selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          semanticPhase: 'waiting_timeout',
-          advisory: 'The observed spend needs manual review',
+    const view = selectGameDashboardView(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            semanticPhase: 'waiting_timeout',
+            advisory: 'The observed spend needs manual review',
+          },
         },
-      },
-    }));
-
-    expect(view.channelDetail).toBe(
-      'Waiting for timeout: The observed spend needs manual review',
+      }),
     );
+
+    expect(view.channelDetail).toBe('Waiting for timeout: The observed spend needs manual review');
   });
 
   it('renders known unroll initiators without inventing an unknown label', () => {
-    const opponent = selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          semanticPhase: 'waiting_timeout',
-          unrollInitiator: 'opponent',
+    const opponent = selectGameDashboardView(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            semanticPhase: 'waiting_timeout',
+            unrollInitiator: 'opponent',
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(opponent.channelDetail).toBe('Waiting for timeout (initiated by opponent)');
 
-    const us = selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          semanticPhase: 'preempting',
-          unrollInitiator: 'us',
+    const us = selectGameDashboardView(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            semanticPhase: 'preempting',
+            unrollInitiator: 'us',
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(us.channelDetail).toBe('Preempting unroll (initiated by you)');
 
-    const unknown = selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          semanticPhase: 'resolving',
+    const unknown = selectGameDashboardView(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            semanticPhase: 'resolving',
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(unknown.channelDetail).toBe('Resolving');
   });
 
   it('prioritizes terminal disposition details over stale semantic progress', () => {
-    const abandoned = selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          sessionDisposition: 'Abandoned',
-          semanticPhase: 'waiting_timeout',
-          advisory: 'Local session was abandoned',
+    const abandoned = selectGameDashboardView(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            sessionDisposition: 'Abandoned',
+            semanticPhase: 'waiting_timeout',
+            advisory: 'Local session was abandoned',
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(abandoned).toMatchObject({
       channelStatusLabel: 'Abandoned',
       channelDetail: 'Local session was abandoned',
     });
 
-    const awaitingPeer = selectGameDashboardView(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          sessionDisposition: 'AwaitOutboundTerminal',
-          semanticPhase: 'submitting_timeout_finish',
-          advisory: null,
+    const awaitingPeer = selectGameDashboardView(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            sessionDisposition: 'AwaitOutboundTerminal',
+            semanticPhase: 'submitting_timeout_finish',
+            advisory: null,
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(awaitingPeer).toMatchObject({
       channelStatusLabel: 'Waiting for Peer',
       channelDetail: 'Waiting for peer to acknowledge close',
@@ -754,12 +847,16 @@ describe('session model selectors', () => {
       },
     });
 
-    expect(selectGameDashboardView(shuttingDown, { cleanShutdownGraceActive: true })).toMatchObject({
-      actionLabel: 'Waiting',
-      actionEnabled: false,
-      actionKind: 'none',
-    });
-    expect(selectGameDashboardView(shuttingDown, { cleanShutdownGraceActive: false })).toMatchObject({
+    expect(selectGameDashboardView(shuttingDown, { cleanShutdownGraceActive: true })).toMatchObject(
+      {
+        actionLabel: 'Waiting',
+        actionEnabled: false,
+        actionKind: 'none',
+      },
+    );
+    expect(
+      selectGameDashboardView(shuttingDown, { cleanShutdownGraceActive: false }),
+    ).toMatchObject({
       actionLabel: 'Go On-Chain',
       actionEnabled: true,
       actionKind: 'go-on-chain',
@@ -775,7 +872,9 @@ describe('session model selectors', () => {
         cleanShutdownStarted: true,
       },
     });
-    expect(selectGameDashboardView(zeroPayoutShutdown, { cleanShutdownGraceActive: true })).toMatchObject({
+    expect(
+      selectGameDashboardView(zeroPayoutShutdown, { cleanShutdownGraceActive: true }),
+    ).toMatchObject({
       actionLabel: 'Abandon',
       actionEnabled: true,
       actionKind: 'abandon',
@@ -786,8 +885,11 @@ describe('session model selectors', () => {
 
   it('enables abandon action after timeout for waiting states', () => {
     const waitingStates = [
-      'OfferSent', 'TransactionPending', 'ShutdownTransactionPending',
-      'GoingOnChain', 'Unrolling',
+      'OfferSent',
+      'TransactionPending',
+      'ShutdownTransactionPending',
+      'GoingOnChain',
+      'Unrolling',
     ] as const;
 
     for (const state of waitingStates) {
@@ -810,20 +912,24 @@ describe('session model selectors', () => {
   });
 
   it('allows chain-submitting dashboard actions even while the blockchain is offline', () => {
-    const cleanShutdown = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: { activeIds: [] },
-    }));
+    const cleanShutdown = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+        game: { activeIds: [] },
+      }),
+    );
     expect(cleanShutdown).toMatchObject({
       actionLabel: 'Clean Shutdown',
       actionEnabled: true,
       actionKind: 'clean-shutdown',
     });
 
-    const goOnChain = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: { activeIds: ['7'] },
-    }));
+    const goOnChain = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+        game: { activeIds: ['7'] },
+      }),
+    );
     expect(goOnChain).toMatchObject({
       actionLabel: 'Go On-Chain',
       actionEnabled: true,
@@ -866,79 +972,113 @@ describe('session model selectors', () => {
   });
 
   it('uses hand terminology for the collapsed hand status', () => {
-    const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-        terminal: { type: 'none', outcome: null, label: null, myReward: null, rewardCoinHex: null },
-      },
-    }));
+    const view = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+        game: {
+          activeIds: ['7'],
+          coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
+          terminal: {
+            type: 'none',
+            outcome: null,
+            label: null,
+            myReward: null,
+            rewardCoinHex: null,
+          },
+        },
+      }),
+    );
 
     expect(view.handStatusLabel).toBe('Active');
     expect(view.handDetail).toBeNull();
   });
 
   it('keeps hands active until unrolling completes', () => {
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'their-turn' },
-      },
-    })).handStatusLabel).toBe('Active');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: 'abcd', turnState: 'their-turn' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Active');
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: null, turnState: 'their-turn' },
-      },
-    })).handStatusLabel).toBe('Active');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: null, turnState: 'their-turn' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Active');
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'their-turn' },
-      },
-    })).handStatusLabel).toBe('Active');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: 'abcd', turnState: 'their-turn' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Active');
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-      },
-    })).handStatusLabel).toBe('Active');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Active');
 
     // The resolved-unroll state is the authoritative boundary even while
     // deriving the game coin's hex asynchronously.
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: null, turnState: 'replaying' },
-      },
-    })).handStatusLabel).toBe('Replaying move');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: null, turnState: 'replaying' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Replaying move');
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'finishing' },
-      },
-    })).handStatusLabel).toBe('Finishing');
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+          game: {
+            activeIds: ['7'],
+            coin: { coinHex: 'abcd', turnState: 'finishing' },
+          },
+        }),
+      ).handStatusLabel,
+    ).toBe('Finishing');
 
     // Detecting the opponent's illegal on-chain move puts us in the slash flow;
     // the bar should say so explicitly instead of a generic "Your turn".
-    const slashing = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: null, turnState: 'opponent-illegal-move' },
-      },
-    }));
+    const slashing = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: {
+          activeIds: ['7'],
+          coin: { coinHex: null, turnState: 'opponent-illegal-move' },
+        },
+      }),
+    );
     expect(slashing.handStatusLabel).toBe('Slashing cheater');
   });
 
@@ -965,20 +1105,32 @@ describe('session model selectors', () => {
       instances,
     };
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
-      game,
-    })).lifecycleRows).toEqual([]);
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+          game,
+        }),
+      ).lifecycleRows,
+    ).toEqual([]);
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
-      game,
-    })).lifecycleRows).toEqual([]);
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+          game,
+        }),
+      ).lifecycleRows,
+    ).toEqual([]);
 
-    expect(selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game,
-    })).lifecycleRows).toEqual([
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+          game,
+        }),
+      ).lifecycleRows,
+    ).toEqual([
       { id: '7', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
       { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
     ]);
@@ -988,7 +1140,10 @@ describe('session model selectors', () => {
     const makeInstance = (id: string, handStatus: 'our-turn' | 'their-turn') => ({
       id,
       amount: '100',
-      coin: { coinHex: `${id}${id}`, turnState: handStatus === 'our-turn' ? 'my-turn' as const : 'their-turn' as const },
+      coin: {
+        coinHex: `${id}${id}`,
+        turnState: handStatus === 'our-turn' ? ('my-turn' as const) : ('their-turn' as const),
+      },
       handStatus,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     });
@@ -1009,15 +1164,22 @@ describe('session model selectors', () => {
       handStatus: 'active',
     });
 
-    const singleton = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: { activeIds: ['7'], currentHandIds: ['7'], instances: { '7': updated['7'] } },
-    }));
-    const multiple = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: { activeIds: ['7', '9'], currentHandIds: ['7', '9'], instances: updated },
-    }));
-    expect(singleton.lifecycleRows[0]).toMatchObject({ label: 'Hand', statusLabel: 'Playing move' });
+    const singleton = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: { activeIds: ['7'], currentHandIds: ['7'], instances: { '7': updated['7'] } },
+      }),
+    );
+    const multiple = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: { activeIds: ['7', '9'], currentHandIds: ['7', '9'], instances: updated },
+      }),
+    );
+    expect(singleton.lifecycleRows[0]).toMatchObject({
+      label: 'Hand',
+      statusLabel: 'Playing move',
+    });
     expect(multiple.lifecycleRows).toEqual([
       { id: '7', label: 'Hand 1', statusLabel: 'Playing move', detail: null },
       { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
@@ -1072,162 +1234,207 @@ describe('session model selectors', () => {
   });
 
   it('shows a premature opponent timeout as an explicit ended detail', () => {
-    const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        coin: { coinHex: null, turnState: 'ended' },
-        terminal: {
-          type: 'settled',
-          outcome: 'opponent_timed_out',
-          label: 'Opponent timed out',
-          myReward: '20',
-          rewardCoinHex: 'abcd',
+    const view = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: {
+          coin: { coinHex: null, turnState: 'ended' },
+          terminal: {
+            type: 'settled',
+            outcome: 'opponent_timed_out',
+            label: 'Opponent timed out',
+            myReward: '20',
+            rewardCoinHex: 'abcd',
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Opponent timed out');
   });
 
   it('keeps each timeout side’s ended detail distinct', () => {
-    const timedOut = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        coin: { coinHex: null, turnState: 'ended' },
-        terminal: {
-          type: 'settled',
-          outcome: 'timed_out_waiting_for_our_move',
-          label: 'Timed out waiting for our move',
-          myReward: '0',
-          rewardCoinHex: null,
+    const timedOut = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: {
+          coin: { coinHex: null, turnState: 'ended' },
+          terminal: {
+            type: 'settled',
+            outcome: 'timed_out_waiting_for_our_move',
+            label: 'Timed out waiting for our move',
+            myReward: '0',
+            rewardCoinHex: null,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(timedOut.handStatusLabel).toBe('Ended');
     expect(timedOut.handDetail).toBe('Timed out waiting for our move');
   });
 
   it('shows settled cleanly as an ended detail', () => {
-    const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        coin: { coinHex: null, turnState: 'ended' },
-        terminal: {
-          type: 'settled',
-          outcome: 'settled_cleanly',
-          label: 'Settled cleanly',
-          myReward: '20',
-          rewardCoinHex: null,
+    const view = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: {
+          coin: { coinHex: null, turnState: 'ended' },
+          terminal: {
+            type: 'settled',
+            outcome: 'settled_cleanly',
+            label: 'Settled cleanly',
+            myReward: '20',
+            rewardCoinHex: null,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Settled cleanly');
   });
 
   it('shows move-too-late as an ended detail distinct from forfeit', () => {
-    const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
-      game: {
-        coin: { coinHex: null, turnState: 'ended' },
-        terminal: {
-          type: 'settled',
-          outcome: 'attempt_to_move_failed',
-          label: 'Attempt to move failed',
-          myReward: '0',
-          rewardCoinHex: null,
+    const view = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+        game: {
+          coin: { coinHex: null, turnState: 'ended' },
+          terminal: {
+            type: 'settled',
+            outcome: 'attempt_to_move_failed',
+            label: 'Attempt to move failed',
+            myReward: '0',
+            rewardCoinHex: null,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Attempt to move failed');
   });
 
   it('parses GameSettled into glossary labels without session-level Folded', () => {
-    expect(terminalInfoFromGameSettled({
-      id: '7',
-      outcome: 'accept_settlement',
-      our_share: { Amount: 0 },
-      coin_id: null,
-    }, null)).toMatchObject({
+    expect(
+      terminalInfoFromGameSettled(
+        {
+          id: '7',
+          outcome: 'accept_settlement',
+          our_share: { Amount: 0 },
+          coin_id: null,
+        },
+        null,
+      ),
+    ).toMatchObject({
       type: 'settled',
       outcome: 'accept_settlement',
       label: 'Accepted',
       myReward: '0',
     });
 
-    expect(terminalInfoFromGameSettled({
-      id: '7',
-      outcome: 'opponent_timed_out',
-      our_share: '20',
-      coin_id: null,
-    }, null)).toMatchObject({
+    expect(
+      terminalInfoFromGameSettled(
+        {
+          id: '7',
+          outcome: 'opponent_timed_out',
+          our_share: '20',
+          coin_id: null,
+        },
+        null,
+      ),
+    ).toMatchObject({
       type: 'settled',
       outcome: 'opponent_timed_out',
       label: 'Opponent timed out',
     });
 
-    expect(terminalInfoFromGameSettled({
-      id: '7',
-      outcome: 'attempt_to_move_failed',
-      our_share: '0',
-      coin_id: null,
-    }, null)).toMatchObject({
+    expect(
+      terminalInfoFromGameSettled(
+        {
+          id: '7',
+          outcome: 'attempt_to_move_failed',
+          our_share: '0',
+          coin_id: null,
+        },
+        null,
+      ),
+    ).toMatchObject({
       label: 'Attempt to move failed',
     });
 
-    expect(settledEventForInfo('7', terminalInfoFromGameSettled({
-      id: '7',
-      outcome: 'settled_cleanly',
-      our_share: '20',
-    }, null))).toEqual({
+    expect(
+      settledEventForInfo(
+        '7',
+        terminalInfoFromGameSettled(
+          {
+            id: '7',
+            outcome: 'settled_cleanly',
+            our_share: '20',
+          },
+          null,
+        ),
+      ),
+    ).toEqual({
       Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
     });
   });
 
   it('keeps cancelled/error GameStatus terminals separate from settlement', () => {
-    expect(parseGameStatusTerminalInfo({
-      id: '7',
-      status: 'ended-cancelled',
-      my_reward: null,
-      coin_id: null,
-      reason: null,
-      other_params: null,
-    }, null, 'my-turn')).toMatchObject({
+    expect(
+      parseGameStatusTerminalInfo(
+        {
+          id: '7',
+          status: 'ended-cancelled',
+          my_reward: null,
+          coin_id: null,
+          reason: null,
+          other_params: null,
+        },
+        null,
+        'my-turn',
+      ),
+    ).toMatchObject({
       type: 'ended-cancelled',
       label: 'Cancelled',
     });
 
-    expect(parseGameStatusTerminalInfo({
-      id: '7',
-      status: 'ended-error',
-      reason: 'boom',
-      other_params: null,
-    }, null, 'my-turn')).toMatchObject({
+    expect(
+      parseGameStatusTerminalInfo(
+        {
+          id: '7',
+          status: 'ended-error',
+          reason: 'boom',
+          other_params: null,
+        },
+        null,
+        'my-turn',
+      ),
+    ).toMatchObject({
       type: 'game-error',
       label: 'boom',
     });
   });
 
   it('prefers terminal hand state over stale on-chain turn state', () => {
-    const view = selectGameDashboardView(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
-      game: {
-        activeIds: ['7'],
-        coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-        terminal: {
-          type: 'settled',
-          outcome: 'forfeited_skipped_reveal',
-          label: 'Forfeited',
-          myReward: '20',
-          rewardCoinHex: null,
+    const view = selectGameDashboardView(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+        game: {
+          activeIds: ['7'],
+          coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
+          terminal: {
+            type: 'settled',
+            outcome: 'forfeited_skipped_reveal',
+            label: 'Forfeited',
+            myReward: '20',
+            rewardCoinHex: null,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(view.handStatusLabel).toBe('Ended');
     expect(view.handDetail).toBe('Forfeited');
@@ -1254,25 +1461,27 @@ describe('session model selectors', () => {
       },
     });
 
-    const active = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Active',
-          ourBalance: '70',
-          theirBalance: '30',
-          gameAllocated: '20',
+    const active = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Active',
+            ourBalance: '70',
+            theirBalance: '30',
+            gameAllocated: '20',
+          },
         },
-      },
-      game: {
-        activeIds: ['game-1', 'game-2'],
-        currentHandIds: ['game-1', 'game-2'],
-        instances: {
-          'game-1': pending('game-1'),
-          'game-2': pending('game-2'),
+        game: {
+          activeIds: ['game-1', 'game-2'],
+          currentHandIds: ['game-1', 'game-2'],
+          instances: {
+            'game-1': pending('game-1'),
+            'game-2': pending('game-2'),
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(active).toEqual([
       { label: 'Me', value: '70' },
       { label: 'Opp', value: '30' },
@@ -1280,73 +1489,79 @@ describe('session model selectors', () => {
       { label: 'Hand 2', value: '100' },
     ]);
 
-    const partiallyResolvedGroup = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Active',
-          ourBalance: '85',
-          theirBalance: '15',
-          gameAllocated: '20',
+    const partiallyResolvedGroup = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Active',
+            ourBalance: '85',
+            theirBalance: '15',
+            gameAllocated: '20',
+          },
         },
-      },
-      game: {
-        activeIds: ['game-2'],
-        currentHandIds: ['game-1', 'game-2'],
-        instances: {
-          'game-1': ended('game-1', '80'),
-          'game-2': pending('game-2'),
+        game: {
+          activeIds: ['game-2'],
+          currentHandIds: ['game-1', 'game-2'],
+          instances: {
+            'game-1': ended('game-1', '80'),
+            'game-2': pending('game-2'),
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(partiallyResolvedGroup).toEqual([
       { label: 'Me', value: '85' },
       { label: 'Opp', value: '15' },
       { label: 'Hand', value: '100' },
     ]);
 
-    const bothResolved = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Active',
-          ourBalance: '85',
-          theirBalance: '15',
-          gameAllocated: '0',
+    const bothResolved = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Active',
+            ourBalance: '85',
+            theirBalance: '15',
+            gameAllocated: '0',
+          },
         },
-      },
-      game: {
-        currentHandIds: ['game-1', 'game-2'],
-        instances: {
-          'game-1': ended('game-1', '80'),
-          'game-2': ended('game-2', '20'),
+        game: {
+          currentHandIds: ['game-1', 'game-2'],
+          instances: {
+            'game-1': ended('game-1', '80'),
+            'game-2': ended('game-2', '20'),
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(bothResolved).toEqual([
       { label: 'Me', value: '85' },
       { label: 'Opp', value: '15' },
     ]);
 
-    const onChainSplits = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Unrolling',
-          ourBalance: '85',
-          theirBalance: '15',
-          gameAllocated: '0',
+    const onChainSplits = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Unrolling',
+            ourBalance: '85',
+            theirBalance: '15',
+            gameAllocated: '0',
+          },
         },
-      },
-      game: {
-        activeIds: [],
-        currentHandIds: ['game-1', 'game-2'],
-        instances: {
-          'game-1': ended('game-1', '80'),
-          'game-2': ended('game-2', '20'),
+        game: {
+          activeIds: [],
+          currentHandIds: ['game-1', 'game-2'],
+          instances: {
+            'game-1': ended('game-1', '80'),
+            'game-2': ended('game-2', '20'),
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(onChainSplits).toEqual([
       { label: 'Me', value: '85' },
       { label: 'Opp', value: '15' },
@@ -1354,77 +1569,103 @@ describe('session model selectors', () => {
       { label: 'Hand 2', value: '20', value2: '80' },
     ]);
 
-    const stale = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'ResolvedStale',
-          ourBalance: '60',
-          theirBalance: '40',
+    const stale = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'ResolvedStale',
+            ourBalance: '60',
+            theirBalance: '40',
+          },
         },
-      },
-      game: {
-        activeIds: ['game-1'],
-        currentHandIds: ['game-1', 'game-2'],
-        instances: {
-          'game-1': pending('game-1'),
-          'game-2': {
-            ...pending('game-2'),
-            coin: { coinHex: null, turnState: 'ended' },
-            handStatus: 'ended',
-            terminal: {
-              type: 'game-error',
-              outcome: null,
-              label: 'Missing from stale unroll',
-              myReward: null,
-              rewardCoinHex: null,
+        game: {
+          activeIds: ['game-1'],
+          currentHandIds: ['game-1', 'game-2'],
+          instances: {
+            'game-1': pending('game-1'),
+            'game-2': {
+              ...pending('game-2'),
+              coin: { coinHex: null, turnState: 'ended' },
+              handStatus: 'ended',
+              terminal: {
+                type: 'game-error',
+                outcome: null,
+                label: 'Missing from stale unroll',
+                myReward: null,
+                rewardCoinHex: null,
+              },
             },
           },
         },
-      },
-    }));
+      }),
+    );
     expect(stale).toEqual([
       { label: 'Me', value: '60' },
       { label: 'Opp', value: '40' },
       { label: 'Hand 1', value: '100' },
     ]);
 
-    const malformedReward = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'Active',
-          ourBalance: '85',
-          theirBalance: '15',
-          gameAllocated: '0',
+    const malformedReward = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Active',
+            ourBalance: '85',
+            theirBalance: '15',
+            gameAllocated: '0',
+          },
         },
-      },
-      game: {
-        currentHandIds: ['game-1'],
-        instances: { 'game-1': ended('game-1', '101') },
-      },
-    }));
+        game: {
+          currentHandIds: ['game-1'],
+          instances: { 'game-1': ended('game-1', '101') },
+        },
+      }),
+    );
     expect(malformedReward).toEqual([
       { label: 'Me', value: '85' },
       { label: 'Opp', value: '15' },
     ]);
 
-    const clean = selectStatusBarBalances(createSessionModel({
-      channel: {
-        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean', ourBalance: '60', theirBalance: '40' },
-      },
-      game: {
-        terminal: { type: 'settled', outcome: 'settled_cleanly', label: 'done', myReward: '10', rewardCoinHex: null },
-      },
-    }));
+    const clean = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'ResolvedClean',
+            ourBalance: '60',
+            theirBalance: '40',
+          },
+        },
+        game: {
+          terminal: {
+            type: 'settled',
+            outcome: 'settled_cleanly',
+            label: 'done',
+            myReward: '10',
+            rewardCoinHex: null,
+          },
+        },
+      }),
+    );
     expect(clean).toEqual([
       { label: 'Me', value: '60' },
       { label: 'Opp', value: '40' },
     ]);
 
-    const errored = selectStatusBarBalances(createSessionModel({
-      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Failed', ourBalance: '60', theirBalance: '40' } },
-    }));
+    const errored = selectStatusBarBalances(
+      createSessionModel({
+        channel: {
+          status: {
+            ...INITIAL_CHANNEL_STATUS_MODEL,
+            state: 'Failed',
+            ourBalance: '60',
+            theirBalance: '40',
+          },
+        },
+      }),
+    );
     expect(errored).toEqual([
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },
@@ -1470,39 +1711,49 @@ describe('session model selectors', () => {
     });
     expect(isCleanShutdownInProgress(shuttingDown)).toBe(true);
     // Peer stays live through cooperative close (keepalives continue).
-    expect(selectGameTabDotColor({
-      sessionPhase: 'off-chain',
-      sessionError: false,
-      peerLiveness: 'connected',
-      cleanShutdownInProgress: true,
-    })).toBe('green');
+    expect(
+      selectGameTabDotColor({
+        sessionPhase: 'off-chain',
+        sessionError: false,
+        peerLiveness: 'connected',
+        cleanShutdownInProgress: true,
+      }),
+    ).toBe('green');
     // Real unreachability (silence / delivery failure) is yellow, not red.
-    expect(selectGameTabDotColor({
-      sessionPhase: 'off-chain',
-      sessionError: false,
-      peerLiveness: 'degraded',
-      cleanShutdownInProgress: true,
-    })).toBe('yellow');
+    expect(
+      selectGameTabDotColor({
+        sessionPhase: 'off-chain',
+        sessionError: false,
+        peerLiveness: 'degraded',
+        cleanShutdownInProgress: true,
+      }),
+    ).toBe('yellow');
     // Dead should not occur during clean shutdown; if it does, treat as yellow.
-    expect(selectGameTabDotColor({
-      sessionPhase: 'off-chain',
-      sessionError: false,
-      peerLiveness: 'dead',
-      cleanShutdownInProgress: true,
-    })).toBe('yellow');
-    expect(selectGameTabDotColor({
-      sessionPhase: 'resolved',
-      sessionError: false,
-      peerLiveness: 'connected',
-      cleanShutdownInProgress: false,
-    })).toBe('gray');
+    expect(
+      selectGameTabDotColor({
+        sessionPhase: 'off-chain',
+        sessionError: false,
+        peerLiveness: 'dead',
+        cleanShutdownInProgress: true,
+      }),
+    ).toBe('yellow');
+    expect(
+      selectGameTabDotColor({
+        sessionPhase: 'resolved',
+        sessionError: false,
+        peerLiveness: 'connected',
+        cleanShutdownInProgress: false,
+      }),
+    ).toBe('gray');
     // Outside clean shutdown, peer dead is still red.
-    expect(selectGameTabDotColor({
-      sessionPhase: 'off-chain',
-      sessionError: false,
-      peerLiveness: 'dead',
-      cleanShutdownInProgress: false,
-    })).toBe('red');
+    expect(
+      selectGameTabDotColor({
+        sessionPhase: 'off-chain',
+        sessionError: false,
+        peerLiveness: 'dead',
+        cleanShutdownInProgress: false,
+      }),
+    ).toBe('red');
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {
@@ -1563,10 +1814,22 @@ describe('session model selectors', () => {
         reviewPeerProposal: {
           id: '42',
           groupIds: ['42'],
-          terms: { gameType: 'spacepoker', myContribution: 20n, theirContribution: 20n, gameTimeout: 31n, spacepokerUnitSize: 2n },
+          terms: {
+            gameType: 'spacepoker',
+            myContribution: 20n,
+            theirContribution: 20n,
+            gameTimeout: 31n,
+            spacepokerUnitSize: 2n,
+          },
         },
         rejectedOnceTerms: null,
-        lastTerms: { gameType: 'spacepoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 23n, spacepokerUnitSize: 1n },
+        lastTerms: {
+          gameType: 'spacepoker',
+          myContribution: 10n,
+          theirContribution: 10n,
+          gameTimeout: 23n,
+          spacepokerUnitSize: 1n,
+        },
         composePerHandAmount: 10n,
         composeGameTimeout: 23n,
         composeGameType: 'spacepoker',
@@ -1588,12 +1851,8 @@ describe('session model selectors', () => {
       version: 8n,
       playerId: 'p1',
       activeGameIds: [],
-      channelNotifQueue: [
-        { id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' },
-      ],
-      gameNotifQueue: [
-        { id: '8', kind: 'game-terminal', title: 'Game', message: 'Done' },
-      ],
+      channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
+      gameNotifQueue: [{ id: '8', kind: 'game-terminal', title: 'Game', message: 'Done' }],
     } as unknown as SessionSave;
 
     const restored = sessionModelFromSave(save);
@@ -1829,34 +2088,58 @@ describe('session model selectors', () => {
   });
 
   it('makes the completed hand inert only while a between-hand dialog has content', () => {
-    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'decision', false, false)).toBe(false);
-    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, true)).toBe(true);
-    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', true, true)).toBe(true);
-    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', false, true)).toBe(false);
-    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, false)).toBe(false);
-    expect(selectInertGameInterfaceForBetweenHandDialog(false, 'compose-proposal', false, true)).toBe(false);
+    expect(selectInertGameInterfaceForBetweenHandDialog(true, 'decision', false, false)).toBe(
+      false,
+    );
+    expect(
+      selectInertGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, true),
+    ).toBe(true);
+    expect(
+      selectInertGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', true, true),
+    ).toBe(true);
+    expect(
+      selectInertGameInterfaceForBetweenHandDialog(true, 'review-incoming-proposal', false, true),
+    ).toBe(false);
+    expect(
+      selectInertGameInterfaceForBetweenHandDialog(true, 'compose-proposal', false, false),
+    ).toBe(false);
+    expect(
+      selectInertGameInterfaceForBetweenHandDialog(false, 'compose-proposal', false, true),
+    ).toBe(false);
   });
 
   it('parses saved session amounts through a shared bigint adapter', () => {
-    expect(sessionAmountsFromSave(
-      { myContribution: '100', theirContribution: '50', perGameAmount: '45' },
-    )).toEqual({ myContribution: 100n, theirContribution: 50n, perGameAmount: 45n });
+    expect(
+      sessionAmountsFromSave({
+        myContribution: '100',
+        theirContribution: '50',
+        perGameAmount: '45',
+      }),
+    ).toEqual({ myContribution: 100n, theirContribution: 50n, perGameAmount: 45n });
 
-    expect(sessionAmountsFromSave(
-      { myContribution: '100', theirContribution: '100', perGameAmount: '10' },
-    )).toEqual({ myContribution: 100n, theirContribution: 100n, perGameAmount: 10n });
+    expect(
+      sessionAmountsFromSave({
+        myContribution: '100',
+        theirContribution: '100',
+        perGameAmount: '10',
+      }),
+    ).toEqual({ myContribution: 100n, theirContribution: 100n, perGameAmount: 10n });
 
-    expect(() => sessionAmountsFromSave(
-      { myContribution: '100', theirContribution: '50' } as any,
-    )).toThrow('Garbled save');
+    expect(() =>
+      sessionAmountsFromSave({ myContribution: '100', theirContribution: '50' } as any),
+    ).toThrow('Garbled save');
 
-    expect(() => sessionAmountsFromSave(
-      { myContribution: 'bad', theirContribution: '50', perGameAmount: '10' },
-    )).toThrow('Garbled save');
+    expect(() =>
+      sessionAmountsFromSave({
+        myContribution: 'bad',
+        theirContribution: '50',
+        perGameAmount: '10',
+      }),
+    ).toThrow('Garbled save');
 
-    expect(() => sessionAmountsFromSave(
-      { myContribution: '50', perGameAmount: '10' } as any,
-    )).toThrow('Garbled save');
+    expect(() =>
+      sessionAmountsFromSave({ myContribution: '50', perGameAmount: '10' } as any),
+    ).toThrow('Garbled save');
   });
 
   it('separates history, diagnostic log, and wasm notification history in snapshots', () => {
@@ -1961,13 +2244,15 @@ describe('session model selectors', () => {
   });
 
   it('always emits Settled gameplay events including clean settles', () => {
-    expect(settledEventForInfo('7', {
-      type: 'settled',
-      outcome: 'settled_cleanly',
-      label: 'Settled cleanly',
-      myReward: '20',
-      rewardCoinHex: null,
-    })).toEqual({
+    expect(
+      settledEventForInfo('7', {
+        type: 'settled',
+        outcome: 'settled_cleanly',
+        label: 'Settled cleanly',
+        myReward: '20',
+        rewardCoinHex: null,
+      }),
+    ).toEqual({
       Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
     });
   });

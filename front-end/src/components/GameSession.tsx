@@ -1,6 +1,24 @@
-import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+  type ErrorInfo,
+} from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, isValidKrunkStake, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
+import {
+  useGameSession,
+  isValidKrunkStake,
+  GameTerminalAttentionInfo,
+  GameTurnState,
+  GameplayEvent,
+  QueuedNotification,
+} from '../hooks/useGameSession';
 import { useCalpokerHand } from '../features/calPoker/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -36,12 +54,15 @@ import { Separator } from './ui/separator';
 import { Button } from './button';
 import { AmountInput } from './AmountInput';
 
-const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const Calpoker = lazy(() => import('../features/calPoker'));
 const SpacePoker = lazy(() => import('../features/spacePoker/SpacePoker'));
 const Krunk = lazy(() => import('../features/krunk/Krunk'));
 
-interface ErrorBoundaryProps { children: ReactNode; }
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
 interface ErrorBoundaryState {
   error: string | null;
   componentStack: string | null;
@@ -63,30 +84,37 @@ function RenderErrorDialog({
 }) {
   return (
     <div
-      className='fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4'
-      role='alertdialog'
-      aria-modal='true'
-      aria-labelledby='render-error-title'
+      className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="render-error-title"
     >
-      <div className='flex max-h-[90vh] w-full max-w-2xl flex-col gap-3 overflow-hidden rounded-lg border border-alert-text bg-canvas-bg p-4 text-canvas-text shadow-xl'>
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-3 overflow-hidden rounded-lg border border-alert-text bg-canvas-bg p-4 text-canvas-text shadow-xl">
         <div>
-          <h2 id='render-error-title' className='text-lg font-semibold text-alert-text'>{title}</h2>
-          <p className='mt-1 text-sm text-canvas-text'>
-            The game UI hit a render error. The session shell is still running; details are shown below.
+          <h2 id="render-error-title" className="text-lg font-semibold text-alert-text">
+            {title}
+          </h2>
+          <p className="mt-1 text-sm text-canvas-text">
+            The game UI hit a render error. The session shell is still running; details are shown
+            below.
           </p>
         </div>
-        <pre className='max-h-56 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text'>{error}</pre>
+        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text">
+          {error}
+        </pre>
         {componentStack && (
-          <pre className='max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text'>{componentStack}</pre>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text">
+            {componentStack}
+          </pre>
         )}
-        <div className='flex flex-wrap justify-end gap-2'>
+        <div className="flex flex-wrap justify-end gap-2">
           {onDismiss && (
-            <Button variant='outline' size='sm' onClick={onDismiss}>
+            <Button variant="outline" size="sm" onClick={onDismiss}>
               Dismiss
             </Button>
           )}
           {onReload && (
-            <Button variant='solid' size='sm' onClick={onReload}>
+            <Button variant="solid" size="sm" onClick={onReload}>
               Reload
             </Button>
           )}
@@ -111,17 +139,19 @@ export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, Erro
   render() {
     if (this.state.error) {
       return (
-        <div className='flex flex-col items-center justify-center gap-4 w-full h-full p-8 text-canvas-text'>
-          <h2 className='text-xl font-semibold text-alert-text'>Something went wrong</h2>
-          <p className='text-sm text-canvas-text'>The session renderer crashed. Reloading is the safest recovery.</p>
+        <div className="flex flex-col items-center justify-center gap-4 w-full h-full p-8 text-canvas-text">
+          <h2 className="text-xl font-semibold text-alert-text">Something went wrong</h2>
+          <p className="text-sm text-canvas-text">
+            The session renderer crashed. Reloading is the safest recovery.
+          </p>
           <RenderErrorDialog
-            title='Session renderer crashed'
+            title="Session renderer crashed"
             error={this.state.error}
             componentStack={this.state.componentStack}
             onReload={() => window.location.reload()}
           />
           <button
-            className='px-4 py-2 rounded bg-canvas-solid text-canvas-bg-subtle hover:opacity-90'
+            className="px-4 py-2 rounded bg-canvas-solid text-canvas-bg-subtle hover:opacity-90"
             onClick={() => window.location.reload()}
           >
             Reload
@@ -162,16 +192,20 @@ class GameAreaErrorBoundary extends Component<GameAreaErrorBoundaryProps, ErrorB
         <>
           {!this.state.dialogDismissed && (
             <RenderErrorDialog
-              title='Game renderer crashed'
+              title="Game renderer crashed"
               error={this.state.error}
               componentStack={this.state.componentStack}
               onDismiss={() => this.setState({ dialogDismissed: true })}
             />
           )}
-          <div className='rounded-md border border-alert-text bg-canvas-bg p-4 text-sm text-canvas-text'>
-            <h2 className='mb-2 font-semibold text-alert-text'>Game renderer crashed</h2>
-            <p className='mb-3 text-canvas-text'>The rest of the session is still available.</p>
-            <Button variant='outline' size='sm' onClick={() => this.setState({ dialogDismissed: false })}>
+          <div className="rounded-md border border-alert-text bg-canvas-bg p-4 text-sm text-canvas-text">
+            <h2 className="mb-2 font-semibold text-alert-text">Game renderer crashed</h2>
+            <p className="mb-3 text-canvas-text">The rest of the session is still available.</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => this.setState({ dialogDismissed: false })}
+            >
               Show Error Details
             </Button>
           </div>
@@ -198,11 +232,25 @@ function CoinId({ hex }: { hex: string }) {
         title="Copy coin ID"
       >
         {copied ? (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="w-3.5 h-3.5"
+          >
+            <path
+              fillRule="evenodd"
+              d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+              clipRule="evenodd"
+            />
           </svg>
         ) : (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="w-3.5 h-3.5"
+          >
             <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
             <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
           </svg>
@@ -268,20 +316,19 @@ function useViewportClampedDragWithInsets(
   return { cardRef, x, y, clampToViewport };
 }
 
-
 function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
   return (
     <>
       {info.advisory && (
-        <p className='text-sm text-canvas-text-contrast select-text cursor-text'>{info.advisory}</p>
+        <p className="text-sm text-canvas-text-contrast select-text cursor-text">{info.advisory}</p>
       )}
       {info.coinHex && (
-        <p className='text-xs text-canvas-text break-all select-text cursor-text'>
+        <p className="text-xs text-canvas-text break-all select-text cursor-text">
           Coin ID: <CoinId hex={info.coinHex} />
         </p>
       )}
       {info.coinAmount && (
-        <p className='text-xs text-canvas-text select-text cursor-text'>
+        <p className="text-xs text-canvas-text select-text cursor-text">
           Coin amount: {formatOptionalMojos(info.coinAmount)}
         </p>
       )}
@@ -291,19 +338,19 @@ function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
 
 function GameTerminalContent({ info }: { info: GameTerminalAttentionInfo }) {
   return (
-    <div className='rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2 select-text cursor-text'>
-      <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-        <span className='text-canvas-text'>My reward:</span>
-        <span className='font-semibold text-canvas-text-contrast'>
+    <div className="rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2 select-text cursor-text">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-canvas-text">My reward:</span>
+        <span className="font-semibold text-canvas-text-contrast">
           {formatOptionalMojos(info.myReward)}
         </span>
       </p>
-      <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-        <span className='text-canvas-text'>Reward coin ID:</span>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-canvas-text">Reward coin ID:</span>
         {info.rewardCoinHex ? (
           <CoinId hex={info.rewardCoinHex} />
         ) : (
-          <span className='font-semibold text-canvas-text-contrast'>None</span>
+          <span className="font-semibold text-canvas-text-contrast">None</span>
         )}
       </p>
     </div>
@@ -323,7 +370,9 @@ function NotificationOverlay({
   zClass: string;
   focusBoundaryPriority: number;
 }) {
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, {
+    top: 8,
+  });
   const dragControls = useDragControls();
   const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
   const titleColor = 'text-canvas-text-contrast';
@@ -344,28 +393,44 @@ function NotificationOverlay({
       className={`absolute ${zClass} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2`}
       data-between-hand-focus-boundary={focusBoundaryPriority}
     >
-      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
+      <Card className="theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line">
         <CardHeader
-          className='text-center pb-2 cursor-grab active:cursor-grabbing'
+          className="text-center pb-2 cursor-grab active:cursor-grabbing"
           onPointerDown={(e) => dragControls.start(e)}
         >
           <CardTitle className={`text-xl ${titleColor}`}>{notification.title}</CardTitle>
         </CardHeader>
         <Separator />
-        <CardContent className='pt-4 flex flex-col gap-2'>
-          {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
-            <ChannelStatusContent info={notification.payload as ChannelStatusModel} />
-          )}
-          {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
-            <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
-          )}
+        <CardContent className="pt-4 flex flex-col gap-2">
+          {notification.kind === 'channel-state' &&
+            notification.payload &&
+            'state' in notification.payload && (
+              <ChannelStatusContent info={notification.payload as ChannelStatusModel} />
+            )}
+          {notification.kind === 'game-terminal' &&
+            notification.payload &&
+            'label' in notification.payload && (
+              <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
+            )}
           {isError && notification.message && (
-            <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'>{notification.message}</pre>
+            <pre className="text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto">
+              {notification.message}
+            </pre>
           )}
-          {!isError && notification.kind !== 'channel-state' && notification.kind !== 'game-terminal' && notification.message && (
-            <p className='text-sm text-canvas-text-contrast text-center select-text cursor-text'>{notification.message}</p>
-          )}
-          <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
+          {!isError &&
+            notification.kind !== 'channel-state' &&
+            notification.kind !== 'game-terminal' &&
+            notification.message && (
+              <p className="text-sm text-canvas-text-contrast text-center select-text cursor-text">
+                {notification.message}
+              </p>
+            )}
+          <Button
+            variant="solid"
+            size="sm"
+            onClick={onDismiss}
+            className="self-center min-w-[96px]"
+          >
             Dismiss
           </Button>
         </CardContent>
@@ -388,7 +453,9 @@ interface CalpokerHandProps {
   opponentName?: string;
 }
 
-function stringifyCalpokerSnapshot(snapshot: CalpokerDisplaySnapshot | undefined): CalpokerDisplaySnapshotView | undefined {
+function stringifyCalpokerSnapshot(
+  snapshot: CalpokerDisplaySnapshot | undefined,
+): CalpokerDisplaySnapshotView | undefined {
   if (!snapshot) return undefined;
   return {
     ...snapshot,
@@ -409,7 +476,9 @@ function parseCalpokerSnapshotView(snapshot: CalpokerDisplaySnapshotView): Calpo
   };
 }
 
-function stringifyCalpokerOutcome(outcome: CalpokerOutcome | undefined): CalpokerOutcomeView | undefined {
+function stringifyCalpokerOutcome(
+  outcome: CalpokerOutcome | undefined,
+): CalpokerOutcomeView | undefined {
   if (!outcome) return undefined;
   return {
     my_win_outcome: outcome.my_win_outcome,
@@ -465,27 +534,39 @@ export function CalpokerHand({
     gameObject.handState ?? undefined,
   );
 
-  const handleGameLog = useCallback((lines: string[]) => {
-    appendGameLog(`California Poker ${formatAmount(perGameAmount)}`);
-    lines.forEach(l => appendGameLog(l));
-    appendGameLog('');
-  }, [appendGameLog, perGameAmount]);
+  const handleGameLog = useCallback(
+    (lines: string[]) => {
+      appendGameLog(`California Poker ${formatAmount(perGameAmount)}`);
+      lines.forEach((l) => appendGameLog(l));
+      appendGameLog('');
+    },
+    [appendGameLog, perGameAmount],
+  );
 
-  const setUiCardSelections = useCallback((next: string[] | ((prev: string[]) => string[])) => {
-    setCardSelections((prev) => {
-      const prevView = prev.map(String);
-      const nextView = typeof next === 'function' ? next(prevView) : next;
-      return nextView.map(BigInt);
-    });
-  }, [setCardSelections]);
+  const setUiCardSelections = useCallback(
+    (next: string[] | ((prev: string[]) => string[])) => {
+      setCardSelections((prev) => {
+        const prevView = prev.map(String);
+        const nextView = typeof next === 'function' ? next(prevView) : next;
+        return nextView.map(BigInt);
+      });
+    },
+    [setCardSelections],
+  );
 
-  const handleSnapshotChange = useCallback((snapshot: CalpokerDisplaySnapshotView) => {
-    saveDisplaySnapshot(parseCalpokerSnapshotView(snapshot));
-  }, [saveDisplaySnapshot]);
+  const handleSnapshotChange = useCallback(
+    (snapshot: CalpokerDisplaySnapshotView) => {
+      saveDisplaySnapshot(parseCalpokerSnapshotView(snapshot));
+    },
+    [saveDisplaySnapshot],
+  );
 
-  const setUiHandOrder = useCallback((nextPlayerHand: string[], nextOpponentHand?: string[]) => {
-    setHandOrder(nextPlayerHand.map(BigInt), nextOpponentHand?.map(BigInt));
-  }, [setHandOrder]);
+  const setUiHandOrder = useCallback(
+    (nextPlayerHand: string[], nextOpponentHand?: string[]) => {
+      setHandOrder(nextPlayerHand.map(BigInt), nextOpponentHand?.map(BigInt));
+    },
+    [setHandOrder],
+  );
 
   return (
     <Calpoker
@@ -544,11 +625,14 @@ export function SpacePokerHand({
     [gameId, onTurnChanged],
   );
 
-  const handleGameLog = useCallback((lines: string[]) => {
-    appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
-    lines.forEach(l => appendGameLog(l));
-    appendGameLog('');
-  }, [appendGameLog, unitMojos, stackSize]);
+  const handleGameLog = useCallback(
+    (lines: string[]) => {
+      appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
+      lines.forEach((l) => appendGameLog(l));
+      appendGameLog('');
+    },
+    [appendGameLog, unitMojos, stackSize],
+  );
 
   return (
     <SpacePoker
@@ -592,10 +676,13 @@ export function KrunkHand({
   opponentName,
 }: KrunkHandProps) {
   // Header (role + stake) is included in each block from formatKrunkHandLog.
-  const handleGameLog = useCallback((lines: string[]) => {
-    lines.forEach(l => appendGameLog(l));
-    appendGameLog('');
-  }, [appendGameLog]);
+  const handleGameLog = useCallback(
+    (lines: string[]) => {
+      lines.forEach((l) => appendGameLog(l));
+      appendGameLog('');
+    },
+    [appendGameLog],
+  );
 
   return (
     <Krunk
@@ -613,7 +700,6 @@ export function KrunkHand({
   );
 }
 
-
 function ComposeProposalDialog({
   session,
   maxPerHandMojos,
@@ -625,18 +711,20 @@ function ComposeProposalDialog({
   const isSpacepoker = session.composeGameType === 'spacepoker';
   const isKrunk = session.composeGameType === 'krunk';
   const [spUnitSize, setSpUnitSize] = useState(() => {
-    const remembered = session.lastHandTerms.gameType === 'spacepoker'
-      ? session.lastHandTerms.spacepokerUnitSize
-      : undefined;
+    const remembered =
+      session.lastHandTerms.gameType === 'spacepoker'
+        ? session.lastHandTerms.spacepokerUnitSize
+        : undefined;
     if (remembered && remembered > 0n) return remembered;
     const stake = session.composePerHandAmount;
     if (stake <= 0n) return 1n;
     return (stake + BigInt(defaultSpacePokerStackSize - 1)) / BigInt(defaultSpacePokerStackSize);
   });
   const [spStackSizeStr, setSpStackSizeStr] = useState(() => {
-    const remembered = session.lastHandTerms.gameType === 'spacepoker'
-      ? session.lastHandTerms.spacepokerUnitSize
-      : undefined;
+    const remembered =
+      session.lastHandTerms.gameType === 'spacepoker'
+        ? session.lastHandTerms.spacepokerUnitSize
+        : undefined;
     if (remembered && remembered > 0n && session.composePerHandAmount > 0n) {
       return String(session.composePerHandAmount / remembered);
     }
@@ -644,10 +732,16 @@ function ComposeProposalDialog({
   });
   const spStackSize = parseInt(spStackSizeStr) || 0;
   const [timeoutStr, setTimeoutStr] = useState(() =>
-    String(session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS)
+    String(
+      session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS,
+    ),
   );
   useEffect(() => {
-    setTimeoutStr(String(session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS));
+    setTimeoutStr(
+      String(
+        session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS,
+      ),
+    );
   }, [session.composeGameTimeout]);
   const gameTimeout = BigInt(timeoutStr || '0');
   const timeoutValid = gameTimeout > 0n;
@@ -656,23 +750,19 @@ function ComposeProposalDialog({
   const spTotalGame = spBetSize * 2n;
   const spExceedsBalance = maxPerHandMojos != null && spBetSize > maxPerHandMojos;
   const spValid = isSpacepoker && spUnitSize > 0n && spStackSize > 0 && !spExceedsBalance;
-  const spMaxUnitSize = maxPerHandMojos != null && spStackSize > 0
-    ? maxPerHandMojos / BigInt(spStackSize)
-    : null;
+  const spMaxUnitSize =
+    maxPerHandMojos != null && spStackSize > 0 ? maxPerHandMojos / BigInt(spStackSize) : null;
 
   const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
   const krunkStakeValid = !isKrunk || isValidKrunkStake(perHandAmount);
-  const standardMaxMojos = isKrunk && maxPerHandMojos != null
-    ? maxPerHandMojos - (maxPerHandMojos % 100n)
-    : maxPerHandMojos;
+  const standardMaxMojos =
+    isKrunk && maxPerHandMojos != null
+      ? maxPerHandMojos - (maxPerHandMojos % 100n)
+      : maxPerHandMojos;
 
   const submit = () => {
-    if (
-      perHandAmount <= 0n
-      || !timeoutValid
-      || !krunkStakeValid
-      || session.composeProposalSent
-    ) return;
+    if (perHandAmount <= 0n || !timeoutValid || !krunkStakeValid || session.composeProposalSent)
+      return;
     session.submitComposedProposal(
       perHandAmount,
       session.composeGameType,
@@ -681,26 +771,28 @@ function ComposeProposalDialog({
     );
   };
   const selectGameType = (gameType: string) => {
-    session.setComposePerHandAmount(selectComposeAmountAfterGameTypeChoice(
-      session.composeGameType,
-      gameType,
-      session.composePerHandAmount,
-    ));
+    session.setComposePerHandAmount(
+      selectComposeAmountAfterGameTypeChoice(
+        session.composeGameType,
+        gameType,
+        session.composePerHandAmount,
+      ),
+    );
     session.setComposeGameType(gameType);
   };
 
   return (
-    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center'>
-      <div className='flex flex-col items-center gap-3'>
-        <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
-        <div className='flex w-full flex-col items-center gap-1'>
-          <div className='flex flex-wrap justify-center gap-2'>
+    <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center">
+      <div className="flex flex-col items-center gap-3">
+        <p className="text-sm text-canvas-text-contrast">Propose terms for the next hand.</p>
+        <div className="flex w-full flex-col items-center gap-1">
+          <div className="flex flex-wrap justify-center gap-2">
             {GAME_REGISTRY.map(({ gameType, displayName }) => (
               <Button
                 key={gameType}
                 variant={session.composeGameType === gameType ? 'solid' : 'outline'}
                 color={session.composeGameType === gameType ? 'primary' : 'neutral'}
-                size='sm'
+                size="sm"
                 disabled={session.composeProposalSent}
                 onClick={() => selectGameType(gameType)}
               >
@@ -716,26 +808,37 @@ function ComposeProposalDialog({
               valueMojos={spUnitSize}
               onChange={setSpUnitSize}
               maxMojos={spMaxUnitSize}
-              onUseMax={spMaxUnitSize != null && spMaxUnitSize > 0n ? () => setSpUnitSize(spMaxUnitSize) : undefined}
+              onUseMax={
+                spMaxUnitSize != null && spMaxUnitSize > 0n
+                  ? () => setSpUnitSize(spMaxUnitSize)
+                  : undefined
+              }
               disabled={session.composeProposalSent}
-              label='Unit size'
-              exceedsLabel='Exceeds available reserve.'
-              onKeyDown={(e) => { if (e.key === 'Enter' && spValid && timeoutValid) submit(); }}
+              label="Unit size"
+              exceedsLabel="Exceeds available reserve."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && spValid && timeoutValid) submit();
+              }}
             />
-            <div className='flex w-full flex-col items-center gap-1'>
-              <label className='text-xs font-medium text-canvas-text'>Stack size (units per player)</label>
+            <div className="flex w-full flex-col items-center gap-1">
+              <label className="text-xs font-medium text-canvas-text">
+                Stack size (units per player)
+              </label>
               <input
-                type='number'
+                type="number"
                 min={1}
-                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+                className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
                 value={spStackSizeStr}
                 disabled={session.composeProposalSent}
                 onChange={(e) => setSpStackSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
-                onKeyDown={(e) => { if (e.key === 'Enter' && spValid && timeoutValid) submit(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && spValid && timeoutValid) submit();
+                }}
               />
             </div>
-            <div className='text-xs text-canvas-text'>
-              Per-player stake: {formatMojos(spBetSize)} · Total game size: {formatMojos(spTotalGame)}
+            <div className="text-xs text-canvas-text">
+              Per-player stake: {formatMojos(spBetSize)} · Total game size:{' '}
+              {formatMojos(spTotalGame)}
             </div>
           </>
         ) : (
@@ -743,35 +846,36 @@ function ComposeProposalDialog({
             valueMojos={session.composePerHandAmount}
             onChange={session.setComposePerHandAmount}
             maxMojos={standardMaxMojos}
-            onUseMax={standardMaxMojos != null && standardMaxMojos > 0n
-              ? () => session.setComposePerHandAmount(standardMaxMojos)
-              : undefined}
+            onUseMax={
+              standardMaxMojos != null && standardMaxMojos > 0n
+                ? () => session.setComposePerHandAmount(standardMaxMojos)
+                : undefined
+            }
             disabled={session.composeProposalSent}
-            label='Per-player stake'
-            exceedsLabel='Exceeds available reserve.'
+            label="Per-player stake"
+            exceedsLabel="Exceeds available reserve."
             onKeyDown={(e) => {
               if (
-                e.key === 'Enter'
-                && !session.composeProposalSent
-                && session.composePerHandAmount > 0n
-                && timeoutValid
-                && krunkStakeValid
-              ) submit();
+                e.key === 'Enter' &&
+                !session.composeProposalSent &&
+                session.composePerHandAmount > 0n &&
+                timeoutValid &&
+                krunkStakeValid
+              )
+                submit();
             }}
           />
         )}
         {isKrunk && perHandAmount > 0n && !krunkStakeValid && (
-          <p className='text-xs text-alert-text'>
-            Krunk stakes must be multiples of 100 mojos.
-          </p>
+          <p className="text-xs text-alert-text">Krunk stakes must be multiples of 100 mojos.</p>
         )}
 
-        <div className='flex w-full flex-col items-center gap-1'>
-          <label className='text-xs font-medium text-canvas-text'>Timeout (blocks)</label>
+        <div className="flex w-full flex-col items-center gap-1">
+          <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
           <input
-            type='number'
+            type="number"
             min={1}
-            className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+            className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
             value={timeoutStr}
             disabled={session.composeProposalSent}
             onChange={(e) => {
@@ -788,10 +892,10 @@ function ComposeProposalDialog({
         </div>
 
         <Button
-          variant='solid'
-          color='primary'
-          size='sm'
-          className='self-center'
+          variant="solid"
+          color="primary"
+          size="sm"
+          className="self-center"
           disabled={
             session.composeProposalSent ||
             perHandAmount <= 0n ||
@@ -817,37 +921,36 @@ function ReviewProposalDialog({
   if (!review) return null;
 
   return (
-    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
-      <div className='flex flex-col gap-3'>
-        <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
-        <p className='text-xs text-canvas-text'>
-          Game: {gameDisplayName(review.terms.gameType)}
-        </p>
-        <p className='text-xs text-canvas-text'>
+    <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-canvas-text-contrast">Do you want to accept this hand?</p>
+        <p className="text-xs text-canvas-text">Game: {gameDisplayName(review.terms.gameType)}</p>
+        <p className="text-xs text-canvas-text">
           Per-player stake: {formatMojos(review.terms.myContribution)}
         </p>
-        <p className='text-xs text-canvas-text'>
+        <p className="text-xs text-canvas-text">
           Timeout: {String(review.terms.gameTimeout)} blocks
         </p>
-        {review.terms.gameType === 'spacepoker' && (() => {
-          const betSize = review.terms.myContribution;
-          const betUnit = review.terms.spacepokerUnitSize;
-          return betUnit && betUnit > 0n ? (
-            <p className='text-xs text-canvas-text'>
-              Unit size: {formatMojos(betUnit)} · Stack: {String(betSize / betUnit)} units
-            </p>
-          ) : null;
-        })()}
-        <div className='flex flex-wrap items-center gap-3'>
+        {review.terms.gameType === 'spacepoker' &&
+          (() => {
+            const betSize = review.terms.myContribution;
+            const betUnit = review.terms.spacepokerUnitSize;
+            return betUnit && betUnit > 0n ? (
+              <p className="text-xs text-canvas-text">
+                Unit size: {formatMojos(betUnit)} · Stack: {String(betSize / betUnit)} units
+              </p>
+            ) : null;
+          })()}
+        <div className="flex flex-wrap items-center gap-3">
           <Button
-            variant='solid'
-            color='primary'
-            size='sm'
+            variant="solid"
+            color="primary"
+            size="sm"
             onClick={session.acceptReviewedProposal}
           >
             Yes
           </Button>
-          <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
+          <Button variant="solid" size="sm" onClick={session.rejectReviewedProposal}>
             No
           </Button>
         </div>
@@ -868,19 +971,23 @@ function BetweenHandOverlay({
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const notificationFocusables = () => Array.from(
-      document.querySelectorAll<HTMLElement>('[data-between-hand-focus-boundary]'),
-    )
-        .sort((a, b) => Number(b.dataset.betweenHandFocusBoundary) - Number(a.dataset.betweenHandFocusBoundary))
-        .flatMap(boundary => Array.from(boundary.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)));
-    const focusable = () => Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-      .filter(element => (
-        dialog.contains(element)
-        || element.closest('[data-between-hand-focus-boundary]') !== null
-      ));
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const notificationFocusables = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-between-hand-focus-boundary]'))
+        .sort(
+          (a, b) =>
+            Number(b.dataset.betweenHandFocusBoundary) - Number(a.dataset.betweenHandFocusBoundary),
+        )
+        .flatMap((boundary) =>
+          Array.from(boundary.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)),
+        );
+    const focusable = () =>
+      Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (element) =>
+          dialog.contains(element) ||
+          element.closest('[data-between-hand-focus-boundary]') !== null,
+      );
     (notificationFocusables()[0] ?? focusable()[0] ?? dialog).focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -921,12 +1028,14 @@ function BetweenHandOverlay({
     <div
       ref={dialogRef}
       tabIndex={-1}
-      role='dialog'
-      aria-modal='true'
-      aria-labelledby='between-hand-dialog-title'
-      className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg/90 p-4 focus:outline-none'
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="between-hand-dialog-title"
+      className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg/90 p-4 focus:outline-none"
     >
-      <h2 id='between-hand-dialog-title' className='sr-only'>Between-hand proposal</h2>
+      <h2 id="between-hand-dialog-title" className="sr-only">
+        Between-hand proposal
+      </h2>
       {children}
     </div>
   );
@@ -935,7 +1044,11 @@ function BetweenHandOverlay({
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
-  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
+  registerMessageHandler: (
+    handler: (msgno: number, msg: Uint8Array) => void,
+    ackHandler: (ack: number) => void,
+    keepaliveHandler: () => void,
+  ) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
   onGameActivity?: () => void;
@@ -943,12 +1056,28 @@ export interface GameSessionProps {
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
   onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
-  onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
+  onCoinsProviderChange?: (
+    getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null,
+  ) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain }) => {
+const GameSession: React.FC<GameSessionProps> = ({
+  params,
+  peerConn,
+  registerMessageHandler,
+  appendGameLog,
+  sessionSave,
+  onGameActivity,
+  onSessionPhaseChange,
+  onRestoreStatusChange,
+  onSessionModelChange,
+  onProtocolStateProviderChange,
+  onCoinsProviderChange,
+  suppressPhaseReporting,
+  blockchain,
+}) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(
@@ -987,12 +1116,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   useEffect(() => {
     const phase = session.sessionPhase;
     if (
-      !onSessionPhaseChange
-      || !shouldReportSessionPhase(
-        phase,
-        !!suppressPhaseReporting,
-        resolvedPhaseReportedRef.current,
-      )
+      !onSessionPhaseChange ||
+      !shouldReportSessionPhase(phase, !!suppressPhaseReporting, resolvedPhaseReportedRef.current)
     ) {
       return;
     }
@@ -1001,14 +1126,21 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       session.channelStatus.state === 'Failed' ||
       session.channelStatus.state === 'ResolvedStale' ||
       session.gameTerminal.type === 'game-error' ||
-      (session.gameTerminal.type === 'settled'
-        && settledOutcome != null
-        && isErrorSettlementOutcome(settledOutcome));
+      (session.gameTerminal.type === 'settled' &&
+        settledOutcome != null &&
+        isErrorSettlementOutcome(settledOutcome));
     if (phase === 'resolved') {
       resolvedPhaseReportedRef.current = true;
     }
     onSessionPhaseChange(phase, hasError);
-  }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.outcome, onSessionPhaseChange, suppressPhaseReporting]);
+  }, [
+    session.sessionPhase,
+    session.channelStatus.state,
+    session.gameTerminal.type,
+    session.gameTerminal.outcome,
+    onSessionPhaseChange,
+    suppressPhaseReporting,
+  ]);
 
   useEffect(() => {
     if (!onGameActivity) return;
@@ -1023,8 +1155,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   const prevGameQueueLen = useRef(session.gameQueue.length);
   const prevChannelQueueLen = useRef(session.channelQueue.length);
   useEffect(() => {
-    const grew = session.gameQueue.length > prevGameQueueLen.current ||
-                 session.channelQueue.length > prevChannelQueueLen.current;
+    const grew =
+      session.gameQueue.length > prevGameQueueLen.current ||
+      session.channelQueue.length > prevChannelQueueLen.current;
     prevGameQueueLen.current = session.gameQueue.length;
     prevChannelQueueLen.current = session.channelQueue.length;
     if (grew) onGameActivity?.();
@@ -1036,8 +1169,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     const prev = prevBetweenHandMode.current;
     prevBetweenHandMode.current = session.betweenHandMode;
     if (
-      session.betweenHandMode === 'review-incoming-proposal'
-      && prev !== 'review-incoming-proposal'
+      session.betweenHandMode === 'review-incoming-proposal' &&
+      prev !== 'review-incoming-proposal'
     ) {
       onGameActivity?.();
     }
@@ -1090,13 +1223,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   const handEverStarted = session.handKey > 0;
   const hasPersistedGameState = !!session.gameSpecificView.handState;
   const hasReviewPeerProposal = session.reviewPeerProposal != null;
-  const showBetweenHandOverlay = session.betweenHands
-    && session.channelStatus.state === 'Active'
-    && !session.cleanShutdownStarted
-    && (
-      session.betweenHandMode === 'compose-proposal'
-      || (session.betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
-    );
+  const showBetweenHandOverlay =
+    session.betweenHands &&
+    session.channelStatus.state === 'Active' &&
+    !session.cleanShutdownStarted &&
+    (session.betweenHandMode === 'compose-proposal' ||
+      (session.betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal));
   const gameInterfaceIsInertForBetweenHandDialog = selectInertGameInterfaceForBetweenHandDialog(
     session.betweenHands,
     session.betweenHandMode,
@@ -1104,42 +1236,49 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     showBetweenHandOverlay,
   );
   const gameSpecificView = session.gameSpecificView;
-  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState);
+  const showGameInterface =
+    handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState);
 
   if (suppressPhaseReporting) {
     return (
-      <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+      <div className="w-full h-full flex items-center justify-center text-canvas-solid">
         Restoring session...
       </div>
     );
   }
 
   return (
-    <div className='relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
-      <div ref={channelOverlayBoundsRef} className='absolute inset-0 pointer-events-none' />
+    <div className="relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6">
+      <div ref={channelOverlayBoundsRef} className="absolute inset-0 pointer-events-none" />
       {session.gameQueue[0] && (
         <NotificationOverlay
           notification={session.gameQueue[0]}
           onDismiss={session.dismissGame}
           boundsRef={channelOverlayBoundsRef}
-          zClass='z-40'
+          zClass="z-40"
           focusBoundaryPriority={40}
         />
       )}
       {/* Main content area */}
-      <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
+      <div className="flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8">
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
-          <div
-            ref={gameAreaRef}
-            tabIndex={-1}
-            inert={gameInterfaceIsInertForBetweenHandDialog}
-            className='relative overflow-hidden z-0 focus:outline-none'
-          >
+        <div
+          ref={gameAreaRef}
+          tabIndex={-1}
+          inert={gameInterfaceIsInertForBetweenHandDialog}
+          className="relative overflow-hidden z-0 focus:outline-none"
+        >
           {showGameInterface && (
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
             >
-              <Suspense fallback={<div className='flex items-center justify-center py-20 text-canvas-text'>Loading game…</div>}>
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center py-20 text-canvas-text">
+                    Loading game…
+                  </div>
+                }
+              >
                 {gameSpecificView.gameType === 'calpoker' ? (
                   <CalpokerHand
                     key={session.handKey}
@@ -1163,9 +1302,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                     iStarted={session.iStarted}
                     gameplayEvent$={session.gameplayEvent$}
                     betSize={String(session.currentHandAmount)}
-                    unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
-                      ? String(session.lastHandTerms.spacepokerUnitSize)
-                      : undefined}
+                    unitSizeMojos={
+                      session.lastHandTerms.gameType === 'spacepoker' &&
+                      session.lastHandTerms.spacepokerUnitSize
+                        ? String(session.lastHandTerms.spacepokerUnitSize)
+                        : undefined
+                    }
                     onTurnChanged={session.onTurnChanged}
                     appendGameLog={session.appendGameLog}
                     perGameAmount={session.currentHandAmount}
@@ -1187,8 +1329,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                     opponentName={params.opponentAlias}
                   />
                 ) : (
-                  <div className='flex items-center justify-center py-20'>
-                    <p className='text-canvas-text'>
+                  <div className="flex items-center justify-center py-20">
+                    <p className="text-canvas-text">
                       Game not supported: {gameDisplayName(gameSpecificView.gameType)}
                     </p>
                   </div>
@@ -1198,55 +1340,57 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           )}
 
           {(!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
-            <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Setting up channel…</p>
+            <div className="flex items-center justify-center py-20">
+              <p className="text-canvas-text">Setting up channel…</p>
             </div>
           )}
-          {handEverStarted && !PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state) && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
-            <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Waiting for next hand…</p>
-            </div>
-          )}
-
-          </div>
-
-        {/* Between-hand session controls — only when the channel is Active */}
-        {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (
-          <>
-            {session.betweenHandMode === 'decision' && (
-              <div className='relative flex w-full items-center justify-center py-2'>
-                <Button
-                  variant='solid'
-                  color='primary'
-                  size='sm'
-                  onClick={session.chooseNewHandSameTerms}
-                  disabled={session.newHandRequested}
-                >
-                  {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
-                </Button>
-                <Button
-                  variant='ghost'
-                  color='neutral'
-                  size='sm'
-                  className='absolute right-2'
-                  onClick={session.chooseDoNotUseCurrentProposal}
-                  leadingIcon={<span className='text-base leading-none'>&times;</span>}
-                >
-                  Close
-                </Button>
+          {handEverStarted &&
+            !PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state) &&
+            !gameSpecificView.displayGameId &&
+            !hasPersistedGameState &&
+            !session.betweenHands && (
+              <div className="flex items-center justify-center py-20">
+                <p className="text-canvas-text">Waiting for next hand…</p>
               </div>
             )}
-          </>
-        )}
+        </div>
+
+        {/* Between-hand session controls — only when the channel is Active */}
+        {session.betweenHands &&
+          session.channelStatus.state === 'Active' &&
+          !session.cleanShutdownStarted && (
+            <>
+              {session.betweenHandMode === 'decision' && (
+                <div className="relative flex w-full items-center justify-center py-2">
+                  <Button
+                    variant="solid"
+                    color="primary"
+                    size="sm"
+                    onClick={session.chooseNewHandSameTerms}
+                    disabled={session.newHandRequested}
+                  >
+                    {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    color="neutral"
+                    size="sm"
+                    className="absolute right-2"
+                    onClick={session.chooseDoNotUseCurrentProposal}
+                    leadingIcon={<span className="text-base leading-none">&times;</span>}
+                  >
+                    Close
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
       </div>
 
       {showBetweenHandOverlay && (
         <BetweenHandOverlay restoreFocus={restoreGameAreaFocus}>
           {session.betweenHandMode === 'compose-proposal' && (
-            <ComposeProposalDialog
-              session={session}
-              maxPerHandMojos={maxPerHandMojos}
-            />
+            <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}
           {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
             <ReviewProposalDialog session={session} />
@@ -1259,7 +1403,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           notification={session.channelQueue[0]}
           onDismiss={session.dismissChannel}
           boundsRef={channelOverlayBoundsRef}
-          zClass='z-50'
+          zClass="z-50"
           focusBoundaryPriority={50}
         />
       )}

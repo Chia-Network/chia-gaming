@@ -37,7 +37,15 @@ const verbose = Boolean(args.verbose);
 type HubInboundMessage =
   | { type: 'join'; id?: string; alias?: string; session_id?: string }
   | { type: 'leave'; id?: string }
-  | { type: 'challenge'; from_id?: string; target_id: string; challenger_amount: string; target_amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | {
+      type: 'challenge';
+      from_id?: string;
+      target_id: string;
+      challenger_amount: string;
+      target_amount: string;
+      channel_timeout?: string;
+      unroll_timeout?: string;
+    }
   | { type: 'challenge_accept'; challenge_id: string; accepter_id?: string }
   | { type: 'challenge_decline'; challenge_id: string }
   | { type: 'challenge_cancel'; from_id?: string }
@@ -221,7 +229,7 @@ function aliasForPlayer(playerId: string): string {
   const liveAlias = hub.players[playerId]?.alias;
   if (liveAlias) return liveAlias;
   const sessionId = playerToSession.get(playerId);
-  return sessionId ? knownAliases.get(sessionId) ?? playerId : playerId;
+  return sessionId ? (knownAliases.get(sessionId) ?? playerId) : playerId;
 }
 
 function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
@@ -264,7 +272,12 @@ function sendGameEvent(playerId: string, type: string, payload: unknown): void {
     logHub('send_game_event_drop_missing_ws', { player_id: playerId, session_id: sessionId, type });
     return;
   }
-  logHubVerbose('send_game_event', { player_id: playerId, session_id: sessionId, ws_id: wsId(ws), type });
+  logHubVerbose('send_game_event', {
+    player_id: playerId,
+    session_id: sessionId,
+    ws_id: wsId(ws),
+    type,
+  });
   sendGameWs(ws, type, payload);
 }
 
@@ -318,7 +331,11 @@ function cancelPlayerChallenges(playerId: string): void {
     const otherId = challenge.from_id === playerId ? challenge.target_id : challenge.from_id;
     hub.removeChallenge(id);
     sendHubEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
-    logHub('challenge_cancelled_on_sweep', { challenge_id: id, swept_player: playerId, notified_player: otherId });
+    logHub('challenge_cancelled_on_sweep', {
+      challenge_id: id,
+      swept_player: playerId,
+      notified_player: otherId,
+    });
   }
 }
 
@@ -355,7 +372,9 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   cancelPendingHubLeave(playerId);
   const previous = hubConnections.get(playerId);
   if (previous && previous !== ws) {
-    try { previous.close(4001, 'replaced_by_new_connection'); } catch {}
+    try {
+      previous.close(4001, 'replaced_by_new_connection');
+    } catch {}
   }
   hubConnections.set(playerId, ws);
 
@@ -448,13 +467,21 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     return;
   }
   if (fromPlayer.status !== 'waiting') {
-    logHub('challenge_drop_sender_unavailable', { sender_id: senderId, target_id, status: fromPlayer.status });
+    logHub('challenge_drop_sender_unavailable', {
+      sender_id: senderId,
+      target_id,
+      status: fromPlayer.status,
+    });
     sendWs(ws, 'error', { error: 'You are in an active session. Finish it first.' });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
   if (targetPlayer.status !== 'waiting') {
-    logHub('challenge_drop_target_unavailable', { sender_id: senderId, target_id, status: targetPlayer.status });
+    logHub('challenge_drop_target_unavailable', {
+      sender_id: senderId,
+      target_id,
+      status: targetPlayer.status,
+    });
     sendWs(ws, 'error', { error: 'That player is in an active session.' });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
@@ -493,7 +520,9 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     if (raw !== undefined) {
       const val = Number(raw);
       if (!Number.isInteger(val) || val < MIN_TIMEOUT_BLOCKS || val > MAX_TIMEOUT_BLOCKS) {
-        sendWs(ws, 'error', { error: `Invalid ${field}: must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.` });
+        sendWs(ws, 'error', {
+          error: `Invalid ${field}: must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`,
+        });
         sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
         return;
       }
@@ -521,7 +550,10 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
   sendGameEvent(target_id, 'hub_attention', {});
 }
 
-function onChallengeAccept(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'challenge_accept' }>): void {
+function onChallengeAccept(
+  ws: WebSocket,
+  msg: Extract<HubInboundMessage, { type: 'challenge_accept' }>,
+): void {
   const accepter_id = getHubSenderId(ws);
   const { challenge_id } = msg;
   const challenge = hub.getChallenge(challenge_id);
@@ -604,7 +636,10 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<HubInboundMessage, { type
   sendGameEvent(challenge.target_id, 'advisory_start', advisoryPayload);
 }
 
-function onChallengeDecline(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'challenge_decline' }>): void {
+function onChallengeDecline(
+  ws: WebSocket,
+  msg: Extract<HubInboundMessage, { type: 'challenge_decline' }>,
+): void {
   const playerId = getHubSenderId(ws);
   const challenge = hub.getChallenge(msg.challenge_id);
   if (!challenge || !playerId || challenge.target_id !== playerId) {
@@ -627,7 +662,10 @@ function onChallengeDecline(ws: WebSocket, msg: Extract<HubInboundMessage, { typ
   });
 }
 
-function onChallengeCancel(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'challenge_cancel' }>): void {
+function onChallengeCancel(
+  ws: WebSocket,
+  _msg: Extract<HubInboundMessage, { type: 'challenge_cancel' }>,
+): void {
   const senderId = getHubSenderId(ws);
   if (!senderId) return;
   const toCancel: Array<{ id: string; challenge: Challenge }> = [];
@@ -638,14 +676,21 @@ function onChallengeCancel(ws: WebSocket, _msg: Extract<HubInboundMessage, { typ
   }
   if (toCancel.length === 0) return;
   for (const { id, challenge } of toCancel) {
-    logHub('challenge_cancelled', { challenge_id: id, challenger_id: senderId, target_id: challenge.target_id });
+    logHub('challenge_cancelled', {
+      challenge_id: id,
+      challenger_id: senderId,
+      target_id: challenge.target_id,
+    });
     hub.removeChallenge(id);
     sendHubEvent(challenge.target_id, 'challenge_resolved', { challenge_id: id, accepted: false });
   }
   sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
 }
 
-function onChangeAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'change_alias' }>): void {
+function onChangeAlias(
+  ws: WebSocket,
+  msg: Extract<HubInboundMessage, { type: 'change_alias' }>,
+): void {
   const meta = wsHubMeta.get(ws);
   if (!meta) return;
   const playerId = meta.playerId;
@@ -660,8 +705,12 @@ function onChangeAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'c
 
 function onGetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'get_alias' }>): void {
   const sessionId = msg.session_id;
-  const alias = sessionId ? knownAliases.get(sessionId) ?? null : null;
-  logHubVerbose('get_alias', { ws_id: wsId(ws), session_id: sessionId ?? null, found: alias !== null });
+  const alias = sessionId ? (knownAliases.get(sessionId) ?? null) : null;
+  logHubVerbose('get_alias', {
+    ws_id: wsId(ws),
+    session_id: sessionId ?? null,
+    found: alias !== null,
+  });
   sendWs(ws, 'alias_result', { alias });
 }
 
@@ -669,7 +718,12 @@ function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_
   const sessionId = msg.session_id ?? wsHubMeta.get(ws)?.sessionId;
   if (!sessionId) return;
   const playerId = sessionToPlayer.get(sessionId);
-  logHub('set_alias', { ws_id: wsId(ws), session_id: sessionId, player_id: playerId ?? null, alias: msg.alias });
+  logHub('set_alias', {
+    ws_id: wsId(ws),
+    session_id: sessionId,
+    player_id: playerId ?? null,
+    alias: msg.alias,
+  });
   knownAliases.set(sessionId, msg.alias);
   const player = playerId ? hub.players[playerId] : undefined;
   if (player) {
@@ -690,8 +744,13 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   });
   const previousGameConn = gameConnections.get(msg.session_id);
   if (previousGameConn && previousGameConn !== ws) {
-    logHub('game_connection_replaced', { ws_id: wsId(previousGameConn), session_id: msg.session_id });
-    try { previousGameConn.close(4001, 'replaced_by_new_connection'); } catch {}
+    logHub('game_connection_replaced', {
+      ws_id: wsId(previousGameConn),
+      session_id: msg.session_id,
+    });
+    try {
+      previousGameConn.close(4001, 'replaced_by_new_connection');
+    } catch {}
   }
   wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
   gameConnections.set(msg.session_id, ws);
@@ -704,10 +763,18 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   }
 
   sendGameWs(ws, 'registered', { player_id: playerId });
-  logHub('identify_registered', { ws_id: wsId(ws), session_id: msg.session_id, player_id: playerId });
+  logHub('identify_registered', {
+    ws_id: wsId(ws),
+    session_id: msg.session_id,
+    player_id: playerId,
+  });
 }
 
-function onGameSend(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'send' }>, rawPayload: Buffer | null): void {
+function onGameSend(
+  ws: WebSocket,
+  msg: Extract<GameInboundMessage, { type: 'send' }>,
+  rawPayload: Buffer | null,
+): void {
   const meta = wsGameMeta.get(ws);
   if (!meta?.playerId) {
     logHub('game_send_drop_no_player', { ws_id: wsId(ws) });
@@ -737,13 +804,20 @@ function onGameSend(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'sen
     const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
     const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
     let off = 0;
-    header.writeUInt32BE(fromIdBuf.byteLength, off); off += 4;
-    fromIdBuf.copy(header, off); off += fromIdBuf.byteLength;
-    header.writeUInt32BE(fromAliasBuf.byteLength, off); off += 4;
+    header.writeUInt32BE(fromIdBuf.byteLength, off);
+    off += 4;
+    fromIdBuf.copy(header, off);
+    off += fromIdBuf.byteLength;
+    header.writeUInt32BE(fromAliasBuf.byteLength, off);
+    off += 4;
     fromAliasBuf.copy(header, off);
     const frame = Buffer.concat([header, rawPayload]);
     targetWs.send(frame);
-    logHubVerbose('game_relay_binary', { from: meta.playerId, to: targetId, payload_bytes: rawPayload.byteLength });
+    logHubVerbose('game_relay_binary', {
+      from: meta.playerId,
+      to: targetId,
+      payload_bytes: rawPayload.byteLength,
+    });
   } else {
     logHubVerbose('game_relay_json_noop', { from: meta.playerId, to: targetId });
   }
@@ -775,13 +849,20 @@ function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): voi
   const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
   const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
   let offset = 0;
-  header.writeUInt32BE(fromIdBuf.byteLength, offset); offset += 4;
-  fromIdBuf.copy(header, offset); offset += fromIdBuf.byteLength;
-  header.writeUInt32BE(fromAliasBuf.byteLength, offset); offset += 4;
+  header.writeUInt32BE(fromIdBuf.byteLength, offset);
+  offset += 4;
+  fromIdBuf.copy(header, offset);
+  offset += fromIdBuf.byteLength;
+  header.writeUInt32BE(fromAliasBuf.byteLength, offset);
+  offset += 4;
   fromAliasBuf.copy(header, offset);
   const frame = Buffer.concat([header, payload]);
   targetWs.send(frame);
-  logHubVerbose('game_relay_binary', { from: meta.playerId, to: targetId, payload_bytes: payload.byteLength });
+  logHubVerbose('game_relay_binary', {
+    from: meta.playerId,
+    to: targetId,
+    payload_bytes: payload.byteLength,
+  });
 }
 
 function onGameClose(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'close' }>): void {
@@ -1005,7 +1086,11 @@ gameWsServer.on('connection', (ws) => {
       }
       const targetIdLen = buf.readUInt32BE(0);
       if (buf.byteLength < 4 + targetIdLen) {
-        logHub('game_binary_header_incomplete', { ws_id: currentWsId, bytes: buf.byteLength, target_id_len: targetIdLen });
+        logHub('game_binary_header_incomplete', {
+          ws_id: currentWsId,
+          bytes: buf.byteLength,
+          target_id_len: targetIdLen,
+        });
         return;
       }
       const targetId = buf.slice(4, 4 + targetIdLen).toString('utf8');
@@ -1025,7 +1110,11 @@ gameWsServer.on('connection', (ws) => {
       logHub('game_ws_message_parse_drop', { ws_id: currentWsId, bytes: buf.byteLength });
       return;
     }
-    logHubVerbose('game_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: buf.byteLength });
+    logHubVerbose('game_ws_message', {
+      ws_id: currentWsId,
+      type: parsed.type,
+      bytes: buf.byteLength,
+    });
 
     switch (parsed.type) {
       case 'identify':
@@ -1080,7 +1169,9 @@ function sweepHubConnections(now: number): boolean {
     const ws = hubConnections.get(playerId);
     if (ws) {
       logHub('hub_sweep_expired', { player_id: playerId, ws_id: wsId(ws) });
-      try { ws.close(4002, 'idle_timeout'); } catch {}
+      try {
+        ws.close(4002, 'idle_timeout');
+      } catch {}
     }
     hubConnections.delete(playerId);
     cancelPendingHubLeave(playerId);
@@ -1104,9 +1195,15 @@ function sweepGameConnections(now: number): void {
     const ws = gameConnections.get(sessionId);
     const meta = ws ? wsGameMeta.get(ws) : undefined;
     const playerId = meta?.playerId;
-    logHub('game_sweep_expired', { session_id: sessionId, player_id: playerId ?? null, ws_id: ws ? wsId(ws) : null });
+    logHub('game_sweep_expired', {
+      session_id: sessionId,
+      player_id: playerId ?? null,
+      ws_id: ws ? wsId(ws) : null,
+    });
     if (ws) {
-      try { ws.close(4002, 'idle_timeout'); } catch {}
+      try {
+        ws.close(4002, 'idle_timeout');
+      } catch {}
     }
     gameConnections.delete(sessionId);
   }
@@ -1145,13 +1242,17 @@ function shutdown(signal: string): void {
   clearInterval(sweepTimer);
 
   for (const ws of [...hubWsServer.clients, ...gameWsServer.clients]) {
-    try { ws.close(1001, 'server_shutdown'); } catch {}
+    try {
+      ws.close(1001, 'server_shutdown');
+    } catch {}
   }
 
   let pendingClosures = 3;
   const deadline = setTimeout(() => {
     for (const ws of [...hubWsServer.clients, ...gameWsServer.clients]) {
-      try { ws.terminate(); } catch {}
+      try {
+        ws.terminate();
+      } catch {}
     }
     httpServer.closeAllConnections?.();
     process.exit();

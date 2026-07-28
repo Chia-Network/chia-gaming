@@ -73,17 +73,21 @@ jobs:
       - name: Build gaming-fe
         run: |
           cd front-end
-          pnpm install --frozen-lockfile && pnpm run build
+          pnpm install --frozen-lockfile
+          pnpm run format:check
+          pnpm run build
 
       - name: Build hub-frontend
         run: |
           cd hub
           pnpm install --frozen-lockfile
+          pnpm --filter chia-gaming-hub-frontend run format:check
           pnpm --filter chia-gaming-hub-frontend run build
 
       - name: Build hub-service
         run: |
           cd hub
+          pnpm --filter chia-gaming-hub-service run format:check
           pnpm --filter chia-gaming-hub-service run build
 
       - name: Build simulator

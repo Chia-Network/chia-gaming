@@ -35,34 +35,43 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
   }, [customUrl, onConnect]);
 
   return (
-    <div className='flex flex-col items-center justify-center h-full px-4'>
-      <div className='flex flex-col items-center gap-6 w-full max-w-sm'>
-        <p className='text-lg font-semibold text-canvas-text-contrast'>Connect to Hub</p>
+    <div className="flex flex-col items-center justify-center h-full px-4">
+      <div className="flex flex-col items-center gap-6 w-full max-w-sm">
+        <p className="text-lg font-semibold text-canvas-text-contrast">Connect to Hub</p>
 
-        <div className='flex flex-col gap-1 w-full'>
-          <div className='flex gap-2 w-full'>
+        <div className="flex flex-col gap-1 w-full">
+          <div className="flex gap-2 w-full">
             <input
-              type='text'
+              type="text"
               value={customUrl}
-              onChange={(e) => { setCustomUrl(e.target.value); setError(''); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleCustomConnect(); }}
-              placeholder='https://hub.example.com'
+              onChange={(e) => {
+                setCustomUrl(e.target.value);
+                setError('');
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCustomConnect();
+              }}
+              placeholder="https://hub.example.com"
               className={
                 'flex-1 px-3 py-2 rounded-lg text-sm bg-canvas-bg border text-canvas-text placeholder:text-canvas-solid outline-none ' +
-                (error ? 'border-alert-border' : 'border-canvas-border focus:border-primary-border-hover')
+                (error
+                  ? 'border-alert-border'
+                  : 'border-canvas-border focus:border-primary-border-hover')
               }
             />
-            <Button variant='solid' onClick={handleCustomConnect} disabled={!customUrl.trim()}>
+            <Button variant="solid" onClick={handleCustomConnect} disabled={!customUrl.trim()}>
               Connect
             </Button>
           </div>
-          {(error || connectionError) && <p className='text-xs text-alert-text'>{error || connectionError}</p>}
+          {(error || connectionError) && (
+            <p className="text-xs text-alert-text">{error || connectionError}</p>
+          )}
         </div>
 
         <button
-          type='button'
+          type="button"
           onClick={() => onConnect(DEV_HUB)}
-          className='text-xs text-canvas-solid underline hover:text-canvas-text'
+          className="text-xs text-canvas-solid underline hover:text-canvas-text"
         >
           dev: connect to local hub (localhost:3003)
         </button>

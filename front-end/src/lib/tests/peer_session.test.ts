@@ -1,7 +1,10 @@
 import { PeerSession, generateSessionId } from '../../services/PeerSession';
 import type { HubConnection } from '../../services/HubConnection';
 
-function mockHubConnection(): HubConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> } {
+function mockHubConnection(): HubConnection & {
+  sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>;
+  sentAppMessages: Array<{ targetId: string; data: unknown }>;
+} {
   const conn = {
     sentPeerMessages: [] as Array<{ targetId: string; payload: Uint8Array }>,
     sentAppMessages: [] as Array<{ targetId: string; data: unknown }>,
@@ -13,7 +16,10 @@ function mockHubConnection(): HubConnection & { sentPeerMessages: Array<{ target
       conn.sentAppMessages.push({ targetId, data });
       return true;
     },
-  } as unknown as HubConnection & { sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>; sentAppMessages: Array<{ targetId: string; data: unknown }> };
+  } as unknown as HubConnection & {
+    sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>;
+    sentAppMessages: Array<{ targetId: string; data: unknown }>;
+  };
   return conn;
 }
 
@@ -145,7 +151,7 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<{ type: string; msgno: number; data?: Uint8Array }> = [];
 
-      const msgPayload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x05, 0xAA, 0xBB]);
+      const msgPayload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x05, 0xaa, 0xbb]);
       ps.deliverRawPeerMessage('peer1', msgPayload);
 
       const ackPayload = new Uint8Array([0x02, 0x00, 0x00, 0x00, 0x03]);
@@ -161,7 +167,7 @@ describe('PeerSession', () => {
       });
 
       expect(received).toHaveLength(3);
-      expect(received[0]).toEqual({ type: 'msg', msgno: 5, data: new Uint8Array([0xAA, 0xBB]) });
+      expect(received[0]).toEqual({ type: 'msg', msgno: 5, data: new Uint8Array([0xaa, 0xbb]) });
       expect(received[1]).toEqual({ type: 'ack', msgno: 3 });
       expect(received[2]).toEqual({ type: 'keepalive', msgno: 0 });
     });
@@ -177,7 +183,7 @@ describe('PeerSession', () => {
         keepaliveHandler: () => received.push({ type: 'keepalive', msgno: 0 }),
       });
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x0A, 0xFF]);
+      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x0a, 0xff]);
       ps.deliverRawPeerMessage('peer1', payload);
       expect(received).toEqual([{ type: 'msg', msgno: 10 }]);
     });
@@ -193,7 +199,7 @@ describe('PeerSession', () => {
         keepaliveHandler: () => {},
       });
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xAA]);
+      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xaa]);
       const result = ps.deliverRawPeerMessage('wrong_peer', payload);
       expect(result).toBe(false);
       expect(received).toHaveLength(0);
@@ -204,7 +210,7 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xAA]);
+      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xaa]);
       const result = ps.deliverRawPeerMessage('peer1', payload);
       expect(result).toBe(false);
     });
@@ -214,7 +220,7 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.destroy();
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xAA]);
+      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xaa]);
       const result = ps.deliverRawPeerMessage('peer1', payload);
       expect(result).toBe(false);
     });
@@ -246,14 +252,14 @@ describe('PeerSession', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
-      ps.sendMessage(42, new Uint8Array([0xDE, 0xAD]));
+      ps.sendMessage(42, new Uint8Array([0xde, 0xad]));
       expect(conn.sentPeerMessages).toHaveLength(1);
       const { targetId, payload } = conn.sentPeerMessages[0];
       expect(targetId).toBe('peer1');
       expect(payload[0]).toBe(0x01);
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       expect(view.getUint32(1, false)).toBe(42);
-      expect(payload.slice(5)).toEqual(new Uint8Array([0xDE, 0xAD]));
+      expect(payload.slice(5)).toEqual(new Uint8Array([0xde, 0xad]));
     });
 
     it('sendAck builds correct frame', () => {

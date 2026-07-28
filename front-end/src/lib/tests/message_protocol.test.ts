@@ -27,23 +27,18 @@ import {
   saveSession,
   type SessionSave,
 } from '../../hooks/save';
-import {
-  DIAGNOSTIC_LOG_LIMIT,
-  WASM_NOTIFICATION_HISTORY_LIMIT,
-} from '../session/historyLimits';
+import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 
 const testIndexedDb = indexedDB;
 const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
-  get: (target, property) => property in target
-    ? Reflect.get(target, property)
-    : () => Promise.resolve(undefined),
+  get: (target, property) =>
+    property in target ? Reflect.get(target, property) : () => Promise.resolve(undefined),
 });
 const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 const mockWasmConnection = new Proxy({} as WasmConnection, {
-  get: (_target, property) => property === 'game_session_serialization_schema'
-    ? () => 1
-    : () => undefined,
+  get: (_target, property) =>
+    property === 'game_session_serialization_schema' ? () => 1 : () => undefined,
 });
 
 function makeStorage(): Storage {
@@ -72,14 +67,16 @@ function enc(s: string): Uint8Array {
 
 function testSpendBundle(coinHex: string): SpendBundle {
   return {
-    spends: [{
-      coin: coinHex,
-      bundle: {
-        puzzle: '80',
-        solution: '80',
-        signature: '',
+    spends: [
+      {
+        coin: coinHex,
+        bundle: {
+          puzzle: '80',
+          solution: '80',
+          signature: '',
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -88,17 +85,17 @@ function makeMockCradle(
 ): ChiaGame {
   return {
     deliver_message: jest.fn((msg: Uint8Array) => onDeliver(msg)),
-    report_coin_states: jest.fn(() => ({ events: [] } as WasmResult)),
-    report_height: jest.fn(() => ({ events: [] } as WasmResult)),
+    report_coin_states: jest.fn(() => ({ events: [] }) as WasmResult),
+    report_height: jest.fn(() => ({ events: [] }) as WasmResult),
     snapshot_watched_coins: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
-    go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
-    abandon: jest.fn(() => ({ events: [] } as WasmResult)),
-    completeOutboundTerminalHandoff: jest.fn(() => ({ events: [] } as WasmResult)),
+    go_on_chain: jest.fn(() => ({ events: [] }) as WasmResult),
+    abandon: jest.fn(() => ({ events: [] }) as WasmResult),
+    completeOutboundTerminalHandoff: jest.fn(() => ({ events: [] }) as WasmResult),
     pendingTerminalHandoff: jest.fn(() => null),
-    provide_coin_spend_bundle: jest.fn(() => ({ events: [] } as WasmResult)),
+    provide_coin_spend_bundle: jest.fn(() => ({ events: [] }) as WasmResult),
     cradle: 0,
   } as unknown as ChiaGame;
 }
@@ -133,9 +130,7 @@ interface TestHarness {
  * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
  */
-function createReadyBlob(
-  onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
-): TestHarness {
+function createReadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefined): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -151,14 +146,15 @@ function createReadyBlob(
   blob.setGameSession(cradle);
   blob.kickSystem(2);
   blob.reportCoinStates(1n, []);
-  blob.onSaveNeeded = () => saveSession({
-    blockchainType: 'simulator',
-    serializedGameSession: cradle.serialize(),
-    gameSessionSchemaVersion: 1n,
-    messageNumber: blob.messageNumber,
-    remoteNumber: blob.remoteNumber,
-    unackedMessages: blob.unackedMessages,
-  });
+  blob.onSaveNeeded = () =>
+    saveSession({
+      blockchainType: 'simulator',
+      serializedGameSession: cradle.serialize(),
+      gameSessionSchemaVersion: 1n,
+      messageNumber: blob.messageNumber,
+      remoteNumber: blob.remoteNumber,
+      unackedMessages: blob.unackedMessages,
+    });
 
   (cradle.deliver_message as jest.Mock).mockClear();
   (cradle.report_coin_states as jest.Mock).mockClear();
@@ -169,9 +165,7 @@ function createReadyBlob(
 }
 
 /** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
-function createUnreadyBlob(
-  onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
-): TestHarness {
+function createUnreadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefined): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -185,14 +179,15 @@ function createUnreadyBlob(
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameSession(cradle);
-  blob.onSaveNeeded = () => saveSession({
-    blockchainType: 'simulator',
-    serializedGameSession: cradle.serialize(),
-    gameSessionSchemaVersion: 1n,
-    messageNumber: blob.messageNumber,
-    remoteNumber: blob.remoteNumber,
-    unackedMessages: blob.unackedMessages,
-  });
+  blob.onSaveNeeded = () =>
+    saveSession({
+      blockchainType: 'simulator',
+      serializedGameSession: cradle.serialize(),
+      gameSessionSchemaVersion: 1n,
+      messageNumber: blob.messageNumber,
+      remoteNumber: blob.remoteNumber,
+      unackedMessages: blob.unackedMessages,
+    });
 
   return { blob, cradle, sentMessages, sentAcks };
 }
@@ -250,7 +245,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     activeBlob = blob;
     const reasons: string[] = [];
-    blob.getObservable().subscribe(event => {
+    blob.getObservable().subscribe((event) => {
       if (event.type === 'notification' && event.data.ActionFailed) {
         reasons.push(String(event.data.ActionFailed.reason));
       }
@@ -265,7 +260,7 @@ describe('in-order delivery', () => {
     });
 
     expect(reasons).toEqual([]);
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(reasons).toEqual(['first', 'second']);
   });
 
@@ -273,7 +268,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     activeBlob = blob;
     const reasons: string[] = [];
-    blob.getObservable().subscribe(event => {
+    blob.getObservable().subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       const reason = String(event.data.ActionFailed.reason);
       reasons.push(reason);
@@ -290,7 +285,7 @@ describe('in-order delivery', () => {
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
 
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(reasons).toEqual(['first', 'second']);
   });
 
@@ -298,7 +293,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     activeBlob = blob;
     let delivered = 0;
-    blob.getObservable().subscribe(event => {
+    blob.getObservable().subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       delivered += 1;
       if (delivered < 101) {
@@ -314,10 +309,10 @@ describe('in-order delivery', () => {
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
 
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(delivered).toBe(100);
 
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(delivered).toBe(101);
   });
 
@@ -325,7 +320,7 @@ describe('in-order delivery', () => {
     const { blob, sentMessages } = createReadyBlob();
     activeBlob = blob;
     const reasons: string[] = [];
-    blob.getObservable().subscribe(event => {
+    blob.getObservable().subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       reasons.push(String(event.data.ActionFailed.reason));
       blob.cleanup();
@@ -340,7 +335,7 @@ describe('in-order delivery', () => {
       ],
     });
 
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(reasons).toEqual(['first']);
     expect(sentMessages).toEqual([]);
     expect((blob as any).eventQueue).toEqual([]);
@@ -361,9 +356,11 @@ describe('in-order delivery', () => {
     expect(sentAcks).toEqual([1, 2, 3]);
     expect((await peekSession())?.remoteNumber).toBe(3n);
     expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
-    expect(
-      (cradle.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0]),
-    ).toEqual([enc('a'), enc('b'), enc('c')]);
+    expect((cradle.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0])).toEqual([
+      enc('a'),
+      enc('b'),
+      enc('c'),
+    ]);
   });
 });
 
@@ -374,33 +371,37 @@ describe('active game tracking', () => {
     blob.activeGameIds = ['1', '3'];
 
     blob.processResult({
-      events: [{
-        Notification: {
-          GameSettled: {
-            id: '1',
-            outcome: 'accept_settlement',
-            on_chain: false,
-            our_share: '100',
-            coin_id: null,
+      events: [
+        {
+          Notification: {
+            GameSettled: {
+              id: '1',
+              outcome: 'accept_settlement',
+              on_chain: false,
+              our_share: '100',
+              coin_id: null,
+            },
           },
         },
-      }],
+      ],
     });
     blob.flushDeferredWork();
     expect(blob.activeGameIds).toEqual(['3']);
 
     blob.processResult({
-      events: [{
-        Notification: {
-          GameSettled: {
-            id: '3',
-            outcome: 'accept_settlement',
-            on_chain: false,
-            our_share: '100',
-            coin_id: null,
+      events: [
+        {
+          Notification: {
+            GameSettled: {
+              id: '3',
+              outcome: 'accept_settlement',
+              on_chain: false,
+              our_share: '100',
+              coin_id: null,
+            },
           },
         },
-      }],
+      ],
     });
     blob.flushDeferredWork();
     expect(blob.activeGameIds).toEqual([]);
@@ -429,18 +430,22 @@ describe('lifecycle flush', () => {
 describe('game action failure events', () => {
   it('scopes failed terminal submissions to their game and action', () => {
     const { blob, cradle } = createReadyBlob();
-    (cradle as unknown as {
-      make_move: (gameId: string, readable: Uint8Array) => WasmResult;
-    }).make_move = () => {
+    (
+      cradle as unknown as {
+        make_move: (gameId: string, readable: Uint8Array) => WasmResult;
+      }
+    ).make_move = () => {
       throw new Error('cannot reveal');
     };
-    (cradle as unknown as {
-      acceptSettlement: (gameId: string) => WasmResult;
-    }).acceptSettlement = () => {
+    (
+      cradle as unknown as {
+        acceptSettlement: (gameId: string) => WasmResult;
+      }
+    ).acceptSettlement = () => {
       throw new Error('cannot accept settlement');
     };
     const events: import('../../types/ChiaGaming').WasmEvent[] = [];
-    const subscription = blob.getObservable().subscribe(event => events.push(event));
+    const subscription = blob.getObservable().subscribe((event) => events.push(event));
 
     blob.makeMove('41', null);
     blob.acceptSettlement('42');
@@ -618,14 +623,10 @@ describe('bounded controller histories', () => {
     activeBlob = blob;
     blob.processResult({
       events: [
-        ...Array.from(
-          { length: WASM_NOTIFICATION_HISTORY_LIMIT + 2 },
-          (_, i) => ({ Notification: { ActionFailed: { reason: `notification-${i}` } } }),
-        ),
-        ...Array.from(
-          { length: DIAGNOSTIC_LOG_LIMIT + 2 },
-          (_, i) => ({ Log: `diagnostic-${i}` }),
-        ),
+        ...Array.from({ length: WASM_NOTIFICATION_HISTORY_LIMIT + 2 }, (_, i) => ({
+          Notification: { ActionFailed: { reason: `notification-${i}` } },
+        })),
+        ...Array.from({ length: DIAGNOSTIC_LOG_LIMIT + 2 }, (_, i) => ({ Log: `diagnostic-${i}` })),
       ],
     });
     blob.flushDeferredWork();
@@ -896,9 +897,9 @@ describe('restore ordering', () => {
       },
     });
 
-    await expect(blob.beginRestore(Promise.reject(new Error('restore broke'))))
-      .rejects
-      .toThrow('restore broke');
+    await expect(blob.beginRestore(Promise.reject(new Error('restore broke')))).rejects.toThrow(
+      'restore broke',
+    );
     sub.unsubscribe();
 
     expect(blob.getRestoreStatus()).toBe('failed');
@@ -928,9 +929,7 @@ describe('restore ordering', () => {
     const err = new Error('wallet rejected spend');
     err.stack = 'spend@http://localhost:3002/app/17818440673N/index.js:50242:15';
 
-    await expect(blob.beginRestore(Promise.reject(err)))
-      .rejects
-      .toThrow('wallet rejected spend');
+    await expect(blob.beginRestore(Promise.reject(err))).rejects.toThrow('wallet rejected spend');
     sub.unsubscribe();
 
     expect(errors).toEqual(['wallet rejected spend']);
@@ -944,19 +943,16 @@ describe('cradle serialization schema restore guard', () => {
     wasmStateInit: WasmStateInit;
     deserializeMock: jest.Mock;
   } {
-    const blob = new SessionController(
-      mockBlockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn([], []),
-    );
+    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn([], []));
     activeBlob = blob;
     const deserializeMock = jest.fn(deserializeGame);
     const wasmStateInit = {
-      getWasmConnection: jest.fn(async () => ({
-        game_session_serialization_schema: () => 1,
-      } as unknown as WasmConnection)),
+      getWasmConnection: jest.fn(
+        async () =>
+          ({
+            game_session_serialization_schema: () => 1,
+          }) as unknown as WasmConnection,
+      ),
       deserializeGame: deserializeMock,
     } as unknown as WasmStateInit;
     return { blob, wasmStateInit, deserializeMock };
@@ -965,24 +961,27 @@ describe('cradle serialization schema restore guard', () => {
   it.each([
     ['missing', undefined],
     ['mismatched', 2n],
-  ])('rejects and deletes a record with a %s cradle schema', async (_label, gameSessionSchemaVersion) => {
-    void saveSession({
-      serializedGameSession: new Uint8Array([1, 2, 3]),
-      gameSessionSchemaVersion,
-      pairingToken: 'restore-schema-test',
-    });
-    await flushSessionSave();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
-    const save = (await peekSession())!;
+  ])(
+    'rejects and deletes a record with a %s cradle schema',
+    async (_label, gameSessionSchemaVersion) => {
+      void saveSession({
+        serializedGameSession: new Uint8Array([1, 2, 3]),
+        gameSessionSchemaVersion,
+        pairingToken: 'restore-schema-test',
+      });
+      await flushSessionSave();
+      const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+      const save = (await peekSession())!;
 
-    await expect(restoreSession(blob, save, wasmStateInit))
-      .rejects
-      .toThrow('Unsupported saved game format');
+      await expect(restoreSession(blob, save, wasmStateInit)).rejects.toThrow(
+        'Unsupported saved game format',
+      );
 
-    expect(deserializeMock).not.toHaveBeenCalled();
-    expect(hasSavedSessionMarker()).toBe(true);
-    expect(await peekSession()).toBeNull();
-  });
+      expect(deserializeMock).not.toHaveBeenCalled();
+      expect(hasSavedSessionMarker()).toBe(true);
+      expect(await peekSession()).toBeNull();
+    },
+  );
 
   it('does not delete same-schema records that fail deserialization', async () => {
     void saveSession({
@@ -1001,9 +1000,9 @@ describe('cradle serialization schema restore guard', () => {
     });
     const save = (await peekSession())!;
 
-    await expect(restoreSession(blob, save, wasmStateInit))
-      .rejects
-      .toThrow('corrupt current-schema cradle');
+    await expect(restoreSession(blob, save, wasmStateInit)).rejects.toThrow(
+      'corrupt current-schema cradle',
+    );
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);
     expect((await peekSession())?.serializedGameSession).toEqual(new Uint8Array([1, 2, 3]));
@@ -1014,12 +1013,18 @@ describe('cleanShutdown calls shut_down on cradle', () => {
   it('calls shut_down on cradle', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
 
     const cradle = {
       ...makeMockCradle(),
-      shut_down: jest.fn(() => ({ events: [] } as WasmResult)),
+      shut_down: jest.fn(() => ({ events: [] }) as WasmResult),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -1037,7 +1042,13 @@ describe('abandon calls Rust through cradle', () => {
   it('delegates abandonment to the cradle', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
 
     const cradle = makeMockCradle();
@@ -1052,7 +1063,13 @@ describe('abandon calls Rust through cradle', () => {
   it('keeps the controller available when Rust rejects abandonment', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -1061,7 +1078,7 @@ describe('abandon calls Rust through cradle', () => {
       }),
     } as unknown as ChiaGame;
     const errors: string[] = [];
-    blob.getObservable().subscribe(event => {
+    blob.getObservable().subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     blob.loadWasm(mockWasmConnection);
@@ -1080,7 +1097,13 @@ describe('go-on-chain terminal remap', () => {
   it('keeps the channel ready for on-chain moves after leaving Active', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(makeMockCradle());
@@ -1103,15 +1126,24 @@ describe('go-on-chain terminal remap', () => {
   it('reports a successful go-on-chain transition before its notification drains', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
-      go_on_chain: jest.fn(() => ({
-        actionSucceeded: true,
-        disposition: { kind: 'active' },
-        events: [],
-      } as WasmResult)),
+      go_on_chain: jest.fn(
+        () =>
+          ({
+            actionSucceeded: true,
+            disposition: { kind: 'active' },
+            events: [],
+          }) as WasmResult,
+      ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
@@ -1123,18 +1155,29 @@ describe('go-on-chain terminal remap', () => {
   it('does not enter on-chain mode when Rust abandons terminally', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
-      go_on_chain: jest.fn(() => ({
-        disposition: { kind: 'terminal' },
-        events: [{
-          Notification: {
-            ChannelStatus: { state: 'ShuttingDown', session_disposition: 'Abandoned' },
-          },
-        }],
-      } as WasmResult)),
+      go_on_chain: jest.fn(
+        () =>
+          ({
+            disposition: { kind: 'terminal' },
+            events: [
+              {
+                Notification: {
+                  ChannelStatus: { state: 'ShuttingDown', session_disposition: 'Abandoned' },
+                },
+              },
+            ],
+          }) as WasmResult,
+      ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
@@ -1146,17 +1189,28 @@ describe('go-on-chain terminal remap', () => {
   it('does not enter on-chain mode when the action fails in an active drain', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
-      go_on_chain: jest.fn(() => ({
-        actionSucceeded: false,
-        disposition: { kind: 'active' },
-        events: [{
-          Notification: { ActionFailed: { reason: 'no channel coin spend info cached' } },
-        }],
-      } as WasmResult)),
+      go_on_chain: jest.fn(
+        () =>
+          ({
+            actionSucceeded: false,
+            disposition: { kind: 'active' },
+            events: [
+              {
+                Notification: { ActionFailed: { reason: 'no channel coin spend info cached' } },
+              },
+            ],
+          }) as WasmResult,
+      ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
@@ -1170,15 +1224,34 @@ describe('terminal protocol cleanup', () => {
   it('completes a restored cooperative terminal handoff', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
       pendingTerminalHandoff: jest.fn(() => ({ id: '1', message: enc('complete clean close') })),
-      completeOutboundTerminalHandoff: jest.fn(() => ({
-        disposition: { kind: 'terminal' },
-        events: [{ Notification: { ChannelStatus: { state: 'ShutdownTransactionPending', session_disposition: 'Abandoned', zero_payout: true } } }],
-      } as WasmResult)),
+      completeOutboundTerminalHandoff: jest.fn(
+        () =>
+          ({
+            disposition: { kind: 'terminal' },
+            events: [
+              {
+                Notification: {
+                  ChannelStatus: {
+                    state: 'ShutdownTransactionPending',
+                    session_disposition: 'Abandoned',
+                    zero_payout: true,
+                  },
+                },
+              },
+            ],
+          }) as WasmResult,
+      ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
     blob.onSaveNeeded = jest.fn();
@@ -1186,10 +1259,13 @@ describe('terminal protocol cleanup', () => {
     blob.setGameSession(cradle);
     blob.kickSystem(2);
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     blob.receiveAck(1n);
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(1);
-    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'ShutdownTransactionPending', session_disposition: 'Abandoned' });
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
+    expect((blob as any).lastChannelStatus).toMatchObject({
+      state: 'ShutdownTransactionPending',
+      session_disposition: 'Abandoned',
+    });
   });
 
   it('does not complete a restored handoff when replaying its close message fails', () => {
@@ -1201,10 +1277,23 @@ describe('terminal protocol cleanup', () => {
     const cradle = {
       ...makeMockCradle(),
       pendingTerminalHandoff: jest.fn(() => ({ id: '1', message: enc('complete clean close') })),
-      completeOutboundTerminalHandoff: jest.fn(() => ({
-        disposition: { kind: 'terminal' },
-        events: [{ Notification: { ChannelStatus: { state: 'ShutdownTransactionPending', session_disposition: 'Abandoned', zero_payout: true } } }],
-      } as WasmResult)),
+      completeOutboundTerminalHandoff: jest.fn(
+        () =>
+          ({
+            disposition: { kind: 'terminal' },
+            events: [
+              {
+                Notification: {
+                  ChannelStatus: {
+                    state: 'ShutdownTransactionPending',
+                    session_disposition: 'Abandoned',
+                    zero_payout: true,
+                  },
+                },
+              },
+            ],
+          }) as WasmResult,
+      ),
     } as unknown as ChiaGame;
     blob.unackedMessages = [{ msgno: 1n, msg: enc('complete clean close') }];
     blob.loadWasm(mockWasmConnection);
@@ -1212,20 +1301,25 @@ describe('terminal protocol cleanup', () => {
     blob.setGameSession(cradle);
     blob.kickSystem(2);
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     expect((blob as any).protocolStopped).toBe(false);
   });
 
   it('does not complete a terminal handoff before its message is acknowledged', () => {
     const { blob, cradle } = createReadyBlob();
-    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({ events: [] } as WasmResult);
+    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
+      events: [],
+    } as WasmResult);
 
     blob.processResult({
-      disposition: { kind: 'await-outbound-terminal', command: { id: '1', message: enc('complete clean close') } },
+      disposition: {
+        kind: 'await-outbound-terminal',
+        command: { id: '1', message: enc('complete clean close') },
+      },
       events: [],
     });
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     expect(() => blob.receiveAck(1n)).not.toThrow();
     expect((blob as any).terminalHandoff).toMatchObject({ id: '1', msgno: 1n });
   });
@@ -1241,54 +1335,65 @@ describe('terminal protocol cleanup', () => {
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
-      completeOutboundTerminalHandoff: jest.fn(() => ({
-        disposition: { kind: 'terminal' },
-        events: [],
-      } as WasmResult)),
+      completeOutboundTerminalHandoff: jest.fn(
+        () =>
+          ({
+            disposition: { kind: 'terminal' },
+            events: [],
+          }) as WasmResult,
+      ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.kickSystem(2);
     blob.onSaveNeeded = jest.fn();
     blob.processResult({
-      disposition: { kind: 'await-outbound-terminal', command: { id: '1', message: enc('complete clean close') } },
+      disposition: {
+        kind: 'await-outbound-terminal',
+        command: { id: '1', message: enc('complete clean close') },
+      },
       events: [],
     });
     await (blob as any).flushDurabilityAndSend();
 
     blob.receiveAck(1n);
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     expect((blob as any).terminalHandoff).toMatchObject({ sent: false, acknowledged: false });
 
     sendMessage.mockReturnValue(true);
     blob.resendUnacked();
     blob.receiveAck(1n);
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
   });
 
   it('leaves a failed terminal completion recoverable without scheduling retries', async () => {
     const { blob, cradle } = createReadyBlob();
     (cradle.completeOutboundTerminalHandoff as jest.Mock)
-      .mockImplementationOnce(() => { throw new Error('temporary completion failure'); })
+      .mockImplementationOnce(() => {
+        throw new Error('temporary completion failure');
+      })
       .mockReturnValueOnce({ disposition: { kind: 'terminal' }, events: [] } as WasmResult);
     blob.onSaveNeeded = jest.fn();
     blob.processResult({
-      disposition: { kind: 'await-outbound-terminal', command: { id: '1', message: enc('complete clean close') } },
+      disposition: {
+        kind: 'await-outbound-terminal',
+        command: { id: '1', message: enc('complete clean close') },
+      },
       events: [],
     });
     await blob.flushPendingWork();
 
     blob.receiveAck(1n);
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
     expect((blob as any).terminalCompletionRetryTimer).toBeUndefined();
     expect((blob as any).protocolStopped).toBe(false);
 
     blob.receiveAck(1n);
 
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(2);
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(2);
     expect((blob as any).protocolStopped).toBe(true);
   });
 
@@ -1296,29 +1401,43 @@ describe('terminal protocol cleanup', () => {
     const { blob, cradle, sentMessages } = createReadyBlob();
     (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
       disposition: { kind: 'terminal' },
-      events: [{
-        Notification: {
-          ChannelStatus: { state: 'ShutdownTransactionPending', session_disposition: 'Abandoned', zero_payout: true },
+      events: [
+        {
+          Notification: {
+            ChannelStatus: {
+              state: 'ShutdownTransactionPending',
+              session_disposition: 'Abandoned',
+              zero_payout: true,
+            },
+          },
         },
-      }],
+      ],
     } as WasmResult);
 
     blob.processResult({
-      disposition: { kind: 'await-outbound-terminal', command: { id: '1', message: enc('complete clean close') } },
+      disposition: {
+        kind: 'await-outbound-terminal',
+        command: { id: '1', message: enc('complete clean close') },
+      },
       events: [
         { OutboundMessage: enc('advisory before clean close') },
-        { Notification: { ChannelStatus: { state: 'ShutdownTransactionPending', zero_payout: true } } },
+        {
+          Notification: {
+            ChannelStatus: { state: 'ShutdownTransactionPending', zero_payout: true },
+          },
+        },
       ],
     });
     await blob.flushPendingWork();
     await blob.flushPendingSave();
     blob.resendUnacked();
 
-    expect(sentMessages.map(message => new TextDecoder().decode(message.msg)))
-      .toContain('complete clean close');
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).not.toHaveBeenCalled();
+    expect(sentMessages.map((message) => new TextDecoder().decode(message.msg))).toContain(
+      'complete clean close',
+    );
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     blob.receiveAck(2n);
-    expect((cradle.completeOutboundTerminalHandoff as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
     expect((blob as any).lastChannelStatus).toMatchObject({
       state: 'ShutdownTransactionPending',
       session_disposition: 'Abandoned',
@@ -1329,7 +1448,13 @@ describe('terminal protocol cleanup', () => {
   it('replaces queued protocol and presentation work with terminal notifications', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = makeMockCradle();
     blob.loadWasm(mockWasmConnection);
@@ -1343,39 +1468,49 @@ describe('terminal protocol cleanup', () => {
     });
     blob.processResult({
       disposition: { kind: 'terminal' },
-      events: [{
-        Notification: {
-          ChannelStatus: {
-            state: 'Active',
-            session_disposition: 'Abandoned',
+      events: [
+        {
+          Notification: {
+            ChannelStatus: {
+              state: 'Active',
+              session_disposition: 'Abandoned',
+            },
           },
         },
-      }],
+      ],
     });
 
     expect(sentMessages).toEqual([]);
-    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Active', session_disposition: 'Abandoned' });
+    expect((blob as any).lastChannelStatus).toMatchObject({
+      state: 'Active',
+      session_disposition: 'Abandoned',
+    });
 
     blob.processResult({
       events: [{ Notification: { ChannelStatus: { state: 'Active' } } }],
       watchCoins: [{ coin_name: 'late', coin_string: 'late-coin' }],
     });
 
-    expect((blob as any).lastChannelStatus).toMatchObject({ state: 'Active', session_disposition: 'Abandoned' });
+    expect((blob as any).lastChannelStatus).toMatchObject({
+      state: 'Active',
+      session_disposition: 'Abandoned',
+    });
   });
 
   it('persists canonical timeout-submission channel progress from WASM', async () => {
     const { blob } = createReadyBlob();
     blob.processResult({
-      events: [{
-        Notification: {
-          ChannelStatus: {
-            state: 'Unrolling',
-            unroll_initiator: 'opponent',
-            semantic_phase: 'submitting_timeout_finish',
+      events: [
+        {
+          Notification: {
+            ChannelStatus: {
+              state: 'Unrolling',
+              unroll_initiator: 'opponent',
+              semantic_phase: 'submitting_timeout_finish',
+            },
           },
         },
-      }],
+      ],
     });
     await blob.flushPendingWork();
 
@@ -1418,13 +1553,22 @@ describe('transaction submission', () => {
 
   it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
     const spend = jest.fn().mockResolvedValue('');
-    const blockchain = new BlockchainPoller({
-      ...mockRpc,
-      spend,
-    } as InternalBlockchainInterface, 60000);
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+      } as InternalBlockchainInterface,
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     blob.loadWasm(mockWasmConnection);
 
@@ -1441,18 +1585,31 @@ describe('transaction submission', () => {
 
   it('drops queued publishes after controller cleanup without cancelling an in-flight publish', async () => {
     let resolveFirst: (() => void) | null = null;
-    const spend = jest.fn()
-      .mockImplementationOnce(() => new Promise<string>((resolve) => {
-        resolveFirst = () => resolve('');
-      }))
+    const spend = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveFirst = () => resolve('');
+          }),
+      )
       .mockResolvedValue('');
-    const blockchain = new BlockchainPoller({
-      ...mockRpc,
-      spend,
-    } as InternalBlockchainInterface, 60000);
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+      } as InternalBlockchainInterface,
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     blob.loadWasm(mockWasmConnection);
 
@@ -1470,24 +1627,33 @@ describe('transaction submission', () => {
 
   it('applies watch and unwatch deltas without resampling the cradle snapshot', async () => {
     const queriedNames: string[][] = [];
-    const blockchain = new BlockchainPoller(new Proxy(
-      {
-        getHeightInfo: () => Promise.resolve(1n),
-        registerCoins: () => Promise.resolve(),
-        getCoinRecordsByNames: (names: string[]) => {
-          queriedNames.push(names);
-          return Promise.resolve([]);
+    const blockchain = new BlockchainPoller(
+      new Proxy(
+        {
+          getHeightInfo: () => Promise.resolve(1n),
+          registerCoins: () => Promise.resolve(),
+          getCoinRecordsByNames: (names: string[]) => {
+            queriedNames.push(names);
+            return Promise.resolve([]);
+          },
+        } as unknown as InternalBlockchainInterface,
+        {
+          get: (target, prop) =>
+            (target as Record<string, unknown>)[prop as string] ??
+            (() => Promise.resolve(undefined)),
         },
-      } as unknown as InternalBlockchainInterface,
-      {
-        get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
-      },
-    ), 60000);
+      ),
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = makeMockCradle();
 
@@ -1518,24 +1684,33 @@ describe('transaction submission', () => {
 
   it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
     const queriedNames: string[][] = [];
-    const blockchain = new BlockchainPoller(new Proxy(
-      {
-        getHeightInfo: () => Promise.resolve(1n),
-        registerCoins: () => Promise.resolve(),
-        getCoinRecordsByNames: (names: string[]) => {
-          queriedNames.push(names);
-          return Promise.resolve([]);
+    const blockchain = new BlockchainPoller(
+      new Proxy(
+        {
+          getHeightInfo: () => Promise.resolve(1n),
+          registerCoins: () => Promise.resolve(),
+          getCoinRecordsByNames: (names: string[]) => {
+            queriedNames.push(names);
+            return Promise.resolve([]);
+          },
+        } as unknown as InternalBlockchainInterface,
+        {
+          get: (target, prop) =>
+            (target as Record<string, unknown>)[prop as string] ??
+            (() => Promise.resolve(undefined)),
         },
-      } as unknown as InternalBlockchainInterface,
-      {
-        get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
-      },
-    ), 60000);
+      ),
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -1559,22 +1734,32 @@ describe('transaction submission', () => {
 
   it('hydrates without blockchain and replays retained submissions on later attach', async () => {
     const spend = jest.fn().mockResolvedValue('');
-    const blockchain = new BlockchainPoller({
-      ...mockRpc,
-      spend,
-      isConnected: () => true,
-      getHeightInfo: () => Promise.resolve(1n),
-      registerCoins: () => Promise.resolve(),
-      getCoinRecordsByNames: () => Promise.resolve([]),
-    } as InternalBlockchainInterface, 60000);
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+        isConnected: () => true,
+        getHeightInfo: () => Promise.resolve(1n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.resolve([]),
+      } as InternalBlockchainInterface,
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
       snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
-      drain_submissions: jest.fn()
+      drain_submissions: jest
+        .fn()
         .mockReturnValueOnce([])
         .mockReturnValueOnce([testSpendBundle('05')]),
     } as unknown as ChiaGame;
@@ -1600,11 +1785,19 @@ describe('transaction submission', () => {
     const blockchain = new BlockchainPoller(mockRpc, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
-      snapshot_watched_coins: jest.fn(() => [{ coin_name: 'restored', coin_string: 'coin-restored' }]),
+      snapshot_watched_coins: jest.fn(() => [
+        { coin_name: 'restored', coin_string: 'coin-restored' },
+      ]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -1627,7 +1820,13 @@ describe('transaction submission', () => {
     const blockchain = new BlockchainPoller(mockRpc, 60000);
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = makeMockCradle();
 
@@ -1642,19 +1841,32 @@ describe('transaction submission', () => {
 
   it('submits drained transactions sequentially', async () => {
     let resolveFirst: (() => void) | null = null;
-    const spend = jest.fn()
-      .mockImplementationOnce(() => new Promise<string>((resolve) => {
-        resolveFirst = () => resolve('');
-      }))
+    const spend = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveFirst = () => resolve('');
+          }),
+      )
       .mockResolvedValue('');
-    const blockchain = new BlockchainPoller({
-      ...mockRpc,
-      spend,
-      isConnected: () => true,
-    } as InternalBlockchainInterface, 60000);
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+        isConnected: () => true,
+      } as InternalBlockchainInterface,
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -1674,13 +1886,22 @@ describe('transaction submission', () => {
 
   it('submits transactions already queued when a manager result is terminal', async () => {
     const spend = jest.fn().mockResolvedValue('');
-    const blockchain = new BlockchainPoller({
-      ...mockRpc,
-      spend,
-    } as InternalBlockchainInterface, 60000);
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+      } as InternalBlockchainInterface,
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const cradle = {
       ...makeMockCradle(),
@@ -1701,25 +1922,45 @@ describe('transaction submission', () => {
   });
 
   it('does not emit user-facing errors for benign stale spend rejections', async () => {
-    expect(isBenignTransactionSubmitError(
-      'spend rejected: status=[3,9] Conflicting transaction: overlapping spends [CoinID(Hash(a))]',
-    )).toBe(true);
-    expect(isBenignTransactionSubmitError(
-      'spend rejected: status=[3,5] Coin not found: CoinID(Hash(b))',
-    )).toBe(true);
-    expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(false);
+    expect(
+      isBenignTransactionSubmitError(
+        'spend rejected: status=[3,9] Conflicting transaction: overlapping spends [CoinID(Hash(a))]',
+      ),
+    ).toBe(true);
+    expect(
+      isBenignTransactionSubmitError(
+        'spend rejected: status=[3,5] Coin not found: CoinID(Hash(b))',
+      ),
+    ).toBe(true);
+    expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(
+      false,
+    );
 
-    const spend = jest.fn()
-      .mockRejectedValueOnce(new Error('spend rejected: status=[3,9] Conflicting transaction: overlapping spends []'))
-      .mockRejectedValueOnce(new Error('spend rejected: status=[3,5] Coin not found: CoinID(Hash(c))'));
-    const blockchain = new BlockchainPoller({
-      ...mockRpc,
-      spend,
-      isConnected: () => true,
-    } as InternalBlockchainInterface, 60000);
+    const spend = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new Error('spend rejected: status=[3,9] Conflicting transaction: overlapping spends []'),
+      )
+      .mockRejectedValueOnce(
+        new Error('spend rejected: status=[3,5] Coin not found: CoinID(Hash(c))'),
+      );
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+        isConnected: () => true,
+      } as InternalBlockchainInterface,
+      60000,
+    );
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
-    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn(sentMessages, sentAcks));
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
     activeBlob = blob;
     const errors: string[] = [];
     blob.getObservable().subscribe((evt) => {

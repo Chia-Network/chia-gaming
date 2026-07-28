@@ -36,9 +36,7 @@ export const makeDescription = (desc: OutcomeHandType) => {
       return `${name}, ${main} high${kickers.length ? ', ' + kickers.join(', ') + ' kickers' : ''}`;
 
     case 'four of a kind':
-      return kickers.length
-        ? `${name}, ${main}s, ${kickers[0]} kicker`
-        : `${name}, ${main}s`;
+      return kickers.length ? `${name}, ${main}s, ${kickers[0]} kicker` : `${name}, ${main}s`;
 
     case 'full house':
       // e.g., "Full House, Aces over Fours"
@@ -67,9 +65,7 @@ export const makeDescription = (desc: OutcomeHandType) => {
 
     case 'high card':
       // e.g., "King high. Ten, Eight, Seven, Two kickers"
-      return kickers.length
-        ? `${main} high. ${kickers.join(', ')} kickers`
-        : `${main} high`;
+      return kickers.length ? `${main} high. ${kickers.join(', ')} kickers` : `${main} high`;
 
     default:
       return `${name} ${values.join(', ')}`;

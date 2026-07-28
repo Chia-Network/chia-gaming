@@ -41,9 +41,9 @@ export function formatKrunkHandLog(
   const roleLabel = role === 'alice' ? 'picking' : 'guessing';
   const lines = [`Krunk (${roleLabel}) ${formatAmount(betSize)}`];
   for (const g of guesses) {
-    lines.push(g.clue.map(v => CLUE_TILE[v]).join('') + g.word);
+    lines.push(g.clue.map((v) => CLUE_TILE[v]).join('') + g.word);
   }
-  const solved = guesses.some(g => g.clue.every(v => v === 2));
+  const solved = guesses.some((g) => g.clue.every((v) => v === 2));
   if (!solved && revealedWord) {
     lines.push('⬛⬛⬛⬛⬛' + revealedWord);
   }
@@ -72,7 +72,10 @@ export function krunkGameSlots(
   };
 }
 
-export function newlyResolvedKrunkIndex(resolvedCount: number, previousResolvedCount: number): number | undefined {
+export function newlyResolvedKrunkIndex(
+  resolvedCount: number,
+  previousResolvedCount: number,
+): number | undefined {
   return resolvedCount > previousResolvedCount ? resolvedCount - 1 : undefined;
 }
 
@@ -106,14 +109,17 @@ export function krunkLetterStatuses(guesses: KrunkGuess[]): Record<string, Krunk
   };
   const out: Record<string, KrunkLetterStatus> = {};
   for (const g of guesses) {
-    if (g.clue.every(v => v === -1)) continue;
+    if (g.clue.every((v) => v === -1)) continue;
     for (let i = 0; i < 5; i++) {
       const letter = g.word.charAt(i);
       if (!letter) continue;
       const next: KrunkLetterStatus =
-        g.clue[i] === 2 ? 'correct'
-          : g.clue[i] === 1 ? 'present'
-            : g.clue[i] === 0 ? 'absent'
+        g.clue[i] === 2
+          ? 'correct'
+          : g.clue[i] === 1
+            ? 'present'
+            : g.clue[i] === 0
+              ? 'absent'
               : 'unused';
       const prev = out[letter] ?? 'unused';
       if (rank[next] > rank[prev]) out[letter] = next;
@@ -128,10 +134,20 @@ const KEYBOARD_ROWS = [
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '⌫'],
 ] as const;
 
-function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValue: number; flipDelay?: number }) {
+function LetterCell({
+  letter,
+  clueValue,
+  flipDelay,
+}: {
+  letter: string;
+  clueValue: number;
+  flipDelay?: number;
+}) {
   // 3 phases: 'idle' (neutral), 'half' (edge-on, swap color), 'done' (revealed)
   const animationDelay = useRef(flipDelay).current;
-  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(animationDelay == null ? 'done' : 'idle');
+  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(
+    animationDelay == null ? 'done' : 'idle',
+  );
 
   useEffect(() => {
     if (animationDelay == null) return;
@@ -143,7 +159,7 @@ function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValu
   useEffect(() => {
     if (phase !== 'half') return;
     const fallback = setTimeout(
-      () => setPhase(current => current === 'half' ? 'done' : current),
+      () => setPhase((current) => (current === 'half' ? 'done' : current)),
       FLIP_HALF_MS + 100,
     );
     return () => clearTimeout(fallback);
@@ -164,7 +180,7 @@ function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValu
     <div
       className={`inline-flex items-center justify-center rounded border border-canvas-line bg-canvas-bg font-bold uppercase tabular-nums select-none text-canvas-text-contrast ${TILE}`}
       style={style}
-      onTransitionEnd={event => {
+      onTransitionEnd={(event) => {
         if (event.propertyName === 'transform' && phase === 'half') {
           setPhase('done');
         }
@@ -177,7 +193,9 @@ function LetterCell({ letter, clueValue, flipDelay }: { letter: string; clueValu
 
 function EmptyCell({ letter }: { letter?: string }) {
   return (
-    <div className={`inline-flex items-center justify-center rounded border border-dashed border-canvas-line bg-canvas-bg font-bold uppercase text-canvas-text-contrast ${TILE}`}>
+    <div
+      className={`inline-flex items-center justify-center rounded border border-dashed border-canvas-line bg-canvas-bg font-bold uppercase text-canvas-text-contrast ${TILE}`}
+    >
       {letter ?? ''}
     </div>
   );
@@ -187,7 +205,9 @@ function TargetCell({ letter, flipDelay }: { letter: string; flipDelay?: number 
   // Same flip phases as LetterCell. While animating, hide the letter until
   // the card lands — this row reveals the answer, not a typed guess.
   const animationDelay = useRef(flipDelay).current;
-  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(animationDelay == null ? 'done' : 'idle');
+  const [phase, setPhase] = useState<'idle' | 'half' | 'done'>(
+    animationDelay == null ? 'done' : 'idle',
+  );
 
   useEffect(() => {
     if (animationDelay == null) return;
@@ -199,7 +219,7 @@ function TargetCell({ letter, flipDelay }: { letter: string; flipDelay?: number 
   useEffect(() => {
     if (phase !== 'half') return;
     const fallback = setTimeout(
-      () => setPhase(current => current === 'half' ? 'done' : current),
+      () => setPhase((current) => (current === 'half' ? 'done' : current)),
       FLIP_HALF_MS + 100,
     );
     return () => clearTimeout(fallback);
@@ -210,16 +230,14 @@ function TargetCell({ letter, flipDelay }: { letter: string; flipDelay?: number 
     transition: `transform ${FLIP_HALF_MS}ms ease-in-out`,
     transform: phase === 'half' ? 'rotateX(90deg)' : 'rotateX(0deg)',
     perspective: '600px',
-    ...(revealed
-      ? { backgroundColor: '#e0e0e0', borderColor: '#999', color: 'black' }
-      : {}),
+    ...(revealed ? { backgroundColor: '#e0e0e0', borderColor: '#999', color: 'black' } : {}),
   };
 
   return (
     <div
       className={`inline-flex items-center justify-center rounded border border-canvas-line bg-canvas-bg font-bold uppercase tabular-nums select-none text-canvas-text-contrast ${TILE}`}
       style={style}
-      onTransitionEnd={event => {
+      onTransitionEnd={(event) => {
         if (event.propertyName === 'transform' && phase === 'half') {
           setPhase('done');
         }
@@ -232,8 +250,8 @@ function TargetCell({ letter, flipDelay }: { letter: string; flipDelay?: number 
 
 function PendingGuessRow({ word }: { word: string }) {
   return (
-    <div className='flex gap-1'>
-      {[0, 1, 2, 3, 4].map(i => (
+    <div className="flex gap-1">
+      {[0, 1, 2, 3, 4].map((i) => (
         <EmptyCell key={i} letter={word.charAt(i)} />
       ))}
     </div>
@@ -241,11 +259,11 @@ function PendingGuessRow({ word }: { word: string }) {
 }
 
 function GuessRow({ guess, animate }: { guess: KrunkGuess; animate?: boolean }) {
-  const pending = guess.clue.every(v => v === -1);
+  const pending = guess.clue.every((v) => v === -1);
   if (pending) return <PendingGuessRow word={guess.word} />;
   return (
-    <div className='flex gap-1'>
-      {[0, 1, 2, 3, 4].map(i => (
+    <div className="flex gap-1">
+      {[0, 1, 2, 3, 4].map((i) => (
         <LetterCell
           key={i}
           letter={guess.word.charAt(i)}
@@ -275,27 +293,29 @@ function Grid({
       rows.push(<GuessRow key={i} guess={guesses[i]} animate={latestAnimateIndex === i} />);
     } else if (showDraftRow && i === guesses.length) {
       rows.push(
-        <div key={i} className='flex gap-1'>
-          {[0, 1, 2, 3, 4].map(j => (
+        <div key={i} className="flex gap-1">
+          {[0, 1, 2, 3, 4].map((j) => (
             <EmptyCell key={j} letter={draftLetters[j]} />
           ))}
         </div>,
       );
     } else {
       rows.push(
-        <div key={i} className='flex gap-1'>
-          {[0, 1, 2, 3, 4].map(j => <EmptyCell key={j} />)}
+        <div key={i} className="flex gap-1">
+          {[0, 1, 2, 3, 4].map((j) => (
+            <EmptyCell key={j} />
+          ))}
         </div>,
       );
     }
   }
-  return <div className='flex flex-col gap-1 items-center'>{rows}</div>;
+  return <div className="flex flex-col gap-1 items-center">{rows}</div>;
 }
 
 function TargetRow({ word, animate }: { word: string; animate?: boolean }) {
   return (
-    <div className='flex gap-1 mt-2'>
-      {[0, 1, 2, 3, 4].map(i => (
+    <div className="flex gap-1 mt-2">
+      {[0, 1, 2, 3, 4].map((i) => (
         <TargetCell
           key={i}
           letter={word.charAt(i)}
@@ -308,13 +328,25 @@ function TargetRow({ word, animate }: { word: string; animate?: boolean }) {
 
 function keyBackground(status: KrunkLetterStatus | undefined): CSSProperties {
   if (status === 'correct') {
-    return { backgroundColor: CLUE_COLORS[2].bg, borderColor: CLUE_COLORS[2].border, color: 'white' };
+    return {
+      backgroundColor: CLUE_COLORS[2].bg,
+      borderColor: CLUE_COLORS[2].border,
+      color: 'white',
+    };
   }
   if (status === 'present') {
-    return { backgroundColor: CLUE_COLORS[1].bg, borderColor: CLUE_COLORS[1].border, color: 'white' };
+    return {
+      backgroundColor: CLUE_COLORS[1].bg,
+      borderColor: CLUE_COLORS[1].border,
+      color: 'white',
+    };
   }
   if (status === 'absent') {
-    return { backgroundColor: CLUE_COLORS[0].bg, borderColor: CLUE_COLORS[0].border, color: 'white' };
+    return {
+      backgroundColor: CLUE_COLORS[0].bg,
+      borderColor: CLUE_COLORS[0].border,
+      color: 'white',
+    };
   }
   return {};
 }
@@ -334,7 +366,7 @@ function KeyboardKey({
 }) {
   return (
     <button
-      type='button'
+      type="button"
       disabled={disabled}
       onClick={onPress}
       className={`inline-flex items-center justify-center rounded border border-canvas-line bg-canvas-bg font-bold uppercase select-none text-canvas-text-contrast disabled:opacity-40 ${
@@ -359,19 +391,13 @@ function OnScreenKeyboard({
   onBackspace: () => void;
 }) {
   return (
-    <div className='flex flex-col gap-1.5 items-center'>
+    <div className="flex flex-col gap-1.5 items-center">
       {KEYBOARD_ROWS.map((row, ri) => (
-        <div key={ri} className='flex gap-1.5 justify-center'>
-          {row.map(key => {
+        <div key={ri} className="flex gap-1.5 justify-center">
+          {row.map((key) => {
             if (key === '⌫') {
               return (
-                <KeyboardKey
-                  key={key}
-                  label='⌫'
-                  wide
-                  disabled={disabled}
-                  onPress={onBackspace}
-                />
+                <KeyboardKey key={key} label="⌫" wide disabled={disabled} onPress={onBackspace} />
               );
             }
             return (
@@ -405,11 +431,11 @@ const Krunk: React.FC<KrunkProps> = ({
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
   // roles are flipped: they're bob in game 0 and alice in game 1.
-  const {
-    aliceGameId,
-    bobGameId,
-    aliceActive,
-  } = krunkGameSlots(currentHandGameIds, iProposedHand, activeGameIds);
+  const { aliceGameId, bobGameId, aliceActive } = krunkGameSlots(
+    currentHandGameIds,
+    iProposedHand,
+    activeGameIds,
+  );
   const aliceId = aliceGameId ?? '';
   const bobId = bobGameId ?? '';
   // Keep each hand "live" for the whole atomic hand via currentHandGameIds.
@@ -461,12 +487,14 @@ const Krunk: React.FC<KrunkProps> = ({
       return;
     }
     aliceLogFiredRef.current = true;
-    onGameLog(formatKrunkHandLog(
-      'alice',
-      betSize,
-      aliceHand.gameState.guesses,
-      aliceHand.gameState.revealedWord ?? aliceHand.gameState.secretWord,
-    ));
+    onGameLog(
+      formatKrunkHandLog(
+        'alice',
+        betSize,
+        aliceHand.gameState.guesses,
+        aliceHand.gameState.revealedWord ?? aliceHand.gameState.secretWord,
+      ),
+    );
   }, [
     aliceHand.gameState.handler,
     aliceHand.gameState.guesses,
@@ -480,12 +508,9 @@ const Krunk: React.FC<KrunkProps> = ({
       return;
     }
     bobLogFiredRef.current = true;
-    onGameLog(formatKrunkHandLog(
-      'bob',
-      betSize,
-      bobHand.gameState.guesses,
-      bobHand.gameState.revealedWord,
-    ));
+    onGameLog(
+      formatKrunkHandLog('bob', betSize, bobHand.gameState.guesses, bobHand.gameState.revealedWord),
+    );
   }, [
     bobHand.gameState.handler,
     bobHand.gameState.guesses,
@@ -503,17 +528,14 @@ const Krunk: React.FC<KrunkProps> = ({
   // Resolved cells must receive their delay in the render where they mount:
   // LetterCell intentionally latches that initial delay.
   const prevResolvedCountRef = useRef(0);
-  const resolvedCount = bobHand.gameState.guesses.filter(g => !g.clue.every(v => v === -1)).length;
+  const resolvedCount = bobHand.gameState.guesses.filter(
+    (g) => !g.clue.every((v) => v === -1),
+  ).length;
   const newlyResolvedIndex = newlyResolvedKrunkIndex(resolvedCount, prevResolvedCountRef.current);
   // Dictionary rejection rolls back the sent guess in gameState; hide any
   // still-queued rows in the same render (don't wait for the clear effect).
-  const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error)
-    ? []
-    : guessQueue;
-  const displayedBobGuesses = krunkGuessesWithQueued(
-    bobHand.gameState.guesses,
-    displayQueue,
-  );
+  const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error) ? [] : guessQueue;
+  const displayedBobGuesses = krunkGuessesWithQueued(bobHand.gameState.guesses, displayQueue);
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
   useEffect(() => {
     if (newlyResolvedIndex === undefined) return;
@@ -523,10 +545,9 @@ const Krunk: React.FC<KrunkProps> = ({
   const latestAnimateIndex = newlyResolvedIndex ?? animateIndex;
 
   const bobRevealedWord = bobHand.gameState.revealedWord;
-  const bobSolved = bobHand.gameState.guesses.some(g => g.clue.every(v => v === 2));
+  const bobSolved = bobHand.gameState.guesses.some((g) => g.clue.every((v) => v === 2));
   const bobMissed = bobRevealedWord != null && !bobSolved;
-  const animateBobReveal = bobMissed
-    && latestAnimateIndex === bobHand.gameState.guesses.length - 1;
+  const animateBobReveal = bobMissed && latestAnimateIndex === bobHand.gameState.guesses.length - 1;
   // Wait for the final guess row to finish flipping before mounting the
   // answer row, so its flip starts only after that animation ends.
   const [bobRevealReady, setBobRevealReady] = useState(false);
@@ -551,16 +572,10 @@ const Krunk: React.FC<KrunkProps> = ({
     wordCommitted &&
     bobHand.gameState.role === 'bob' &&
     bobHand.gameState.handler === KrunkHandler.BobGuess;
-  const canDraftGuess = bobInHand && canDraftKrunkGuess(
-    wordCommitted,
-    bobHand.gameState.handler,
-    filledGuessCount,
-  );
-  const canQueueGuess = bobInHand && canQueueKrunkGuess(
-    wordCommitted,
-    bobHand.gameState.handler,
-    filledGuessCount,
-  );
+  const canDraftGuess =
+    bobInHand && canDraftKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
+  const canQueueGuess =
+    bobInHand && canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
 
   // Drain the queue whenever it becomes our turn to guess. Only pop after
   // we know submit will accept (BobGuess); otherwise a rejected submit
@@ -576,7 +591,7 @@ const Krunk: React.FC<KrunkProps> = ({
     if (!isBobGuessPhase || guessQueue.length === 0) return;
     if (bobHand.gameState.handler !== KrunkHandler.BobGuess) return;
     const next = guessQueue[0];
-    setGuessQueue(rest => rest.slice(1));
+    setGuessQueue((rest) => rest.slice(1));
     bobHand.submitGuess(next);
   }, [
     isBobGuessPhase,
@@ -595,7 +610,9 @@ const Krunk: React.FC<KrunkProps> = ({
   // whenever there is room to type/queue — including while BobWaiting on a clue.
   const keyboardMode: 'pick' | 'guess' | null = pickingWord
     ? 'pick'
-    : (canDraftGuess ? 'guess' : null);
+    : canDraftGuess
+      ? 'guess'
+      : null;
   const activeDraft = keyboardMode === 'pick' ? wordDraft : guessDraft;
   const showGuessDraft = canDraftGuess;
   const keyboardFocusRef = useRef<HTMLDivElement>(null);
@@ -616,7 +633,7 @@ const Krunk: React.FC<KrunkProps> = ({
       bobHand.submitGuess(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
       if (filledGuessCount >= MAX_GUESSES) return false;
-      setGuessQueue(prev => [...prev, guessDraft]);
+      setGuessQueue((prev) => [...prev, guessDraft]);
     } else {
       return false;
     }
@@ -632,23 +649,20 @@ const Krunk: React.FC<KrunkProps> = ({
   ]);
 
   const submitActive = useCallback(() => {
-    const submitted = keyboardMode === 'pick'
-      ? commitWord()
-      : keyboardMode === 'guess'
-        ? submitGuess()
-        : false;
+    const submitted =
+      keyboardMode === 'pick' ? commitWord() : keyboardMode === 'guess' ? submitGuess() : false;
     if (submitted) keyboardFocusRef.current?.focus();
   }, [keyboardMode, commitWord, submitGuess]);
 
   const themLabel = opponentName ?? 'Opponent';
 
   const bobWon =
-    bobHand.gameState.handler === KrunkHandler.Terminal
-    && bobHand.gameState.outcome === 'win'
-    && bobHand.gameState.settlementOutcome === null;
+    bobHand.gameState.handler === KrunkHandler.Terminal &&
+    bobHand.gameState.outcome === 'win' &&
+    bobHand.gameState.settlementOutcome === null;
   const handComplete =
-    bobHand.gameState.handler === KrunkHandler.Terminal
-    && aliceHand.gameState.handler === KrunkHandler.Terminal;
+    bobHand.gameState.handler === KrunkHandler.Terminal &&
+    aliceHand.gameState.handler === KrunkHandler.Terminal;
 
   type KrunkNotice = { text: string; kind: 'error' | 'win' | 'info' };
 
@@ -678,9 +692,8 @@ const Krunk: React.FC<KrunkProps> = ({
     if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
     if (displayQueue.length > 0) {
       return {
-        text: displayQueue.length === 1
-          ? '1 guess queued…'
-          : `${displayQueue.length} guesses queued…`,
+        text:
+          displayQueue.length === 1 ? '1 guess queued…' : `${displayQueue.length} guesses queued…`,
         kind: 'info',
       };
     }
@@ -694,32 +707,29 @@ const Krunk: React.FC<KrunkProps> = ({
       return { text: 'Scoring…', kind: 'info' };
     }
     return { text: `Waiting for ${themLabel}…`, kind: 'info' };
-  }, [
-    bobHand.gameState,
-    handComplete,
-    wordCommitted,
-    displayQueue.length,
-    themLabel,
-  ]);
+  }, [bobHand.gameState, handComplete, wordCommitted, displayQueue.length, themLabel]);
 
   const letterStatuses = useMemo(
     () => krunkLetterStatuses(bobHand.gameState.guesses),
     [bobHand.gameState.guesses],
   );
 
-  const typeLetter = useCallback((letter: string) => {
-    if (keyboardMode === null) return;
-    const setter = keyboardMode === 'pick' ? setWordDraft : setGuessDraft;
-    setter(prev => {
-      if (prev.length >= 5) return prev;
-      return (prev + letter.toUpperCase()).replace(/[^A-Z]/g, '').slice(0, 5);
-    });
-  }, [keyboardMode]);
+  const typeLetter = useCallback(
+    (letter: string) => {
+      if (keyboardMode === null) return;
+      const setter = keyboardMode === 'pick' ? setWordDraft : setGuessDraft;
+      setter((prev) => {
+        if (prev.length >= 5) return prev;
+        return (prev + letter.toUpperCase()).replace(/[^A-Z]/g, '').slice(0, 5);
+      });
+    },
+    [keyboardMode],
+  );
 
   const backspace = useCallback(() => {
     if (keyboardMode === null) return;
     const setter = keyboardMode === 'pick' ? setWordDraft : setGuessDraft;
-    setter(prev => prev.slice(0, -1));
+    setter((prev) => prev.slice(0, -1));
   }, [keyboardMode]);
 
   // Physical keyboard for pick/guess drafting.
@@ -728,7 +738,10 @@ const Krunk: React.FC<KrunkProps> = ({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
         return;
       }
       if (e.key === 'Enter') {
@@ -752,19 +765,16 @@ const Krunk: React.FC<KrunkProps> = ({
 
   // Label tracks the next action the player needs, even while waiting.
   const actionLabel = !wordCommitted ? 'Pick' : 'Guess';
-  const actionEnabled = keyboardMode === 'pick'
-    ? wordDraft.length === 5
-    : keyboardMode === 'guess'
-      && guessDraft.length === 5
-      && (isBobGuessPhase || canQueueGuess);
+  const actionEnabled =
+    keyboardMode === 'pick'
+      ? wordDraft.length === 5
+      : keyboardMode === 'guess' && guessDraft.length === 5 && (isBobGuessPhase || canQueueGuess);
   return (
-    <div className='flex flex-col gap-4 items-center py-4'>
-      <div className='flex gap-6 items-start justify-center'>
+    <div className="flex flex-col gap-4 items-center py-4">
+      <div className="flex gap-6 items-start justify-center">
         {/* Left: Bob's guessing board (my guesses) */}
-        <div className='flex flex-col items-center gap-2'>
-          <p className='text-sm font-semibold text-canvas-text-contrast'>
-            Your guesses
-          </p>
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-sm font-semibold text-canvas-text-contrast">Your guesses</p>
           <Grid
             guesses={displayedBobGuesses}
             draft={guessDraft}
@@ -774,48 +784,56 @@ const Krunk: React.FC<KrunkProps> = ({
           {bobMissed && bobRevealReady && bobRevealedWord ? (
             <TargetRow word={bobRevealedWord} animate={animateBobReveal} />
           ) : (
-            <div className='flex gap-1 mt-2'>
-              {[0, 1, 2, 3, 4].map(i => <EmptyCell key={i} />)}
+            <div className="flex gap-1 mt-2">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <EmptyCell key={i} />
+              ))}
             </div>
           )}
-          <p className={`min-h-5 max-w-60 text-center text-xs ${
-            bobBoardNotice?.kind === 'error'
-              ? 'text-red-600'
-              : bobBoardNotice?.kind === 'win'
-                ? 'font-semibold text-canvas-text-contrast'
-                : 'text-canvas-text-contrast'
-          }`}>
+          <p
+            className={`min-h-5 max-w-60 text-center text-xs ${
+              bobBoardNotice?.kind === 'error'
+                ? 'text-red-600'
+                : bobBoardNotice?.kind === 'win'
+                  ? 'font-semibold text-canvas-text-contrast'
+                  : 'text-canvas-text-contrast'
+            }`}
+          >
             {bobBoardNotice?.text ?? ''}
           </p>
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}
-        <div className='flex flex-col items-center gap-2'>
-          <p className='text-sm font-semibold text-canvas-text-contrast'>
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-sm font-semibold text-canvas-text-contrast">
             {themLabel}&apos;s guesses
           </p>
           <Grid guesses={aliceHand.gameState.guesses} />
 
           {pickingWord ? (
-            <div className='flex gap-1 mt-2'>
-              {[0, 1, 2, 3, 4].map(i => (
+            <div className="flex gap-1 mt-2">
+              {[0, 1, 2, 3, 4].map((i) => (
                 <EmptyCell key={i} letter={wordDraft.charAt(i)} />
               ))}
             </div>
           ) : aliceHand.gameState.secretWord ? (
             <TargetRow word={aliceHand.gameState.secretWord} />
           ) : null}
-          <p className={`min-h-5 max-w-60 text-center text-xs ${
-            aliceBoardNotice?.kind === 'error'
-              ? 'text-red-600'
-              : 'text-canvas-text-contrast'
-          }`}>
+          <p
+            className={`min-h-5 max-w-60 text-center text-xs ${
+              aliceBoardNotice?.kind === 'error' ? 'text-red-600' : 'text-canvas-text-contrast'
+            }`}
+          >
             {aliceBoardNotice?.text ?? ''}
           </p>
         </div>
       </div>
 
-      <div ref={keyboardFocusRef} tabIndex={-1} className='flex flex-col items-center gap-2 focus:outline-none'>
+      <div
+        ref={keyboardFocusRef}
+        tabIndex={-1}
+        className="flex flex-col items-center gap-2 focus:outline-none"
+      >
         <OnScreenKeyboard
           statuses={letterStatuses}
           disabled={keyboardMode === null || handComplete}
@@ -823,15 +841,17 @@ const Krunk: React.FC<KrunkProps> = ({
           onBackspace={backspace}
         />
         <button
-          type='button'
-          className='px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40'
+          type="button"
+          className="px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40"
           disabled={!actionEnabled || handComplete}
           onClick={submitActive}
         >
           {actionLabel}
         </button>
       </div>
-      <p className='min-h-5 text-center text-sm text-canvas-text-contrast'>{sharedStatusNotice.text}</p>
+      <p className="min-h-5 text-center text-sm text-canvas-text-contrast">
+        {sharedStatusNotice.text}
+      </p>
     </div>
   );
 };

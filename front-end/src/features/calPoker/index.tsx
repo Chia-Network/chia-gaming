@@ -2,10 +2,7 @@ import React from 'react';
 
 import { CaliforniaPoker } from './components';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
-import {
-  CalpokerDisplaySnapshotView,
-  CalpokerOutcomeView,
-} from './types/CaliforniapokerProps';
+import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcomeView | undefined;
@@ -51,9 +48,9 @@ const Calpoker: React.FC<CalpokerProps> = ({
   useCheatNerfKeys(handleCheat, handleNerf);
 
   return (
-    <div className='relative flex h-full w-full min-h-0 flex-col'>
+    <div className="relative flex h-full w-full min-h-0 flex-col">
       {/* Game area */}
-      <div className='flex-1 min-h-0 flex flex-col'>
+      <div className="flex-1 min-h-0 flex flex-col">
         <CaliforniaPoker
           playerNumber={playerNumber}
           moveNumber={moveNumber}

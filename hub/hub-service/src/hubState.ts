@@ -1,10 +1,6 @@
 import crypto from 'node:crypto';
 
-import {
-  Player,
-  PlayerStatus,
-  Challenge,
-} from './types/hub';
+import { Player, PlayerStatus, Challenge } from './types/hub';
 
 function randomHex(): string {
   return crypto.randomBytes(16).toString('hex');
@@ -41,7 +37,14 @@ export class Hub {
     return listOfObject(this.players);
   }
 
-  createChallenge(fromId: string, targetId: string, challengerAmount: string, targetAmount: string, channel_timeout?: string, unroll_timeout?: string): Challenge {
+  createChallenge(
+    fromId: string,
+    targetId: string,
+    challengerAmount: string,
+    targetAmount: string,
+    channel_timeout?: string,
+    unroll_timeout?: string,
+  ): Challenge {
     const challenge: Challenge = {
       id: randomHex(),
       from_id: fromId,

@@ -20,7 +20,6 @@ function randomHex(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-
 export interface CalpokerDisplaySnapshot {
   gameState: string;
   winner: string | null;
@@ -101,21 +100,24 @@ export interface SessionSave {
   durabilityWarning?: string;
   activeGameIds?: string[];
   currentHandGameIds?: string[];
-  gameInstances?: Record<string, {
-    id: string;
-    amount: string;
-    coinHex: string | null;
-    turnState: string;
-    onChain?: boolean;
-    handStatus: string;
-    terminal: {
-      type: string;
-      outcome?: string | null;
-      label: string | null;
-      myReward: string | null;
-      rewardCoinHex: string | null;
-    };
-  }>;
+  gameInstances?: Record<
+    string,
+    {
+      id: string;
+      amount: string;
+      coinHex: string | null;
+      turnState: string;
+      onChain?: boolean;
+      handStatus: string;
+      terminal: {
+        type: string;
+        outcome?: string | null;
+        label: string | null;
+        myReward: string | null;
+        rewardCoinHex: string | null;
+      };
+    }
+  >;
   iProposedHand?: boolean;
   activeGameType?: string;
   handState?: PersistedGameState | null;
@@ -143,16 +145,59 @@ export interface SessionSave {
   betweenHandComposePerHand?: string;
   betweenHandComposeGameTimeout?: string;
   betweenHandComposeGameType?: string;
-  betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandPendingRetryTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandCachedPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
-  betweenHandReviewPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandLastTerms?: {
+    my_contribution: string;
+    their_contribution: string;
+    game_timeout?: string;
+    game_type?: string;
+    spacepoker_unit_size?: string;
+  } | null;
+  betweenHandRejectedOnceTerms?: {
+    my_contribution: string;
+    their_contribution: string;
+    game_timeout?: string;
+    game_type?: string;
+    spacepoker_unit_size?: string;
+  } | null;
+  betweenHandPendingRetryTerms?: {
+    my_contribution: string;
+    their_contribution: string;
+    game_timeout?: string;
+    game_type?: string;
+    spacepoker_unit_size?: string;
+  } | null;
+  betweenHandCachedPeerProposal?: {
+    id: string;
+    groupIds: string[];
+    my_contribution: string;
+    their_contribution: string;
+    game_timeout?: string;
+    game_type?: string;
+    spacepoker_unit_size?: string;
+  } | null;
+  betweenHandReviewPeerProposal?: {
+    id: string;
+    groupIds: string[];
+    my_contribution: string;
+    their_contribution: string;
+    game_timeout?: string;
+    game_type?: string;
+    spacepoker_unit_size?: string;
+  } | null;
   /** Ordered member IDs for each locally originated factory proposal group. */
   outgoingProposalGroupIds?: string[][];
   /** Ordered member IDs for groups accepted but not yet terminally resolved. */
   acceptedProposalGroupIds?: string[][];
-  outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
+  outgoingProposalTerms?: Record<
+    string,
+    {
+      my_contribution: string;
+      their_contribution: string;
+      game_timeout?: string;
+      game_type?: string;
+      spacepoker_unit_size?: string;
+    }
+  >;
 
   // Timer persistence (epoch ms timestamps)
   waitingStateEnteredAt?: bigint;
@@ -182,14 +227,13 @@ const KNOWN_WALLETCONNECT_DB_NAMES = [
   'walletconnect',
   'walletconnect-v2',
 ];
-const KNOWN_HARD_RESET_DB_NAMES = [
-  SESSION_DB_NAME,
-  ...KNOWN_WALLETCONNECT_DB_NAMES,
-];
+const KNOWN_HARD_RESET_DB_NAMES = [SESSION_DB_NAME, ...KNOWN_WALLETCONNECT_DB_NAMES];
 
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
-  return lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect');
+  return (
+    lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect')
+  );
 }
 
 function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<void> {
@@ -198,17 +242,25 @@ function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<v
       const request = indexedDB.deleteDatabase(name);
       request.onsuccess = () => resolve();
       request.onerror = () => {
-        console.error(`[save] ${context}: failed to delete IndexedDB database "${name}":`, request.error);
+        console.error(
+          `[save] ${context}: failed to delete IndexedDB database "${name}":`,
+          request.error,
+        );
         resolve();
       };
       // Blocked means another connection is still open. Keep waiting for
       // onsuccess/onerror — resolving early would let hardReset claim a wipe
       // that has not happened yet.
       request.onblocked = () => {
-        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"; waiting for other connections to close`);
+        console.warn(
+          `[save] ${context}: deletion blocked for IndexedDB database "${name}"; waiting for other connections to close`,
+        );
       };
     } catch (e) {
-      console.error(`[save] ${context}: failed to start IndexedDB database deletion for "${name}":`, e);
+      console.error(
+        `[save] ${context}: failed to start IndexedDB database deletion for "${name}":`,
+        e,
+      );
       resolve();
     }
   });
@@ -222,7 +274,9 @@ function clearWalletConnectLocalStorageKeys(): void {
       if (key && isWalletConnectStorageKey(key)) toRemove.push(key);
     }
     for (const key of toRemove) localStorage.removeItem(key);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function clearWalletConnectStorage(): Promise<void> {
@@ -232,15 +286,21 @@ export async function clearWalletConnectStorage(): Promise<void> {
 
 async function clearWalletConnectIndexedDb(): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
-  const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+  const dynamicDatabaseLookup = indexedDB as IDBFactory & {
+    databases?: () => Promise<Array<{ name?: string }>>;
+  };
 
   if (typeof dynamicDatabaseLookup.databases === 'function') {
     try {
       const databases = await dynamicDatabaseLookup.databases();
       const toDelete = databases
         .map((db) => db.name)
-        .filter((name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name));
-      await Promise.all(toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')));
+        .filter(
+          (name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name),
+        );
+      await Promise.all(
+        toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+      );
       return;
     } catch {
       // Fall through to known database names.
@@ -248,7 +308,9 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
   }
 
   await Promise.all(
-    KNOWN_WALLETCONNECT_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+    KNOWN_WALLETCONNECT_DB_NAMES.map((name) =>
+      deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup'),
+    ),
   );
 }
 
@@ -275,13 +337,15 @@ async function clearAllIndexedDbForHardReset(): Promise<void> {
 
   // Always wipe known databases first. Enumeration can hang while WalletConnect
   // (or other) connections are still open; known deletes must not wait on that.
-  await Promise.all(
-    KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')),
-  );
+  await Promise.all(KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')));
 
-  const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+  const dynamicDatabaseLookup = indexedDB as IDBFactory & {
+    databases?: () => Promise<Array<{ name?: string }>>;
+  };
   if (typeof dynamicDatabaseLookup.databases !== 'function') {
-    console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; known DB names already deleted');
+    console.error(
+      '[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; known DB names already deleted',
+    );
     return;
   }
 
@@ -291,7 +355,9 @@ async function clearAllIndexedDbForHardReset(): Promise<void> {
     await Promise.all(
       databases
         .map((db) => db.name)
-        .filter((name): name is string => typeof name === 'string' && name.length > 0 && !known.has(name))
+        .filter(
+          (name): name is string => typeof name === 'string' && name.length > 0 && !known.has(name),
+        )
         .map((name) => deleteIndexedDb(name, 'hard reset')),
     );
   } catch (e) {
@@ -318,10 +384,15 @@ const tabId: string = (() => {
     const existing = sessionStorage.getItem(TAB_ID_SESSION_KEY);
     if (existing) return existing;
   }
-  const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
-    ? crypto.randomUUID()
-    : randomHex();
-  try { sessionStorage.setItem(TAB_ID_SESSION_KEY, id); } catch { /* ignore */ }
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : randomHex();
+  try {
+    sessionStorage.setItem(TAB_ID_SESSION_KEY, id);
+  } catch {
+    /* ignore */
+  }
   return id;
 })();
 let fenced = false;
@@ -329,30 +400,46 @@ const fencedListeners = new Set<() => void>();
 
 function fireFenced(): void {
   for (const cb of fencedListeners) {
-    try { cb(); } catch { /* ignore */ }
+    try {
+      cb();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
-export function onFenced(cb: () => void): void { fencedListeners.add(cb); }
-export function offFenced(cb: () => void): void { fencedListeners.delete(cb); }
+export function onFenced(cb: () => void): void {
+  fencedListeners.add(cb);
+}
+export function offFenced(cb: () => void): void {
+  fencedListeners.delete(cb);
+}
 
 export function isLeaseConflict(): boolean {
   try {
     const current = localStorage.getItem(LEASE_KEY);
     return current !== null && current !== tabId;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 export function checkLease(): boolean {
   try {
     const current = localStorage.getItem(LEASE_KEY);
     return current === null || current === tabId;
-  } catch { return true; }
+  } catch {
+    return true;
+  }
 }
 
 export function claimLease(): void {
   fenced = false;
-  try { localStorage.setItem(LEASE_KEY, tabId); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(LEASE_KEY, tabId);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function reclaimLease(): void {
@@ -360,7 +447,11 @@ export function reclaimLease(): void {
 }
 
 export function clearLease(): void {
-  try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(LEASE_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function isFenced(): boolean {
@@ -379,14 +470,8 @@ export function hasSavedSessionMarker(): boolean {
  * True when prefs remember a wallet choice and/or hub, or WC left storage.
  * Independent of whether a game session / cradle exists.
  */
-export function hasConnectionPreferences(
-  state: SessionSave = loadPreferences(),
-): boolean {
-  return !!(
-    state.blockchainType
-    || state.hubUrl
-    || hasWalletConnectStorage()
-  );
+export function hasConnectionPreferences(state: SessionSave = loadPreferences()): boolean {
+  return !!(state.blockchainType || state.hubUrl || hasWalletConnectStorage());
 }
 
 /**
@@ -394,9 +479,7 @@ export function hasConnectionPreferences(
  * Connection prefs count even with no game session; the session marker
  * covers durable cradles / prior explicit save intent.
  */
-export function shouldOfferResumeOrStartOver(
-  state: SessionSave = loadPreferences(),
-): boolean {
+export function shouldOfferResumeOrStartOver(state: SessionSave = loadPreferences()): boolean {
   return hasConnectionPreferences(state) || hasSavedSessionMarker();
 }
 
@@ -404,7 +487,9 @@ export function shouldOfferResumeOrStartOver(
 export function markSavedSession(): void {
   try {
     localStorage.setItem(SESSION_MARKER_KEY, '1');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -415,7 +500,9 @@ export function markSavedSession(): void {
 export function markAutoResumeOnce(): void {
   try {
     sessionStorage.setItem(AUTO_RESUME_ONCE_KEY, '1');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -429,7 +516,9 @@ export function peekAutoResumeOnce(): boolean {
       autoResumeLatch = true;
       return true;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return false;
 }
 
@@ -441,14 +530,18 @@ export function clearAutoResumeOnce(): void {
   autoResumeLatch = false;
   try {
     sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Clear the boot Resume/Start Over marker. */
 export function clearSavedSessionMarker(): void {
   try {
     localStorage.removeItem(SESSION_MARKER_KEY);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function assertNoNumbers(obj: unknown, path: string): void {
@@ -530,9 +623,8 @@ function loadPreferences(): SessionSave {
         return {
           version: CURRENT_VERSION,
           ...preferences,
-          defaultFee: preferences.defaultFee === undefined
-            ? undefined
-            : BigInt(preferences.defaultFee),
+          defaultFee:
+            preferences.defaultFee === undefined ? undefined : BigInt(preferences.defaultFee),
         };
       }
     }
@@ -553,9 +645,9 @@ function isTerminalFinishedChannel(status: ChannelStatusPayload | null | undefin
  */
 function isResumable(state: SessionSave): boolean {
   return !!(
-    state.serializedGameSession
-    || state.pairingToken
-    || isTerminalFinishedChannel(state.channelStatus)
+    state.serializedGameSession ||
+    state.pairingToken ||
+    isTerminalFinishedChannel(state.channelStatus)
   );
 }
 
@@ -578,18 +670,20 @@ function queueWrite(state: SessionSave): Promise<void> {
   const snapshot = structuredClone(state);
   capPersistedHistories(snapshot);
   assertNoNumbers(snapshot, 'SessionSave');
-  writeChain = writeChain.catch(() => {}).then(async () => {
-    if (fenced) return;
-    await writeSessionRecord(snapshot);
-    if (fenced) return;
-    // Only *set* the boot marker for a durable game session here. Pre-game
-    // wallet connection marks explicitly in Shell; preference-only writes must
-    // not clear that marker (previously saveSession({ blockchainType }) wiped
-    // it, so reload restored the wallet type with no Resume/Start Over).
-    if (isResumable(snapshot)) {
-      markSavedSession();
-    }
-  });
+  writeChain = writeChain
+    .catch(() => {})
+    .then(async () => {
+      if (fenced) return;
+      await writeSessionRecord(snapshot);
+      if (fenced) return;
+      // Only *set* the boot marker for a durable game session here. Pre-game
+      // wallet connection marks explicitly in Shell; preference-only writes must
+      // not clear that marker (previously saveSession({ blockchainType }) wiped
+      // it, so reload restored the wallet type with no Resume/Start Over).
+      if (isResumable(snapshot)) {
+        markSavedSession();
+      }
+    });
   return writeChain;
 }
 
@@ -690,7 +784,10 @@ let identityDiskChecked = false;
 
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
-  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   settleScheduledPersist();
   cached = null;
   writeChain = Promise.resolve();
@@ -698,9 +795,21 @@ export function _resetForTests(): void {
   fencedListeners.clear();
   identityDiskChecked = false;
   autoResumeLatch = false;
-  try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
-  try { localStorage.removeItem(RESET_KEY); } catch { /* ignore */ }
-  try { sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY); } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(LEASE_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    localStorage.removeItem(RESET_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function loadState(): SessionSave {
@@ -789,9 +898,9 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
 
   // Non-resumable record: still pull hub identity if prefs lack it.
   if (
-    (!mem.sessionId && record.sessionId)
-    || (!mem.playerId && record.playerId)
-    || (!mem.myHubPlayerId && record.myHubPlayerId)
+    (!mem.sessionId && record.sessionId) ||
+    (!mem.playerId && record.playerId) ||
+    (!mem.myHubPlayerId && record.myHubPlayerId)
   ) {
     cached = {
       ...mem,
@@ -878,7 +987,7 @@ export function regenerateSessionId(): string {
 export function clearSessionId(): void {
   // Intentional clear — next getSessionId may mint a replacement.
   identityDiskChecked = true;
-  mutate(s => {
+  mutate((s) => {
     s.sessionId = undefined;
     s.myHubPlayerId = undefined;
   });
@@ -889,7 +998,7 @@ export function getBlockchainType(): BlockchainType | undefined {
 }
 
 export function saveSession(fields: Partial<SessionSave>): Promise<void> {
-  return mutate(s => {
+  return mutate((s) => {
     Object.assign(s, fields);
     capPersistedHistories(s);
   });
@@ -900,7 +1009,7 @@ export function saveSession(fields: Partial<SessionSave>): Promise<void> {
  * protocol. Display/history fields supplied by the caller are retained.
  */
 export function saveTerminalSession(fields: Partial<SessionSave>): Promise<void> {
-  return mutate(s => {
+  return mutate((s) => {
     Object.assign(s, fields, {
       serializedGameSession: undefined,
       gameSessionSchemaVersion: undefined,
@@ -927,7 +1036,9 @@ function hasWalletConnectStorage(): boolean {
       const key = localStorage.key(i);
       if (key && isWalletConnectStorageKey(key)) return true;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return false;
 }
 
@@ -1012,14 +1123,16 @@ export function clearSession(): Promise<void> {
     blockchainType: prev.blockchainType,
   };
   savePreferences(cached);
-  const deletePromise = writeChain = writeChain.catch(() => {}).then(async () => {
-    await deleteSessionRecord();
-    if (cached?.blockchainType || cached?.hubUrl) {
-      markSavedSession();
-    } else {
-      clearSavedSessionMarker();
-    }
-  });
+  const deletePromise = (writeChain = writeChain
+    .catch(() => {})
+    .then(async () => {
+      await deleteSessionRecord();
+      if (cached?.blockchainType || cached?.hubUrl) {
+        markSavedSession();
+      } else {
+        clearSavedSessionMarker();
+      }
+    }));
   return deletePromise;
 }
 
@@ -1111,7 +1224,9 @@ export function getAlias(): string {
 }
 
 export function setAlias(alias: string): void {
-  mutate(s => { s.alias = alias; });
+  mutate((s) => {
+    s.alias = alias;
+  });
 }
 
 // --- Theme ---
@@ -1121,7 +1236,9 @@ export function getTheme(): 'dark' | 'light' | undefined {
 }
 
 export function setTheme(theme: 'dark' | 'light'): void {
-  mutate(s => { s.theme = theme; });
+  mutate((s) => {
+    s.theme = theme;
+  });
 }
 
 // --- Default fee ---
@@ -1131,7 +1248,9 @@ export function getDefaultFee(): bigint {
 }
 
 export function setDefaultFee(fee: bigint): void {
-  mutate(s => { s.defaultFee = fee; });
+  mutate((s) => {
+    s.defaultFee = fee;
+  });
 }
 
 export function getFeeUnit(): 'mojo' | 'xch' {
@@ -1139,7 +1258,9 @@ export function getFeeUnit(): 'mojo' | 'xch' {
 }
 
 export function setFeeUnit(unit: 'mojo' | 'xch'): void {
-  mutate(s => { s.feeUnit = unit; });
+  mutate((s) => {
+    s.feeUnit = unit;
+  });
 }
 
 // --- Active tab ---
@@ -1149,7 +1270,9 @@ export function getActiveTab(): string | undefined {
 }
 
 export function setActiveTab(tab: string): void {
-  mutate(s => { s.activeTab = tab; });
+  mutate((s) => {
+    s.activeTab = tab;
+  });
 }
 
 // --- Notification badges ---
@@ -1159,7 +1282,9 @@ export function getUnreadGame(): boolean {
 }
 
 export function setUnreadGame(v: boolean): void {
-  mutate(s => { s.unreadGame = v || undefined; });
+  mutate((s) => {
+    s.unreadGame = v || undefined;
+  });
 }
 
 export function getWalletAlert(): boolean {
@@ -1167,7 +1292,9 @@ export function getWalletAlert(): boolean {
 }
 
 export function setWalletAlert(v: boolean): void {
-  mutate(s => { s.walletAlert = v || undefined; });
+  mutate((s) => {
+    s.walletAlert = v || undefined;
+  });
 }
 
 export function getHubAlert(): boolean {
@@ -1175,7 +1302,9 @@ export function getHubAlert(): boolean {
 }
 
 export function setHubAlert(v: boolean): void {
-  mutate(s => { s.hubAlert = v || undefined; });
+  mutate((s) => {
+    s.hubAlert = v || undefined;
+  });
 }
 
 // --- Hub URL ---
@@ -1185,7 +1314,8 @@ export function getHubUrl(): string | undefined {
 }
 
 export function setHubUrl(url: string | undefined): void {
-  mutate(s => { s.hubUrl = url || undefined; });
+  mutate((s) => {
+    s.hubUrl = url || undefined;
+  });
   if (url) markSavedSession();
 }
-

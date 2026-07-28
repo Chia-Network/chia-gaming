@@ -1,6 +1,6 @@
-import { BestHandType } from "./BestHandType";
-import { CardValueSuit } from "./CardValueSuit";
-import { FormatHandProps } from "./FormatHandProps";
+import { BestHandType } from './BestHandType';
+import { CardValueSuit } from './CardValueSuit';
+import { FormatHandProps } from './FormatHandProps';
 
 interface HandDisplayProps {
   title: string;
@@ -19,6 +19,6 @@ interface HandDisplayProps {
   onReorder?: (reorderedCards: CardValueSuit[]) => void;
   formatHandDescription: (f: FormatHandProps) => string;
   timeoutBadge?: 'winner' | 'timeout' | 'forfeit' | null;
-};
+}
 
 export type { HandDisplayProps };

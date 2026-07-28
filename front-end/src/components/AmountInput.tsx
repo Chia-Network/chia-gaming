@@ -112,19 +112,19 @@ export function AmountInput({
   }, [maxMojos, unit, onChange, onUseMax]);
 
   return (
-    <div className='flex flex-col items-center gap-1 text-center'>
-      <div className='flex flex-wrap items-center justify-center gap-2'>
-        <span className='text-xs text-canvas-text'>{label}</span>
-        <div className='flex rounded-md border border-canvas-border overflow-hidden text-xs'>
+    <div className="flex flex-col items-center gap-1 text-center">
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <span className="text-xs text-canvas-text">{label}</span>
+        <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
           <button
-            type='button'
+            type="button"
             onClick={() => handleUnitChange('mojo')}
             className={`px-2 py-0.5 transition-colors ${unit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
           >
             mojo
           </button>
           <button
-            type='button'
+            type="button"
             onClick={() => handleUnitChange('xch')}
             className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${unit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
           >
@@ -133,7 +133,7 @@ export function AmountInput({
         </div>
       </div>
       <input
-        type='text'
+        type="text"
         inputMode={unit === 'xch' ? 'decimal' : 'numeric'}
         value={rawInput}
         onChange={(e) => handleChange(e.target.value)}
@@ -144,15 +144,17 @@ export function AmountInput({
         }`}
       />
       {exceeds && (
-        <div className='flex flex-wrap items-center justify-center gap-2 text-xs text-alert-text'>
+        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-alert-text">
           <span>{exceedsLabel}</span>
           {onUseMax !== undefined && (
             <button
-              type='button'
+              type="button"
               onClick={handleUseMax}
-              className='underline font-medium hover:text-alert-text-contrast transition-colors'
+              className="underline font-medium hover:text-alert-text-contrast transition-colors"
             >
-              Use max ({unit === 'xch' ? `${mojosToXchStr(maxMojos!)} XCH` : `${maxMojos!.toString()} mojos`})
+              Use max (
+              {unit === 'xch' ? `${mojosToXchStr(maxMojos!)} XCH` : `${maxMojos!.toString()} mojos`}
+              )
             </button>
           )}
         </div>

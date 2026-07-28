@@ -1,8 +1,6 @@
 import { SessionController } from './SessionController';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
-import {
-  PeerConnectionResult,
-} from '../types/ChiaGaming';
+import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
 import {
   clearSession,
@@ -45,42 +43,44 @@ export function setTransactionPublishNerfed(nerfed: boolean): void {
   }
 }
 
-export function subscribeTransactionPublishNerfed(
-  listener: (nerfed: boolean) => void,
-): () => void {
+export function subscribeTransactionPublishNerfed(listener: (nerfed: boolean) => void): () => void {
   transactionPublishNerfListeners.add(listener);
   return () => transactionPublishNerfListeners.delete(listener);
 }
 
 function requireBigIntCounter(value: unknown, label: string): bigint {
-    if (typeof value === 'bigint') return value;
-    if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
-    if (typeof value === 'string') {
-        try { return BigInt(value); } catch { /* fall through */ }
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
+  if (typeof value === 'string') {
+    try {
+      return BigInt(value);
+    } catch {
+      /* fall through */
     }
-    throw new Error(`restoreSession: missing or invalid ${label}`);
+  }
+  throw new Error(`restoreSession: missing or invalid ${label}`);
 }
 
 function requireBoolean(value: unknown, label: string): boolean {
-    if (typeof value === 'boolean') return value;
-    throw new Error(`restoreSession: missing or invalid ${label}`);
+  if (typeof value === 'boolean') return value;
+  throw new Error(`restoreSession: missing or invalid ${label}`);
 }
 
 function requireString(value: unknown, label: string): string {
-    if (typeof value === 'string') return value;
-    throw new Error(`restoreSession: missing or invalid ${label}`);
+  if (typeof value === 'string') return value;
+  throw new Error(`restoreSession: missing or invalid ${label}`);
 }
 
 export function setInitStarted(value: boolean) {
-    initStarted = value;
+  initStarted = value;
 }
 
 export function destroySessionController(): void {
-    if (sessionController) {
-        sessionController.cleanup();
-        sessionController = null;
-    }
-    initStarted = false;
+  if (sessionController) {
+    sessionController.cleanup();
+    sessionController = null;
+  }
+  initStarted = false;
 }
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
@@ -98,12 +98,21 @@ export async function configSessionController(
   sc.loadWasm(wasmConnection);
   const entropy = new Uint8Array(32);
   crypto.getRandomValues(entropy);
-  const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
+  const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
   const theirContribution = sc.theirContribution;
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(rngId, wasmConnection, iStarted, sc.myContribution, theirContribution, address.puzzleHash, channelTimeout, unrollTimeout);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(
+    rngId,
+    wasmConnection,
+    iStarted,
+    sc.myContribution,
+    theirContribution,
+    address.puzzleHash,
+    channelTimeout,
+    unrollTimeout,
+  );
   sc.setGameSession(cradle);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
@@ -123,10 +132,14 @@ export async function restoreSession(
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
   const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
-  if (save.gameSessionSchemaVersion === undefined || save.gameSessionSchemaVersion !== currentSchema) {
-    const savedSchema = save.gameSessionSchemaVersion === undefined
-      ? 'missing'
-      : save.gameSessionSchemaVersion.toString();
+  if (
+    save.gameSessionSchemaVersion === undefined ||
+    save.gameSessionSchemaVersion !== currentSchema
+  ) {
+    const savedSchema =
+      save.gameSessionSchemaVersion === undefined
+        ? 'missing'
+        : save.gameSessionSchemaVersion.toString();
     await clearSession();
     markSavedSession();
     throw new Error(
@@ -134,9 +147,12 @@ export async function restoreSession(
     );
   }
 
-  const cradleBytes = save.serializedGameSession instanceof Uint8Array
-    ? save.serializedGameSession
-    : (() => { throw new Error('restoreSession serializedGameSession must be a Uint8Array'); })();
+  const cradleBytes =
+    save.serializedGameSession instanceof Uint8Array
+      ? save.serializedGameSession
+      : (() => {
+          throw new Error('restoreSession serializedGameSession must be a Uint8Array');
+        })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
   sc.messageNumber = requireBigIntCounter(save.messageNumber, 'messageNumber');
@@ -146,7 +162,7 @@ export async function restoreSession(
   if (!Array.isArray(save.unackedMessages)) {
     throw new Error('restoreSession: missing or invalid unackedMessages');
   }
-  sc.unackedMessages = save.unackedMessages.map(m => ({
+  sc.unackedMessages = save.unackedMessages.map((m) => ({
     msgno: requireBigIntCounter(m.msgno, 'unackedMessages.msgno'),
     msg: m.msg,
   }));
@@ -161,9 +177,11 @@ export async function restoreSession(
   }
   sc.activeGameIds = [...save.activeGameIds];
   sc.handState = save.handState ?? null;
-  sc.restoreChannelStatus(save.channelStatus
-    ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
-    : null);
+  sc.restoreChannelStatus(
+    save.channelStatus
+      ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
+      : null,
+  );
   sc.myAlias = save.myAlias;
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
@@ -176,7 +194,11 @@ export async function restoreSession(
 export function getOrCreateSessionController(
   blockchain: BlockchainPoller | null,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
+  registerMessageHandler: (
+    handler: (msgno: number, msg: Uint8Array) => void,
+    ackHandler: (ack: number) => void,
+    keepaliveHandler: () => void,
+  ) => void,
   uniqueId: string,
   myContribution: bigint,
   theirContribution: bigint,
@@ -269,9 +291,12 @@ export function getOrCreateSessionController(
         );
       } catch (e) {
         if (sessionController !== owningController) return;
-        const msg = e instanceof Error ? (e.stack || e.message)
-          : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
-          : String(e);
+        const msg =
+          e instanceof Error
+            ? e.stack || e.message
+            : typeof e === 'object' && e !== null && 'data' in e
+              ? ((e as any).data?.error ?? String(e))
+              : String(e);
         console.error('[sessionController] newSession error:', e);
         log(`[sessionController] newSession error: ${msg}`);
         owningController.rxjsEmitter?.next({ type: 'error', error: msg });
@@ -284,9 +309,9 @@ export function getOrCreateSessionController(
 }
 
 /** @deprecated use getOrCreateSessionController */
-export function getBlobSingleton(
-  ...args: Parameters<typeof getOrCreateSessionController>
-): { gameObject: SessionController } {
+export function getBlobSingleton(...args: Parameters<typeof getOrCreateSessionController>): {
+  gameObject: SessionController;
+} {
   const result = getOrCreateSessionController(...args);
   return { gameObject: result.sessionController };
 }

@@ -208,8 +208,14 @@ test('public hub updates never include the secret nonce', async () => {
     const { ws, id } = await joinHub(hub.origin, secret, 'Alice');
     const update = await nextJson(ws, (msg) => msg.type === 'hub_update');
     assert.equal(JSON.stringify(update).includes(secret), false);
-    assert.equal(update.players.some((player) => player.id === id), true);
-    assert.equal(update.players.some((player) => 'session_id' in player), false);
+    assert.equal(
+      update.players.some((player) => player.id === id),
+      true,
+    );
+    assert.equal(
+      update.players.some((player) => 'session_id' in player),
+      false,
+    );
     await closeWs(ws);
   } finally {
     await hub.stop();
@@ -254,7 +260,12 @@ test('challenge authority and availability come from bound sessions', async () =
     const bobGame = await identifyGame(hub.origin, 'secret-bob-match');
     const carolGame = await identifyGame(hub.origin, 'secret-carol-match');
 
-    sendJson(alice.ws, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
+    sendJson(alice.ws, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+    });
     const challenge = await nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
 
     // Carol cannot accept Bob's challenge (she's not the target)
@@ -284,7 +295,12 @@ test('challenge authority and availability come from bound sessions', async () =
     // Carol cannot challenge Bob (he's now busy)
     const carolError = nextJson(carol.ws, (msg) => msg.type === 'error');
     const carolResolved = nextJson(carol.ws, (msg) => msg.type === 'challenge_resolved');
-    sendJson(carol.ws, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
+    sendJson(carol.ws, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+    });
     const error = await carolError;
     assert.match(error.error, /active session/);
     const resolved = await carolResolved;

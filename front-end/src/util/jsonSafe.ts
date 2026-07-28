@@ -29,9 +29,7 @@ function base64ToUint8(b64: string): Uint8Array {
 function isBytesTag(value: unknown): value is { [BYTES_TAG]: string } {
   if (value === null || typeof value !== 'object') return false;
   const entries = Object.entries(value);
-  return entries.length === 1 &&
-    entries[0][0] === BYTES_TAG &&
-    typeof entries[0][1] === 'string';
+  return entries.length === 1 && entries[0][0] === BYTES_TAG && typeof entries[0][1] === 'string';
 }
 
 function jsonValue(v: unknown): string {
@@ -42,7 +40,9 @@ function jsonValue(v: unknown): string {
   if (v instanceof Uint8Array) return JSON.stringify(uint8ToBase64(v));
   if (ArrayBuffer.isView(v)) {
     const view = v as ArrayBufferView;
-    return JSON.stringify(uint8ToBase64(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)));
+    return JSON.stringify(
+      uint8ToBase64(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)),
+    );
   }
   if (Array.isArray(v)) return `[${v.map(jsonValue).join(',')}]`;
   const entries = Object.entries(v as Record<string, unknown>)
@@ -60,10 +60,12 @@ const BIGINT_TAG = '$bigint';
 function isBigintTag(value: unknown): value is { [BIGINT_TAG]: string } {
   if (value === null || typeof value !== 'object') return false;
   const entries = Object.entries(value);
-  return entries.length === 1 &&
+  return (
+    entries.length === 1 &&
     entries[0][0] === BIGINT_TAG &&
     typeof entries[0][1] === 'string' &&
-    /^-?\d+$/.test(entries[0][1]);
+    /^-?\d+$/.test(entries[0][1])
+  );
 }
 
 export function jsonParseLossless(text: string): any {
@@ -82,11 +84,13 @@ export function jsonParseLossless(text: string): any {
 }
 
 function jsonLosslessValue(v: unknown): string {
-  if (typeof v === 'bigint') return `{${JSON.stringify(BIGINT_TAG)}:${JSON.stringify(v.toString())}}`;
+  if (typeof v === 'bigint')
+    return `{${JSON.stringify(BIGINT_TAG)}:${JSON.stringify(v.toString())}}`;
   if (v === null || v === undefined) return 'null';
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (typeof v === 'string') return JSON.stringify(v);
-  if (v instanceof Uint8Array) return `{${JSON.stringify(BYTES_TAG)}:${JSON.stringify(uint8ToBase64(v))}}`;
+  if (v instanceof Uint8Array)
+    return `{${JSON.stringify(BYTES_TAG)}:${JSON.stringify(uint8ToBase64(v))}}`;
   if (Array.isArray(v)) return `[${v.map(jsonLosslessValue).join(',')}]`;
   const entries = Object.entries(v as Record<string, unknown>)
     .filter(([, val]) => val !== undefined)

@@ -73,15 +73,18 @@ function columnsForWidth(px: number, currentCols: number): number {
 
   let target = 1;
   for (const bp of breakpoints) {
-    if (px >= bp.min) { target = bp.cols; break; }
+    if (px >= bp.min) {
+      target = bp.cols;
+      break;
+    }
   }
   if (target === currentCols) return currentCols;
 
   if (target > currentCols) {
-    const bp = breakpoints.find(b => b.cols === target);
+    const bp = breakpoints.find((b) => b.cols === target);
     if (bp && px < bp.min + margin) return currentCols;
   } else {
-    const bp = breakpoints.find(b => b.cols === currentCols);
+    const bp = breakpoints.find((b) => b.cols === currentCols);
     if (bp && px > bp.min - margin) return currentCols;
   }
   return target;
@@ -166,28 +169,31 @@ function HandDisplay(props: HandDisplayProps) {
     slotCentersRef.current = centers;
   }, []);
 
-  const nearestSlotIndex = useCallback((centerX: number, centerY: number, excludeIndex: number): number => {
-    const centers = slotCentersRef.current;
-    const slots = holeSlotsRef.current;
-    if (centers.length === 0 || !slots) return homeSlotRef.current;
+  const nearestSlotIndex = useCallback(
+    (centerX: number, centerY: number, excludeIndex: number): number => {
+      const centers = slotCentersRef.current;
+      const slots = holeSlotsRef.current;
+      if (centers.length === 0 || !slots) return homeSlotRef.current;
 
-    let bestIndex = -1;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < centers.length; i++) {
-      if (i === excludeIndex) continue;
-      if (slots[i] == null) continue;
-      const center = centers[i];
-      if (!center) continue;
-      const dx = centerX - center.x;
-      const dy = centerY - center.y;
-      const distSq = dx * dx + dy * dy;
-      if (distSq < bestDistance) {
-        bestDistance = distSq;
-        bestIndex = i;
+      let bestIndex = -1;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < centers.length; i++) {
+        if (i === excludeIndex) continue;
+        if (slots[i] == null) continue;
+        const center = centers[i];
+        if (!center) continue;
+        const dx = centerX - center.x;
+        const dy = centerY - center.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < bestDistance) {
+          bestDistance = distSq;
+          bestIndex = i;
+        }
       }
-    }
-    return bestIndex >= 0 ? bestIndex : homeSlotRef.current;
-  }, []);
+      return bestIndex >= 0 ? bestIndex : homeSlotRef.current;
+    },
+    [],
+  );
 
   useEffect(() => {
     cardsRef.current = cards;
@@ -236,9 +242,7 @@ function HandDisplay(props: HandDisplayProps) {
   useEffect(() => {
     const updateWinnerPosition = () => {
       if (containerRef.current) {
-        const cardElements = containerRef.current.querySelectorAll(
-          `[data-card-id^="${area}-"]`,
-        );
+        const cardElements = containerRef.current.querySelectorAll(`[data-card-id^="${area}-"]`);
         if (cardElements.length > 0) {
           const containerRect = containerRef.current.getBoundingClientRect();
           const lastCardElement = cardElements[cardElements.length - 1];
@@ -356,175 +360,186 @@ function HandDisplay(props: HandDisplayProps) {
     return () => window.removeEventListener('resize', onResizeClearAnimations);
   }, [clearDropAnimation, clearShiftAnimations]);
 
-  const beginDragSession = useCallback((index: number, pointerX: number, pointerY: number) => {
-    const groupEl = groupRef.current;
-    const itemEl = itemRefs.current[index];
-    const cardsNow = cardsRef.current;
-    if (!groupEl || !itemEl || !cardsNow[index]) return;
+  const beginDragSession = useCallback(
+    (index: number, pointerX: number, pointerY: number) => {
+      const groupEl = groupRef.current;
+      const itemEl = itemRefs.current[index];
+      const cardsNow = cardsRef.current;
+      if (!groupEl || !itemEl || !cardsNow[index]) return;
 
-    measureSlotCenters();
-    const groupRect = groupEl.getBoundingClientRect();
-    const itemRect = itemEl.getBoundingClientRect();
-    const card = cardsNow[index];
-    const cardCenterX = itemRect.left + itemRect.width / 2;
-    const cardCenterY = itemRect.top + itemRect.height / 2;
+      measureSlotCenters();
+      const groupRect = groupEl.getBoundingClientRect();
+      const itemRect = itemEl.getBoundingClientRect();
+      const card = cardsNow[index];
+      const cardCenterX = itemRect.left + itemRect.width / 2;
+      const cardCenterY = itemRect.top + itemRect.height / 2;
 
-    const nextHoleSlots: HoleSlot[] = cardsNow.map((c, i) => (i === index ? null : c));
+      const nextHoleSlots: HoleSlot[] = cardsNow.map((c, i) => (i === index ? null : c));
 
-    const nextActiveDrag: ActiveDrag = {
-      card,
-      originIndex: index,
-      width: itemRect.width,
-      height: itemRect.height,
-      left: itemRect.left - groupRect.left,
-      top: itemRect.top - groupRect.top,
-      lockLeft: itemRect.left - groupRect.left,
-      lockTop: itemRect.top - groupRect.top,
-    };
-
-    homeSlotRef.current = index;
-    grabOffsetRef.current = {
-      x: pointerX - cardCenterX,
-      y: pointerY - cardCenterY,
-    };
-    holeSlotsRef.current = nextHoleSlots;
-    activeDragRef.current = nextActiveDrag;
-    isDraggingRef.current = true;
-
-    setAnyDragging(true);
-    setDraggingCardId(card.cardId ?? String(index));
-    setHoleSlots(nextHoleSlots);
-    setActiveDrag(nextActiveDrag);
-    pendingDragRef.current = null;
-  }, [measureSlotCenters]);
-
-  const updateActiveDragFromPointer = useCallback((pointerX: number, pointerY: number) => {
-    const dragging = activeDragRef.current;
-    const groupEl = groupRef.current;
-    if (!dragging || !groupEl) return;
-
-    const groupRect = groupEl.getBoundingClientRect();
-    const grabOffset = grabOffsetRef.current ?? { x: 0, y: 0 };
-
-    const centerX = pointerX - grabOffset.x;
-    const centerY = pointerY - grabOffset.y;
-
-    let nextLeft = centerX - dragging.width / 2 - groupRect.left;
-    let nextTop = centerY - dragging.height / 2 - groupRect.top;
-
-    const maxLeft = Math.max(0, groupRect.width - dragging.width);
-    const maxTop = Math.max(0, groupRect.height - dragging.height);
-
-    if (dragAxisRef.current === 'x') nextTop = dragging.lockTop;
-    if (dragAxisRef.current === 'y') nextLeft = dragging.lockLeft;
-
-    nextLeft = Math.min(maxLeft, Math.max(0, nextLeft));
-    nextTop = Math.min(maxTop, Math.max(0, nextTop));
-
-    const nextDrag = {
-      ...dragging,
-      left: nextLeft,
-      top: nextTop,
-    };
-    activeDragRef.current = nextDrag;
-    setActiveDrag(nextDrag);
-
-    const defaultSlot = homeSlotRef.current;
-    const centers = slotCentersRef.current;
-    const currentDefaultCenter = centers[defaultSlot];
-    if (!currentDefaultCenter) return;
-
-    const nearest = nearestSlotIndex(centerX, centerY, defaultSlot);
-    if (nearest < 0) return;
-
-    const nearestCenter = centers[nearest];
-    if (!nearestCenter) return;
-
-    const defaultDx = centerX - currentDefaultCenter.x;
-    const defaultDy = centerY - currentDefaultCenter.y;
-    const defaultDistSq = defaultDx * defaultDx + defaultDy * defaultDy;
-
-    const nearestDx = centerX - nearestCenter.x;
-    const nearestDy = centerY - nearestCenter.y;
-    const nearestDistSq = nearestDx * nearestDx + nearestDy * nearestDy;
-
-    if (nearestDistSq + SWITCH_EPSILON_SQ >= defaultDistSq) return;
-
-    const currentSlots = holeSlotsRef.current;
-    if (!currentSlots) return;
-
-    const nextSlots = currentSlots.slice();
-    const movingCard = nextSlots[nearest];
-    const oldDefaultSlot = defaultSlot;
-    const fromEl = itemRefs.current[nearest];
-    const fromRect = fromEl?.getBoundingClientRect();
-    nextSlots[defaultSlot] = nextSlots[nearest];
-    nextSlots[nearest] = null;
-
-    homeSlotRef.current = nearest;
-    holeSlotsRef.current = nextSlots;
-
-    if (movingCard && fromRect) {
-      const animKey = ++shiftAnimKeyRef.current;
-      removeShiftAnimationsForCard(movingCard);
-      const groupRect = groupRef.current?.getBoundingClientRect();
-      const fromLeft = fromRect.left - (groupRect?.left ?? 0);
-      const fromTop = fromRect.top - (groupRect?.top ?? 0);
-      const prelimShift: ShiftAnim = {
-        key: animKey,
-        card: movingCard,
-        fromLeft,
-        fromTop,
-        toLeft: fromLeft,
-        toTop: fromTop,
-        width: fromRect.width,
-        height: fromRect.height,
-        hideIndex: oldDefaultSlot,
-        started: false,
+      const nextActiveDrag: ActiveDrag = {
+        card,
+        originIndex: index,
+        width: itemRect.width,
+        height: itemRect.height,
+        left: itemRect.left - groupRect.left,
+        top: itemRect.top - groupRect.top,
+        lockLeft: itemRect.left - groupRect.left,
+        lockTop: itemRect.top - groupRect.top,
       };
-      // Batch with setHoleSlots so hideForShift is true on the same render
-      // as the slot reorder — prevents a one-frame flicker in Chrome.
-      setHoleSlots(nextSlots);
-      setShiftAnims((prev) => [...prev, prelimShift]);
-      const measureRaf = requestAnimationFrame(() => {
-        const latestGroup = groupRef.current;
-        const toEl = itemRefs.current[oldDefaultSlot];
-        if (!latestGroup || !toEl) return;
-        const latestGroupRect = latestGroup.getBoundingClientRect();
-        const toRect = toEl.getBoundingClientRect();
-        const measuredToLeft = toRect.left - latestGroupRect.left;
-        const measuredToTop = toRect.top - latestGroupRect.top;
-        // Second rAF: the browser has now painted the overlay at translate(0,0).
-        // Setting started + real destination in the next frame triggers the
-        // CSS transition from the painted initial position.
-        const startRaf = requestAnimationFrame(() => {
-          setShiftAnims((prev) => prev.map((anim) => (
-            anim.key === animKey
-              ? { ...anim, toLeft: measuredToLeft, toTop: measuredToTop, started: true }
-              : anim
-          )));
+
+      homeSlotRef.current = index;
+      grabOffsetRef.current = {
+        x: pointerX - cardCenterX,
+        y: pointerY - cardCenterY,
+      };
+      holeSlotsRef.current = nextHoleSlots;
+      activeDragRef.current = nextActiveDrag;
+      isDraggingRef.current = true;
+
+      setAnyDragging(true);
+      setDraggingCardId(card.cardId ?? String(index));
+      setHoleSlots(nextHoleSlots);
+      setActiveDrag(nextActiveDrag);
+      pendingDragRef.current = null;
+    },
+    [measureSlotCenters],
+  );
+
+  const updateActiveDragFromPointer = useCallback(
+    (pointerX: number, pointerY: number) => {
+      const dragging = activeDragRef.current;
+      const groupEl = groupRef.current;
+      if (!dragging || !groupEl) return;
+
+      const groupRect = groupEl.getBoundingClientRect();
+      const grabOffset = grabOffsetRef.current ?? { x: 0, y: 0 };
+
+      const centerX = pointerX - grabOffset.x;
+      const centerY = pointerY - grabOffset.y;
+
+      let nextLeft = centerX - dragging.width / 2 - groupRect.left;
+      let nextTop = centerY - dragging.height / 2 - groupRect.top;
+
+      const maxLeft = Math.max(0, groupRect.width - dragging.width);
+      const maxTop = Math.max(0, groupRect.height - dragging.height);
+
+      if (dragAxisRef.current === 'x') nextTop = dragging.lockTop;
+      if (dragAxisRef.current === 'y') nextLeft = dragging.lockLeft;
+
+      nextLeft = Math.min(maxLeft, Math.max(0, nextLeft));
+      nextTop = Math.min(maxTop, Math.max(0, nextTop));
+
+      const nextDrag = {
+        ...dragging,
+        left: nextLeft,
+        top: nextTop,
+      };
+      activeDragRef.current = nextDrag;
+      setActiveDrag(nextDrag);
+
+      const defaultSlot = homeSlotRef.current;
+      const centers = slotCentersRef.current;
+      const currentDefaultCenter = centers[defaultSlot];
+      if (!currentDefaultCenter) return;
+
+      const nearest = nearestSlotIndex(centerX, centerY, defaultSlot);
+      if (nearest < 0) return;
+
+      const nearestCenter = centers[nearest];
+      if (!nearestCenter) return;
+
+      const defaultDx = centerX - currentDefaultCenter.x;
+      const defaultDy = centerY - currentDefaultCenter.y;
+      const defaultDistSq = defaultDx * defaultDx + defaultDy * defaultDy;
+
+      const nearestDx = centerX - nearestCenter.x;
+      const nearestDy = centerY - nearestCenter.y;
+      const nearestDistSq = nearestDx * nearestDx + nearestDy * nearestDy;
+
+      if (nearestDistSq + SWITCH_EPSILON_SQ >= defaultDistSq) return;
+
+      const currentSlots = holeSlotsRef.current;
+      if (!currentSlots) return;
+
+      const nextSlots = currentSlots.slice();
+      const movingCard = nextSlots[nearest];
+      const oldDefaultSlot = defaultSlot;
+      const fromEl = itemRefs.current[nearest];
+      const fromRect = fromEl?.getBoundingClientRect();
+      nextSlots[defaultSlot] = nextSlots[nearest];
+      nextSlots[nearest] = null;
+
+      homeSlotRef.current = nearest;
+      holeSlotsRef.current = nextSlots;
+
+      if (movingCard && fromRect) {
+        const animKey = ++shiftAnimKeyRef.current;
+        removeShiftAnimationsForCard(movingCard);
+        const groupRect = groupRef.current?.getBoundingClientRect();
+        const fromLeft = fromRect.left - (groupRect?.left ?? 0);
+        const fromTop = fromRect.top - (groupRect?.top ?? 0);
+        const prelimShift: ShiftAnim = {
+          key: animKey,
+          card: movingCard,
+          fromLeft,
+          fromTop,
+          toLeft: fromLeft,
+          toTop: fromTop,
+          width: fromRect.width,
+          height: fromRect.height,
+          hideIndex: oldDefaultSlot,
+          started: false,
+        };
+        // Batch with setHoleSlots so hideForShift is true on the same render
+        // as the slot reorder — prevents a one-frame flicker in Chrome.
+        setHoleSlots(nextSlots);
+        setShiftAnims((prev) => [...prev, prelimShift]);
+        const measureRaf = requestAnimationFrame(() => {
+          const latestGroup = groupRef.current;
+          const toEl = itemRefs.current[oldDefaultSlot];
+          if (!latestGroup || !toEl) return;
+          const latestGroupRect = latestGroup.getBoundingClientRect();
+          const toRect = toEl.getBoundingClientRect();
+          const measuredToLeft = toRect.left - latestGroupRect.left;
+          const measuredToTop = toRect.top - latestGroupRect.top;
+          // Second rAF: the browser has now painted the overlay at translate(0,0).
+          // Setting started + real destination in the next frame triggers the
+          // CSS transition from the painted initial position.
+          const startRaf = requestAnimationFrame(() => {
+            setShiftAnims((prev) =>
+              prev.map((anim) =>
+                anim.key === animKey
+                  ? { ...anim, toLeft: measuredToLeft, toTop: measuredToTop, started: true }
+                  : anim,
+              ),
+            );
+          });
+          shiftRafIdsRef.current.push(startRaf);
+          const timeoutId = window.setTimeout(() => {
+            removeShiftAnimation(animKey);
+          }, SHIFT_ANIM_DURATION_MS + 80);
+          shiftTimeoutsRef.current.set(animKey, timeoutId);
         });
-        shiftRafIdsRef.current.push(startRaf);
-        const timeoutId = window.setTimeout(() => {
-          removeShiftAnimation(animKey);
-        }, SHIFT_ANIM_DURATION_MS + 80);
-        shiftTimeoutsRef.current.set(animKey, timeoutId);
-      });
-      shiftRafIdsRef.current.push(measureRaf);
-    } else {
-      setHoleSlots(nextSlots);
-    }
+        shiftRafIdsRef.current.push(measureRaf);
+      } else {
+        setHoleSlots(nextSlots);
+      }
 
-    requestAnimationFrame(measureSlotCenters);
-  }, [measureSlotCenters, nearestSlotIndex, removeShiftAnimation, removeShiftAnimationsForCard]);
+      requestAnimationFrame(measureSlotCenters);
+    },
+    [measureSlotCenters, nearestSlotIndex, removeShiftAnimation, removeShiftAnimationsForCard],
+  );
 
-  const commitDropAnimation = useCallback((dropKey: number) => {
-    const currentDrop = dropAnimRef.current;
-    if (!currentDrop || currentDrop.key !== dropKey) return;
-    dropAnimRef.current = null;
-    onReorder?.(currentDrop.finalOrder);
-    clearDragSession();
-  }, [clearDragSession, onReorder]);
+  const commitDropAnimation = useCallback(
+    (dropKey: number) => {
+      const currentDrop = dropAnimRef.current;
+      if (!currentDrop || currentDrop.key !== dropKey) return;
+      dropAnimRef.current = null;
+      onReorder?.(currentDrop.finalOrder);
+      clearDragSession();
+    },
+    [clearDragSession, onReorder],
+  );
 
   const startDropAnimation = useCallback(() => {
     const dragging = activeDragRef.current;
@@ -532,7 +547,14 @@ function HandDisplay(props: HandDisplayProps) {
     const defaultSlot = homeSlotRef.current;
     const groupEl = groupRef.current;
     const toEl = defaultSlot >= 0 ? itemRefs.current[defaultSlot] : null;
-    if (dragging && currentSlots && defaultSlot >= 0 && defaultSlot < currentSlots.length && groupEl && toEl) {
+    if (
+      dragging &&
+      currentSlots &&
+      defaultSlot >= 0 &&
+      defaultSlot < currentSlots.length &&
+      groupEl &&
+      toEl
+    ) {
       const finalOrder = currentSlots.slice() as CardValueSuit[];
       finalOrder[defaultSlot] = dragging.card;
       const groupRect = groupEl.getBoundingClientRect();
@@ -571,16 +593,19 @@ function HandDisplay(props: HandDisplayProps) {
   }, [clearDragSession, clearDropAnimation, commitDropAnimation]);
 
   useEffect(() => {
-    const interactionLocked = () =>
-      !!dropAnimRef.current ||
-      shiftAnimsRef.current.length > 0;
+    const interactionLocked = () => !!dropAnimRef.current || shiftAnimsRef.current.length > 0;
 
     const onPointerMove = (event: PointerEvent) => {
       const pending = pendingDragRef.current;
-      if (pending && event.pointerId === pending.pointerId && !activeDragRef.current && !interactionLocked()) {
+      if (
+        pending &&
+        event.pointerId === pending.pointerId &&
+        !activeDragRef.current &&
+        !interactionLocked()
+      ) {
         const dx = event.clientX - pending.startX;
         const dy = event.clientY - pending.startY;
-        if ((dx * dx + dy * dy) < (DRAG_ACTIVATION_THRESHOLD_PX * DRAG_ACTIVATION_THRESHOLD_PX)) return;
+        if (dx * dx + dy * dy < DRAG_ACTIVATION_THRESHOLD_PX * DRAG_ACTIVATION_THRESHOLD_PX) return;
         beginDragSession(pending.index, event.clientX, event.clientY);
       }
       if (activeDragRef.current) {
@@ -608,7 +633,13 @@ function HandDisplay(props: HandDisplayProps) {
       window.removeEventListener('pointerup', onPointerUp);
       unlockBodyTextSelection();
     };
-  }, [beginDragSession, clearShiftAnimations, startDropAnimation, updateActiveDragFromPointer, unlockBodyTextSelection]);
+  }, [
+    beginDragSession,
+    clearShiftAnimations,
+    startDropAnimation,
+    updateActiveDragFromPointer,
+    unlockBodyTextSelection,
+  ]);
 
   const isWinner = winner === winnerType;
 
@@ -623,9 +654,7 @@ function HandDisplay(props: HandDisplayProps) {
     const isInBestHand =
       isPostRevealPhase &&
       bestHand?.cards?.some(
-        (bestCard) =>
-          bestCard.cardId != null &&
-          bestCard.cardId === card.cardId,
+        (bestCard) => bestCard.cardId != null && bestCard.cardId === card.cardId,
       );
     const hasHalo = haloCardIds.includes(card.cardId ?? '-1');
     const hideForSwap = swapHiddenCardIds.includes(card.cardId ?? '-1');
@@ -656,7 +685,7 @@ function HandDisplay(props: HandDisplayProps) {
   const dragAxis: 'x' | 'y' | true = rows === 1 ? 'x' : cols === 1 ? 'y' : true;
   dragAxisRef.current = dragAxis;
   const gapPx = 8;
-  const gapAdjust = cols > 1 ? `${(cols - 1) * gapPx / cols}px` : '0px';
+  const gapAdjust = cols > 1 ? `${((cols - 1) * gapPx) / cols}px` : '0px';
   const itemWidth = `calc(${100 / cols}% - ${gapAdjust})`;
   const groupStyle = {
     '--card-w': itemWidth,
@@ -664,21 +693,20 @@ function HandDisplay(props: HandDisplayProps) {
     opacity: cards.length > 0 ? 1 : 0,
     transition: `opacity ${HALO_FADE_DURATION_MS}ms ease-in-out`,
   } as React.CSSProperties;
-  const placeholderSlots: HoleSlot[] = cards.length === 0
-    ? new Array(EXPECTED_HAND_SIZE).fill(null)
-    : [];
+  const placeholderSlots: HoleSlot[] =
+    cards.length === 0 ? new Array(EXPECTED_HAND_SIZE).fill(null) : [];
   const visibleSlots = holeSlots ?? (cards.length > 0 ? cards : placeholderSlots);
 
   return (
     <div
       ref={containerRef}
-      className='w-full max-w-full mx-auto relative text-canvas-text'
+      className="w-full max-w-full mx-auto relative text-canvas-text"
       data-area={area}
     >
-      <div className='relative'>
+      <div className="relative">
         {gameState === GAME_STATES.FINAL && isWinner && !timeoutBadge && (
           <div
-            className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            className="absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg"
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
@@ -689,7 +717,7 @@ function HandDisplay(props: HandDisplayProps) {
         )}
         {timeoutBadge === 'winner' && (
           <div
-            className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            className="absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg"
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
@@ -698,24 +726,25 @@ function HandDisplay(props: HandDisplayProps) {
             Winner!
           </div>
         )}
-        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') && cardRightEdgeOffset !== null && (
-          <div
-            className='absolute z-20 -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg'
-            style={{
-              // Align to the final card rather than the full-width hand
-              // container. Wait for the measurement above so it never first
-              // paints in the center before snapping into place.
-              left: '50%',
-              transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
-            }}
-          >
-            {timeoutBadge === 'forfeit' ? 'Forfeit' : 'Timed Out'}
-          </div>
-        )}
+        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') &&
+          cardRightEdgeOffset !== null && (
+            <div
+              className="absolute z-20 -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg"
+              style={{
+                // Align to the final card rather than the full-width hand
+                // container. Wait for the measurement above so it never first
+                // paints in the center before snapping into place.
+                left: '50%',
+                transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
+              }}
+            >
+              {timeoutBadge === 'forfeit' ? 'Forfeit' : 'Timed Out'}
+            </div>
+          )}
 
         <div
           ref={groupRef}
-          className='hand-reorder-group'
+          className="hand-reorder-group"
           style={{ ...groupStyle, pointerEvents: dropAnim ? 'none' : 'auto' }}
         >
           {visibleSlots.map((slotCard, idx) => {
@@ -723,21 +752,21 @@ function HandDisplay(props: HandDisplayProps) {
             const isDragging = draggingCardId === slotCardId;
             const hideForShift =
               !!slotCard &&
-              shiftAnims.some((anim) =>
-                anim.hideIndex === idx &&
-                (
-                  slotCard === anim.card ||
-                  (
-                    slotCard.cardId != null &&
-                    anim.card.cardId != null &&
-                    slotCard.cardId === anim.card.cardId
-                  )
-                ));
+              shiftAnims.some(
+                (anim) =>
+                  anim.hideIndex === idx &&
+                  (slotCard === anim.card ||
+                    (slotCard.cardId != null &&
+                      anim.card.cardId != null &&
+                      slotCard.cardId === anim.card.cardId)),
+              );
             return (
               <div
                 key={`slot-${idx}`}
                 className={`relative flex items-center justify-center ${isDragging ? 'z-50' : 'z-0'}`}
-                ref={(el) => { itemRefs.current[idx] = el; }}
+                ref={(el) => {
+                  itemRefs.current[idx] = el;
+                }}
                 onPointerDown={(event) => {
                   if (!dragEnabled) return;
                   if (slotCard == null) return;
@@ -766,7 +795,7 @@ function HandDisplay(props: HandDisplayProps) {
                   </div>
                 ) : (
                   <div style={{ width: '100%' }}>
-                    <div className='w-full aspect-[5/7]' />
+                    <div className="w-full aspect-[5/7]" />
                   </div>
                 )}
               </div>
@@ -775,7 +804,7 @@ function HandDisplay(props: HandDisplayProps) {
           {shiftAnims.map((anim) => (
             <div
               key={anim.key}
-              className='absolute z-40 pointer-events-none'
+              className="absolute z-40 pointer-events-none"
               style={{
                 left: anim.fromLeft,
                 top: anim.fromTop,
@@ -790,14 +819,12 @@ function HandDisplay(props: HandDisplayProps) {
                 removeShiftAnimation(anim.key);
               }}
             >
-              <div style={{ width: '100%' }}>
-                {renderCard(anim.card, anim.hideIndex, false)}
-              </div>
+              <div style={{ width: '100%' }}>{renderCard(anim.card, anim.hideIndex, false)}</div>
             </div>
           ))}
           {dropAnim && (
             <div
-              className='absolute z-50 pointer-events-none'
+              className="absolute z-50 pointer-events-none"
               style={{
                 left: dropAnim.fromLeft,
                 top: dropAnim.fromTop,
@@ -826,7 +853,7 @@ function HandDisplay(props: HandDisplayProps) {
           )}
           {activeDrag && (
             <div
-              className='absolute z-50 pointer-events-none'
+              className="absolute z-50 pointer-events-none"
               style={{
                 left: activeDrag.left,
                 top: activeDrag.top,

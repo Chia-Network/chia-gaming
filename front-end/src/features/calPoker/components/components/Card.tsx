@@ -32,12 +32,12 @@ function Card(props: CardRenderProps) {
   const stateClass = isHidden ? 'card-hidden' : dimmed ? 'card-dimmed' : '';
 
   return (
-    <div className='w-full relative'>
+    <div className="w-full relative">
       {showDragOutline && !hasHalo && (
-        <div className='absolute -inset-2 rounded-xl z-0 bg-canvas-bg' />
+        <div className="absolute -inset-2 rounded-xl z-0 bg-canvas-bg" />
       )}
       <div
-        className='absolute -inset-2 rounded-xl z-0 transition-opacity ease-in-out'
+        className="absolute -inset-2 rounded-xl z-0 transition-opacity ease-in-out"
         style={{
           backgroundColor: '#9E8A8E',
           opacity: hasHalo ? 1 : 0,

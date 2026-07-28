@@ -53,11 +53,16 @@ describe('Krunk terms', () => {
   });
 
   it('keeps the aggregate per-player contributions from a grouped proposal', () => {
-    expect(parseTermsFromNotificationValue({
-      my_contribution: { Amount: '300' },
-      their_contribution: { Amount: '300' },
-      timeout: 15,
-    }, 'krunk')).toEqual({
+    expect(
+      parseTermsFromNotificationValue(
+        {
+          my_contribution: { Amount: '300' },
+          their_contribution: { Amount: '300' },
+          timeout: 15,
+        },
+        'krunk',
+      ),
+    ).toEqual({
       gameType: 'krunk',
       myContribution: 300n,
       theirContribution: 300n,
@@ -117,10 +122,9 @@ describe('Krunk first guess drafting', () => {
     expect(krunkGuessesWithQueued([], ['CRANE'])).toEqual([
       { word: 'CRANE', clue: [-1, -1, -1, -1, -1] },
     ]);
-    expect(krunkGuessesWithQueued(
-      [{ word: 'CRANE', clue: [0, 0, 0, 0, 1] }],
-      ['SLATE', 'AUDIO'],
-    )).toEqual([
+    expect(
+      krunkGuessesWithQueued([{ word: 'CRANE', clue: [0, 0, 0, 0, 1] }], ['SLATE', 'AUDIO']),
+    ).toEqual([
       { word: 'CRANE', clue: [0, 0, 0, 0, 1] },
       { word: 'SLATE', clue: [-1, -1, -1, -1, -1] },
       { word: 'AUDIO', clue: [-1, -1, -1, -1, -1] },
@@ -147,10 +151,12 @@ describe('Krunk first guess drafting', () => {
       settlementOutcome: null,
       error: null,
     };
-    expect(applyKrunkMoveRejected(alice, {
-      tag: 'not_in_dictionary',
-      message: 'xxxxx',
-    })).toMatchObject({
+    expect(
+      applyKrunkMoveRejected(alice, {
+        tag: 'not_in_dictionary',
+        message: 'xxxxx',
+      }),
+    ).toMatchObject({
       handler: KrunkHandler.WaitingCommit,
       myTurn: true,
       secretWord: null,
@@ -164,10 +170,12 @@ describe('Krunk first guess drafting', () => {
       secretWord: null,
       guesses: [{ word: 'XXXXX', clue: [-1, -1, -1, -1, -1] }],
     };
-    expect(applyKrunkMoveRejected(bob, {
-      tag: 'not_in_dictionary',
-      message: 'xxxxx',
-    })).toMatchObject({
+    expect(
+      applyKrunkMoveRejected(bob, {
+        tag: 'not_in_dictionary',
+        message: 'xxxxx',
+      }),
+    ).toMatchObject({
       handler: KrunkHandler.BobGuess,
       myTurn: true,
       guesses: [],
@@ -190,19 +198,34 @@ describe('Krunk first guess drafting', () => {
     };
 
     expect(krunkTerminalStatus(timedOut, 'Peer')).toBe('We timed out.');
-    expect(krunkTerminalStatus({
-      ...timedOut,
-      role: 'alice',
-      settlementOutcome: 'opponent_timed_out',
-    }, 'Peer')).toBe('Peer timed out.');
-    expect(krunkTerminalStatus({
-      ...timedOut,
-      settlementOutcome: 'forfeited_skipped_reveal',
-    }, 'Peer')).toBe('We forfeited.');
-    expect(krunkTerminalStatus({
-      ...timedOut,
-      settlementOutcome: 'settled_cleanly',
-    }, 'Peer')).toBe('Settled.');
+    expect(
+      krunkTerminalStatus(
+        {
+          ...timedOut,
+          role: 'alice',
+          settlementOutcome: 'opponent_timed_out',
+        },
+        'Peer',
+      ),
+    ).toBe('Peer timed out.');
+    expect(
+      krunkTerminalStatus(
+        {
+          ...timedOut,
+          settlementOutcome: 'forfeited_skipped_reveal',
+        },
+        'Peer',
+      ),
+    ).toBe('We forfeited.');
+    expect(
+      krunkTerminalStatus(
+        {
+          ...timedOut,
+          settlementOutcome: 'settled_cleanly',
+        },
+        'Peer',
+      ),
+    ).toBe('Settled.');
   });
 
   it('leaves bob correct-guess copy to the win-amount UI', () => {
@@ -219,12 +242,17 @@ describe('Krunk first guess drafting', () => {
       error: null,
     };
     expect(krunkTerminalStatus(bobWin, 'Peer')).toBeNull();
-    expect(krunkTerminalStatus({
-      ...bobWin,
-      outcome: 'lose',
-      moverShare: null,
-      revealedWord: 'CRANE',
-    }, 'Peer')).toBe('Out of guesses.');
+    expect(
+      krunkTerminalStatus(
+        {
+          ...bobWin,
+          outcome: 'lose',
+          moverShare: null,
+          revealedWord: 'CRANE',
+        },
+        'Peer',
+      ),
+    ).toBe('Out of guesses.');
   });
 
   it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {
@@ -235,10 +263,12 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('aggregates keyboard letter statuses with NYT green-over-amber priority', () => {
-    expect(krunkLetterStatuses([
-      { word: 'CRANE', clue: [0, 0, 0, 0, 1] }, // E present
-      { word: 'EAGER', clue: [2, 0, 0, 0, 0] }, // E correct
-    ])).toEqual({
+    expect(
+      krunkLetterStatuses([
+        { word: 'CRANE', clue: [0, 0, 0, 0, 1] }, // E present
+        { word: 'EAGER', clue: [2, 0, 0, 0, 0] }, // E correct
+      ]),
+    ).toEqual({
       C: 'absent',
       R: 'absent',
       A: 'absent',
@@ -249,17 +279,19 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('formats a solved guessing hand for session history', () => {
-    expect(formatKrunkHandLog(
-      'bob',
-      10_000_000_000n, // 0.01 XCH
-      [
-        { word: 'RATES', clue: [0, 0, 0, 0, 1] },
-        { word: 'SPOIL', clue: [1, 0, 1, 0, 0] },
-        { word: 'MOUSY', clue: [0, 2, 0, 2, 2] },
-        { word: 'BOSSY', clue: [2, 2, 2, 2, 2] },
-      ],
-      'BOSSY',
-    )).toEqual([
+    expect(
+      formatKrunkHandLog(
+        'bob',
+        10_000_000_000n, // 0.01 XCH
+        [
+          { word: 'RATES', clue: [0, 0, 0, 0, 1] },
+          { word: 'SPOIL', clue: [1, 0, 1, 0, 0] },
+          { word: 'MOUSY', clue: [0, 2, 0, 2, 2] },
+          { word: 'BOSSY', clue: [2, 2, 2, 2, 2] },
+        ],
+        'BOSSY',
+      ),
+    ).toEqual([
       'Krunk (guessing) 0.01 XCH',
       '⬛⬛⬛⬛🟧RATES',
       '🟧⬛🟧⬛⬛SPOIL',
@@ -269,18 +301,20 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('formats a missed picking hand with a gray reveal line', () => {
-    expect(formatKrunkHandLog(
-      'alice',
-      10_000_000_000n,
-      [
-        { word: 'RATES', clue: [1, 0, 0, 0, 0] },
-        { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
-        { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
-        { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
-        { word: 'CROWN', clue: [0, 2, 2, 2, 2] },
-      ],
-      'FROWN',
-    )).toEqual([
+    expect(
+      formatKrunkHandLog(
+        'alice',
+        10_000_000_000n,
+        [
+          { word: 'RATES', clue: [1, 0, 0, 0, 0] },
+          { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
+          { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
+          { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
+          { word: 'CROWN', clue: [0, 2, 2, 2, 2] },
+        ],
+        'FROWN',
+      ),
+    ).toEqual([
       'Krunk (picking) 0.01 XCH',
       '🟧⬛⬛⬛⬛RATES',
       '⬛🟩🟩⬛🟩GROIN',
@@ -292,18 +326,20 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('omits the reveal line when a guess is all green', () => {
-    expect(formatKrunkHandLog(
-      'bob',
-      10_000_000_000n,
-      [
-        { word: 'RATES', clue: [1, 0, 0, 0, 0] },
-        { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
-        { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
-        { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
-        { word: 'FROWN', clue: [2, 2, 2, 2, 2] },
-      ],
-      'FROWN',
-    )).toEqual([
+    expect(
+      formatKrunkHandLog(
+        'bob',
+        10_000_000_000n,
+        [
+          { word: 'RATES', clue: [1, 0, 0, 0, 0] },
+          { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
+          { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
+          { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
+          { word: 'FROWN', clue: [2, 2, 2, 2, 2] },
+        ],
+        'FROWN',
+      ),
+    ).toEqual([
       'Krunk (guessing) 0.01 XCH',
       '🟧⬛⬛⬛⬛RATES',
       '⬛🟩🟩⬛🟩GROIN',
@@ -314,11 +350,13 @@ describe('Krunk first guess drafting', () => {
   });
 
   it('routes a typed move rejection with its game id, tag, and message', () => {
-    expect(gameplayEventForMoveRejected({
-      id: 7n,
-      tag: 'not_in_dictionary',
-      message: 'xxxxx',
-    })).toEqual({
+    expect(
+      gameplayEventForMoveRejected({
+        id: 7n,
+        tag: 'not_in_dictionary',
+        message: 'xxxxx',
+      }),
+    ).toEqual({
       MoveRejected: {
         gameId: '7',
         tag: 'not_in_dictionary',
@@ -332,8 +370,7 @@ describe('Krunk first guess drafting', () => {
     // full atomic group so both Krunk panels wire immediately.
     const activeIds = activeIdsAfterProposalAccepted([], '1', ['1', '3']);
     expect(activeIds).toEqual(['1', '3']);
-    expect(activeIdsAfterProposalAccepted(activeIds, '3', ['1', '3']))
-      .toEqual(['1', '3']);
+    expect(activeIdsAfterProposalAccepted(activeIds, '3', ['1', '3'])).toEqual(['1', '3']);
 
     const opponentCommit = {
       GameStatus: {

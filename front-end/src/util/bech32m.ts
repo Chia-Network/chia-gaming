@@ -13,9 +13,7 @@ export function decodeBech32mPuzzleHash(addr: string): string | null {
 
 export function encodePuzzleHashToBech32m(hexPuzzleHash: string, prefix = 'xch'): string {
   const clean = hexPuzzleHash.startsWith('0x') ? hexPuzzleHash.slice(2) : hexPuzzleHash;
-  const bytes = Uint8Array.from(
-    clean.match(/.{1,2}/g)!.map((b) => Number.parseInt(b, 16)),
-  );
+  const bytes = Uint8Array.from(clean.match(/.{1,2}/g)!.map((b) => Number.parseInt(b, 16)));
   const words = bech32m.toWords(bytes);
   return bech32m.encode(prefix, words);
 }
