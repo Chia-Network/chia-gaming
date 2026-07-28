@@ -58,15 +58,31 @@ function cacheControlForPath(pathname) {
   return 'public, max-age=86400';
 }
 
-function sendFile(res, filePath, pathname) {
-  const ext = path.extname(filePath);
+function acceptsGzip(req) {
+  const accept = req.headers['accept-encoding'] || '';
+  return accept.includes('gzip');
+}
+
+function gzipPath(filePath, req) {
+  if (!acceptsGzip(req)) return null;
+  const gz = filePath + '.gz';
+  if (fs.existsSync(gz)) return gz;
+  return null;
+}
+
+function sendFile(res, filePath, pathname, gzip = false) {
+  const ext = path.extname(pathname);
   const ct = MIME[ext] || 'application/octet-stream';
   const headers = {
     'Content-Type': ct,
     'Cache-Control': cacheControlForPath(pathname),
   };
+  if (gzip) {
+    headers['Content-Encoding'] = 'gzip';
+    headers['Vary'] = 'Accept-Encoding';
+  }
   if (ext === '.wasm') {
-    headers['SourceMap'] = path.basename(filePath) + '.map';
+    headers['SourceMap'] = path.basename(pathname) + '.map';
   }
 
   const stream = fs.createReadStream(filePath);
@@ -103,7 +119,8 @@ const server = http.createServer((req, res) => {
 
   fs.stat(filePath, (err, st) => {
     if (!err && st.isFile()) {
-      return sendFile(res, filePath, pathname);
+      const gz = gzipPath(filePath, req);
+      return sendFile(res, gz || filePath, pathname, !!gz);
     }
 
     // SPA fallback: serve index.html for missing extensionless paths
@@ -114,7 +131,8 @@ const server = http.createServer((req, res) => {
           res.writeHead(404);
           return res.end('Not found');
         }
-        return sendFile(res, indexPath, '/index.html');
+        const gz = gzipPath(indexPath, req);
+        return sendFile(res, gz || indexPath, '/index.html', !!gz);
       });
     }
 

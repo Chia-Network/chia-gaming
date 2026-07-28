@@ -65,6 +65,19 @@ GAME_ZIP="chia-gaming-${TAG}.zip"
 HUB_TARBALL="chia-gaming-hub-${TAG}.tgz"
 HUB_ZIP="chia-gaming-hub-${TAG}.zip"
 
+# Create zip archive if the `zip` command is available; otherwise warn and skip.
+# The tarball is always created and is sufficient for deployment.
+function maybe_zip() {
+    local src_dir=$1
+    local out_zip=$2
+    if command -v zip >/dev/null 2>&1; then
+        rm -f "$out_zip"
+        (cd "$src_dir" && zip -rq "$out_zip" .)
+    else
+        echo "Warning: 'zip' command not found, skipping $out_zip"
+    fi
+}
+
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
@@ -128,8 +141,7 @@ node "$ROOT_DIR/tools/verify-stage.mjs" "$GAME_STAGE"
 echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_player_app"
 tar -czf "$ROOT_DIR/deploy_player_app/$GAME_TARBALL" -C "$GAME_STAGE" .
-rm -f "$ROOT_DIR/deploy_player_app/$GAME_ZIP"
-(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
+maybe_zip "$GAME_STAGE" "$ROOT_DIR/deploy_player_app/$GAME_ZIP"
 rm -rf "$GAME_STAGE"
 
 # ── Assemble hub staging tree ──────────────────────────────────────
@@ -153,8 +165,7 @@ node "$ROOT_DIR/tools/verify-stage.mjs" "$HUB_STAGE"
 echo "=== Creating $HUB_TARBALL and $HUB_ZIP ==="
 mkdir -p "$ROOT_DIR/deploy_hub"
 tar -czf "$ROOT_DIR/deploy_hub/$HUB_TARBALL" -C "$HUB_STAGE" .
-rm -f "$ROOT_DIR/deploy_hub/$HUB_ZIP"
-(cd "$HUB_STAGE" && zip -rq "$ROOT_DIR/deploy_hub/$HUB_ZIP" .)
+maybe_zip "$HUB_STAGE" "$ROOT_DIR/deploy_hub/$HUB_ZIP"
 rm -rf "$HUB_STAGE"
 
 # ── Done ─────────────────────────────────────────────────────────────
@@ -163,9 +174,9 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  Artifacts:"
 echo "    $ROOT_DIR/deploy_player_app/$GAME_TARBALL"
-echo "    $ROOT_DIR/deploy_player_app/$GAME_ZIP"
+[ -f "$ROOT_DIR/deploy_player_app/$GAME_ZIP" ] && echo "    $ROOT_DIR/deploy_player_app/$GAME_ZIP"
 echo "    $ROOT_DIR/deploy_hub/$HUB_TARBALL"
-echo "    $ROOT_DIR/deploy_hub/$HUB_ZIP"
+[ -f "$ROOT_DIR/deploy_hub/$HUB_ZIP" ] && echo "    $ROOT_DIR/deploy_hub/$HUB_ZIP"
 echo "════════════════════════════════════════════════════════"
 
 ABORTED=0
