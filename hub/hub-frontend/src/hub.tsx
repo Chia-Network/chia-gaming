@@ -111,12 +111,13 @@ const HubScreen = () => {
     joinHub(trimmed);
   }
 
-  function commitEdit(e: any) {
-    const value = e.target.value;
+  function commitEdit(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
     setEditingAlias(false);
-    setMyAlias(value);
-    notifyParentAlias(value.trim());
-    setHubAlias(publicId ?? '', value);
+    setMyAlias(trimmed);
+    notifyParentAlias(trimmed);
+    setHubAlias(publicId ?? '', trimmed);
   }
 
   useEffect(() => {
@@ -239,11 +240,11 @@ const HubScreen = () => {
               placeholder="Enter new alias"
               value={myAlias}
               onChange={(e) => setMyAlias(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
-              onBlur={commitEdit}
+              onKeyDown={(e) => e.key === 'Enter' && commitEdit(e.currentTarget.value)}
+              onBlur={(e) => commitEdit(e.currentTarget.value)}
             />
             <button
-              onClick={commitEdit}
+              onClick={() => commitEdit(myAlias)}
               aria-label="save-alias"
               className="px-4 py-2 rounded bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover font-medium"
             >
