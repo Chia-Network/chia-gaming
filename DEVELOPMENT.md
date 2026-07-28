@@ -264,12 +264,15 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
   --dir hub/hub-frontend/serve
 ```
 
-| Flag / env  | Required | Purpose                                                                                        |
-| ----------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `--self`    | yes      | Public HTTP origin of this hub (used for WebSocket URL derivation)                         |
-| `--dir`     | yes      | Root directory to serve static hub files from                                                |
-| `--verbose` | no       | Verbose logging                                                                                |
-| `PORT`      | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                   |
+| Flag / env                   | Required | Purpose                                                                                                |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `--self`                     | yes      | Public HTTP origin of this hub (used for WebSocket URL derivation)                                     |
+| `--dir`                      | yes      | Root directory to serve static hub files from                                                          |
+| `--verbose`                  | no       | Verbose logging                                                                                        |
+| `PORT`                       | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                              |
+| `HUB_MAX_TOTAL_CONNECTIONS`  | no       | Maximum combined hub and game WebSocket connections (default `2000`)                                   |
+| `HUB_MAX_CONNECTIONS_PER_IP` | no       | Maximum combined WebSocket connections per client IP (default `8`)                                     |
+| `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
 
 #### Simulator
 
@@ -325,6 +328,12 @@ load — not when a session is accepted — via relative paths under
 `basePath`.
 - `**--self` must match the public URL.** The hub uses it to derive
 WebSocket URLs. Mismatches cause connection failures.
+- **Connection limits.** Tune `HUB_MAX_TOTAL_CONNECTIONS` and
+`HUB_MAX_CONNECTIONS_PER_IP` for the deployment. When the hub is reachable only
+through a trusted reverse proxy, set `HUB_TRUST_PROXY=1` and configure the proxy
+to replace `X-Forwarded-For` with the connecting client's address. Never enable
+this setting while clients can connect directly, because they could spoof the
+header and bypass the per-IP limit.
 - **Caching rules.** Only root URLs (`index.html`, `build-meta.json`,
 favicon, etc.) stay stable across rebuilds; each deploy mints a new
 `/app/<nonce>/` tree. Configure your production web server (nginx,

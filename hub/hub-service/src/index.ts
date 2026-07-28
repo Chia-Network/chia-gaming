@@ -1,5 +1,6 @@
-import { createServer } from 'http';
+import { createServer, type IncomingMessage } from 'http';
 import crypto from 'node:crypto';
+import type { Duplex } from 'node:stream';
 
 import cors from 'cors';
 import express from 'express';
@@ -74,19 +75,100 @@ interface GameConnMeta {
 
 const HUB_DISCONNECT_GRACE_MS = 3000;
 const CONNECTION_TTL_MS = 60_000;
+const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
+const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
+const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
 const hubWsServer = new WebSocketServer({ noServer: true });
 const gameWsServer = new WebSocketServer({ noServer: true });
+const connectionsByIp = new Map<string, number>();
+let totalConnections = 0;
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${name} must be a safe integer`);
+  }
+  return value;
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  throw new Error(`${name} must be one of: 0, 1, false, true`);
+}
+
+function normalizeIp(ip: string): string {
+  const trimmed = ip.trim();
+  return trimmed.startsWith('::ffff:') ? trimmed.slice('::ffff:'.length) : trimmed;
+}
+
+function clientIp(req: IncomingMessage): string {
+  if (TRUST_PROXY) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0];
+    if (first) return normalizeIp(first);
+  }
+  return normalizeIp(req.socket.remoteAddress ?? 'unknown');
+}
+
+function rejectUpgrade(socket: Duplex): void {
+  socket.write(
+    'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
+  );
+  socket.destroy();
+}
+
+function trackConnection(ws: WebSocket, ip: string): void {
+  totalConnections += 1;
+  connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
+  ws.once('close', () => {
+    totalConnections -= 1;
+    const remaining = (connectionsByIp.get(ip) ?? 1) - 1;
+    if (remaining === 0) {
+      connectionsByIp.delete(ip);
+    } else {
+      connectionsByIp.set(ip, remaining);
+    }
+  });
+}
+
+function handleUpgrade(
+  wsServer: WebSocketServer,
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+): void {
+  const ip = clientIp(req);
+  const ipConnections = connectionsByIp.get(ip) ?? 0;
+  if (totalConnections >= MAX_TOTAL_CONNECTIONS || ipConnections >= MAX_CONNECTIONS_PER_IP) {
+    logHubVerbose('ws_upgrade_rejected_connection_limit', {
+      ip,
+      total_connections: totalConnections,
+      ip_connections: ipConnections,
+    });
+    rejectUpgrade(socket);
+    return;
+  }
+
+  wsServer.handleUpgrade(req, socket, head, (ws) => {
+    trackConnection(ws, ip);
+    wsServer.emit('connection', ws, req);
+  });
+}
 
 httpServer.on('upgrade', (req, socket, head) => {
   const pathname = new URL(req.url!, `http://${req.headers.host}`).pathname;
   if (pathname === '/ws/hub') {
-    hubWsServer.handleUpgrade(req, socket, head, (ws) => {
-      hubWsServer.emit('connection', ws, req);
-    });
+    handleUpgrade(hubWsServer, req, socket, head);
   } else if (pathname === '/ws/game') {
-    gameWsServer.handleUpgrade(req, socket, head, (ws) => {
-      gameWsServer.emit('connection', ws, req);
-    });
+    handleUpgrade(gameWsServer, req, socket, head);
   } else {
     socket.destroy();
   }

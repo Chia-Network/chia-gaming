@@ -23,7 +23,7 @@ async function getFreePort() {
   });
 }
 
-async function startHub() {
+async function startHub(env = {}) {
   const port = await getFreePort();
   const dir = mkdtempSync(path.join(tmpdir(), 'hub-behavior-'));
   const child = spawn(
@@ -31,7 +31,14 @@ async function startHub() {
     ['dist/index-rollup.cjs', '--self', `http://127.0.0.1:${port}`, '--dir', dir],
     {
       cwd: path.resolve(import.meta.dirname, '..'),
-      env: { ...process.env, PORT: String(port) },
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HUB_MAX_TOTAL_CONNECTIONS: '2000',
+        HUB_MAX_CONNECTIONS_PER_IP: '8',
+        HUB_TRUST_PROXY: '0',
+        ...env,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -64,15 +71,18 @@ async function startHub() {
   };
 }
 
-async function openWs(origin, pathName) {
-  const ws = new WebSocket(`${origin.replace(/^http/, 'ws')}${pathName}`);
+async function openWs(origin, pathName, options) {
+  const ws = new WebSocket(`${origin.replace(/^http/, 'ws')}${pathName}`, options);
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out connecting ${pathName}`)), 2_000);
     ws.once('open', () => {
       clearTimeout(timer);
       resolve(undefined);
     });
-    ws.once('error', reject);
+    ws.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
   return ws;
 }
@@ -462,6 +472,84 @@ test('identify ignores client-supplied player_id and assigns from the secret', a
     assert.notEqual(registered.player_id, 'p_attacker_chosen_id_abcdef');
     assert.match(registered.player_id, /^p_/);
     await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('total connection cap rejects excess upgrades and recovers after close', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '2',
+    HUB_MAX_CONNECTIONS_PER_IP: '10',
+  });
+  try {
+    const hubSocket = await openWs(hub.origin, '/ws/hub');
+    const gameSocket = await openWs(hub.origin, '/ws/game');
+
+    await assert.rejects(openWs(hub.origin, '/ws/hub'), /Unexpected server response: 503/);
+
+    await closeWs(hubSocket);
+    const replacement = await openWs(hub.origin, '/ws/hub');
+
+    await closeWs(replacement);
+    await closeWs(gameSocket);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('per-IP connection cap uses trusted forwarded addresses only when configured', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '10',
+    HUB_MAX_CONNECTIONS_PER_IP: '1',
+    HUB_TRUST_PROXY: '1',
+  });
+  try {
+    const first = await openWs(hub.origin, '/ws/hub', {
+      headers: { 'x-forwarded-for': '203.0.113.1' },
+    });
+
+    await assert.rejects(
+      openWs(hub.origin, '/ws/game', {
+        headers: { 'x-forwarded-for': '203.0.113.1' },
+      }),
+      /Unexpected server response: 503/,
+    );
+
+    const differentIp = await openWs(hub.origin, '/ws/game', {
+      headers: { 'x-forwarded-for': '203.0.113.2' },
+    });
+
+    await closeWs(first);
+    const replacement = await openWs(hub.origin, '/ws/hub', {
+      headers: { 'x-forwarded-for': '203.0.113.1' },
+    });
+
+    await closeWs(replacement);
+    await closeWs(differentIp);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('per-IP connection cap ignores forwarded addresses from untrusted clients', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '10',
+    HUB_MAX_CONNECTIONS_PER_IP: '1',
+  });
+  try {
+    const first = await openWs(hub.origin, '/ws/hub', {
+      headers: { 'x-forwarded-for': '203.0.113.1' },
+    });
+
+    await assert.rejects(
+      openWs(hub.origin, '/ws/game', {
+        headers: { 'x-forwarded-for': '203.0.113.2' },
+      }),
+      /Unexpected server response: 503/,
+    );
+
+    await closeWs(first);
   } finally {
     await hub.stop();
   }
