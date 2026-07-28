@@ -318,7 +318,7 @@ export function useCalpokerHand(
         gameObject.setHandState(persistedCalpokerState({ ...existing, cardSelections }));
       }
     }
-  }, [cardSelections, gameObject]);
+  }, [cardSelections, gameObject, playerHand.length]);
 
   const handleCheat = useCallback(() => {
     const go = gameObjectRef.current;

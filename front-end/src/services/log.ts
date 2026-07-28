@@ -74,7 +74,6 @@ function diagWrite(line: string): void {
   } catch {
     /* fall through to console */
   }
-  // eslint-disable-next-line no-console
   console.error(line);
 }
 

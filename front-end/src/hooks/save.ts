@@ -1053,7 +1053,7 @@ export async function peekSession(): Promise<SessionSave | null> {
   const wipedIncompatible = await hydrateSessionCacheFromDisk();
   if (persistPromise) await flushSessionSave();
   await writeChain;
-  let record = await readSessionRecord();
+  const record = await readSessionRecord();
   if (record && record.version !== CURRENT_VERSION) {
     // Wipe the unreadable record but keep the boot marker so reload still
     // forces Resume/Start Over instead of silently booting into leftover

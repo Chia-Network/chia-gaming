@@ -308,7 +308,7 @@ export class HubConnection {
   }
 
   private dispatchHubEnvelope(buf: ArrayBuffer): void {
-    let msg: HubEnvelope | null = null;
+    let msg: HubEnvelope | null;
     try {
       msg = decodeHubEnvelope(buf);
     } catch {

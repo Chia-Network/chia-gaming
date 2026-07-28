@@ -1,7 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 
-const MOJOS_PER_XCH = 1_000_000_000_000n;
-
 function mojosToXchStr(mojos: bigint): string {
   const s = mojos.toString().padStart(13, '0');
   const whole = s.slice(0, -12).replace(/^0+/, '') || '0';

@@ -156,7 +156,7 @@ async function waitForRelayerConnected(): Promise<void> {
   });
 }
 
-type PreparedRpc<T> = {
+type PreparedRpc = {
   method: ChiaMethod;
   params: Record<string, unknown>;
   data: object;
@@ -166,19 +166,19 @@ type PreparedRpc<T> = {
 
 class WalletConnectRpcClient {
   request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
-    let prepared: PreparedRpc<T>;
+    let prepared: PreparedRpc;
     try {
       prepared = this.prepareRpc(method, data);
     } catch (e) {
       return Promise.reject(e);
     }
-    return this.runPreparedRpc(prepared).catch((e) => {
+    return this.runPreparedRpc<T>(prepared).catch((e) => {
       this.logRpcError(prepared, e);
       throw walletConnectError(method, getErrorText(e), e);
     });
   }
 
-  private prepareRpc<T, D extends object>(method: ChiaMethod, data: D): PreparedRpc<T> {
+  private prepareRpc<D extends object>(method: ChiaMethod, data: D): PreparedRpc {
     if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
     if (!walletConnectState.getSession()) throw new Error('Session is not connected');
 
@@ -207,7 +207,7 @@ class WalletConnectRpcClient {
     };
   }
 
-  private async runPreparedRpc<T>(prepared: PreparedRpc<T>): Promise<T> {
+  private async runPreparedRpc<T>(prepared: PreparedRpc): Promise<T> {
     const session = walletConnectState.getSession();
     const client = walletConnectState.getClient();
     if (!session) throw new Error('Session is not connected');
@@ -221,24 +221,20 @@ class WalletConnectRpcClient {
       );
     }
 
-    try {
-      const raw = await client.request({
-        topic: session.topic,
-        chainId: walletConnectState.getChainId(),
-        request: { method: prepared.method, params: prepared.params },
-      });
-      const result = this.normalizeResult(prepared, raw);
-      if (shouldLogRpcTraffic(prepared.method)) {
-        const elapsed = Date.now() - prepared.enqueuedAt;
-        log(`[WC RPC] ← ${prepared.method} ok ${elapsed}ms result=${summarizeRpcValue(result)}`);
-      }
-      return result;
-    } catch (e) {
-      throw e;
+    const raw = await client.request({
+      topic: session.topic,
+      chainId: walletConnectState.getChainId(),
+      request: { method: prepared.method, params: prepared.params },
+    });
+    const result = this.normalizeResult<T>(prepared, raw);
+    if (shouldLogRpcTraffic(prepared.method)) {
+      const elapsed = Date.now() - prepared.enqueuedAt;
+      log(`[WC RPC] ← ${prepared.method} ok ${elapsed}ms result=${summarizeRpcValue(result)}`);
     }
+    return result;
   }
 
-  private normalizeResult<T>(prepared: PreparedRpc<T>, raw: unknown): T {
+  private normalizeResult<T>(prepared: PreparedRpc, raw: unknown): T {
     const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
     if (result?.error) {
       const errorText = toDebugJson(result.error);
@@ -258,7 +254,7 @@ class WalletConnectRpcClient {
     return result as T;
   }
 
-  private logRpcError(prepared: PreparedRpc<unknown>, e: unknown): void {
+  private logRpcError(prepared: PreparedRpc, e: unknown): void {
     const elapsed = Date.now() - prepared.enqueuedAt;
     const errText = getErrorText(e);
     if (shouldLogRpcError(prepared.method)) {

@@ -458,7 +458,7 @@ describe('setBusy', () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     (cb.getPresence as jest.Mock).mockReturnValue({ busy: true });
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedHubDisconnects = 1;
 
@@ -480,7 +480,7 @@ describe('setBusy', () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     (cb.getPresence as jest.Mock).mockReturnValue({ busy: true, alias: 'Alice' });
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedHubDisconnects = 1;
 

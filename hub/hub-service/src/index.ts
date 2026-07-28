@@ -415,15 +415,6 @@ function sendGameEvent(playerId: string, type: string, payload: unknown): void {
   sendGameWs(ws, type, payload);
 }
 
-function sendGameBinary(playerId: string, data: Buffer): boolean {
-  const sessionId = playerToSession.get(playerId);
-  if (!sessionId) return false;
-  const ws = gameConnections.get(sessionId);
-  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-  ws.send(data);
-  return true;
-}
-
 function broadcastHubUpdate(): void {
   const players = hub.getPlayers();
   for (const [playerId] of hubConnections) {

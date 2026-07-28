@@ -1,19 +1,5 @@
-import {
-  init,
-  config_scaffold,
-  create_game_session,
-  deliver_message,
-  cache_file,
-  chia_identity,
-  Spend,
-  CoinSpend,
-  SpendBundle,
-  IChiaIdentity,
-  DrainResult,
-} from '../../../node-pkg/chia_gaming_wasm.js';
 import { Subscription } from 'rxjs';
 import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
-import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
@@ -31,24 +17,20 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
 import 'fake-indexeddb/auto';
-// @ts-ignore
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
-// @ts-ignore
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import { resolve } from 'path';
-// @ts-ignore
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
 function rooted(name: string) {
-  // @ts-ignore
+  // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
   return resolve(__dirname, '../../../..', name);
 }
 
 async function fetchPreset(key: string): Promise<Uint8Array> {
   return new Uint8Array(fs.readFileSync(rooted(key)));
-}
-
-function preset_file(name: string) {
-  cache_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
 }
 
 interface SimpleMessage {
@@ -251,7 +233,7 @@ afterEach(async () => {
   } catch (e) {
     const desc = describeThrown(e);
     testLog(`CLEANUP FAILURE: ${desc}`);
-    throw new Error(`[load_wasm cleanup failed]\n${desc}`);
+    throw new Error(`[load_wasm cleanup failed]\n${desc}`, { cause: e });
   }
 });
 
@@ -288,7 +270,7 @@ class SessionControllerAdapter {
   }
 
   outbound_messages(): Array<SimpleMessage> {
-    let w = this.waiting_messages;
+    const w = this.waiting_messages;
     this.waiting_messages = [];
     return w;
   }
@@ -364,6 +346,7 @@ function assertCradleRoundTrip(stage: string, controller: SessionController): Ui
     throw new Error(
       `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
         `protocol=${state}\n${describeThrown(e)}`,
+      { cause: e },
     );
   }
   testLog(
@@ -382,8 +365,8 @@ async function action_with_messages(
   cradle1: SessionControllerAdapter,
   cradle2: SessionControllerAdapter,
 ) {
-  let cradles = [cradle1, cradle2];
-  let subscriptions: Subscription[] = [];
+  const cradles = [cradle1, cradle2];
+  const subscriptions: Subscription[] = [];
 
   // The poller drives each cradle's coin polling directly via report_coin_states.
   cradles.forEach((c) => {
@@ -417,7 +400,7 @@ async function action_with_messages(
       iterations++;
       let deliveredOutbound = false;
       for (let c = 0; c < 2; c++) {
-        let outbound = cradles[c].outbound_messages();
+        const outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
           deliveredOutbound = true;
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
@@ -471,7 +454,7 @@ async function initSessionController(
   const theirContribution = 100n;
 
   await fakeBlockchainInfo.registerUser(uniqueId);
-  let gameObject = new SessionController(
+  const gameObject = new SessionController(
     blockchain,
     uniqueId,
     myContribution,
@@ -535,7 +518,7 @@ it(
 
       const cradle1 = addActiveCradle(new SessionControllerAdapter());
       const cradle2 = addActiveCradle(new SessionControllerAdapter());
-      let peer_conn1: PeerConnectionResult = {
+      const peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
           return true;
@@ -545,9 +528,9 @@ it(
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init1 = new WasmStateInit(fetchPreset);
+      const wasm_init1 = new WasmStateInit(fetchPreset);
       storeInitArgs(async () => {}, WholeWasmObject);
-      let wasm_blob1 = await initSessionController(
+      const wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
         true,
@@ -569,7 +552,7 @@ it(
       cradle1.set_blob(wasm_blob1);
       testLog('after cradle1 init');
 
-      let peer_conn2: PeerConnectionResult = {
+      const peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
           return true;
@@ -579,8 +562,8 @@ it(
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init2 = new WasmStateInit(fetchPreset);
-      let wasm_blob2 = await initSessionController(
+      const wasm_init2 = new WasmStateInit(fetchPreset);
+      const wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',
         false,
@@ -691,7 +674,7 @@ it(
     } catch (e) {
       const desc = describeThrown(e);
       testLog(`TEST FAILURE: ${desc}`);
-      throw new Error(`[load_wasm loads failed]\n${desc}`);
+      throw new Error(`[load_wasm loads failed]\n${desc}`, { cause: e });
     } finally {
       offConnectionLog();
     }

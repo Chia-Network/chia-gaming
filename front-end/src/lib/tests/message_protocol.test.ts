@@ -224,10 +224,6 @@ afterEach(async () => {
   clearTestGlobal('sessionStorage');
 });
 
-function flushDeferredWork(blob: SessionController) {
-  blob.flushDeferredWork();
-}
-
 function transactionSubmitQueue(blob: SessionController): Promise<void> {
   return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
 }
@@ -560,7 +556,7 @@ describe('buffering before system ready, then spill', () => {
 
   it('delivers out-of-order buffered messages in correct order', () => {
     const delivered: Uint8Array[] = [];
-    const { blob, sentAcks } = createUnreadyBlob((msg) => {
+    const { blob } = createUnreadyBlob((msg) => {
       delivered.push(msg);
       return { events: [] };
     });

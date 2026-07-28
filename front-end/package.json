@@ -10,9 +10,7 @@
     "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outfile=dist/js/index-rollup.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
     "build:deploy": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --format=esm --splitting --outdir=dist/app && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
     "bundle": "rm -rf dist/app && pnpm run build:deploy && node scripts/assemble-bundle.mjs",
-    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci",
-    "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'scripts/**/*.{ts,js,mjs}' '*.{ts,js,mjs,json}' 'public/**/*.html'",
-    "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'scripts/**/*.{ts,js,mjs}' '*.{ts,js,mjs,json}' 'public/**/*.html'"
+    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.15",
@@ -44,7 +42,6 @@
     "esbuild": "0.25.11",
     "fake-indexeddb": "^6.2.5",
     "jest": "30.1.3",
-    "prettier": "3.5.3",
     "tailwindcss": "4.1.17",
     "ts-jest": "29.4.1",
     "typescript": "5.9.3"

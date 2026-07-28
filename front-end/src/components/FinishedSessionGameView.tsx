@@ -34,10 +34,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
     model.game.currentHandIds[0] ??
     model.game.activeIds[0] ??
     'finished';
-  const frozenBridge = useMemo(
-    () => createFrozenHandBridge(handState),
-    [model.game.handKey, handState],
-  );
+  const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
   const noopTurnChanged = useCallback((_gameId: string, _isMyTurn: boolean) => {}, []);
   const noopLog = useCallback((_line: string) => {}, []);
   const noopOutcome = useCallback((_outcome: CalpokerOutcome) => {}, []);

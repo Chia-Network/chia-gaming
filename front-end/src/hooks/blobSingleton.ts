@@ -17,10 +17,10 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
 
-export var sessionController: SessionController | null = null;
+export let sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
 export { sessionController as blobSingleton };
-export var initStarted = false;
+export let initStarted = false;
 let transactionPublishNerfed = false;
 const transactionPublishNerfListeners = new Set<(nerfed: boolean) => void>();
 
@@ -90,20 +90,20 @@ export async function configSessionController(
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
   blockchain: BlockchainPoller,
-  uniqueId: string,
+  _uniqueId: string,
   channelTimeout?: number,
   unrollTimeout?: number,
 ): Promise<SessionController> {
-  let wasmConnection = await wasmStateInit.getWasmConnection();
+  const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
   const entropy = new Uint8Array(32);
   crypto.getRandomValues(entropy);
   const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
-  let rngId = wasmConnection.create_rng(seedHex);
-  let address = await blockchain.rpc.getAddress();
+  const rngId = wasmConnection.create_rng(seedHex);
+  const address = await blockchain.rpc.getAddress();
   sc.setBlockchainAddress(address);
   const theirContribution = sc.theirContribution;
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(
+  const { game: cradle } = wasmStateInit.createGame(
     rngId,
     wasmConnection,
     iStarted,

@@ -740,7 +740,6 @@ describe('BlockchainPoller', () => {
       // or 2 reports (partial-snapshot skip didn't fire) -- plus env/versions.
       // The test script runs jest with --silent=false --useStderr, so this
       // shows up in CI logs.
-      // eslint-disable-next-line no-console
       console.error('DBG_POLLER_FLAKE failure', {
         env: envDiagObj(),
         nameA,

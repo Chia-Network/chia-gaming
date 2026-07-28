@@ -17,7 +17,6 @@ import {
 
 // Utils
 import {
-  formatHandDescription,
   makeDescription,
   formatCardsForLog,
   formatOrderedCardsForLog,
@@ -33,6 +32,21 @@ import {
   settlementByUs,
 } from '../../../lib/settlement';
 import { shouldRestoreCalpokerSelection } from '../useCalpokerHand';
+
+const SUIT_MAP: Record<number, SuitName> = {
+  0: 'Q',
+  1: '♠',
+  2: '♥',
+  3: '♦',
+  4: '♣',
+};
+
+function cvsFromCard(cardId: string): CardValueSuit {
+  const { rank, suit } = cardIdToRankSuit(BigInt(cardId));
+  return { rank, suit: SUIT_MAP[suit], cardId };
+}
+
+const cardsToBigints = (cardIds: string[]): bigint[] => cardIds.map((cardId) => BigInt(cardId));
 
 function translateTopline(topline: string | undefined): string | null {
   if (!topline) return null;
@@ -51,7 +65,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   setHandOrder,
   handleMakeMove,
   outcome,
-  myWinOutcome,
   onGameLog,
   onSnapshotChange,
   initialSnapshot,
@@ -64,14 +77,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     ? calpokerSettlementVerb(settlementOutcome)
     : 'timed out';
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
-  // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
-  const suitMap: Record<number, SuitName> = {
-    0: 'Q',
-    1: '♠',
-    2: '♥',
-    3: '♦',
-    4: '♣',
-  };
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
@@ -83,13 +88,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const rememberedCardsRef = useRef<CardValueSuit[][]>([[], []]);
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
-
-  const cvsFromCard = (cardId: string): CardValueSuit => {
-    const { rank, suit } = cardIdToRankSuit(BigInt(cardId));
-    return { rank, suit: suitMap[suit], cardId };
-  };
-
-  const cardsToBigints = (cardIds: string[]): bigint[] => cardIds.map((cardId) => BigInt(cardId));
 
   useEffect(() => {
     if (outcome) {
@@ -109,14 +107,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         rememberedCardsRef.current = [mappedPlayer, mappedOpponent];
       }
     }
-  }, [playerHand, opponentHand, outcome, gameState, initialSnapshot]);
-
-  useEffect(() => {
-    const haveOutcome = outcome ? outcome : rememberedOutcome;
-    if (haveOutcome && gameState === GAME_STATES.AWAITING_SWAP) {
-      swapCards(haveOutcome);
-    }
-  }, [outcome, gameState, moveNumber, rememberedOutcome]);
+  }, [playerHand, opponentHand, outcome, gameState]);
 
   // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
   const [winner, setWinner] = useState<string | null>(null);
@@ -129,12 +120,38 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [playerSwapHiddenIds, setPlayerSwapHiddenIds] = useState<string[]>([]);
   const [opponentSwapHiddenIds, setOpponentSwapHiddenIds] = useState<string[]>([]);
 
-  const dealCards = () => {
+  const saveSnapshot = useCallback(
+    (
+      gs: string,
+      w: string | null,
+      pBest: BestHandType | undefined,
+      oBest: BestHandType | undefined,
+      pHalo: string[],
+      oHalo: string[],
+      pText: string,
+      oText: string,
+    ) => {
+      const snap: CalpokerDisplaySnapshotView = {
+        gameState: gs,
+        winner: w,
+        playerBestHandCardIds: pBest?.cards.map((c) => c.cardId!) ?? [],
+        opponentBestHandCardIds: oBest?.cards.map((c) => c.cardId!) ?? [],
+        playerHaloCardIds: pHalo,
+        opponentHaloCardIds: oHalo,
+        playerDisplayText: pText,
+        opponentDisplayText: oText,
+      };
+      onSnapshotChange(snap);
+    },
+    [onSnapshotChange],
+  );
+
+  const dealCards = useCallback(() => {
     setGameState(GAME_STATES.SELECTING);
     setCardSelections([]);
     setWinner(null);
     saveSnapshot(GAME_STATES.SELECTING, null, undefined, undefined, [], [], '', '');
-  };
+  }, [saveSnapshot, setCardSelections]);
 
   const toggleCardSelection = (cardId: string) => {
     if (gameState !== GAME_STATES.SELECTING) return;
@@ -247,335 +264,333 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   // aiSwapCardIds are the opponent cards given to the player.
   // playerCards and opponentCards are the local card data.
   //
-  const calculateMovingCards = (
-    playerSwapCardIds: string[],
-    aiSwapCardIds: string[],
-    playerCards: CardValueSuit[],
-    opponentCards: CardValueSuit[],
-  ): MovingCardData[] => {
-    const movingCardData: MovingCardData[] = [];
-    const usedPlayerCards = new Set<string>();
-    const usedAiCards = new Set<string>();
+  const calculateMovingCards = useCallback(
+    (
+      playerSwapCardIds: string[],
+      aiSwapCardIds: string[],
+      playerCards: CardValueSuit[],
+      opponentCards: CardValueSuit[],
+    ): MovingCardData[] => {
+      const movingCardData: MovingCardData[] = [];
+      const usedPlayerCards = new Set<string>();
+      const usedAiCards = new Set<string>();
 
-    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
-    const offsetX = wrapperRect?.left ?? 0;
-    const offsetY = wrapperRect?.top ?? 0;
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+      const offsetX = wrapperRect?.left ?? 0;
+      const offsetY = wrapperRect?.top ?? 0;
 
-    // Prefixes for DOM selectors (myPrefix = viewer's hand in DOM)
-    const myPrefix = 'player';
-    const oppPrefix = 'ai';
+      // Prefixes for DOM selectors (myPrefix = viewer's hand in DOM)
+      const myPrefix = 'player';
+      const oppPrefix = 'ai';
 
-    const sortByDomX = (ids: string[], prefix: string) =>
-      [...ids].sort((a, b) => {
-        const elA = document.querySelector(`[data-card-id="${prefix}-${a}"]`);
-        const elB = document.querySelector(`[data-card-id="${prefix}-${b}"]`);
-        if (!elA || !elB) return 0;
-        return elA.getBoundingClientRect().left - elB.getBoundingClientRect().left;
+      const sortByDomX = (ids: string[], prefix: string) =>
+        [...ids].sort((a, b) => {
+          const elA = document.querySelector(`[data-card-id="${prefix}-${a}"]`);
+          const elB = document.querySelector(`[data-card-id="${prefix}-${b}"]`);
+          if (!elA || !elB) return 0;
+          return elA.getBoundingClientRect().left - elB.getBoundingClientRect().left;
+        });
+      const sortedPlayerSwaps = sortByDomX(playerSwapCardIds, myPrefix);
+      const sortedAiSwaps = sortByDomX(aiSwapCardIds, oppPrefix);
+
+      // Player -> Opponent animations
+      sortedPlayerSwaps.forEach((swapCardId, i) => {
+        const aiCardId = sortedAiSwaps[i];
+        if (aiCardId === undefined) {
+          return;
+        }
+        usedPlayerCards.add(swapCardId);
+
+        const mySource = document.querySelector(`[data-card-id="${myPrefix}-${swapCardId}"]`);
+        const oppTarget = document.querySelector(`[data-card-id="${oppPrefix}-${aiCardId}"]`);
+
+        if (mySource && oppTarget) {
+          const myRect = (mySource as Element).getBoundingClientRect();
+          const oppRect = (oppTarget as Element).getBoundingClientRect();
+
+          const card = playerCards.find((c) => c.cardId === swapCardId);
+          if (!card) {
+            return;
+          }
+          movingCardData.push({
+            id: `${myPrefix}-to-${oppPrefix}-${swapCardId}`,
+            card,
+            startX: myRect.left - offsetX,
+            startY: myRect.top - offsetY,
+            endX: oppRect.left - offsetX,
+            endY: oppRect.top - offsetY,
+            width: myRect.width,
+            height: myRect.height,
+            direction: 'playerToAi',
+            zIndex: 0,
+          });
+        }
       });
-    const sortedPlayerSwaps = sortByDomX(playerSwapCardIds, myPrefix);
-    const sortedAiSwaps = sortByDomX(aiSwapCardIds, oppPrefix);
 
-    // Player -> Opponent animations
-    sortedPlayerSwaps.forEach((swapCardId, i) => {
-      const aiCardId = sortedAiSwaps[i];
-      if (aiCardId === undefined) {
-        return;
-      }
-      usedPlayerCards.add(swapCardId);
-
-      const mySource = document.querySelector(`[data-card-id="${myPrefix}-${swapCardId}"]`);
-      const oppTarget = document.querySelector(`[data-card-id="${oppPrefix}-${aiCardId}"]`);
-
-      if (mySource && oppTarget) {
-        const myRect = (mySource as Element).getBoundingClientRect();
-        const oppRect = (oppTarget as Element).getBoundingClientRect();
-
-        const card = playerCards.find((c) => c.cardId === swapCardId);
-        if (!card) {
+      // Opponent -> Player animations
+      sortedAiSwaps.forEach((swapCardId, i) => {
+        const playerCardId = sortedPlayerSwaps[i];
+        if (playerCardId === undefined) {
           return;
         }
-        movingCardData.push({
-          id: `${myPrefix}-to-${oppPrefix}-${swapCardId}`,
-          card,
-          startX: myRect.left - offsetX,
-          startY: myRect.top - offsetY,
-          endX: oppRect.left - offsetX,
-          endY: oppRect.top - offsetY,
-          width: myRect.width,
-          height: myRect.height,
-          direction: 'playerToAi',
-          zIndex: 0,
-        });
-      }
-    });
+        usedAiCards.add(swapCardId);
 
-    // Opponent -> Player animations
-    sortedAiSwaps.forEach((swapCardId, i) => {
-      const playerCardId = sortedPlayerSwaps[i];
-      if (playerCardId === undefined) {
-        return;
-      }
-      usedAiCards.add(swapCardId);
+        const oppSource = document.querySelector(`[data-card-id="${oppPrefix}-${swapCardId}"]`);
+        const myTarget = document.querySelector(`[data-card-id="${myPrefix}-${playerCardId}"]`);
 
-      const oppSource = document.querySelector(`[data-card-id="${oppPrefix}-${swapCardId}"]`);
-      const myTarget = document.querySelector(`[data-card-id="${myPrefix}-${playerCardId}"]`);
+        if (oppSource && myTarget) {
+          const oppRect = (oppSource as Element).getBoundingClientRect();
+          const myRect = (myTarget as Element).getBoundingClientRect();
 
-      if (oppSource && myTarget) {
-        const oppRect = (oppSource as Element).getBoundingClientRect();
-        const myRect = (myTarget as Element).getBoundingClientRect();
+          const card = opponentCards.find((c) => c.cardId === swapCardId);
+          if (!card) {
+            return;
+          }
+          movingCardData.push({
+            id: `${oppPrefix}-to-${myPrefix}-${swapCardId}`,
+            card,
+            startX: oppRect.left - offsetX,
+            startY: oppRect.top - offsetY,
+            endX: myRect.left - offsetX,
+            endY: myRect.top - offsetY,
+            width: oppRect.width,
+            height: oppRect.height,
+            direction: 'aiToPlayer',
+            zIndex: 0,
+          });
+        }
+      });
 
-        const card = opponentCards.find((c) => c.cardId === swapCardId);
-        if (!card) {
+      const selfCardAnimate = (myPrefix: string, usedCards: Set<string>, card: CardValueSuit) => {
+        if (card.cardId === undefined) {
           return;
         }
-        movingCardData.push({
-          id: `${oppPrefix}-to-${myPrefix}-${swapCardId}`,
-          card,
-          startX: oppRect.left - offsetX,
-          startY: oppRect.top - offsetY,
-          endX: myRect.left - offsetX,
-          endY: myRect.top - offsetY,
-          width: oppRect.width,
-          height: oppRect.height,
-          direction: 'aiToPlayer',
-          zIndex: 0,
-        });
+        if (usedCards.has(card.cardId)) {
+          return;
+        }
+        // source = dest
+        const source = document.querySelector(`[data-card-id="${myPrefix}-${card.cardId}"]`);
+        if (source) {
+          const myRect = (source as Element).getBoundingClientRect();
+          movingCardData.push({
+            id: `${myPrefix}-to-${myPrefix}-${card.cardId}`,
+            card,
+            startX: myRect.left - offsetX,
+            startY: myRect.top - offsetY,
+            endX: myRect.left - offsetX,
+            endY: myRect.top - offsetY,
+            width: myRect.width,
+            height: myRect.height,
+            direction: 'self',
+            zIndex: 0,
+          });
+        }
+      };
+
+      playerCards.forEach((card) => selfCardAnimate(myPrefix, usedPlayerCards, card));
+      opponentCards.forEach((card) => selfCardAnimate(oppPrefix, usedAiCards, card));
+
+      // Assign z-indexes: player swap cards highest (rightmost first),
+      // then opponent swap cards (rightmost first), then non-swapping cards lowest.
+      const playerSwaps = movingCardData
+        .filter((c) => c.direction === 'playerToAi')
+        .sort((a, b) => b.startX - a.startX);
+      const aiSwaps = movingCardData
+        .filter((c) => c.direction === 'aiToPlayer')
+        .sort((a, b) => b.startX - a.startX);
+      let z = 100;
+      for (const c of playerSwaps) {
+        c.zIndex = z--;
       }
-    });
-
-    const selfCardAnimate = (
-      myPrefix: string,
-      usedCards: Set<string>,
-      card: CardValueSuit,
-      i: number,
-    ) => {
-      if (card.cardId === undefined) {
-        return;
+      for (const c of aiSwaps) {
+        c.zIndex = z--;
       }
-      if (usedCards.has(card.cardId)) {
-        return;
+      for (const c of movingCardData) {
+        if (c.direction === 'self') c.zIndex = 50;
       }
-      // source = dest
-      const source = document.querySelector(`[data-card-id="${myPrefix}-${card.cardId}"]`);
-      if (source) {
-        const myRect = (source as Element).getBoundingClientRect();
-        movingCardData.push({
-          id: `${myPrefix}-to-${myPrefix}-${card.cardId}`,
-          card,
-          startX: myRect.left - offsetX,
-          startY: myRect.top - offsetY,
-          endX: myRect.left - offsetX,
-          endY: myRect.top - offsetY,
-          width: myRect.width,
-          height: myRect.height,
-          direction: 'self',
-          zIndex: 0,
-        });
-      }
-    };
 
-    playerCards.forEach((card, i) => selfCardAnimate(myPrefix, usedPlayerCards, card, i));
-    opponentCards.forEach((card, i) => selfCardAnimate(oppPrefix, usedAiCards, card, i));
+      return movingCardData;
+    },
+    [],
+  );
 
-    // Assign z-indexes: player swap cards highest (rightmost first),
-    // then opponent swap cards (rightmost first), then non-swapping cards lowest.
-    const playerSwaps = movingCardData
-      .filter((c) => c.direction === 'playerToAi')
-      .sort((a, b) => b.startX - a.startX);
-    const aiSwaps = movingCardData
-      .filter((c) => c.direction === 'aiToPlayer')
-      .sort((a, b) => b.startX - a.startX);
-    let z = 100;
-    for (const c of playerSwaps) {
-      c.zIndex = z--;
-    }
-    for (const c of aiSwaps) {
-      c.zIndex = z--;
-    }
-    for (const c of movingCardData) {
-      if (c.direction === 'self') c.zIndex = 50;
-    }
+  const swapCards = useCallback(
+    (rememberedOutcome: CalpokerOutcomeView) => {
+      const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
+      setWinner(liveWinner);
+      setGameState(GAME_STATES.REVEALING_SWAP);
 
-    return movingCardData;
-  };
+      const playerOriginal = rememberedOutcome.my_cards;
+      const opponentOriginal = rememberedOutcome.their_cards;
+      const playerFinal = rememberedOutcome.my_final_hand;
+      const opponentFinal = rememberedOutcome.their_final_hand;
 
-  const swapCards = (rememberedOutcome: CalpokerOutcomeView) => {
-    const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
-    setWinner(liveWinner);
-    setGameState(GAME_STATES.REVEALING_SWAP);
+      const playerFinalSet = new Set(playerFinal);
+      const opponentFinalSet = new Set(opponentFinal);
+      const playerDiscardIds = playerOriginal.filter((id) => !playerFinalSet.has(id));
+      const opponentDiscardIds = opponentOriginal.filter((id) => !opponentFinalSet.has(id));
 
-    const playerOriginal = rememberedOutcome.my_cards;
-    const opponentOriginal = rememberedOutcome.their_cards;
-    const playerFinal = rememberedOutcome.my_final_hand;
-    const opponentFinal = rememberedOutcome.their_final_hand;
+      const playerKeptIds = playerOriginal.filter((id) => playerFinalSet.has(id));
+      const opponentKeptIds = opponentOriginal.filter((id) => opponentFinalSet.has(id));
+      const resultWord =
+        rememberedOutcome.my_win_outcome === 'win'
+          ? 'Win'
+          : rememberedOutcome.my_win_outcome === 'lose'
+            ? 'Lose'
+            : 'Tie';
+      const myOrdered = orderUsedCardsForLog(
+        cardsToBigints(rememberedOutcome.my_used_cards),
+        cardsToBigints(rememberedOutcome.my_hand_value),
+      ).map(String);
+      const theirOrdered = orderUsedCardsForLog(
+        cardsToBigints(rememberedOutcome.their_used_cards),
+        cardsToBigints(rememberedOutcome.their_hand_value),
+      ).map(String);
+      onGameLog([
+        `${formatCardsForLog(cardsToBigints(playerKeptIds))} give ${formatCardsForLog(cardsToBigints(playerDiscardIds))}`,
+        `${formatCardsForLog(cardsToBigints(opponentKeptIds))} give ${formatCardsForLog(cardsToBigints(opponentDiscardIds))}`,
+        `${resultWord} ${formatOrderedCardsForLog(cardsToBigints(myOrdered))} vs ${formatOrderedCardsForLog(cardsToBigints(theirOrdered))}`,
+      ]);
 
-    const playerFinalSet = new Set(playerFinal);
-    const opponentFinalSet = new Set(opponentFinal);
-    const playerDiscardIds = playerOriginal.filter((id) => !playerFinalSet.has(id));
-    const opponentDiscardIds = opponentOriginal.filter((id) => !opponentFinalSet.has(id));
+      setPlayerHaloCardIds(playerDiscardIds);
+      setOpponentHaloCardIds(opponentDiscardIds);
+      setPlayerSwapHiddenIds(playerDiscardIds);
+      setOpponentSwapHiddenIds(opponentDiscardIds);
 
-    const playerKeptIds = playerOriginal.filter((id) => playerFinalSet.has(id));
-    const opponentKeptIds = opponentOriginal.filter((id) => opponentFinalSet.has(id));
-    const resultWord =
-      rememberedOutcome.my_win_outcome === 'win'
-        ? 'Win'
-        : rememberedOutcome.my_win_outcome === 'lose'
-          ? 'Lose'
-          : 'Tie';
-    const myOrdered = orderUsedCardsForLog(
-      cardsToBigints(rememberedOutcome.my_used_cards),
-      cardsToBigints(rememberedOutcome.my_hand_value),
-    ).map(String);
-    const theirOrdered = orderUsedCardsForLog(
-      cardsToBigints(rememberedOutcome.their_used_cards),
-      cardsToBigints(rememberedOutcome.their_hand_value),
-    ).map(String);
-    onGameLog([
-      `${formatCardsForLog(cardsToBigints(playerKeptIds))} give ${formatCardsForLog(cardsToBigints(playerDiscardIds))}`,
-      `${formatCardsForLog(cardsToBigints(opponentKeptIds))} give ${formatCardsForLog(cardsToBigints(opponentDiscardIds))}`,
-      `${resultWord} ${formatOrderedCardsForLog(cardsToBigints(myOrdered))} vs ${formatOrderedCardsForLog(cardsToBigints(theirOrdered))}`,
-    ]);
+      const myUsedCards = rememberedOutcome.my_used_cards;
+      const oppUsedCards = rememberedOutcome.their_used_cards;
+      const myHandValue = rememberedOutcome.my_hand_value;
+      const oppHandValue = rememberedOutcome.their_hand_value;
 
-    setPlayerHaloCardIds(playerDiscardIds);
-    setOpponentHaloCardIds(opponentDiscardIds);
-    setPlayerSwapHiddenIds(playerDiscardIds);
-    setOpponentSwapHiddenIds(opponentDiscardIds);
+      const playerBestCards: CardValueSuit[] = myUsedCards.map(cvsFromCard);
+      const opponentBestCards: CardValueSuit[] = oppUsedCards.map(cvsFromCard);
+      const pBest: BestHandType = {
+        cards: playerBestCards,
+        rank: { name: '', score: 0, tiebreakers: [] },
+      };
+      const oBest: BestHandType = {
+        cards: opponentBestCards,
+        rank: { name: '', score: 0, tiebreakers: [] },
+      };
 
-    const myUsedCards = rememberedOutcome.my_used_cards;
-    const oppUsedCards = rememberedOutcome.their_used_cards;
-    const myHandValue = rememberedOutcome.my_hand_value;
-    const oppHandValue = rememberedOutcome.their_hand_value;
-
-    const playerBestCards: CardValueSuit[] = myUsedCards.map(cvsFromCard);
-    const opponentBestCards: CardValueSuit[] = oppUsedCards.map(cvsFromCard);
-    const pBest: BestHandType = {
-      cards: playerBestCards,
-      rank: { name: '', score: 0, tiebreakers: [] },
-    };
-    const oBest: BestHandType = {
-      cards: opponentBestCards,
-      rank: { name: '', score: 0, tiebreakers: [] },
-    };
-
-    saveSnapshot(
-      GAME_STATES.REVEALING_SWAP,
-      liveWinner,
-      undefined,
-      undefined,
-      playerDiscardIds,
-      opponentDiscardIds,
-      playerDisplayText,
-      opponentDisplayText,
-    );
-
-    const playerSwapCardIds = playerDiscardIds;
-    const aiSwapCardIds = opponentDiscardIds;
-
-    setTimeout(() => {
-      setGameState(GAME_STATES.SWAPPING);
-      const remembered = rememberedCardsRef.current;
-      const movingCardData = calculateMovingCards(
-        playerSwapCardIds,
-        aiSwapCardIds,
-        remembered[0],
-        remembered[1],
+      saveSnapshot(
+        GAME_STATES.REVEALING_SWAP,
+        liveWinner,
+        undefined,
+        undefined,
+        playerDiscardIds,
+        opponentDiscardIds,
+        playerDisplayText,
+        opponentDisplayText,
       );
-      setMovingCards(movingCardData);
-      setShowSwapAnimation(true);
+
+      const playerSwapCardIds = playerDiscardIds;
+      const aiSwapCardIds = opponentDiscardIds;
 
       setTimeout(() => {
-        const playerDiscardToIncoming = new Map<string, string>();
-        for (let i = 0; i < playerSwapCardIds.length; i++) {
-          playerDiscardToIncoming.set(playerSwapCardIds[i], aiSwapCardIds[i]);
-        }
-        const opponentDiscardToIncoming = new Map<string, string>();
-        for (let i = 0; i < aiSwapCardIds.length; i++) {
-          opponentDiscardToIncoming.set(aiSwapCardIds[i], playerSwapCardIds[i]);
-        }
-
-        const ref = rememberedCardsRef.current;
-        const newPlayer = ref[0].map((c) => {
-          const incoming = playerDiscardToIncoming.get(c.cardId!);
-          return incoming !== undefined ? cvsFromCard(incoming) : c;
-        });
-        const newOpponent = ref[1].map((c) => {
-          const incoming = opponentDiscardToIncoming.get(c.cardId!);
-          return incoming !== undefined ? cvsFromCard(incoming) : c;
-        });
-
-        setPlayerCards(newPlayer);
-        setOpponentCards(newOpponent);
-        rememberedCardsRef.current = [newPlayer, newOpponent];
-        setHandOrder(
-          newPlayer.map((c) => c.cardId!),
-          newOpponent.map((c) => c.cardId!),
-        );
-
-        setPlayerHaloCardIds(aiSwapCardIds);
-        setOpponentHaloCardIds(playerSwapCardIds);
-        setPlayerSwapHiddenIds([]);
-        setOpponentSwapHiddenIds([]);
-        setPlayerBestHand(pBest);
-        setAiBestHand(oBest);
-
-        setMovingCards([]);
-        setShowSwapAnimation(false);
-        setGameState(GAME_STATES.FINAL);
-        const pText = makeDescription(
-          handValueToDescription(cardsToBigints(myHandValue), cardsToBigints(myUsedCards)),
-        );
-        const oText = makeDescription(
-          handValueToDescription(cardsToBigints(oppHandValue), cardsToBigints(oppUsedCards)),
-        );
-        setPlayerDisplayText(pText);
-        setOpponentDisplayText(oText);
-        saveSnapshot(
-          GAME_STATES.FINAL,
-          liveWinner,
-          pBest,
-          oBest,
-          aiSwapCardIds,
+        setGameState(GAME_STATES.SWAPPING);
+        const remembered = rememberedCardsRef.current;
+        const movingCardData = calculateMovingCards(
           playerSwapCardIds,
-          pText,
-          oText,
+          aiSwapCardIds,
+          remembered[0],
+          remembered[1],
         );
-      }, SWAP_ANIMATION_DURATION);
-    }, PRE_SWAP_REVEAL_DURATION);
-  };
+        setMovingCards(movingCardData);
+        setShowSwapAnimation(true);
 
-  const saveSnapshot = useCallback(
-    (
-      gs: string,
-      w: string | null,
-      pBest: BestHandType | undefined,
-      oBest: BestHandType | undefined,
-      pHalo: string[],
-      oHalo: string[],
-      pText: string,
-      oText: string,
-    ) => {
-      const snap: CalpokerDisplaySnapshotView = {
-        gameState: gs,
-        winner: w,
-        playerBestHandCardIds: pBest?.cards.map((c) => c.cardId!) ?? [],
-        opponentBestHandCardIds: oBest?.cards.map((c) => c.cardId!) ?? [],
-        playerHaloCardIds: pHalo,
-        opponentHaloCardIds: oHalo,
-        playerDisplayText: pText,
-        opponentDisplayText: oText,
-      };
-      onSnapshotChange(snap);
+        setTimeout(() => {
+          const playerDiscardToIncoming = new Map<string, string>();
+          for (let i = 0; i < playerSwapCardIds.length; i++) {
+            playerDiscardToIncoming.set(playerSwapCardIds[i], aiSwapCardIds[i]);
+          }
+          const opponentDiscardToIncoming = new Map<string, string>();
+          for (let i = 0; i < aiSwapCardIds.length; i++) {
+            opponentDiscardToIncoming.set(aiSwapCardIds[i], playerSwapCardIds[i]);
+          }
+
+          const ref = rememberedCardsRef.current;
+          const newPlayer = ref[0].map((c) => {
+            const incoming = playerDiscardToIncoming.get(c.cardId!);
+            return incoming !== undefined ? cvsFromCard(incoming) : c;
+          });
+          const newOpponent = ref[1].map((c) => {
+            const incoming = opponentDiscardToIncoming.get(c.cardId!);
+            return incoming !== undefined ? cvsFromCard(incoming) : c;
+          });
+
+          setPlayerCards(newPlayer);
+          setOpponentCards(newOpponent);
+          rememberedCardsRef.current = [newPlayer, newOpponent];
+          setHandOrder(
+            newPlayer.map((c) => c.cardId!),
+            newOpponent.map((c) => c.cardId!),
+          );
+
+          setPlayerHaloCardIds(aiSwapCardIds);
+          setOpponentHaloCardIds(playerSwapCardIds);
+          setPlayerSwapHiddenIds([]);
+          setOpponentSwapHiddenIds([]);
+          setPlayerBestHand(pBest);
+          setAiBestHand(oBest);
+
+          setMovingCards([]);
+          setShowSwapAnimation(false);
+          setGameState(GAME_STATES.FINAL);
+          const pText = makeDescription(
+            handValueToDescription(cardsToBigints(myHandValue), cardsToBigints(myUsedCards)),
+          );
+          const oText = makeDescription(
+            handValueToDescription(cardsToBigints(oppHandValue), cardsToBigints(oppUsedCards)),
+          );
+          setPlayerDisplayText(pText);
+          setOpponentDisplayText(oText);
+          saveSnapshot(
+            GAME_STATES.FINAL,
+            liveWinner,
+            pBest,
+            oBest,
+            aiSwapCardIds,
+            playerSwapCardIds,
+            pText,
+            oText,
+          );
+        }, SWAP_ANIMATION_DURATION);
+      }, PRE_SWAP_REVEAL_DURATION);
     },
-    [onSnapshotChange],
+    [
+      calculateMovingCards,
+      onGameLog,
+      opponentDisplayText,
+      playerDisplayText,
+      saveSnapshot,
+      setHandOrder,
+    ],
   );
 
   useEffect(() => {
-    if (initialSnapshot) {
-      const snap = initialSnapshot;
+    const haveOutcome = outcome ? outcome : rememberedOutcome;
+    if (haveOutcome && gameState === GAME_STATES.AWAITING_SWAP) {
+      swapCards(haveOutcome);
+    }
+  }, [outcome, gameState, rememberedOutcome, swapCards]);
+
+  const initialSetupRef = useRef({
+    initialSnapshot,
+    moveNumber,
+    outcome,
+    settlementOutcome,
+    dealCards,
+  });
+
+  useEffect(() => {
+    const initial = initialSetupRef.current;
+    if (initial.initialSnapshot) {
+      const snap = initial.initialSnapshot;
       const restoredGameState = shouldRestoreCalpokerSelection(
-        moveNumber,
-        !!outcome,
-        settlementOutcome != null,
+        initial.moveNumber,
+        !!initial.outcome,
+        initial.settlementOutcome != null,
       )
         ? GAME_STATES.SELECTING
         : snap.gameState;
@@ -598,7 +613,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         });
       }
     } else {
-      dealCards();
+      initial.dealCards();
     }
   }, []);
 
@@ -646,7 +661,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             </div>
             <div className="flex items-center justify-center p-2">
               <HandDisplay
-                title=""
                 cards={opponentCards.length ? opponentCards : rememberedCardsRef.current[1]}
                 playerNumber={playerNumber == 1 ? 2 : 1}
                 area="ai"
@@ -657,8 +671,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 gameState={gameState}
                 haloCardIds={opponentHalos}
                 swapHiddenCardIds={opponentSwapHiddenIds}
-                formatHandDescription={formatHandDescription}
-                selectedCards={[]}
                 timeoutBadge={
                   settlementOutcome
                     ? calpokerTimeoutBadge(settlementOutcome, 'theirs', handCompleted)
@@ -682,7 +694,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             </div>
             <div className="flex items-center justify-center p-2">
               <HandDisplay
-                title=""
                 cards={playerCards.length ? playerCards : rememberedCardsRef.current[0]}
                 playerNumber={playerNumber}
                 area="player"
@@ -690,13 +701,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 winnerType="player"
                 bestHand={playerBestHand}
                 onCardClick={toggleCardSelection}
-                selectedCards={cardSelections}
                 showSwapAnimation={showSwapAnimation}
                 gameState={gameState}
                 haloCardIds={playerHalos}
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
-                formatHandDescription={formatHandDescription}
                 timeoutBadge={
                   settlementOutcome
                     ? calpokerTimeoutBadge(settlementOutcome, 'ours', handCompleted)

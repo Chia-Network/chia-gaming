@@ -384,7 +384,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         });
       }
       log(`[wc-blockchain] pushTransactions error #${seq}: ${errStr}`);
-      throw new Error(`Wallet transaction submit failed from ${src}: ${errStr}`);
+      throw new Error(`Wallet transaction submit failed from ${src}: ${errStr}`, { cause: e });
     }
   }
 
@@ -551,7 +551,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.error ??
         (parsedError as any)?.data?.structuredError?.message ??
         '';
-      throw new Error(errorMsg || errorText || 'createOfferForIds failed');
+      throw new Error(errorMsg || errorText || 'createOfferForIds failed', { cause: e });
     }
   }
 

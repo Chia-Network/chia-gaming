@@ -47,6 +47,14 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.0 --activate
 
+      - name: Install repository tooling
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting and lint
+        run: |
+          pnpm run format:check
+          pnpm run lint
+
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -74,20 +82,17 @@ jobs:
         run: |
           cd front-end
           pnpm install --frozen-lockfile
-          pnpm run format:check
           pnpm run build
 
       - name: Build hub-frontend
         run: |
           cd hub
           pnpm install --frozen-lockfile
-          pnpm --filter chia-gaming-hub-frontend run format:check
           pnpm --filter chia-gaming-hub-frontend run build
 
       - name: Build hub-service
         run: |
           cd hub
-          pnpm --filter chia-gaming-hub-service run format:check
           pnpm --filter chia-gaming-hub-service run build
 
       - name: Build simulator

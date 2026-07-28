@@ -51,7 +51,7 @@ export function hubHsLog(event: string, fields?: Record<string, unknown>) {
       parts.push(`${k}=${String(v)}`);
     }
   }
-  console.log(parts.join(' '));
+  console.warn(parts.join(' '));
 }
 
 function toWsUrl(input: string): string {
@@ -120,6 +120,7 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
   useEffect(() => {
     if (!uniqueId) return;
 
+    const connId = connIdRef.current;
     const wsUrl = toWsUrl(hubUrl);
     hubHsLog('connection_init', {
       conn_id: connIdRef.current,
@@ -357,7 +358,7 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
       window.removeEventListener('beforeunload', onBeforeUnload);
       closingRef.current = true;
       hubHsLog('connection_cleanup', {
-        conn_id: connIdRef.current,
+        conn_id: connId,
         session_id: sessionId,
       });
       setIsConnected(false);

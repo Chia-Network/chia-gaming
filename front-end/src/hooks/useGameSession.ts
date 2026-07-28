@@ -43,7 +43,6 @@ import {
   createSessionModel,
   channelStatusModelFromPayload,
   INITIAL_CHANNEL_STATUS_MODEL,
-  isWindingDownChannelStatus,
   ON_CHAIN_CHANNEL_STATES,
   selectDefaultCalpokerInitialTurn,
   selectDefaultCalpokerProposalMyTurn,
@@ -734,7 +733,7 @@ export function useGameSession(
   // `goOnChain` mutates controller-owned state synchronously, before the Rust
   // notification reaches React. This transient counter only schedules that
   // projection update; it is deliberately not part of the persisted model.
-  const [onChainRefresh, setOnChainRefresh] = useState(0);
+  const [, setOnChainRefresh] = useState(0);
 
   const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>(
     () =>
@@ -744,9 +743,7 @@ export function useGameSession(
       },
   );
   const gameConnectionStateRef = useRef<GameConnectionState>(gameConnectionState);
-  const [myRunningBalance, setMyRunningBalance] = useState(
-    () => restoredModel?.myRunningBalance ?? 0n,
-  );
+  const [myRunningBalance] = useState(() => restoredModel?.myRunningBalance ?? 0n);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusModel>(() => {
     return restoredModel?.channel.status ?? INITIAL_CHANNEL_STATUS_MODEL;
   });
@@ -1661,10 +1658,6 @@ export function useGameSession(
         if (!gs) return;
         const status = gs.status;
         const inOnChainFlow = ON_CHAIN_CHANNEL_STATES.has(channelStatusRef.current);
-        const isOnChainTurnStatus =
-          status === 'on-chain-my-turn' ||
-          status === 'on-chain-their-turn' ||
-          status === 'replaying';
         const isLocalTurnStatus = status === 'my-turn' || status === 'their-turn';
         const ignoreLocalTurnDuringOnChain = inOnChainFlow && isLocalTurnStatus;
 
@@ -2010,13 +2003,13 @@ export function useGameSession(
       cancelProposalOrThrow,
       replaceGameInstances,
       updateGameInstance,
-      appendGameLog,
       setGameConnectionStateImmediately,
       setBetweenHandModeImmediately,
       setCachedPeerProposalImmediately,
       setReviewPeerProposalImmediately,
       setRejectedOnceTermsImmediately,
       setLastHandTermsImmediately,
+      setPendingRetryTerms,
     ],
   );
 
@@ -2071,7 +2064,7 @@ export function useGameSession(
     return () => {
       subscription.unsubscribe();
     };
-  }, [sc, handleNotification, pushChannel]);
+  }, [sc, handleNotification, pushChannel, gameplayEventSubject]);
 
   // Drive the cradle's coin polling: the poller asks the cradle which coins to
   // watch and feeds raw chain state back via report_coin_states.
@@ -2326,7 +2319,7 @@ export function useGameSession(
   const gameSpecificView = selectGameSpecificView(sessionModel);
   const sessionPhase = useMemo(
     () => selectSessionPhase(sessionModel, sc.onChain),
-    [sessionModel, sc.onChain, onChainRefresh],
+    [sessionModel, sc.onChain],
   );
 
   return {

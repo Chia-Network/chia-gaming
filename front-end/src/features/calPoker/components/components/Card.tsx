@@ -6,8 +6,6 @@ function Card(props: CardRenderProps) {
   const {
     id,
     card,
-    index,
-    isSelected,
     onClick,
     isBeingSwapped = false,
     hideForSwap = false,

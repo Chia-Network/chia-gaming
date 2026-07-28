@@ -15,12 +15,11 @@ import {
   useGameSession,
   isValidKrunkStake,
   GameTerminalAttentionInfo,
-  GameTurnState,
   GameplayEvent,
   QueuedNotification,
 } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../features/calPoker/useCalpokerHand';
-import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
+import { CalpokerDisplaySnapshot } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { SessionPhase } from '../types/ChiaGaming';

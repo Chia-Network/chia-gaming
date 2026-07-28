@@ -2,9 +2,9 @@ import { WasmConnection, WasmInitFn, ChiaGame, RngId } from '../types/ChiaGaming
 import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 
-var chia_gaming_init: WasmInitFn | undefined = undefined;
-var cg: WasmConnection | undefined = undefined;
-var logInitialized = false;
+let chia_gaming_init: WasmInitFn | undefined = undefined;
+let cg: WasmConnection | undefined = undefined;
+let logInitialized = false;
 
 /** Manual mirror of native startup loads (game_collection + channel/referee). Not auto-traced. */
 export const PRESET_FILES = [
@@ -149,15 +149,11 @@ export class WasmStateInit {
   }
 
   createRng(seed: string): RngId | undefined {
-    let rng_handle = this.wasmConnection?.create_rng(seed);
+    const rng_handle = this.wasmConnection?.create_rng(seed);
     if (rng_handle) {
       return new RngId(rng_handle);
     }
     return undefined;
-  }
-
-  getChiaIdentity(rngSeed: string) {
-    // return this.wasmConnection?.chia_identity(rngSeed);
   }
 
   createGame(
@@ -190,7 +186,7 @@ export class WasmStateInit {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);
     const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
-    let chiaGameId = wasm.restore_session(serializedGame, seedHex);
+    const chiaGameId = wasm.restore_session(serializedGame, seedHex);
     return new ChiaGame(wasm, chiaGameId);
   }
 }

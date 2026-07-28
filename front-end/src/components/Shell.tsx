@@ -109,7 +109,6 @@ import {
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
-import { gameDisplayName } from '../lib/gameRegistry';
 import {
   appendRecent,
   DIAGNOSTIC_LOG_LIMIT,
@@ -123,8 +122,6 @@ import { Button } from './button';
 import { HubPicker } from './HubPicker';
 
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
-
-const MOJOS_PER_XCH = 1_000_000_000_000;
 
 function getInterface(bcType: 'simulator' | 'walletconnect') {
   return bcType === 'walletconnect'
@@ -219,7 +216,7 @@ function parseSessionAmount(raw: string): bigint {
     return amount;
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('session amount')) throw e;
-    throw new Error(`invalid session amount: ${raw}`);
+    throw new Error(`invalid session amount: ${raw}`, { cause: e });
   }
 }
 
@@ -719,7 +716,6 @@ const Shell = () => {
   }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
-  const lastPeerActivityRef = useRef(0);
   // --- Boot state machine ---
   //
   // The boot initializer NEVER claims the lease. Claiming the lease writes
@@ -1091,11 +1087,6 @@ const Shell = () => {
     setPeerLiveness(peerSessionRef.current?.liveness ?? null);
   }, []);
 
-  const markPeerActive = useCallback(() => {
-    peerSessionRef.current?.notePeerActivity();
-    syncPeerLiveness();
-  }, [syncPeerLiveness]);
-
   const markPeerInactive = useCallback(() => {
     peerSessionRef.current?.markInactive();
     syncPeerLiveness();
@@ -1408,8 +1399,6 @@ const Shell = () => {
     return () => clearInterval(id);
   }, []);
 
-  const [userReady, setUserReady] = useState(false);
-
   // Balance polling
   const stopBalancePolling = useCallback(() => {
     try {
@@ -1481,7 +1470,7 @@ const Shell = () => {
         setWalletConnected(false);
       }
     });
-  }, [activeBlockchainPoller, blockchainType, startBalancePolling]);
+  }, [activeBlockchainPoller, blockchainType, setWalletAlert, startBalancePolling]);
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
   const [hubConnectionError, setHubConnectionError] = useState<string | null>(null);
@@ -1725,16 +1714,16 @@ const Shell = () => {
     [
       uniqueId,
       syncPeerLiveness,
-      markPeerActive,
       markPeerInactive,
       markPeerDead,
       cancelAttemptedSession,
-      clearSessionPreservingHistory,
       isAvailableForNewSessionPrompt,
       sendSessionReject,
       setPendingAdvisoryState,
       setPendingProposalState,
       bindPeerMessageHandler,
+      setActiveTab,
+      setHubAlert,
     ],
   );
 
@@ -1806,7 +1795,6 @@ const Shell = () => {
       setWalletConnected(true);
       setConnecting(false);
       setConnectionSetup(null);
-      setUserReady(true);
       if (options.switchToHub) {
         setActiveTab('hub');
       }
@@ -1878,7 +1866,7 @@ const Shell = () => {
         }
       }
     },
-    [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting],
+    [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting, setWalletAlert],
   );
 
   const handleFinalize = useCallback(async () => {
@@ -1932,7 +1920,7 @@ const Shell = () => {
         setUnreadGame(true);
       });
     }
-  }, [deferStateUpdate]);
+  }, [deferStateUpdate, setUnreadGame]);
 
   const clearSessionTimers = useCallback(() => {
     if (cleanShutdownGraceTimerRef.current !== null) {
@@ -2074,7 +2062,7 @@ const Shell = () => {
       setRestoreError(null);
       setRestoreHubReconciled(false);
     },
-    [clearSessionTimers, frozenCoins, resetPeerRelayState, sessionController],
+    [clearSessionTimers, frozenCoins, resetPeerRelayState],
   );
 
   const handleSessionPhaseChange = useCallback(
@@ -2123,12 +2111,15 @@ const Shell = () => {
     restoreHubReconciled,
   );
 
-  const handleTabChange = useCallback((tabId: TabId) => {
-    setActiveTab(tabId);
-    if (tabId === 'game') setUnreadGame(false);
-    if (tabId === 'wallet') setWalletAlert(false);
-    if (tabId === 'hub') setHubAlert(false);
-  }, []);
+  const handleTabChange = useCallback(
+    (tabId: TabId) => {
+      setActiveTab(tabId);
+      if (tabId === 'game') setUnreadGame(false);
+      if (tabId === 'wallet') setWalletAlert(false);
+      if (tabId === 'hub') setHubAlert(false);
+    },
+    [setActiveTab, setHubAlert, setUnreadGame, setWalletAlert],
+  );
 
   useThemeSyncToIframe('hub-iframe', [iframeUrl]);
 
@@ -2315,7 +2306,7 @@ const Shell = () => {
         }
       })();
     },
-    [uniqueId, completeConnection, stablePeerConn, setActiveTab],
+    [uniqueId, completeConnection, stablePeerConn, setActiveTab, setWalletAlert],
   );
 
   // User clicked "Resume Session" in the resumeDialog, or boot landed on
@@ -2579,11 +2570,6 @@ const Shell = () => {
       doDisconnectHub();
     }
   }, [peerLiveness, sessionPhase, doDisconnectHub]);
-
-  const handleEndPeerConnection = useCallback(() => {
-    resetPeerRelayState();
-    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current));
-  }, [resetPeerRelayState]);
 
   const startCleanShutdownGrace = useCallback(() => {
     if (cleanShutdownGraceTimerRef.current !== null) {

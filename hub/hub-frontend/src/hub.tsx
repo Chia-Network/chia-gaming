@@ -94,7 +94,7 @@ const HubScreen = () => {
         unique_id: uniqueId,
       });
     }
-  }, [aliasLoaded, savedAlias, joinHub]);
+  }, [aliasLoaded, savedAlias, joinHub, sessionId, uniqueId]);
 
   function confirmAlias() {
     const trimmed = myAlias.trim();

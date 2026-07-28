@@ -66,11 +66,6 @@ function makeStorage(): Storage {
   };
 }
 
-async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
 function setTestGlobal(key: string, value: unknown) {
   Object.defineProperty(globalThis, key, {
     configurable: true,

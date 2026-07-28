@@ -108,7 +108,7 @@ describe('RealBlockchainInterface', () => {
     mockWalletConnectState.disconnect.mockClear();
   });
 
-  async function connectAndWait(blockchain: RealBlockchainInterface) {
+  async function connectAndWait(_blockchain: RealBlockchainInterface) {
     mockWalletSession = { topic: 'wallet-1' };
     for (const next of mockWalletListeners) {
       next({ stateName: 'connected', connected: true, sessions: 1 });

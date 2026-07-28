@@ -92,7 +92,6 @@ function columnsForWidth(px: number, currentCols: number): number {
 
 function HandDisplay(props: HandDisplayProps) {
   const {
-    title,
     cards,
     playerNumber,
     area,
@@ -100,19 +99,16 @@ function HandDisplay(props: HandDisplayProps) {
     winnerType,
     bestHand,
     onCardClick,
-    selectedCards,
     showSwapAnimation,
     gameState,
     haloCardIds,
     swapHiddenCardIds = [],
     onReorder,
-    formatHandDescription,
     timeoutBadge,
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
   const [cardRightEdgeOffset, setCardRightEdgeOffset] = useState<number | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
-  const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
   const [shiftAnims, setShiftAnims] = useState<ShiftAnim[]>([]);
@@ -337,7 +333,6 @@ function HandDisplay(props: HandDisplayProps) {
     setActiveDrag(null);
     setHoleSlots(null);
     setDraggingCardId(null);
-    setAnyDragging(false);
     unlockBodyTextSelection();
     setTimeout(() => {
       isDraggingRef.current = false;
@@ -396,7 +391,6 @@ function HandDisplay(props: HandDisplayProps) {
       activeDragRef.current = nextActiveDrag;
       isDraggingRef.current = true;
 
-      setAnyDragging(true);
       setDraggingCardId(card.cardId ?? String(index));
       setHoleSlots(nextHoleSlots);
       setActiveDrag(nextActiveDrag);
@@ -661,11 +655,9 @@ function HandDisplay(props: HandDisplayProps) {
 
     return (
       <Card
-        index={idx}
         id={`card-${playerNumber}-${idx}`}
         card={card}
         cardId={`${area}-${cardId}`}
-        isSelected={selectedCards.includes(cardId)}
         onClick={() => handleCardClick(cardId)}
         isBeingSwapped={showSwapAnimation}
         hideForSwap={hideForSwap}

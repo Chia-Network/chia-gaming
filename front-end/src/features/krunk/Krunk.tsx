@@ -477,6 +477,8 @@ const Krunk: React.FC<KrunkProps> = ({
     onBobTurnChanged,
     bobInHand,
   );
+  const setAliceSecretWord = aliceHand.setSecretWord;
+  const submitBobGuessMove = bobHand.submitGuess;
 
   // Write each half to the session history panel when it finishes.
   // The two games can complete at different times; log them separately.
@@ -592,13 +594,13 @@ const Krunk: React.FC<KrunkProps> = ({
     if (bobHand.gameState.handler !== KrunkHandler.BobGuess) return;
     const next = guessQueue[0];
     setGuessQueue((rest) => rest.slice(1));
-    bobHand.submitGuess(next);
+    submitBobGuessMove(next);
   }, [
     isBobGuessPhase,
     guessQueue,
     bobHand.gameState.handler,
     bobHand.gameState.error,
-    bobHand.submitGuess,
+    submitBobGuessMove,
   ]);
 
   useEffect(() => {
@@ -619,10 +621,10 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const commitWord = useCallback(() => {
     if (wordDraft.length !== 5) return false;
-    aliceHand.setSecretWord(wordDraft);
+    setAliceSecretWord(wordDraft);
     setWordDraft('');
     return true;
-  }, [wordDraft, aliceHand.setSecretWord]);
+  }, [wordDraft, setAliceSecretWord]);
 
   const submitGuess = useCallback(() => {
     if (guessDraft.length !== 5) return false;
@@ -630,7 +632,7 @@ const Krunk: React.FC<KrunkProps> = ({
     // commit or clue). Send immediately only when it is our guess turn
     // and the queue is empty.
     if (isBobGuessPhase && guessQueue.length === 0) {
-      bobHand.submitGuess(guessDraft);
+      submitBobGuessMove(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
       if (filledGuessCount >= MAX_GUESSES) return false;
       setGuessQueue((prev) => [...prev, guessDraft]);
@@ -645,7 +647,7 @@ const Krunk: React.FC<KrunkProps> = ({
     canQueueGuess,
     guessQueue.length,
     filledGuessCount,
-    bobHand.submitGuess,
+    submitBobGuessMove,
   ]);
 
   const submitActive = useCallback(() => {
@@ -707,7 +709,14 @@ const Krunk: React.FC<KrunkProps> = ({
       return { text: 'Scoring…', kind: 'info' };
     }
     return { text: `Waiting for ${themLabel}…`, kind: 'info' };
-  }, [bobHand.gameState, handComplete, wordCommitted, displayQueue.length, themLabel]);
+  }, [
+    aliceHand.gameState.handler,
+    bobHand.gameState,
+    handComplete,
+    wordCommitted,
+    displayQueue.length,
+    themLabel,
+  ]);
 
   const letterStatuses = useMemo(
     () => krunkLetterStatuses(bobHand.gameState.guesses),

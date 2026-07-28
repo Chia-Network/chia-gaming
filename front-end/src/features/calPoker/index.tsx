@@ -43,8 +43,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
   opponentName,
   settlementOutcome,
 }) => {
-  const myWinOutcome = outcome?.my_win_outcome;
-
   useCheatNerfKeys(handleCheat, handleNerf);
 
   return (
@@ -61,7 +59,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
           setHandOrder={setHandOrder}
           handleMakeMove={handleMakeMove}
           outcome={outcome}
-          myWinOutcome={myWinOutcome}
           onGameLog={onGameLog}
           onSnapshotChange={onSnapshotChange}
           initialSnapshot={initialSnapshot}
