@@ -133,19 +133,21 @@ Local availability is authoritative for what happens next:
   auto-join). Mutual rejects cancel both attempts cleanly.
 
 The player app self-declares whether it is `busy` over the game channel. Busy
-means the app has an active session (the user explicitly accepted a session
-start). The `HubConnection` uses a `getPresence` callback — provided by
-Shell — to derive the authoritative busy+alias state at connect and reconnect
-time for the `identify` message. Presence alias comes from the active session
-aliases or `peekAlias()` (hub-synced prefs). It must never call `getAlias()`,
-which invents and persists a `Player_*` fallback that can overwrite the
-hub-side hub name. Explicit `setBusy(true)` is called only when
-the user accepts a session (not when a consent dialog is merely displayed), and
-`setBusy(false)` fires on the session controller's terminal event or when the
-user explicitly ends/cancels a session. Showing a session-consent dialog does not
-set busy; local availability still gates inbound advisories/proposals as above.
-When the app later reports that it is not busy, the hub sets the player back
-to `'waiting'`.
+means session obligation (`shouldReportHubBusy`) or — for WalletConnect without
+a resumable cradle/pairingToken — an unverified full-node peer gate
+(`shouldReportPresenceBusy`). The `HubConnection` uses a `getPresence` callback
+— provided by Shell — to derive the authoritative busy+alias state at connect
+and reconnect time for the `identify` message. Presence alias comes from the
+active session aliases or `peekAlias()` (hub-synced prefs). It must never call
+`getAlias()`, which invents and persists a `Player_*` fallback that can
+overwrite the hub-side hub name. Explicit `setBusy(true)` is called when the
+user accepts a session (not when a consent dialog is merely displayed). Idle /
+terminal clear paths must go through `presenceBusy(...)` rather than bare
+`setBusy(false)`, so the peer gate can still hold busy until a full node peer
+is verified. Showing a session-consent dialog does not set busy; local
+availability (`isAvailableForNewSessionPrompt`) still gates inbound
+advisories/proposals as above. When the app later reports that it is not busy,
+the hub sets the player back to `'waiting'`.
 
 #### Game channel events
 
