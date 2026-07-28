@@ -32,11 +32,7 @@ export function reactPropSafeValue<T>(value: T): T {
   if (isDenseNumericByteObject(value)) return value;
   if (Array.isArray(value)) {
     // Huge number[] byte blobs: share the reference rather than mapping.
-    if (
-      value.length > 4096
-      && typeof value[0] === 'number'
-      && typeof value[4096] === 'number'
-    ) {
+    if (value.length > 4096 && typeof value[0] === 'number' && typeof value[4096] === 'number') {
       return value;
     }
     const copy = value.map(reactPropSafeValue);

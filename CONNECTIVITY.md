@@ -171,8 +171,11 @@ Specific rules:
 - **Explicit terminal signal** (local go-on-chain or received FOAD) → peer
   marked dead (red). This is the only path to the dead state.
 - **Session transitions off-chain → on-chain** — one-way. No going back.
-- **Wallet loss** — no cascade. Session is logically unchanged; blockchain
-  operations just can't make progress until a wallet is reconnected.
+- **Wallet loss** — no cascade to the hub or peer. The session is logically
+  unchanged and stays mounted; blockchain operations just can't make progress
+  until a wallet is reconnected. While walletless the app reports `busy` to the
+  hub (it cannot fund or resolve a channel, so the lobby must not offer
+  matches), and any pending pre-Active matchmaking attempt is cancelled.
 
 ---
 
@@ -182,8 +185,8 @@ Specific rules:
 
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
-| Disconnect | Always | "You are in a session. Blockchain operations will stall until you reconnect." (only if session exists) | Wallet interface torn down. Session save preserved. |
-| Reconnect (same or different) | Always | None | Stalled operations resume. Session continues. |
+| Disconnect | Always | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection kept. Pending pre-Active matchmaking cancelled. App reports `busy`. Session save preserved. |
+| Reconnect (same or different) | Always | None | Stalled operations resume. `busy` recomputed from session phase and any in-progress non-terminal restore cradle. Session continues. |
 
 ### Hub
 
@@ -413,9 +416,13 @@ The hub does not create a session. It can only advise and relay:
 ### Recently implemented
 
 - **Wallet disconnect preserving session**: `handleDisconnectWallet` no
-  longer calls `clearSession()`. The session save is preserved across
-  wallet disconnects; blockchain operations stall until a wallet is
-  reconnected. (`Shell.tsx`)
+  longer calls `clearSession()` and does not tear down the hub. The session
+  save is preserved across wallet disconnects; blockchain operations stall
+  until a wallet is reconnected. While walletless the app reports `busy`
+  (`shouldReportHubBusy(phase, false)` forces busy regardless of phase) and
+  cancels any pending pre-Active matchmaking attempt; wallet reconnect
+  recomputes presence from the session phase and any in-progress non-terminal
+  restore cradle (phase alone is often still `none` mid-resume). (`Shell.tsx`)
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via

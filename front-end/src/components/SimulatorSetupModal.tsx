@@ -9,7 +9,9 @@ interface SimulatorSetupModalProps {
 
 export function SimulatorSetupModal({ open, onConnect, connecting }: SimulatorSetupModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
+    null,
+  );
   const offsetRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -83,28 +85,32 @@ export function SimulatorSetupModal({ open, onConnect, connecting }: SimulatorSe
   return (
     <div
       ref={panelRef}
-      style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 10, width: '22rem', maxWidth: 'calc(100% - 2rem)' }}
-      className='border border-canvas-border bg-canvas-bg shadow-xl rounded-xl p-5 flex flex-col items-center gap-4'
+      style={{
+        position: 'absolute',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        zIndex: 10,
+        width: '22rem',
+        maxWidth: 'calc(100% - 2rem)',
+      }}
+      className="border border-canvas-border bg-canvas-bg shadow-xl rounded-xl p-5 flex flex-col items-center gap-4"
     >
       <div
         onMouseDown={handleDragStart}
         style={{ cursor: 'grab' }}
-        className='select-none w-full text-center'
+        className="select-none w-full text-center"
       >
-        <h2 className='text-lg font-semibold text-canvas-text-contrast leading-tight'>
-          Simulator
-        </h2>
-        <p className='text-sm text-canvas-text mt-0.5'>
-          Connect to the simulated blockchain
-        </p>
+        <h2 className="text-lg font-semibold text-canvas-text-contrast leading-tight">Simulator</h2>
+        <p className="text-sm text-canvas-text mt-0.5">Connect to the simulated blockchain</p>
       </div>
 
       <Button
-        variant='solid'
+        variant="solid"
         onClick={onConnect}
         disabled={connecting}
         isLoading={connecting}
-        loadingText='Connecting&#x2026;'
+        loadingText="Connecting&#x2026;"
       >
         Connect
       </Button>

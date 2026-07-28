@@ -35,10 +35,7 @@ function syncThemeToIframe(iframeId: string) {
   }
 
   try {
-    iframe.contentWindow?.postMessage(
-      { type: 'theme-sync', vars: payload, dark: isDark },
-      '*',
-    );
+    iframe.contentWindow?.postMessage({ type: 'theme-sync', vars: payload, dark: isDark }, '*');
   } catch {
     // ignore
   }
@@ -81,6 +78,6 @@ export function useThemeSyncToIframe(iframeId: string, deps: unknown[]) {
       window.removeEventListener('message', messageHandler);
       observer.disconnect();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }

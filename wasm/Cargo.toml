@@ -20,7 +20,7 @@ path = "src/mod.rs"
 chia_gaming = { path= "..", features = [] }
 clvm-traits = "=0.38.2"
 clvm-utils = "=0.38.2"
-clvmr = { version = "=0.17.5", features = ["pre-eval"] }
+clvmr = { version = "=0.17.7", features = ["pre-eval"] }
 hex = "=0.4.3"
 lol_alloc = "=0.4.1"
 rand = "=0.9.3"
@@ -35,6 +35,7 @@ chia-puzzles = "=0.20.2"
 chia-traits = "=0.38.2"
 flate2 = { version = "=1.1.1", default-features = false, features = ["zlib-rs"] }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+getrandom_04 = { package = "getrandom", version = "=0.4.3", features = ["wasm_js"] }
 js-sys = "=0.3.81"
 wasm-bindgen = { version = "=0.2.104", features = ["serde-serialize"] }
 

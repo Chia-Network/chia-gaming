@@ -1,0 +1,10 @@
+**/node_modules/
+**/dist/
+**/node-pkg/
+**/target/
+**/coverage/
+**/*.hex
+**/*.dat
+**/*.map
+**/pnpm-lock.yaml
+**/patches/

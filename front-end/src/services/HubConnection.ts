@@ -32,7 +32,15 @@ export interface HubConnectionCallbacks {
 }
 
 type HubEnvelope =
-  | { type: 'advisory_start'; peer_id: string; peer_alias: string; my_amount: string; their_amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | {
+      type: 'advisory_start';
+      peer_id: string;
+      peer_alias: string;
+      my_amount: string;
+      their_amount: string;
+      channel_timeout?: string;
+      unroll_timeout?: string;
+    }
   | { type: 'registered'; player_id: string }
   | { type: 'delivery_failure'; to: string }
   | { type: 'hub_attention' }
@@ -41,10 +49,20 @@ type HubEnvelope =
   | { type: 'error'; error?: string };
 
 export type PeerAppMessage =
-  | { type: 'session_proposal'; proposer_amount: string; responder_amount: string; from_alias?: string; channel_timeout?: string; unroll_timeout?: string; game_session_id?: string }
+  | {
+      type: 'session_proposal';
+      proposer_amount: string;
+      responder_amount: string;
+      from_alias?: string;
+      channel_timeout?: string;
+      unroll_timeout?: string;
+      game_session_id?: string;
+    }
   | { type: 'session_reject' };
 
-function definedBencodexFields(data: Record<string, BencodexValue | undefined>): Record<string, BencodexValue> {
+function definedBencodexFields(
+  data: Record<string, BencodexValue | undefined>,
+): Record<string, BencodexValue> {
   const out: Record<string, BencodexValue> = {};
   for (const [key, value] of Object.entries(data)) {
     if (value !== undefined) out[key] = value;
@@ -163,7 +181,9 @@ export class HubConnection {
       log(`[hub] sendWs dropped (ws not open) type=${String(payload.type ?? '?')}`);
       return false;
     }
-    ws.send(encodeBencodex(definedBencodexFields(payload as Record<string, BencodexValue | undefined>)));
+    ws.send(
+      encodeBencodex(definedBencodexFields(payload as Record<string, BencodexValue | undefined>)),
+    );
     return true;
   }
 
@@ -192,7 +212,11 @@ export class HubConnection {
     const connectTimeout = globalThis.setTimeout(() => {
       if (this.ws === ws || this.closed) return;
       log('[hub] connection timeout, closing attempt');
-      try { ws.close(); } catch { /* ignore */ }
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
     }, HubConnection.CONNECT_TIMEOUT_MS);
     if (typeof connectTimeout === 'object' && 'unref' in connectTimeout) connectTimeout.unref();
 
@@ -267,22 +291,24 @@ export class HubConnection {
           this.callbacks.onClosed();
           return;
         }
-        const base = HubConnection.RECONNECT_DELAYS[
-          Math.min(this.reconnectAttempt, HubConnection.RECONNECT_DELAYS.length - 1)
-        ];
+        const base =
+          HubConnection.RECONNECT_DELAYS[
+            Math.min(this.reconnectAttempt, HubConnection.RECONNECT_DELAYS.length - 1)
+          ];
         const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
         this.reconnectAttempt++;
         this.reconnectTimer = globalThis.setTimeout(() => {
           this.reconnectTimer = null;
           this.connectWs();
         }, jitter);
-        if (typeof this.reconnectTimer === 'object' && 'unref' in this.reconnectTimer) this.reconnectTimer.unref();
+        if (typeof this.reconnectTimer === 'object' && 'unref' in this.reconnectTimer)
+          this.reconnectTimer.unref();
       }
     };
   }
 
   private dispatchHubEnvelope(buf: ArrayBuffer): void {
-    let msg: HubEnvelope | null = null;
+    let msg: HubEnvelope | null;
     try {
       msg = decodeHubEnvelope(buf);
     } catch {
@@ -304,7 +330,9 @@ export class HubConnection {
           channel_timeout: msg.channel_timeout,
           unroll_timeout: msg.unroll_timeout,
         };
-        log(`[hub] advisory_start peer=${params.peer_id} alias=${params.peer_alias} my_amount=${params.my_amount} their_amount=${params.their_amount}`);
+        log(
+          `[hub] advisory_start peer=${params.peer_id} alias=${params.peer_alias} my_amount=${params.my_amount} their_amount=${params.their_amount}`,
+        );
         this.callbacks.onAdvisoryStart(params);
         break;
       }
@@ -360,7 +388,9 @@ export class HubConnection {
    */
   sendPeerAppMessage(targetId: string, data: PeerAppMessage): boolean {
     log(`[hub] send app type=${data.type} to=${targetId}`);
-    const payload = encodeBencodex(definedBencodexFields(data as Record<string, BencodexValue | undefined>));
+    const payload = encodeBencodex(
+      definedBencodexFields(data as Record<string, BencodexValue | undefined>),
+    );
     return this.sendToPeer(targetId, payload);
   }
 
@@ -458,7 +488,8 @@ export class HubConnection {
     this.keepaliveTimer = setInterval(() => {
       this.sendWs({ type: 'keepalive' });
     }, 15_000);
-    if (typeof this.keepaliveTimer === 'object' && 'unref' in this.keepaliveTimer) this.keepaliveTimer.unref();
+    if (typeof this.keepaliveTimer === 'object' && 'unref' in this.keepaliveTimer)
+      this.keepaliveTimer.unref();
   }
 
   private stopKeepaliveTimer() {

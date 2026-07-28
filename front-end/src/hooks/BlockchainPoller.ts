@@ -60,7 +60,11 @@ export class BlockchainPoller {
   private connectionEpoch = 0;
   private pendingRpcRejects = new Set<() => void>();
 
-  constructor(blockchain: InternalBlockchainInterface, pollIntervalMs: number, maxBackoffMs?: number) {
+  constructor(
+    blockchain: InternalBlockchainInterface,
+    pollIntervalMs: number,
+    maxBackoffMs?: number,
+  ) {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
@@ -116,11 +120,12 @@ export class BlockchainPoller {
       spend: (blob, spendBundle, source, fee) =>
         this.enqueueRpc('spend', () => adapter.spend(blob, spendBundle, source, fee), true),
       rememberLocalRemovals: adapter.rememberLocalRemovals
-        ? (spendBundle) => this.enqueueRpc(
-          'rememberLocalRemovals',
-          () => adapter.rememberLocalRemovals!(spendBundle),
-          true,
-        )
+        ? (spendBundle) =>
+            this.enqueueRpc(
+              'rememberLocalRemovals',
+              () => adapter.rememberLocalRemovals!(spendBundle),
+              true,
+            )
         : undefined,
       getAddress: () => this.enqueueRpc('getAddress', () => adapter.getAddress(), true),
       getBalance: () => this.enqueueRpc('getBalance', () => adapter.getBalance()),
@@ -137,8 +142,10 @@ export class BlockchainPoller {
         ),
       getCoinRecordsByNames: (names) =>
         this.enqueueRpc('getCoinRecordsByNames', () => adapter.getCoinRecordsByNames(names)),
-      registerCoins: (names) => this.enqueueRpc('registerCoins', () => adapter.registerCoins(names)),
-      startMonitoring: () => this.enqueueRpc('startMonitoring', () => adapter.startMonitoring(), true),
+      registerCoins: (names) =>
+        this.enqueueRpc('registerCoins', () => adapter.registerCoins(names)),
+      startMonitoring: () =>
+        this.enqueueRpc('startMonitoring', () => adapter.startMonitoring(), true),
       beginConnect: (uniqueId) => adapter.beginConnect(uniqueId),
       disconnect: () => adapter.disconnect(),
       isConnected: () => adapter.isConnected(),
@@ -153,7 +160,8 @@ export class BlockchainPoller {
     const connectionEpoch = this.connectionEpoch;
     return new Promise<T>((resolve, reject) => {
       let settled = false;
-      const rejectForDisconnect = () => settle(reject, new Error(`RPC request discarded during disconnect: ${label}`));
+      const rejectForDisconnect = () =>
+        settle(reject, new Error(`RPC request discarded during disconnect: ${label}`));
       const settle = <V>(complete: (value: V) => void, value: V) => {
         if (settled) return;
         settled = true;
@@ -418,7 +426,8 @@ export class BlockchainPoller {
       // tick, so the coin gets picked up once it registers.
       const namesToQuery = names.filter((n) => this.registeredNames.has(n));
 
-      const records = namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
+      const records =
+        namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
       if (!this.isConnectionEpochActive(connectionEpoch)) return;
       const recordByName = await this.recordMap(records, connectionEpoch);
       if (!this.isConnectionEpochActive(connectionEpoch)) return;
@@ -439,7 +448,10 @@ export class BlockchainPoller {
     if (!this.balanceCallbacks || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const balance = await this.adapter.getBalance();
-      if (this.isConnectionEpochActive(connectionEpoch) && this.balancePollingScheduler.isInterested()) {
+      if (
+        this.isConnectionEpochActive(connectionEpoch) &&
+        this.balancePollingScheduler.isInterested()
+      ) {
         this.balanceCallbacks?.onBalance(balance);
       }
     } catch (e) {
@@ -493,8 +505,12 @@ export class BlockchainPoller {
       // that omits it is ambiguous and can be a transient RPC miss.  Do not turn
       // that into a deletion.  Height decreases are different: they are the reorg
       // signal the transaction manager needs, so omissions must be forwarded.
-      if (height >= previousPeak
-          && coins.some(({ coin_name }) => this.observedNames.has(coin_name) && !recordByName.has(coin_name))) {
+      if (
+        height >= previousPeak &&
+        coins.some(
+          ({ coin_name }) => this.observedNames.has(coin_name) && !recordByName.has(coin_name),
+        )
+      ) {
         continue;
       }
       const csr: CoinStateRecord[] = [];
