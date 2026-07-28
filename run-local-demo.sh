@@ -111,13 +111,14 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     ./tools/build-chialisp.sh
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
+    echo "=== Installing JavaScript workspace deps ==="
+    pnpm --dir "$SCRIPT_DIR" install --frozen-lockfile
     echo "=== Building gaming frontend ==="
-    (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
+    pnpm --dir "$SCRIPT_DIR" --filter chia-gaming-fe run build
     echo "=== Building hub-frontend ==="
-    (cd "$SCRIPT_DIR/hub" && pnpm install --frozen-lockfile --ignore-scripts)
-    (cd "$HUB_FRONTEND_DIR" && pnpm run build)
+    pnpm --dir "$SCRIPT_DIR" --filter chia-gaming-hub-frontend run build
     echo "=== Building hub-service ==="
-    (cd "$HUB_SERVICE_DIR" && pnpm run build)
+    pnpm --dir "$SCRIPT_DIR" --filter chia-gaming-hub-service run build
 fi
 
 # ── Assemble staging directories ────────────────────────────────────

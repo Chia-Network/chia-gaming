@@ -156,7 +156,8 @@ applied.
 ### 3. Player app (frontend JS/CSS)
 
 ```bash
-(cd front-end && pnpm install --frozen-lockfile && pnpm run build)
+pnpm install --frozen-lockfile
+pnpm --filter chia-gaming-fe run build
 ```
 
 Outputs `dist/js/index-rollup.js` and `dist/css/index.css`.
@@ -164,8 +165,7 @@ Outputs `dist/js/index-rollup.js` and `dist/css/index.css`.
 ### 4. Hub frontend
 
 ```bash
-(cd hub && pnpm install --frozen-lockfile)
-(cd hub && pnpm --filter chia-gaming-hub-frontend run build)
+pnpm --filter chia-gaming-hub-frontend run build
 ```
 
 Outputs `hub/hub-frontend/public/index.js` and
@@ -174,7 +174,7 @@ Outputs `hub/hub-frontend/public/index.js` and
 ### 5. Hub service
 
 ```bash
-(cd hub && pnpm --filter chia-gaming-hub-service run build)
+pnpm --filter chia-gaming-hub-service run build
 ```
 
 Outputs `hub/hub-service/dist/index-rollup.cjs`.

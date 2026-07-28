@@ -9,7 +9,7 @@
     "test": "pnpm run build && node --test src/*.test.mjs"
   },
   "dependencies": {
-    "chia-gaming-bencodex": "file:../../shared/bencodex",
+    "chia-gaming-bencodex": "workspace:*",
     "cors": "2.8.5",
     "express": "5.1.0",
     "minimist": "1.2.8",
