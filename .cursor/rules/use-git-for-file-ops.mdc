@@ -12,3 +12,10 @@ When adding, removing, or moving files in this repo, always use git commands:
 - **Add new files:** create the file, then `git add <path>`
 
 This keeps the index in sync and avoids forgetting to stage changes.
+
+## Committing changes
+
+When the user asks to commit, use `git commit -a` for tracked modifications
+and deletions. New files must already have been explicitly staged when created,
+per the rules above. Review `git status` and `git diff` before committing;
+do not use `git add -A` unless the user explicitly requests it.

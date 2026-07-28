@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+before_diff="$(mktemp)"
+after_diff="$(mktemp)"
+trap 'rm -f "$before_diff" "$after_diff"' EXIT
+
+git diff --binary >"$before_diff"
+
+cargo clippy --all --features=sim-tests,sim-server --fix --allow-dirty --allow-staged
+cargo fmt
+cargo clippy --all --features=sim-tests,sim-server -- -D warnings
+
+git diff --binary >"$after_diff"
+if ! cmp -s "$before_diff" "$after_diff"; then
+  echo "Clippy or cargo fmt updated files; review and stage the changes before committing." >&2
+  exit 1
+fi
