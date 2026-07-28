@@ -3,31 +3,6 @@ import { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 
-// DBG_POLLER_FLAKE: "skips transient partial snapshots" has flaked in CI but
-// never reproduces locally. The only environment-dependent dependency in the
-// path is crypto.subtle (via coinRecordToName). This helper captures runtime
-// versions and crypto availability so the next CI failure is self-describing.
-// Remove this block (and its uses below) once the flake is understood.
-function envDiagObj(): Record<string, unknown> {
-  const cr = globalThis.crypto as unknown as { subtle?: { digest?: unknown } } | undefined;
-  return {
-    nodeVersion: typeof process !== 'undefined' ? process.version : '(no process)',
-    versions: typeof process !== 'undefined' ? process.versions : '(no process)',
-    jestWorker: typeof process !== 'undefined' ? (process.env.JEST_WORKER_ID ?? '(none)') : '(no process)',
-    cryptoType: typeof cr,
-    subtleType: typeof cr?.subtle,
-    digestType: typeof cr?.subtle?.digest,
-  };
-}
-
-function envDiag(): string {
-  try {
-    return JSON.stringify(envDiagObj());
-  } catch {
-    return '(envDiag stringify failed)';
-  }
-}
-
 function makeRpc(heights: bigint[]): InternalBlockchainInterface {
   return new Proxy(
     {
@@ -607,7 +582,7 @@ describe('BlockchainPoller', () => {
     record.spentBlockIndex = 10n;
     const name = await coinRecordToName(record);
     if (!name) {
-      throw new Error(`coinRecordToName returned undefined; env=${envDiag()}`);
+      throw new Error('coinRecordToName returned undefined');
     }
     const queriedNames: string[][] = [];
     const rpc = new Proxy(
@@ -661,19 +636,8 @@ describe('BlockchainPoller', () => {
     const recordB = makeCoinRecord(2);
     const nameA = await coinRecordToName(recordA);
     const nameB = await coinRecordToName(recordB);
-    // DBG_POLLER_FLAKE: a fast assertion failure here in CI means
-    // coinRecordToName returned undefined, i.e. crypto.subtle threw/was absent.
-    // Surface that (with versions) instead of a bare "expected defined".
     if (!nameA || !nameB) {
-      throw new Error(
-        `DBG_POLLER_FLAKE coinRecordToName returned undefined ` +
-        `(nameA=${String(nameA)} nameB=${String(nameB)}) env=${envDiag()}`,
-      );
-    }
-    // DBG_POLLER_FLAKE: a collision (replaced/garbage digest from a polluting
-    // global mock in the same worker) would make both coins map to one name.
-    if (nameA === nameB) {
-      throw new Error(`DBG_POLLER_FLAKE nameA === nameB (${nameA}); env=${envDiag()}`);
+      throw new Error('coinRecordToName returned undefined');
     }
     expect(nameA).toBeDefined();
     expect(nameB).toBeDefined();
@@ -719,33 +683,15 @@ describe('BlockchainPoller', () => {
         { coin: 'coin-b', created_height: 10n, spent_height: null },
       ],
     }];
-    try {
-      expect(reports).toEqual(expectedReports);
-      expect(heightOnlyPeaks).toEqual([100n, 100n]);
-    } catch (e) {
-      // DBG_POLLER_FLAKE: dump everything needed to tell apart the failure
-      // modes -- 0 reports (skip mis-fired / coins absent), 1 wrong report,
-      // or 2 reports (partial-snapshot skip didn't fire) -- plus env/versions.
-      // The test script runs jest with --silent=false --useStderr, so this
-      // shows up in CI logs.
-      // eslint-disable-next-line no-console
-      console.error('DBG_POLLER_FLAKE failure', {
-        env: envDiagObj(),
-        nameA,
-        nameB,
-        sameName: nameA === nameB,
-        reportsCount: reports.length,
-        reports,
-      });
-      throw e;
-    }
+    expect(reports).toEqual(expectedReports);
+    expect(heightOnlyPeaks).toEqual([100n, 100n]);
   });
 
   it('skips snapshots when returned records cannot be mapped to coin names', async () => {
     const recordA = makeCoinRecord(1);
     const nameA = await coinRecordToName(recordA);
     if (!nameA) {
-      throw new Error(`coinRecordToName returned undefined; env=${envDiag()}`);
+      throw new Error('coinRecordToName returned undefined');
     }
 
     const malformedRecord = {
@@ -794,7 +740,7 @@ describe('BlockchainPoller', () => {
     record.spentBlockIndex = 42n;
     const name = await coinRecordToName(record);
     if (!name) {
-      throw new Error(`coinRecordToName returned undefined; env=${envDiag()}`);
+      throw new Error('coinRecordToName returned undefined');
     }
 
     const rpc = new Proxy(

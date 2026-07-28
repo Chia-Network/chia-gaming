@@ -48,9 +48,6 @@
   },
   "jest": {
     "preset": "ts-jest",
-    "setupFilesAfterEnv": [
-      "<rootDir>/scripts/jestDiagSetup.ts"
-    ],
     "testMatch": [
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
     ],

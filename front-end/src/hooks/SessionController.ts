@@ -287,6 +287,7 @@ export class SessionController implements PollingGameSession {
     this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
     this.blockchain = null;
+    this.onSaveNeeded = null;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
