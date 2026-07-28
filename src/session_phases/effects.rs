@@ -46,15 +46,58 @@ pub enum ChannelStatus {
     Failed,
 }
 
+/// Local host ownership of a session. This does not describe the channel coin
+/// or alter the actual protocol lifecycle in [`ChannelStatus`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SessionDisposition {
+    AwaitOutboundTerminal,
+    Abandoned,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
     pub state: ChannelStatus,
+    #[serde(default)]
+    pub session_disposition: Option<SessionDisposition>,
     pub advisory: Option<String>,
     pub coin: Option<CoinString>,
     pub our_balance: Option<Amount>,
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
     pub have_potato: Option<bool>,
+    #[serde(default)]
+    pub zero_payout: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unroll_initiator: Option<UnrollInitiator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_phase: Option<ChannelSemanticPhase>,
+}
+
+/// Which party caused the observed channel-to-unroll transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnrollInitiator {
+    Us,
+    Opponent,
+}
+
+/// Fine-grained progress within the existing on-chain channel lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSemanticPhase {
+    SubmittingChannelSpend,
+    ResolvingOpponentChannelSpend,
+    Preempting,
+    WaitingTimeout,
+    SubmittingTimeoutFinish,
+    Resolving,
+}
+
+/// Context for a timeout spend that the transaction manager has submitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TimeoutClaimSemantic {
+    ChannelTimeoutFinish,
+    GameOpponentTurn { id: GameID },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -97,6 +140,13 @@ pub enum SettlementOutcome {
     OpponentCheated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailedGameAction {
+    MakeMove,
+    AcceptSettlement,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GameStatusOtherParams {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -111,6 +161,8 @@ pub struct GameStatusOtherParams {
     pub game_finished: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forfeited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submitting_timeout_claim: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -179,6 +231,10 @@ pub enum GameNotification {
     },
 
     ActionFailed {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<GameID>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<FailedGameAction>,
         reason: String,
     },
     MoveRejected {
@@ -188,6 +244,8 @@ pub enum GameNotification {
     },
     ChannelStatus {
         state: ChannelStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_disposition: Option<SessionDisposition>,
         advisory: Option<String>,
         coin: Option<CoinString>,
         our_balance: Option<Amount>,
@@ -195,20 +253,25 @@ pub enum GameNotification {
         game_allocated: Option<Amount>,
         #[serde(skip_serializing_if = "Option::is_none")]
         have_potato: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        zero_payout: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unroll_initiator: Option<UnrollInitiator>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        semantic_phase: Option<ChannelSemanticPhase>,
     },
 }
 
 /// A coin id worth surfacing in the dashboard so the user can look it up in a
 /// block explorer. The active phase handler decides which of these apply; in
-/// practice there are 0-2 at any moment (one channel/settlement-level coin and
-/// at most one game-level coin).
+/// practice this can include multiple simultaneous game coins and payouts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoinOfInterest {
     Channel,
     Unroll,
-    Change,
-    Game,
-    GameChange,
+    UnrollPayout,
+    CurrentGame,
+    GamePayout,
 }
 
 impl CoinOfInterest {
@@ -216,9 +279,9 @@ impl CoinOfInterest {
         match self {
             CoinOfInterest::Channel => "Channel coin",
             CoinOfInterest::Unroll => "Unroll coin",
-            CoinOfInterest::Change => "Change coin",
-            CoinOfInterest::Game => "Game coin",
-            CoinOfInterest::GameChange => "Game change coin",
+            CoinOfInterest::UnrollPayout => "Unroll payout coin",
+            CoinOfInterest::CurrentGame => "Current game coin",
+            CoinOfInterest::GamePayout => "Game payout coin",
         }
     }
 }
@@ -253,6 +316,9 @@ impl GameNotification {
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum GameSessionEvent {
     OutboundMessage(Vec<u8>),
+    /// The sole message required before a local terminal transition. The
+    /// transaction manager owns its durable handoff and finalization.
+    OutboundTerminalMessage(Vec<u8>),
     /// A spend bundle to submit, with the optional absolute height at/after
     /// which it can no longer be included (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
     /// the handler threads explicitly rather than parsing back out of the bundle).
@@ -270,6 +336,8 @@ pub enum GameSessionEvent {
         /// Eagerly-built spend to submit once this coin reaches its relative
         /// timeout age.  `None` for coins with no timeout claim.
         spend: Option<SpendBundle>,
+        /// Optional UI context emitted only when the manager submits `spend`.
+        semantic: Option<TimeoutClaimSemantic>,
     },
 }
 
@@ -297,6 +365,15 @@ pub enum Effect {
         clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
     },
     PeerCleanShutdownComplete(CoinSpend),
+    /// A durable host-owned clean-shutdown handoff. This is intercepted by
+    /// `GameSession`; it must never flow through ordinary packet delivery.
+    QueueTerminalHandoff(CoinSpend),
+    /// This zero-payout local session has no remaining claim to pursue, so it
+    /// can terminate without submitting a channel or unroll spend.
+    CompleteZeroPayoutShutdown,
+    /// Escalate a peer protocol failure through `GameSession`, which owns the
+    /// zero-payout abandonment policy.
+    GoOnChainAfterPeerError,
     PeerRequestPotato,
     PeerGameMessage(GameID, Vec<u8>),
 
@@ -313,6 +390,7 @@ pub enum Effect {
         /// coin reaches its relative timeout age.  `None` when there is no
         /// timeout claim to make for this coin.
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     },
     RequestPuzzleAndSolution(CoinString),
 
@@ -376,6 +454,17 @@ pub fn apply_effects(
             Effect::PeerCleanShutdownComplete(cs) => {
                 system.send_message(&PeerMessage::CleanShutdownComplete(cs))?;
             }
+            Effect::QueueTerminalHandoff(_) => {
+                return Err(crate::common::types::Error::StrErr(
+                    "terminal handoff must be intercepted by GameSession".to_string(),
+                ));
+            }
+            Effect::CompleteZeroPayoutShutdown => {}
+            Effect::GoOnChainAfterPeerError => {
+                return Err(crate::common::types::Error::StrErr(
+                    "peer-error escalation must be intercepted by GameSession".to_string(),
+                ));
+            }
             Effect::PeerRequestPotato => {
                 system.send_message(&PeerMessage::RequestPotato(()))?;
             }
@@ -390,8 +479,9 @@ pub fn apply_effects(
                 timeout,
                 name,
                 spend,
+                semantic,
             } => {
-                system.register_coin(&coin, &timeout, name, spend)?;
+                system.register_coin(&coin, &timeout, name, spend, semantic)?;
             }
             Effect::RequestPuzzleAndSolution(coin) => {
                 system.request_puzzle_and_solution(&coin)?;
@@ -408,4 +498,48 @@ pub fn apply_effects(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    struct LegacyChannelStatusSnapshot {
+        state: ChannelStatus,
+        advisory: Option<String>,
+        coin: Option<CoinString>,
+        our_balance: Option<Amount>,
+        their_balance: Option<Amount>,
+        game_allocated: Option<Amount>,
+        have_potato: Option<bool>,
+    }
+
+    #[test]
+    fn legacy_channel_status_restores_new_progress_fields_as_unknown() {
+        let legacy = LegacyChannelStatusSnapshot {
+            state: ChannelStatus::Active,
+            advisory: None,
+            coin: None,
+            our_balance: None,
+            their_balance: None,
+            game_allocated: None,
+            have_potato: None,
+        };
+
+        let encoded = bencodex::to_vec(&legacy).expect("serialize legacy snapshot");
+        let restored: ChannelStatusSnapshot =
+            bencodex::from_slice(&encoded).expect("restore legacy snapshot");
+
+        assert_eq!(restored.zero_payout, None);
+        assert_eq!(restored.unroll_initiator, None);
+        assert_eq!(restored.semantic_phase, None);
+    }
+
+    #[test]
+    fn coin_of_interest_labels_describe_coin_provenance() {
+        assert_eq!(CoinOfInterest::UnrollPayout.label(), "Unroll payout coin");
+        assert_eq!(CoinOfInterest::CurrentGame.label(), "Current game coin");
+        assert_eq!(CoinOfInterest::GamePayout.label(), "Game payout coin");
+    }
 }

@@ -1,11 +1,15 @@
 import type {
   ChannelStatus,
+  ChannelStatusPayload,
   GameConnectionState,
   PeerLiveness,
+  SessionDisposition,
   SessionPhase,
+  CoinOfInterestEntry,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionSave } from '../../hooks/save';
+import { coerceToBytes } from '../../util';
 import type { SettlementOutcome } from '../settlement';
 import { isSettlementOutcome } from '../settlement';
 import {
@@ -21,6 +25,7 @@ export type GameTurnState =
   | 'playing-on-chain'
   | 'replaying'
   | 'opponent-illegal-move'
+  | 'submitting-timeout'
   | 'finishing'
   | 'ended';
 
@@ -32,6 +37,7 @@ export type HandStatus =
   | 'playing-move'
   | 'replaying-move'
   | 'slashing'
+  | 'submitting-timeout'
   | 'finishing'
   | 'ended';
 
@@ -44,7 +50,6 @@ export type GameTerminalType =
 
 export type NotificationKind =
   | 'channel-state'
-  | 'session-over'
   | 'action-failed'
   | 'infra-error'
   | 'durability-error'
@@ -54,18 +59,25 @@ export type NotificationKind =
 
 export interface ChannelStatusModel {
   state: ChannelStatus;
+  sessionDisposition: SessionDisposition | null;
   advisory: string | null;
+  coin: Uint8Array | null;
   coinHex: string | null;
   coinAmount: string | null;
   ourBalance: string | null;
   theirBalance: string | null;
   gameAllocated: string | null;
   havePotato: boolean | null;
+  zeroPayout: boolean | null;
+  unrollInitiator: 'us' | 'opponent' | null;
+  semanticPhase: ChannelStatusPayload['semantic_phase'] | null;
 }
 
 export interface GameCoinModel {
   coinHex: string | null;
   turnState: GameTurnState;
+  /** Latest GameStatus is on-chain; exact coin id may still be enriching. */
+  onChain?: boolean;
 }
 
 export interface GameTerminalModel {
@@ -89,7 +101,11 @@ export interface QueuedNotificationModel {
   kind: NotificationKind;
   title: string;
   message: string;
-  payload?: any;
+  payload?: ChannelStatusModel | {
+    label: string;
+    myReward: string | null;
+    rewardCoinHex: string | null;
+  };
 }
 
 export interface HandTermsModel {
@@ -125,7 +141,6 @@ export interface PeerModel {
 export interface ChannelModel {
   status: ChannelStatusModel;
   connection: GameConnectionState;
-  goOnChainPressed: boolean;
   cleanShutdownStarted: boolean;
   dismissedChannelStatus: ChannelStatus | null;
   queue: QueuedNotificationModel[];
@@ -157,6 +172,8 @@ export interface BetweenHandModel {
   composeProposalSent: boolean;
   newHandRequested: boolean;
   outgoingProposalIds: string[];
+  outgoingProposalGroupIds: string[][];
+  acceptedProposalGroupIds: string[][];
   outgoingProposalTerms: Record<string, HandTermsModel>;
   pendingRetryTerms: HandTermsModel | null;
 }
@@ -189,35 +206,6 @@ export interface SessionModelInput {
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
-export interface SessionSnapshot {
-  restore?: Partial<RestoreModel>;
-  peer?: Partial<PeerModel>;
-  channel?: Partial<ChannelModel>;
-  game?: Partial<GameModel>;
-  betweenHand?: Partial<BetweenHandModel>;
-  history?: Partial<SessionHistoryModel>;
-  myRunningBalance?: string;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie';
-}
-
-export type SessionEvent =
-  | { type: 'restore-status'; status: RestoreStatus; error: string | null }
-  | { type: 'hub-reconciled'; reconciled: boolean }
-  | { type: 'peer-connected'; connected: boolean | null }
-  | { type: 'channel-status'; status: ChannelStatusModel }
-  | { type: 'game-coin'; coin: GameCoinModel }
-  | { type: 'hand-status'; status: HandStatus }
-  | { type: 'game-terminal'; terminal: GameTerminalModel }
-  | { type: 'between-hand'; state: Partial<BetweenHandModel> }
-  | { type: 'history'; state: Partial<SessionHistoryModel> };
-
-export type SessionIntent =
-  | { type: 'go-on-chain' }
-  | { type: 'clean-shutdown' }
-  | { type: 'propose-game'; terms: HandTermsModel }
-  | { type: 'accept-proposal'; id: string }
-  | { type: 'reject-proposal'; id: string };
-
 export type GameDashboardActionKind =
   | 'none'
   | 'cancel'
@@ -237,6 +225,7 @@ export type GameDashboardActionLabel =
 export interface GameDashboardViewModel {
   channelStatusLabel: string;
   channelDetail: string | null;
+  havePotato: boolean;
   handStatusLabel: string;
   handDetail: string | null;
   lifecycleRows: Array<{
@@ -261,14 +250,74 @@ export interface StatusBarBalanceSegment {
 
 export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   state: 'Handshaking',
+  sessionDisposition: null,
   advisory: null,
+  coin: null,
   coinHex: null,
   coinAmount: null,
   ourBalance: null,
   theirBalance: null,
   gameAllocated: null,
   havePotato: null,
+  zeroPayout: null,
+  unrollInitiator: null,
+  semanticPhase: null,
 };
+
+function parseChannelAmount(coin: unknown): string | null {
+  const bytes = coerceToBytes(coin);
+  if (!bytes || bytes.length < 64) return null;
+  let value = 0n;
+  for (let i = 64; i < bytes.length; i += 1) {
+    value = (value << 8n) + BigInt(bytes[i] & 0xff);
+  }
+  return value.toString();
+}
+
+function parseChannelAmountValue(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'object' && 'Amount' in value) {
+    return String((value as { Amount: unknown }).Amount);
+  }
+  return String(value);
+}
+
+export function channelStatusModelFromPayload(status: ChannelStatusPayload): ChannelStatusModel {
+  const coin = coerceToBytes(status.coin);
+  const coinAmount = parseChannelAmount(status.coin);
+  const resolvedFromUnroll = status.state === 'ResolvedUnrolled' || status.state === 'ResolvedStale';
+  return {
+    state: status.state,
+    sessionDisposition: status.session_disposition ?? null,
+    advisory: status.advisory ?? null,
+    coin,
+    coinHex: null,
+    coinAmount,
+    ourBalance: resolvedFromUnroll ? (coinAmount ?? '0') : parseChannelAmountValue(status.our_balance),
+    theirBalance: parseChannelAmountValue(status.their_balance),
+    gameAllocated: parseChannelAmountValue(status.game_allocated),
+    havePotato: status.have_potato ?? null,
+    zeroPayout: status.zero_payout ?? null,
+    unrollInitiator: status.unroll_initiator ?? null,
+    semanticPhase: status.semantic_phase ?? null,
+  };
+}
+
+export function channelStatusPayloadFromModel(status: ChannelStatusModel): ChannelStatusPayload {
+  return {
+    state: status.state,
+    session_disposition: status.sessionDisposition,
+    advisory: status.advisory,
+    coin: status.coin,
+    our_balance: status.ourBalance,
+    their_balance: status.theirBalance,
+    game_allocated: status.gameAllocated,
+    have_potato: status.havePotato,
+    zero_payout: status.zeroPayout,
+    unroll_initiator: status.unrollInitiator,
+    semantic_phase: status.semanticPhase,
+  };
+}
 
 export const INITIAL_GAME_TERMINAL_MODEL: GameTerminalModel = {
   type: 'none',
@@ -289,14 +338,14 @@ export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
   gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
 };
 
-const RESOLVED_STATES = new Set<ChannelStatus>([
+export const RESOLVED_CHANNEL_STATES = new Set<ChannelStatus>([
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
   'Failed',
 ]);
 
-const WINDING_DOWN_STATES = new Set<ChannelStatus>([
+export const WINDING_DOWN_CHANNEL_STATES = new Set<ChannelStatus>([
   'ShutdownTransactionPending',
   'GoingOnChain',
   'Unrolling',
@@ -306,13 +355,52 @@ const WINDING_DOWN_STATES = new Set<ChannelStatus>([
   'Failed',
 ]);
 
-const ON_CHAIN_HAND_STATES = new Set<ChannelStatus>([
+export const ON_CHAIN_CHANNEL_STATES = new Set<ChannelStatus>([
   'GoingOnChain',
   'Unrolling',
   'ResolvedClean',
   'ResolvedUnrolled',
   'ResolvedStale',
 ]);
+
+/**
+ * Per-game on-chain classifications become authoritative only once the unroll
+ * result can no longer be preempted. This branch reports that boundary as a
+ * resolved unroll, not as a separate "done unrolling" lifecycle state.
+ */
+const UNROLL_COMPLETED_HAND_STATES = new Set<ChannelStatus>([
+  'ResolvedUnrolled',
+  'ResolvedStale',
+]);
+
+export const PRE_ACTIVE_CHANNEL_STATES = new Set<ChannelStatus>([
+  'Handshaking',
+  'WaitingForHeightToOffer',
+  'WaitingForHeightToAccept',
+  'OurWalletMakingOffer',
+  'OurWalletMakingOfferAcceptance',
+  'OfferSent',
+  'TransactionPending',
+]);
+
+type TerminalChannelSnapshot =
+  | Pick<ChannelStatusModel, 'state' | 'sessionDisposition'>
+  | Pick<ChannelStatusPayload, 'state' | 'session_disposition'>;
+
+export function isTerminalChannelSnapshot(
+  status: TerminalChannelSnapshot | null | undefined,
+): boolean {
+  const sessionDisposition = status && ('sessionDisposition' in status
+    ? status.sessionDisposition
+    : status.session_disposition);
+  return sessionDisposition !== 'AwaitOutboundTerminal'
+    && (sessionDisposition === 'Abandoned'
+      || (status !== null && status !== undefined && RESOLVED_CHANNEL_STATES.has(status.state)));
+}
+
+export function isPreActiveChannelStatus(state: string | null | undefined): boolean {
+  return state === null || state === undefined || PRE_ACTIVE_CHANNEL_STATES.has(state as ChannelStatus);
+}
 
 const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
@@ -341,6 +429,7 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   'playing-move': 'Playing move',
   'replaying-move': 'Replaying move',
   slashing: 'Slashing cheater',
+  'submitting-timeout': 'Submitting timeout claim',
   finishing: 'Finishing',
   ended: 'Ended',
 };
@@ -366,7 +455,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     channel: {
       status: INITIAL_CHANNEL_STATUS_MODEL,
       connection: { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
-      goOnChainPressed: false,
       cleanShutdownStarted: false,
       dismissedChannelStatus: null,
       queue: [],
@@ -398,6 +486,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       composeProposalSent: false,
       newHandRequested: false,
       outgoingProposalIds: [],
+      outgoingProposalGroupIds: [],
+      acceptedProposalGroupIds: [],
       outgoingProposalTerms: {},
       pendingRetryTerms: null,
       ...betweenHand,
@@ -413,58 +503,39 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
   };
 }
 
-export function updateSessionModel(model: SessionModel, event: SessionEvent): SessionModel {
-  switch (event.type) {
-    case 'restore-status':
-      return {
-        ...model,
-        restore: { ...model.restore, status: event.status, error: event.error },
-      };
-    case 'hub-reconciled':
-      return {
-        ...model,
-        restore: { ...model.restore, hubReconciled: event.reconciled },
-      };
-    case 'peer-connected':
-      return { ...model, peer: { connected: event.connected } };
-    case 'channel-status':
-      return {
-        ...model,
-        channel: { ...model.channel, status: event.status },
-      };
-    case 'game-coin':
-      return {
-        ...model,
-        game: { ...model.game, coin: event.coin },
-      };
-    case 'hand-status':
-      return {
-        ...model,
-        game: { ...model.game, handStatus: event.status },
-      };
-    case 'game-terminal':
-      return {
-        ...model,
-        game: { ...model.game, terminal: event.terminal },
-      };
-    case 'between-hand':
-      return {
-        ...model,
-        betweenHand: { ...model.betweenHand, ...event.state },
-      };
-    case 'history':
-      return {
-        ...model,
-        history: { ...model.history, ...event.state },
-      };
-  }
+/**
+ * Abandonment is a terminal session disposition, not a per-game outcome. Keep
+ * the authoritative channel snapshot but discard local game/hand presentation
+ * that cannot receive a corresponding terminal game event.
+ */
+export function clearDerivedGamePresentation(model: SessionModel): SessionModel {
+  return {
+    ...model,
+    game: {
+      ...model.game,
+      coin: { coinHex: null, turnState: 'my-turn' },
+      handStatus: 'none',
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+      handKey: 0,
+      activeIds: [],
+      currentHandIds: [],
+      instances: {},
+      lastDisplayedId: null,
+      handState: null,
+    },
+  };
 }
 
 export function isWindingDownChannelStatus(state: ChannelStatus): boolean {
-  return WINDING_DOWN_STATES.has(state);
+  return WINDING_DOWN_CHANNEL_STATES.has(state);
 }
 
-export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, 'none'> {
+export function selectSessionPhase(
+  model: SessionModel,
+  hostOnChain = false,
+): Exclude<SessionPhase, 'none'> {
+  if (model.channel.status.sessionDisposition === 'Abandoned') return 'resolved';
+  if (model.channel.status.sessionDisposition === 'AwaitOutboundTerminal') return 'off-chain';
   if (
     (model.channel.status.state === 'ResolvedUnrolled'
       || model.channel.status.state === 'ResolvedStale')
@@ -472,9 +543,14 @@ export function selectSessionPhase(model: SessionModel): Exclude<SessionPhase, '
   ) {
     return 'on-chain';
   }
-  if (RESOLVED_STATES.has(model.channel.status.state)) return 'resolved';
+  if (isTerminalChannelSnapshot(model.channel.status)) return 'resolved';
+  // `go_on_chain` reports success synchronously, but the authoritative
+  // GoingOnChain notification follows through the asynchronous event queue.
+  // The controller-only result prevents that gap from downgrading Shell back
+  // to off-chain; it is intentionally never persisted.
+  if (hostOnChain) return 'on-chain';
   if (model.channel.status.state === 'ShutdownTransactionPending') return 'off-chain';
-  if (model.channel.goOnChainPressed || isWindingDownChannelStatus(model.channel.status.state)) {
+  if (isWindingDownChannelStatus(model.channel.status.state)) {
     return 'on-chain';
   }
   return 'off-chain';
@@ -511,16 +587,32 @@ export function selectDisplayGameId(model: SessionModel): string | null {
   return model.game.activeIds[0] ?? model.game.lastDisplayedId;
 }
 
+function selectDisplayedGameInstance(model: SessionModel): GameInstanceModel | null {
+  const id = selectDisplayGameId(model);
+  return id === null ? null : model.game.instances[id] ?? null;
+}
+
 export function selectBetweenHands(model: SessionModel): boolean {
   return model.game.handKey > 0 && model.game.activeIds.length === 0;
 }
 
-export function selectHideGameInterfaceForBetweenHandDialog(
+/**
+ * A compose/review dialog leaves the completed hand mounted beneath it so the
+ * terminal presentation remains visible and preserves its local state. The
+ * background must be inert while the modal owns interaction and focus.
+ */
+export function selectInertGameInterfaceForBetweenHandDialog(
   betweenHands: boolean,
   betweenHandMode: BetweenHandModeModel,
+  hasReviewPeerProposal: boolean,
+  overlayIsActive: boolean,
 ): boolean {
-  return betweenHands
-    && (betweenHandMode === 'compose-proposal' || betweenHandMode === 'review-incoming-proposal');
+  return overlayIsActive
+    && betweenHands
+    && (
+      betweenHandMode === 'compose-proposal'
+      || (betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
+    );
 }
 
 export interface ShellViewModel {
@@ -583,6 +675,30 @@ export interface GameDashboardSelectorOptions {
 
 function channelStatusDetail(model: SessionModel): string | null {
   const channel = model.channel.status;
+  if (channel.sessionDisposition === 'Abandoned') {
+    return channel.advisory ?? 'Session abandoned';
+  }
+  if (channel.sessionDisposition === 'AwaitOutboundTerminal') {
+    return channel.advisory ?? 'Waiting for peer to acknowledge close';
+  }
+  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
+    submitting_channel_spend: 'Submitting channel spend',
+    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
+    preempting: 'Preempting unroll',
+    waiting_timeout: 'Waiting for timeout',
+    submitting_timeout_finish: 'Submitting timeout finish',
+    resolving: 'Resolving',
+  };
+  if (channel.semanticPhase) {
+    const phase = phaseLabels[channel.semanticPhase];
+    const initiator = channel.unrollInitiator === 'us'
+      ? ' (initiated by you)'
+      : channel.unrollInitiator === 'opponent'
+        ? ' (initiated by opponent)'
+        : '';
+    const detail = `${phase}${initiator}`;
+    return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
+  }
   switch (channel.state) {
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
@@ -592,23 +708,31 @@ function channelStatusDetail(model: SessionModel): string | null {
 }
 
 function selectHandStatus(model: SessionModel): HandStatus {
-  if (model.game.terminal.type !== 'none' || model.game.coin.turnState === 'ended') {
+  const displayed = selectDisplayedGameInstance(model);
+  const terminal = displayed?.terminal ?? model.game.terminal;
+  const coin = displayed?.coin ?? model.game.coin;
+  if (terminal.type !== 'none' || coin.turnState === 'ended') {
     return 'ended';
   }
   if (model.game.activeIds.length === 0) {
     return 'none';
   }
-  if (!model.game.coin.coinHex) {
+  // The unroll commitment can still be preempted while GoingOnChain or
+  // Unrolling. Per-game coin/turn classifications are not authoritative until
+  // the unroll coin resolves, irrespective of asynchronous coin-id enrichment.
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return 'active';
   }
-  if (ON_CHAIN_HAND_STATES.has(model.channel.status.state)) {
-    switch (model.game.coin.turnState) {
+  if (ON_CHAIN_CHANNEL_STATES.has(model.channel.status.state)) {
+    switch (coin.turnState) {
       case 'my-turn':
         return 'our-turn';
       // We detected the opponent's illegal on-chain move and are now resolving
       // the slash; surface that explicitly rather than a generic "our turn".
       case 'opponent-illegal-move':
         return 'slashing';
+      case 'submitting-timeout':
+        return 'submitting-timeout';
       case 'their-turn':
         return 'their-turn';
       case 'playing-on-chain':
@@ -627,7 +751,7 @@ function collapsedHandStatusLabel(model: SessionModel): string {
 }
 
 function collapsedHandDetail(model: SessionModel): string | null {
-  const terminal = model.game.terminal;
+  const terminal = selectDisplayedGameInstance(model)?.terminal ?? model.game.terminal;
   if (terminal.type === 'none') {
     return null;
   }
@@ -650,8 +774,7 @@ function instanceTerminalDetail(instance: GameInstanceModel): string | null {
 }
 
 function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifecycleRows'] {
-  if (!ON_CHAIN_HAND_STATES.has(model.channel.status.state)
-      || model.channel.status.state === 'ResolvedClean') {
+  if (!UNROLL_COMPLETED_HAND_STATES.has(model.channel.status.state)) {
     return [];
   }
   const multiple = model.game.currentHandIds.length > 1;
@@ -672,11 +795,27 @@ export const ABANDON_WAITING_STATES = new Set<ChannelStatus>([
   'GoingOnChain', 'Unrolling',
 ]);
 
+export function isChannelAbandonable(
+  status: ChannelStatusModel | null | undefined,
+  abandonEnabled: boolean,
+): boolean {
+  return status?.sessionDisposition !== 'AwaitOutboundTerminal'
+    && ((status?.state === 'ShuttingDown' && status.zeroPayout === true)
+    || (abandonEnabled && status !== null && status !== undefined
+      && ABANDON_WAITING_STATES.has(status.state)));
+}
+
 function dashboardActionFor(
   model: SessionModel,
   cleanShutdownGraceActive: boolean,
   abandonEnabled: boolean,
 ): Pick<GameDashboardViewModel, 'actionLabel' | 'actionEnabled' | 'actionKind'> {
+  if (isTerminalChannelSnapshot(model.channel.status)) {
+    return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
+  }
+  if (model.channel.status.sessionDisposition === 'AwaitOutboundTerminal') {
+    return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+  }
   switch (model.channel.status.state) {
     case 'Handshaking':
     case 'WaitingForHeightToOffer':
@@ -699,11 +838,21 @@ function dashboardActionFor(
       }
       return { actionLabel: 'Clean Shutdown', actionEnabled: true, actionKind: 'clean-shutdown' };
     case 'ShuttingDown':
+      if (model.channel.status.zeroPayout) {
+        return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+      }
       if (cleanShutdownGraceActive) {
         return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
       }
       return { actionLabel: 'Go On-Chain', actionEnabled: true, actionKind: 'go-on-chain' };
     case 'ShutdownTransactionPending':
+      if (model.channel.status.zeroPayout) {
+        return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+      }
+      if (abandonEnabled) {
+        return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+      }
+      return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
     case 'GoingOnChain':
     case 'Unrolling':
       if (abandonEnabled) {
@@ -726,6 +875,7 @@ export function selectGameDashboardView(
     return {
       channelStatusLabel: 'No Session',
       channelDetail: null,
+      havePotato: false,
       handStatusLabel: 'No hand',
       handDetail: null,
       lifecycleRows: [],
@@ -739,8 +889,13 @@ export function selectGameDashboardView(
   const action = dashboardActionFor(model, options.cleanShutdownGraceActive ?? false, options.abandonEnabled ?? false);
 
   return {
-    channelStatusLabel: CHANNEL_STATUS_LABELS[channel.state],
+    channelStatusLabel: channel.sessionDisposition === 'Abandoned'
+      ? 'Abandoned'
+      : channel.sessionDisposition === 'AwaitOutboundTerminal'
+        ? 'Waiting for Peer'
+        : CHANNEL_STATUS_LABELS[channel.state],
     channelDetail: channelStatusDetail(model),
+    havePotato: channel.havePotato === true,
     handStatusLabel: collapsedHandStatusLabel(model),
     handDetail: collapsedHandDetail(model),
     lifecycleRows: selectLifecycleRows(model),
@@ -765,8 +920,7 @@ export function selectStatusBarBalances(
 
   const channel = model.channel.status;
 
-  const channelFailed = channel.state === 'Failed' || channel.state === 'ResolvedStale';
-  if (channelFailed) {
+  if (channel.state === 'Failed') {
     return [
       { label: 'Me', value: '0' },
       { label: 'Opp', value: '?' },
@@ -798,7 +952,7 @@ export function selectStatusBarBalances(
   ];
 
   const onChain =
-    ON_CHAIN_HAND_STATES.has(channel.state)
+    ON_CHAIN_CHANNEL_STATES.has(channel.state)
     && channel.state !== 'ResolvedClean';
   const displayedIds = onChain
     ? model.game.currentHandIds
@@ -846,10 +1000,11 @@ export interface GameSessionViewModel {
 }
 
 export function selectGameSessionView(model: SessionModel): GameSessionViewModel {
+  const displayed = selectDisplayedGameInstance(model);
   return {
     channelStatus: model.channel.status,
-    gameCoin: model.game.coin,
-    gameTerminal: model.game.terminal,
+    gameCoin: displayed?.coin ?? model.game.coin,
+    gameTerminal: displayed?.terminal ?? model.game.terminal,
     currentHandAmount: model.betweenHand.lastTerms.myContribution,
     activeGameId: model.game.activeIds[0] ?? null,
     activeGameIds: model.game.activeIds,
@@ -870,12 +1025,13 @@ export interface GameSpecificViewModel {
 }
 
 export function selectGameSpecificView(model: SessionModel): GameSpecificViewModel {
+  const displayed = selectDisplayedGameInstance(model);
   return {
     gameType: model.game.activeGameType,
     displayGameId: selectDisplayGameId(model),
     handState: model.game.handState,
-    turnState: model.game.coin.turnState,
-    terminal: model.game.terminal,
+    turnState: displayed?.coin.turnState ?? model.game.coin.turnState,
+    terminal: displayed?.terminal ?? model.game.terminal,
   };
 }
 
@@ -997,14 +1153,16 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
   const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  if (save.activeGameIds === undefined) {
+  const activeIds = save.activeGameIds
+    ?? (isTerminalChannelSnapshot(save.channelStatus) ? [] : undefined);
+  if (activeIds === undefined) {
     throw new Error('Garbled save: missing activeGameIds');
   }
-  if (!Array.isArray(save.activeGameIds)) {
+  if (!Array.isArray(activeIds)) {
     throw new Error('Garbled save: invalid activeGameIds');
   }
-  const activeIds = [...save.activeGameIds];
-  const currentHandIds = save.currentHandGameIds ?? activeIds;
+  const restoredActiveIds = [...activeIds];
+  const currentHandIds = save.currentHandGameIds ?? restoredActiveIds;
   const instances: Record<string, GameInstanceModel> = Object.fromEntries(
     Object.entries(save.gameInstances ?? {}).map(([id, instance]) => [
       id,
@@ -1014,6 +1172,7 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         coin: {
           coinHex: instance.coinHex,
           turnState: instance.turnState as GameTurnState,
+          onChain: instance.onChain,
         },
         handStatus: instance.handStatus as HandStatus,
         terminal: {
@@ -1038,21 +1197,11 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
     },
     channel: {
       status: save.channelStatus
-        ? {
-            state: save.channelStatus.state,
-            advisory: save.channelStatus.advisory ?? null,
-            coinHex: null,
-            coinAmount: null,
-            ourBalance: save.channelStatus.our_balance == null ? null : String(save.channelStatus.our_balance),
-            theirBalance: save.channelStatus.their_balance == null ? null : String(save.channelStatus.their_balance),
-            gameAllocated: save.channelStatus.game_allocated == null ? null : String(save.channelStatus.game_allocated),
-            havePotato: save.channelStatus.have_potato ?? null,
-          }
+        ? channelStatusModelFromPayload(save.channelStatus)
         : INITIAL_CHANNEL_STATUS_MODEL,
       connection: save.channelStatus
         ? { stateIdentifier: 'running', stateDetail: [] }
         : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
-      goOnChainPressed: save.goOnChainPressed ?? false,
       cleanShutdownStarted: save.cleanShutdownStarted ?? false,
       dismissedChannelStatus: (save.dismissedChannelStatus as ChannelStatus | undefined) ?? null,
       queue: parseQueuedNotifications(save.channelNotifQueue),
@@ -1062,11 +1211,12 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         coinHex: save.gameCoinHex ?? null,
         turnState: (() => {
           if (save.gameTurnState === undefined || save.gameTurnState === null) {
-            if (activeIds.length === 0) return 'my-turn' as GameTurnState;
+            if (restoredActiveIds.length === 0) return 'my-turn' as GameTurnState;
             throw new Error('Garbled save: missing gameTurnState');
           }
           return save.gameTurnState as GameTurnState;
         })(),
+        onChain: save.gameOnChain,
       },
       handStatus: (save.gameHandStatus as HandStatus | undefined) ?? 'none',
       terminal: save.gameTerminalType && save.gameTerminalType !== 'none'
@@ -1080,14 +1230,14 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             rewardCoinHex: save.gameTerminalRewardCoin ?? null,
           }
         : INITIAL_GAME_TERMINAL_MODEL,
-      handKey: (activeIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
-      activeIds,
+      handKey: (restoredActiveIds.length > 0 || save.handState || save.betweenHandLastTerms) ? 1 : 0,
+      activeIds: restoredActiveIds,
       currentHandIds,
       instances,
-      lastDisplayedId: activeIds[0] ?? null,
+      lastDisplayedId: restoredActiveIds[0] ?? null,
       activeGameType: (() => {
         if (save.activeGameType) return save.activeGameType;
-        if (activeIds.length === 0) return 'calpoker';
+        if (restoredActiveIds.length === 0) return 'calpoker';
         throw new Error('Garbled save: missing activeGameType');
       })(),
       handState: save.handState ?? null,
@@ -1102,13 +1252,36 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
             )
           )
         : {};
-      const outgoingProposalIds = Object.keys(outgoingProposalTerms);
+      if (
+        Object.keys(outgoingProposalTerms).length > 0
+        && save.outgoingProposalGroupIds === undefined
+      ) {
+        throw new Error('Garbled save: outgoing proposal terms missing group IDs');
+      }
+      const outgoingProposalGroupIds = (save.outgoingProposalGroupIds ?? []).map((groupIds, index) => {
+        if (!Array.isArray(groupIds) || groupIds.length === 0) {
+          throw new Error(`Garbled save: outgoing proposal group ${index} missing IDs`);
+        }
+        return [...groupIds];
+      });
+      const groupedOutgoingIds = outgoingProposalGroupIds.flat();
+      const outgoingProposalIds = [
+        ...groupedOutgoingIds,
+        ...Object.keys(outgoingProposalTerms).filter(id => !groupedOutgoingIds.includes(id)),
+      ];
       const hasOutgoing = outgoingProposalIds.length > 0;
+      const acceptedProposalGroupIds = (save.acceptedProposalGroupIds ?? []).map((groupIds, index) => {
+        if (!Array.isArray(groupIds) || groupIds.length === 0) {
+          throw new Error(`Garbled save: accepted proposal group ${index} missing IDs`);
+        }
+        return [...groupIds];
+      });
       return {
         mode,
         cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
         reviewPeerProposal: parseProposalSnapshot(save.betweenHandReviewPeerProposal, lastTerms),
         rejectedOnceTerms: parseOptionalTermsSnapshot(save.betweenHandRejectedOnceTerms, lastTerms),
+        pendingRetryTerms: parseOptionalTermsSnapshot(save.betweenHandPendingRetryTerms, lastTerms),
         lastTerms,
         composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
         composeGameTimeout: parsePositiveBigintString(save.betweenHandComposeGameTimeout, lastTerms.gameTimeout),
@@ -1116,6 +1289,8 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         composeProposalSent: hasOutgoing && mode === 'compose-proposal',
         newHandRequested: hasOutgoing && mode === 'decision',
         outgoingProposalIds,
+        outgoingProposalGroupIds,
+        acceptedProposalGroupIds,
         outgoingProposalTerms,
       };
     })(),
@@ -1153,7 +1328,11 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
       : undefined,
     gameCoinHex: model.game.coin.coinHex,
     gameTurnState: model.game.coin.turnState,
+    gameOnChain: model.game.coin.onChain ?? undefined,
     gameHandStatus: model.game.handStatus !== 'none' ? model.game.handStatus : undefined,
+    activeGameIds: model.game.activeIds,
+    activeGameType: model.game.activeGameType,
+    handState: model.game.handState,
     currentHandGameIds: model.game.currentHandIds.length > 0
       ? model.game.currentHandIds
       : undefined,
@@ -1166,6 +1345,7 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
             amount: instance.amount,
             coinHex: instance.coin.coinHex,
             turnState: instance.coin.turnState,
+            onChain: instance.coin.onChain ?? undefined,
             handStatus: instance.handStatus,
             terminal: instance.terminal,
           }]];
@@ -1184,7 +1364,6 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
       ? model.game.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
       : undefined,
     dismissedChannelStatus: model.channel.dismissedChannelStatus ?? undefined,
-    goOnChainPressed: model.channel.goOnChainPressed || undefined,
     cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
     betweenHandMode: model.betweenHand.mode,
     betweenHandComposePerHand: model.betweenHand.composePerHandAmount.toString(),
@@ -1193,6 +1372,9 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms),
     betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
       ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
+      : undefined,
+    betweenHandPendingRetryTerms: model.betweenHand.pendingRetryTerms
+      ? termsSnapshot(model.betweenHand.pendingRetryTerms)
       : undefined,
     betweenHandCachedPeerProposal: model.betweenHand.cachedPeerProposal
       ? {
@@ -1208,6 +1390,12 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
           ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
         }
       : undefined,
+    outgoingProposalGroupIds: model.betweenHand.outgoingProposalGroupIds.length > 0
+      ? model.betweenHand.outgoingProposalGroupIds.map(groupIds => [...groupIds])
+      : undefined,
+    acceptedProposalGroupIds: model.betweenHand.acceptedProposalGroupIds.length > 0
+      ? model.betweenHand.acceptedProposalGroupIds.map(groupIds => [...groupIds])
+      : undefined,
     outgoingProposalTerms: Object.keys(model.betweenHand.outgoingProposalTerms).length > 0
       ? Object.fromEntries(
           Object.entries(model.betweenHand.outgoingProposalTerms).map(
@@ -1216,4 +1404,26 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
         )
       : undefined,
   };
+}
+
+/** Best-effort display for terminal saves created before `coinsOfInterest`. */
+export function legacyCoinsOfInterestFromModel(model: SessionModel): CoinOfInterestEntry[] {
+  const coins: CoinOfInterestEntry[] = [];
+  const seen = new Set<string>();
+  const add = (label: string, id: string | null) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    coins.push({ label, id });
+  };
+
+  add('Unroll payout coin', model.channel.status.coinHex);
+  for (const id of model.game.currentHandIds) {
+    const instance = model.game.instances[id];
+    if (!instance) continue;
+    add('Current game coin', instance.coin.coinHex);
+    add('Game payout coin', instance.terminal.rewardCoinHex);
+  }
+  add('Current game coin', model.game.coin.coinHex);
+  add('Game payout coin', model.game.terminal.rewardCoinHex);
+  return coins;
 }

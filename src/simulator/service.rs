@@ -32,7 +32,7 @@ use crate::common::types::{
     CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error,
     Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
-use crate::game_session::{FullCoinSetAdapter, WatchReport};
+use crate::game_session::CoinObservation;
 use crate::simulator::Simulator;
 use crate::utils::map_m;
 use clvm_traits::Atom;
@@ -127,10 +127,34 @@ struct GameRunner {
     simulator: Simulator,
     coinset_adapter: FullCoinSetAdapter,
 
-    sim_record: BTreeMap<u64, WatchReport>,
+    sim_record: BTreeMap<u64, Vec<CoinObservation>>,
 }
 
 type StringWithError = Result<String, Error>;
+
+#[derive(Default)]
+struct FullCoinSetAdapter {
+    current_coins: HashSet<CoinString>,
+}
+
+impl FullCoinSetAdapter {
+    fn make_observations(&mut self, current_coins: &[CoinString]) -> Vec<CoinObservation> {
+        let current_coins: HashSet<CoinString> = current_coins.iter().cloned().collect();
+        let observations = current_coins
+            .difference(&self.current_coins)
+            .cloned()
+            .map(CoinObservation::Created)
+            .chain(
+                self.current_coins
+                    .difference(&current_coins)
+                    .cloned()
+                    .map(CoinObservation::Spent),
+            )
+            .collect();
+        self.current_coins = current_coins;
+        observations
+    }
+}
 
 impl GameRunner {
     fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
@@ -180,10 +204,8 @@ impl GameRunner {
     fn chase_block(&mut self) -> Result<u64, Error> {
         let new_height = self.simulator.get_current_height() as u64;
         let new_coins = self.simulator.get_all_coins()?;
-        let watch_report = self
-            .coinset_adapter
-            .make_report_from_coin_set_update(new_height, &new_coins)?;
-        self.sim_record.insert(new_height, watch_report);
+        let observations = self.coinset_adapter.make_observations(&new_coins);
+        self.sim_record.insert(new_height, observations);
         Ok(new_height)
     }
 
@@ -194,16 +216,20 @@ impl GameRunner {
     }
 
     fn get_block_data(&self, block: u64) -> StringWithError {
-        if let Some(report) = self.sim_record.get(&block) {
-            let created: Vec<String> = report
-                .created_watched
+        if let Some(observations) = self.sim_record.get(&block) {
+            let created: Vec<String> = observations
                 .iter()
-                .map(|c| hex::encode(c.to_bytes()))
+                .filter_map(|observation| match observation {
+                    CoinObservation::Created(coin) => Some(hex::encode(coin.to_bytes())),
+                    CoinObservation::Spent(_) => None,
+                })
                 .collect();
-            let deleted: Vec<String> = report
-                .deleted_watched
+            let deleted: Vec<String> = observations
                 .iter()
-                .map(|c| hex::encode(c.to_bytes()))
+                .filter_map(|observation| match observation {
+                    CoinObservation::Created(_) => None,
+                    CoinObservation::Spent(coin) => Some(hex::encode(coin.to_bytes())),
+                })
                 .collect();
             return Ok(format!(
                 "{{ \"created\": {created:?}, \"deleted\": {deleted:?} }}\n"
@@ -593,10 +619,13 @@ impl GameRunner {
     }
 
     fn block_spends(&mut self, height: u64) -> StringWithError {
-        let spends = self.sim_record.get(&height).map(|report| {
-            let block_spend_data: Vec<CoinsetSpendRecord> = report
-                .deleted_watched
+        let spends = self.sim_record.get(&height).map(|observations| {
+            let block_spend_data: Vec<CoinsetSpendRecord> = observations
                 .iter()
+                .filter_map(|observation| match observation {
+                    CoinObservation::Created(_) => None,
+                    CoinObservation::Spent(coin) => Some(coin),
+                })
                 .filter_map(|c| {
                     c.to_parts().and_then(|(parent, ph, amt)| {
                         self.simulator

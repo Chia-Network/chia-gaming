@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from './SessionController';
-import { GameplayEvent } from './useGameSession';
-import { log } from '../services/log';
-import { PersistedGameState } from './save';
+import { SessionController } from '../../hooks/SessionController';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { PersistedGameState } from '../../hooks/save';
 import {
-  isForfeitOutcome,
-  settlementByUs,
   type SettlementOutcome,
-} from '../lib/settlement';
+} from '../../lib/settlement';
 
 const SPACEPOKER_PERSISTED_STATE_VERSION = 1n;
 const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;
@@ -31,10 +28,39 @@ export const SpHandler = {
 } as const;
 export type SpHandler = typeof SpHandler[keyof typeof SpHandler];
 
+export function isTerminalSpacepokerHandler(handler: SpHandler): boolean {
+  return handler === SpHandler.Showdown || handler === SpHandler.Folded;
+}
+
 export interface SpGameState {
   handler: SpHandler;
   myTurn: boolean;
   N: bigint;
+}
+
+export function opponentTerminalAction(state: SpGameState): 'fold' | 'concede' | null {
+  if (state.handler === SpHandler.MidRound && !state.myTurn) return 'fold';
+  // We are waiting for the opponent's final move. If settlement arrives
+  // without an `end` readable, they chose the no-reveal (flag) action.
+  if (state.handler === SpHandler.End && !state.myTurn) return 'concede';
+  return null;
+}
+
+export function voluntarySpacepokerSettlementAction(
+  outcome: SettlementOutcome,
+  state: SpGameState,
+): { player: 'you' | 'opponent'; action: 'fold' | 'concede' } | null {
+  if (outcome !== 'accept_settlement' && outcome !== 'we_accepted') return null;
+  const action = state.handler === SpHandler.MidRound
+    ? 'fold'
+    : state.handler === SpHandler.End
+      ? 'concede'
+      : null;
+  if (!action) return null;
+  return {
+    player: outcome === 'we_accepted' || state.myTurn ? 'you' : 'opponent',
+    action,
+  };
 }
 
 export interface SpHandEntry {
@@ -58,11 +84,64 @@ export interface SpOutcome {
 
 export type SpTerminalState =
   | 'none'
+  | 'settled'
   | 'revealed'
   | 'conceded-by-you'
   | 'conceded-by-opponent'
   | 'folded-by-you'
   | 'folded-by-opponent';
+
+export interface PendingSpacepokerTerminalAction {
+  action: 'fold' | 'concede' | 'reveal';
+  submission: 'make-move' | 'accept-settlement';
+  previousTerminalState: SpTerminalState;
+  previousGameState: SpGameState;
+}
+
+export function pendingTerminalActionMatchesFailure(
+  pending: PendingSpacepokerTerminalAction | null,
+  submission: 'make-move' | 'accept-settlement' | undefined,
+): pending is PendingSpacepokerTerminalAction {
+  return pending != null && pending.submission === submission;
+}
+
+export function retainsRevealedTerminalPresentation(
+  pending: PendingSpacepokerTerminalAction | null,
+  terminalState: SpTerminalState,
+  outcome: SettlementOutcome,
+): boolean {
+  const voluntaryAcknowledgement =
+    outcome === 'accept_settlement' || outcome === 'we_accepted';
+  return voluntaryAcknowledgement
+    && (pending?.action === 'reveal' || terminalState === 'revealed');
+}
+
+export function retainsVoluntaryTerminalPresentation(
+  terminalState: SpTerminalState,
+  outcome: SettlementOutcome,
+): boolean {
+  const voluntaryAcknowledgement =
+    outcome === 'accept_settlement' || outcome === 'we_accepted';
+  return voluntaryAcknowledgement && (
+    terminalState === 'folded-by-you'
+    || terminalState === 'folded-by-opponent'
+    || terminalState === 'conceded-by-you'
+    || terminalState === 'conceded-by-opponent'
+  );
+}
+
+export function terminalAutoSubmissionAllowed(
+  recovery: 'fold' | 'concede' | 'reveal' | null,
+): boolean {
+  return recovery == null;
+}
+
+export function terminalRecoveryAfterOpponentMove(
+  recovery: 'concede' | 'reveal' | null,
+  completesTerminalAction: boolean,
+): 'concede' | 'reveal' | null {
+  return completesTerminalAction ? null : recovery;
+}
 
 export interface UseSpacepokerHandResult {
   gameState: SpGameState;
@@ -77,7 +156,10 @@ export interface UseSpacepokerHandResult {
   betUnit: bigint;
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
+  settlementOutcome: SettlementOutcome | null;
   terminalState: SpTerminalState;
+  terminalRecovery: 'concede' | 'reveal' | null;
+  retryTerminalAction: () => void;
   lastRaise: bigint;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
@@ -103,10 +185,31 @@ export interface SpacepokerHandState {
   iRaisedLast: boolean;
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
+  settlementOutcome?: SettlementOutcome | null;
   terminalState?: SpTerminalState;
+  terminalRecovery?: 'concede' | 'reveal' | null;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
   displayMode: SpacepokerDisplayMode;
+}
+
+export function acceptedSettlementFromOpponent(handler: SpHandler): {
+  action: 'fold' | 'concede';
+  terminalState: SpTerminalState;
+  nextHandler: SpHandler;
+} {
+  if (handler === SpHandler.End) {
+    return {
+      action: 'concede',
+      terminalState: 'conceded-by-opponent',
+      nextHandler: SpHandler.Showdown,
+    };
+  }
+  return {
+    action: 'fold',
+    terminalState: 'folded-by-opponent',
+    nextHandler: SpHandler.Folded,
+  };
 }
 
 function clvmListToBigints(prog: Program): bigint[] {
@@ -137,8 +240,14 @@ function formatXch(mojos: bigint): string {
   return `${sign}${frac ? `${whole}.${frac}` : whole} XCH`;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+export function rollbackOptimisticTerminalHistory(
+  history: SpHandEntry[],
+  action: 'fold' | 'concede' | 'reveal',
+): SpHandEntry[] {
+  const last = history[history.length - 1];
+  return last?.player === 'you' && last.action === action
+    ? history.slice(0, -1)
+    : history;
 }
 
 function spacepokerStateFromPersisted(
@@ -208,7 +317,13 @@ export function useSpacepokerHand(
   const [iRaisedLast, setIRaisedLast] = useState(initialHandState?.iRaisedLast ?? false);
   const [handHistory, setHandHistory] = useState<SpHandEntry[]>(initialHandState?.handHistory ?? []);
   const [outcome, setOutcome] = useState<SpOutcome | null>(initialHandState?.outcome ?? null);
+  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
+    initialHandState?.settlementOutcome ?? null,
+  );
   const [terminalState, setTerminalState] = useState<SpTerminalState>(initialHandState?.terminalState ?? 'none');
+  const [terminalRecovery, setTerminalRecovery] = useState<'concede' | 'reveal' | null>(
+    initialHandState?.terminalRecovery ?? null,
+  );
   // Coin toss result: true = I open, false = opponent opens, null = not yet known
   const [coinTossIOpen, setCoinTossIOpen] = useState<boolean | null>(initialHandState?.coinTossIOpen ?? null);
   const [displayMode, setDisplayMode] = useState<SpacepokerDisplayMode>(initialHandState?.displayMode ?? fallbackDisplayMode);
@@ -223,11 +338,17 @@ export function useSpacepokerHand(
   const handFinishedRef = useRef(
     initialHandState?.gameState.handler === SpHandler.Showdown
       || initialHandState?.gameState.handler === SpHandler.Folded
+      || (initialHandState?.terminalState != null && initialHandState.terminalState !== 'none')
   );
   const coinTossIOpenRef = useRef(coinTossIOpen);
   const communityCardsRef = useRef(communityCards);
   const lastRaiseRef = useRef(lastRaise);
   const outcomeRef = useRef(outcome);
+  const terminalStateRef = useRef(terminalState);
+  const terminalActionByUsRef = useRef<'fold' | 'concede' | 'reveal' | null>(null);
+  const terminalActionByOpponentRef = useRef<'fold' | 'concede' | 'reveal' | null>(null);
+  const pendingTerminalActionRef = useRef<PendingSpacepokerTerminalAction | null>(null);
+  const terminalClosureRef = useRef(false);
   const halfPotRef = useRef(halfPot);
   const iRaisedLastRef = useRef(iRaisedLast);
   const handHistoryRef = useRef(handHistory);
@@ -247,6 +368,7 @@ export function useSpacepokerHand(
   halfPotRef.current = halfPot;
   iRaisedLastRef.current = iRaisedLast;
   handHistoryRef.current = handHistory;
+  terminalStateRef.current = terminalState;
 
   useEffect(() => {
     if (unitSizeMojos && unitSizeMojos > 0n && !initialHandState) {
@@ -267,7 +389,9 @@ export function useSpacepokerHand(
       iRaisedLast,
       handHistory,
       outcome,
+      settlementOutcome,
       terminalState,
+      terminalRecovery,
       coinTossIOpen,
       unitSizeMojos: betUnit,
       displayMode,
@@ -285,7 +409,9 @@ export function useSpacepokerHand(
     iRaisedLast,
     handHistory,
     outcome,
+    settlementOutcome,
     terminalState,
+    terminalRecovery,
     coinTossIOpen,
     betUnit,
     displayMode,
@@ -320,44 +446,115 @@ export function useSpacepokerHand(
     return mojos / betUnit;
   }
 
+  function terminalStateFor(
+    player: 'you' | 'opponent',
+    action: 'fold' | 'concede',
+  ): SpTerminalState {
+    if (action === 'fold') return player === 'you' ? 'folded-by-you' : 'folded-by-opponent';
+    return player === 'you' ? 'conceded-by-you' : 'conceded-by-opponent';
+  }
+
+  function terminalGameStateFor(
+    action: 'fold' | 'concede',
+    current: SpGameState,
+  ): SpGameState {
+    return action === 'fold'
+      ? { handler: SpHandler.Folded, myTurn: false, N: current.N }
+      : { handler: SpHandler.Showdown, myTurn: false, N: 0n };
+  }
+
+  function rollbackPendingTerminalAction(
+    submission: 'make-move' | 'accept-settlement',
+  ): boolean {
+    const pending = pendingTerminalActionRef.current;
+    if (!pendingTerminalActionMatchesFailure(pending, submission)) return false;
+    pendingTerminalActionRef.current = null;
+    terminalClosureRef.current = false;
+    handFinishedRef.current = false;
+    setTerminalRecovery(pending.action === 'fold' ? null : pending.action);
+    terminalActionByUsRef.current = null;
+    setHandHistory(prev => rollbackOptimisticTerminalHistory(prev, pending.action));
+    setTerminalState(pending.previousTerminalState);
+    transition(pending.previousGameState);
+    return true;
+  }
+
+  function clearShowdownData() {
+    recordOutcome(null);
+  }
+
+  function replaceWithGenericTerminalClosure(
+    outcome: SettlementOutcome | null,
+    current: SpGameState,
+  ) {
+    const pending = pendingTerminalActionRef.current;
+    pendingTerminalActionRef.current = null;
+    terminalClosureRef.current = true;
+    terminalActionByUsRef.current = null;
+    terminalActionByOpponentRef.current = null;
+    handFinishedRef.current = true;
+    setTerminalRecovery(null);
+    setSettlementOutcome(outcome);
+    if (pending) {
+      setHandHistory(prev => rollbackOptimisticTerminalHistory(prev, pending.action));
+    }
+    clearShowdownData();
+    setTerminalState('settled');
+    transition({ handler: SpHandler.Folded, myTurn: false, N: current.N });
+  }
+
   function applySettlement(outcome: SettlementOutcome) {
     const cur = gsRef.current;
-    if (cur.handler === SpHandler.Showdown || cur.handler === SpHandler.Folded) {
+    setSettlementOutcome(outcome);
+    const pending = pendingTerminalActionRef.current;
+    if (pending) {
+      pendingTerminalActionRef.current = null;
+      if (retainsRevealedTerminalPresentation(pending, terminalStateRef.current, outcome)) {
+        handFinishedRef.current = true;
+        setTerminalRecovery(null);
+        return;
+      }
+      if (
+        (outcome === 'accept_settlement' || outcome === 'we_accepted')
+      ) {
+        handFinishedRef.current = true;
+        setTerminalRecovery(null);
+        return;
+      }
+      terminalActionByUsRef.current = null;
+      replaceWithGenericTerminalClosure(outcome, cur);
       return;
     }
-    const byUs = settlementByUs(outcome);
-    if (byUs === true || isForfeitOutcome(outcome)) {
-      if (byUs && !cur.myTurn) {
-        const snap = lastActionSnapshotRef.current;
-        if (snap) {
-          setHalfPot(snap.halfPot);
-          setLastRaise(snap.lastRaise);
-          setIRaisedLast(snap.iRaisedLast);
-          setHandHistory(prev => prev.slice(0, snap.historyLength));
+
+    if (
+      retainsRevealedTerminalPresentation(null, terminalStateRef.current, outcome)
+      || retainsVoluntaryTerminalPresentation(terminalStateRef.current, outcome)
+    ) {
+      handFinishedRef.current = true;
+      setTerminalRecovery(null);
+      return;
+    }
+
+    const voluntaryAction = voluntarySpacepokerSettlementAction(outcome, cur);
+    handFinishedRef.current = true;
+    if (voluntaryAction) {
+      if (voluntaryAction.player === 'opponent') {
+        if (terminalActionByOpponentRef.current == null) {
+          terminalActionByOpponentRef.current = voluntaryAction.action;
+          setHandHistory(prev => [...prev, { player: 'opponent', action: voluntaryAction.action }]);
         }
-      }
-      setTerminalState('folded-by-you');
-      transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
-      return;
-    }
-    if (byUs === false) {
-      if (cur.handler === SpHandler.End) {
-        recordOutcome(null);
-        setOpponentHoleCards(null);
-        setOpponentBoost(null);
-        setHandHistory(prev => [...prev, { player: 'opponent', action: 'concede' }]);
-        setTerminalState('conceded-by-opponent');
-        transition({ handler: SpHandler.Showdown, myTurn: false, N: 0n });
       } else {
-        setHandHistory(prev => [...prev, { player: 'opponent', action: 'fold' }]);
-        setTerminalState('folded-by-opponent');
-        transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
+        terminalActionByUsRef.current = voluntaryAction.action;
+        setHandHistory(prev => [...prev, { player: 'you', action: voluntaryAction.action }]);
       }
+      setTerminalState(terminalStateFor(voluntaryAction.player, voluntaryAction.action));
+      transition(terminalGameStateFor(voluntaryAction.action, cur));
       return;
     }
-    // Non-directional settles (e.g. settled_cleanly) with no showdown yet.
-    setTerminalState('folded-by-you');
-    transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
+
+    // Timeout, clean, slash, and unknown terminal outcomes retain the canonical
+    // GameSettled presentation rather than being shown as a poker action.
+    replaceWithGenericTerminalClosure(outcome, cur);
   }
 
   // ── OpponentMoved: the opponent made a move, it's now my turn ──
@@ -366,11 +563,27 @@ export function useSpacepokerHand(
   useEffect(() => {
     const sub = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
+        if (terminalClosureRef.current) return;
         if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            applySettlement(evt.Settled.outcome);
+          applySettlement(evt.Settled.outcome);
+          return;
+        }
+        if ('MoveRejected' in evt) {
+          if (evt.MoveRejected.gameId !== gameIdRef.current) return;
+          rollbackPendingTerminalAction('make-move');
+          return;
+        }
+        if ('GameError' in evt) {
+          if (evt.GameError.gameId !== gameIdRef.current) return;
+          if (evt.GameError.source === 'action' && (
+            evt.GameError.action
+            && rollbackPendingTerminalAction(evt.GameError.action)
+          )) {
+            return;
+          }
+          if (evt.GameError.source === 'terminal') {
+            replaceWithGenericTerminalClosure(null, gsRef.current);
           }
           return;
         }
@@ -522,7 +735,9 @@ export function useSpacepokerHand(
           // "end": opponent made the final reveal.
           // Format: ("end" yourSelected yourEval oppSelected oppEval result oppHole1 oppHole2 oppBoost)
           if (tag === 'end') {
+            pendingTerminalActionRef.current = null;
             handFinishedRef.current = true;
+            setTerminalRecovery(recovery => terminalRecoveryAfterOpponentMove(recovery, true));
             const yourSelected = clvmListToBigints(items[1]);
             const yourEval = clvmListToBigints(items[2]);
             const oppSelected = clvmListToBigints(items[3]);
@@ -539,6 +754,7 @@ export function useSpacepokerHand(
               opponentHandCards: oppSelected,
               opponentHandEval: oppEval,
             });
+            terminalActionByOpponentRef.current = 'reveal';
             setHandHistory(prev => [...prev, { player: 'opponent', action: 'reveal' }]);
             setTerminalState('revealed');
             transition({ handler: SpHandler.Showdown, myTurn: false, N: 0n });
@@ -571,10 +787,6 @@ export function useSpacepokerHand(
               placeCards(N - 1n, items.slice(3).map(p => p.toBigInt()));
             }
           }
-
-        } else if ('GameError' in evt) {
-          if (evt.GameError.gameId !== gameIdRef.current) return;
-          handFinishedRef.current = true;
         }
       },
     });
@@ -589,11 +801,14 @@ export function useSpacepokerHand(
   // outstanding raise and we have no remaining raise capacity.
   // End: auto-play reveal or game-level accept.
   useEffect(() => {
+    if (handFinishedRef.current) return;
+    if (!terminalAutoSubmissionAllowed(terminalRecovery)) return;
     const { handler, myTurn, N } = gs;
     if (!myTurn) return;
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     if (!go || !gid) return;
+    if (!go.isChannelReady()) return;
 
     if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) {
       try {
@@ -641,25 +856,40 @@ export function useSpacepokerHand(
       if (!currentOutcome) return;
       handFinishedRef.current = true;
       const action = currentOutcome.result >= 0n ? 'reveal' : 'accept';
+      const optimisticHistoryAction = action === 'reveal' ? 'reveal' : 'concede';
+      const previousTerminalState = terminalState;
+      const pending: NonNullable<typeof pendingTerminalActionRef.current> = {
+        action: optimisticHistoryAction,
+        submission: action === 'reveal' ? 'make-move' : 'accept-settlement',
+        previousTerminalState,
+        previousGameState: gs,
+      };
+      pendingTerminalActionRef.current = pending;
       try {
         if (action === 'reveal') {
-          go.makeMove(gid, null);
-          setHandHistory(prev => [...prev, { player: 'you', action: 'reveal' }]);
+          terminalActionByUsRef.current = 'reveal';
+          setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
           setTerminalState('revealed');
+          go.makeMove(gid, null);
         } else {
-          go.acceptSettlement(gid);
-          setHandHistory(prev => [...prev, { player: 'you', action: 'concede' }]);
+          terminalActionByUsRef.current = 'concede';
+          setHandHistory(prev => [...prev, { player: 'you', action: optimisticHistoryAction }]);
           setTerminalState('conceded-by-you');
+          go.acceptSettlement(gid);
         }
-      } catch (error) {
-        handFinishedRef.current = false;
-        log(`[spacepoker] failed to ${action} at showdown: ${errorMessage(error)}`);
+      } catch {
+        rollbackPendingTerminalAction(pending.submission);
         return;
       }
+      if (pendingTerminalActionRef.current !== pending) return;
       transition({ handler: SpHandler.Showdown, myTurn: false, N });
       return;
     }
-  }, [gs, outcome, coinTossIOpen, lastRaise, playerStack]);
+  }, [gs, outcome, coinTossIOpen, lastRaise, playerStack, terminalState, terminalRecovery]);
+
+  const retryTerminalAction = useCallback(() => {
+    if (terminalRecovery != null) setTerminalRecovery(null);
+  }, [terminalRecovery]);
 
   const handleCheck = useCallback(() => {
     const go = gameObjectRef.current;
@@ -732,12 +962,22 @@ export function useSpacepokerHand(
     const cur = gsRef.current;
     // "Fold" is a UX betting action. Protocol-wise this accepts the current
     // settlement; Space Poker has no fold move in its handlers or validators.
-    go.acceptSettlement(gid);
-    setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
     handFinishedRef.current = true;
+    const previousTerminalState = terminalState;
+    terminalActionByUsRef.current = 'fold';
+    const pending: NonNullable<typeof pendingTerminalActionRef.current> = {
+      action: 'fold',
+      submission: 'accept-settlement',
+      previousTerminalState,
+      previousGameState: cur,
+    };
+    pendingTerminalActionRef.current = pending;
+    setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
     setTerminalState('folded-by-you');
+    go.acceptSettlement(gid);
+    if (pendingTerminalActionRef.current !== pending) return;
     transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
-  }, []);
+  }, [terminalState]);
 
   const formatBet = useCallback((units: bigint): string => {
     if (displayMode === 'units') return String(units);
@@ -759,7 +999,10 @@ export function useSpacepokerHand(
     betUnit,
     handHistory,
     outcome,
+    settlementOutcome,
     terminalState,
+    terminalRecovery,
+    retryTerminalAction,
     lastRaise,
     coinTossIOpen,
     unitSizeMojos: betUnit,

@@ -206,11 +206,24 @@ immediately goes on-chain instead of cooperating.
 2. The responder receives the batch, processes any actions, then combines the
   initiator's half-signature with their own to produce a complete `CoinSpend`.
    They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
-   standalone message outside the normal potato flow. The responder transitions
-   to `SpendChannelCoinPhase` immediately (it already has the complete spend).
+   standalone message outside the normal potato flow. Normally the responder
+   transitions to `SpendChannelCoinPhase` immediately (it already has the
+   complete spend).
 3. The initiator receives `CleanShutdownComplete`, submits the transaction,
    and transitions to `SpendChannelCoinPhase`. Either side can submit the
    completed spend on-chain; duplicate submissions are harmless.
+
+**Zero-payout exception.** When Rust's shutdown snapshot reports
+`zero_payout: true`, that player still completes every cooperative protocol
+step, but does not submit the clean-close transaction itself. A zero-payout
+responder sends the completed spend through the host's durable outbound path,
+then receives a persisted terminal-handoff command. After the peer acknowledges
+that handoff, Rust records `session_disposition: Abandoned` while retaining the
+real shutdown channel status; it does not enter
+long-lived chain watching or wait for the peer's transaction. A zero-payout
+initiator abandons when it receives `CleanShutdownComplete`, because that
+response proves the peer already has all required close material. The
+non-zero-payout peer is responsible for any on-chain publication.
 
 ### Assumes Single-Handing
 

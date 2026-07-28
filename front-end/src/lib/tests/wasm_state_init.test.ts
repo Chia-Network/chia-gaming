@@ -2,12 +2,13 @@ import {
   WasmStateInit,
   ensureWasmLoaded,
   storeInitArgs,
+  registerWasmLoader,
   _resetWasmLoadForTests,
   PRESET_FILES,
 } from '../../hooks/WasmStateInit';
 import type { WasmConnection } from '../../types/ChiaGaming';
 
-describe('WasmStateInit eager load', () => {
+describe('WasmStateInit lazy load', () => {
   beforeEach(() => {
     _resetWasmLoadForTests();
   });
@@ -22,6 +23,36 @@ describe('WasmStateInit eager load', () => {
       cache_file: jest.fn(),
     } as unknown as WasmConnection;
   }
+
+  it('does not fetch WASM or presets until a session needs them', () => {
+    const wasm = mockWasm();
+    const initFn = jest.fn(async () => {});
+    const fetchPreset = jest.fn(async () => new Uint8Array([1, 2, 3]));
+
+    new WasmStateInit(fetchPreset);
+    storeInitArgs(initFn, wasm);
+
+    expect(initFn).not.toHaveBeenCalled();
+    expect(fetchPreset).not.toHaveBeenCalled();
+  });
+
+  it('notifies glue after registering window.loadWasm', () => {
+    const wasm = mockWasm();
+    const initFn = jest.fn(async () => {});
+    const target = {
+      dispatchEvent: jest.fn(() => true),
+    };
+
+    registerWasmLoader(target);
+
+    expect(target.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'chia-gaming-wasm-loader-ready' }),
+    );
+    expect(target.loadWasm).toBeDefined();
+    target.loadWasm!(initFn, wasm);
+
+    expect(initFn).not.toHaveBeenCalled();
+  });
 
   it('ensureWasmLoaded is idempotent and loads presets in parallel with init', async () => {
     const wasm = mockWasm();

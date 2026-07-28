@@ -6,8 +6,18 @@ peer message reliability, and reconnect reconciliation, see
 `FRONTEND_ARCHITECTURE.md`. For the authoritative settlement outcome glossary
 (off-chain accept + on-chain #1–#11), see
 [`NAMING_AUDIT.md` — Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux). The frontend supports full page reload — game state
-is continuously saved to localStorage and restored on reload with a fresh RNG
+is continuously saved to IndexedDB and restored on reload with a fresh RNG
 seed.
+
+## Authority vs projection
+
+Rust notifications are protocol facts. JavaScript renders and persists their
+browser envelope, but does not infer settlement, channel lifecycle, or
+protocol validity from display data. A UI action is an intent sent to Rust; its
+result becomes authoritative only when Rust emits the corresponding
+notification. The sole JS exception is explicit client capability policy, such
+as declining a second concurrent proposal group while still supporting each
+independently progressing game within an accepted group.
 
 The UI layer receives events via the `ToLocalUI` trait callbacks and
 `GameNotification` variants (delivered through `game_notification`).
@@ -48,6 +58,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 - [WASM Event FIFO and Async Drain](#wasm-event-fifo-and-async-drain)
 - [Channel Lifecycle Notifications](#channel-lifecycle-notifications)
+- [Abandonment and Zero-Payout Shutdown](#abandonment-and-zero-payout-shutdown)
 - [Dashboard Status Labels](#dashboard-status-labels)
 - [Gameplay Notifications](#gameplay-notifications)
 - [Proposal Notifications](#proposal-notifications)
@@ -79,11 +90,16 @@ Flow:
    `result.events` to the JS `eventQueue`, calls `drain_submissions()` for
    intercepted transaction submissions, and calls `scheduleDrain()`.
 4. `scheduleDrain()` is a no-op if a drain is already scheduled or the queue
-   is empty. Otherwise it schedules a `setTimeout(0)` callback that dispatches
-   **one** event, saves state, and calls `scheduleDrain()` again for the next.
+   is empty. Otherwise it schedules one `setTimeout(0)` callback. That active
+   drain consumes the complete synchronous FIFO, including events appended by a
+   re-entrant active WASM call, before returning. To prevent a re-entrant
+   producer from monopolizing the browser, a drain yields after 100 events and
+   schedules the remaining FIFO for the next macrotask.
 
-Each event is dispatched exactly once by `dispatchEvent()`, in a separate
-macrotask. Event types and their handlers:
+Each event is dispatched exactly once by `dispatchEvent()`, in FIFO order.
+The first active event still begins in a later macrotask; subsequent events in
+the same synchronous drain do not get separate timers. Event types and their
+handlers:
 
 - `OutboundMessage` — send to peer via hub
 - `Notification` — surface game/channel state to the UI
@@ -98,28 +114,24 @@ list because they are intercepted during manager drain. They still originate as
 queued Rust events; they just become manager state/submission buffers and
 polling deltas before JS dispatch.
 
-Why async (one event per macrotask):
+Why the macrotask boundary and quiescent active drain coexist:
 
-- Some event handlers trigger additional WASM calls that produce more
-  `GameSessionEvent`s (for example, a notification handler that calls
-  `proposeGame`, which returns new events). Those events are appended to
-  the queue and drained in subsequent macrotasks.
-- Notification handlers in React check React state (e.g.
-  `gameConnectionState`). React `setState` calls don't flush until the
-  call stack unwinds. If multiple notifications were dispatched in a single
-  synchronous loop, handlers for events 2..N would see stale React state
-  from before event 1's `setState` took effect.
-- By yielding to the macrotask queue between events, React flushes state
-  updates before the next event handler runs. This means notification
-  handlers can rely on React state being current — no special rules about
-  using refs instead of state for guards.
-- Ordering is preserved: events from the first WASM call are queued first;
-  events produced re-entrantly (from a WASM call inside a handler) are
-  appended after. The queue drains in FIFO order.
+- The timer preserves the existing asynchronous host boundary before a normal
+  active result becomes visible.
+- During that timer callback, an event handler can synchronously call WASM and
+  append more active effects. The controller keeps the active-drain marker set,
+  so those effects join the same FIFO transaction instead of scheduling a
+  second visible update.
+- A self-replenishing active source is bounded to 100 events per macrotask.
+  The unprocessed tail remains in FIFO order and is scheduled normally, so it
+  cannot starve rendering or other browser work.
+- A terminal `ManagerDrainDisposition` does not use this path. It clears stale
+  queued presentation/protocol work and performs its existing final flush, so
+  a stale active notification cannot follow terminal presentation.
 
-This makes frontend event processing deterministic and allows notification
-handlers to use ordinary React state without worrying about synchronous
-batching artifacts.
+This makes the controller's active presentation delivery deterministic while
+preserving terminal queue replacement, delivery-critical save failure handling,
+and cooperative terminal-handoff acknowledgement behavior.
 
 ---
 
@@ -146,7 +158,7 @@ for how those lenses relate.
 | `TransactionPending`  | Full spend bundle assembled                    | We have the complete channel-creation transaction in hand, waiting for on-chain confirmation                                                  |
 | `Active`              | Channel operational                            | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields. |
 | `ShuttingDown`    | Clean shutdown initiated                       | Cooperative channel closure has been initiated (advisory protocol, not yet on-chain)                                                          |
-| `ShutdownTransactionPending` | Clean shutdown spend assembled | A clean shutdown transaction has been formed and is pending confirmation                                                                       |
+| `ShutdownTransactionPending` | Clean shutdown spend assembled | A clean shutdown transaction has been formed. Normally the local side may submit it; with `zero_payout: true`, the peer is given the complete spend and owns publication. |
 | `GoingOnChain` | Explicit on-chain transition initiated | Local side has initiated transition from off-chain potato flow to on-chain resolution                                                         |
 | `Unrolling`       | Unroll detected on-chain                       | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                |
 | `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
@@ -168,7 +180,24 @@ details.
 Each `ChannelStatus` notification is emitted when the `PeerLifecyclePhase` is
 replaced (handler transition) or when the current handler's snapshot changes
 (e.g. balance update during `Active`). The frontend uses this single
-notification type for its persistent channel state display.
+notification type for its persistent channel state display. At the WASM
+boundary it is normalized into one `ChannelStatusModel`, containing the real
+channel state, optional local `sessionDisposition`,
+advisory, coin identity and amount, both balances, game allocation,
+`havePotato`, `zeroPayout`, and optional on-chain progress context. During an
+unroll, `unrollInitiator` identifies whether we or the opponent caused the
+observed channel spend when that attribution is definitive; a locally queued
+spend or cooperative-close setup alone leaves it unknown. `semanticPhase` refines the existing `GoingOnChain` /
+`Unrolling` state as submitting or resolving the channel spend, preempting,
+waiting for the relative timeout, submitting the timeout finish, or resolving
+the unroll spend. These are display facts, not new lifecycle states. Banner text, the potato indicator, dashboard
+actions, phase selection, persistence, and restore all project from that one
+snapshot instead of maintaining parallel channel-status shapes.
+During a cooperative terminal handoff, Rust sets
+`sessionDisposition: AwaitOutboundTerminal`; this is a local delivery state,
+not a channel result. It keeps the frontend session live until the peer
+acknowledges the close command, even if the channel snapshot has already moved
+to a resolved state.
 
 Monotonicity applies across all three lenses:
 
@@ -179,6 +208,102 @@ Monotonicity applies across all three lenses:
 - **On-chain lifecycle lens:** coin progression is forward-only
   (`created -> unrolling -> resolved` for channels, and
   `off-chain -> on-chain loop -> terminal` for games).
+
+When a watched timeout spend becomes mature, `TransactionManager` is the sole
+component that queues its submission. Before the host drains the submission
+buffer, it updates the session's canonical status snapshot to
+`submitting_timeout_finish`; the normal `ChannelStatus` notification then
+persists and restores that fact. The UI never infers timeout maturity, submits
+the transaction, or mutates a durable channel snapshot from a transient event.
+If a reorg changes or clears the watched coin's birthday, the manager re-arms
+the relative timeout and restores the canonical phase to `waiting_timeout`
+until the claim becomes mature again.
+
+---
+
+## Abandonment and Zero-Payout Shutdown
+
+Abandonment is a local, terminal choice owned by Rust. JavaScript can request
+`abandon`, but it does not validate whether abandonment is safe, infer a payout,
+or synthesize a terminal channel state. `GameSession::abandon` stops local peer
+participation, clears queued inbound protocol work and watched coins, and emits
+the last real `ChannelStatus` snapshot with `session_disposition: Abandoned`;
+it first discards pending cradle events and resync work so an older status
+cannot follow the terminal result.
+`TransactionManager::abandon` also discards
+unsubmitted transactions, events, and watch registrations. It cannot retract a
+transaction that was already broadcast or change the blockchain's eventual
+resolution.
+
+`session_disposition: Abandoned` does not mean that the channel was resolved on-chain or that the
+player received zero. To keep the terminal dashboard useful after reload, the
+notification carries forward the most recent channel snapshot's balances, coin,
+game allocation, potato state, and `zero_payout` value. A manual abandon can
+therefore show a nonzero last-known balance; that is display context, not a
+promise that funds are settled or claimable.
+
+### Zero-payout shutdown
+
+Rust computes `zero_payout` only while the channel is shutting down. It is true
+when the local current channel share is zero **and** no active game can later
+produce a share. This deliberately reuses the channel's authoritative
+settlement/forfeit state instead of asking React to reason about pending accepts,
+game commitments, or timeout paths.
+
+The flag keeps the clean-shutdown protocol cooperative. The zero-payout side
+continues to validate, sign, and send the close material its peer needs; it does
+not create its own fallback or clean-close submission. A block update or peer
+silence does not silently turn that state into an on-chain spend or local
+abandonment. The user may explicitly abandon while the handshake is waiting.
+An explicit Go On-Chain request maps to the same local abandonment outcome
+rather than creating a zero-value spend.
+
+An inbound `deliver_message` failure is deliberately different: it is treated
+as an escalation request because the local protocol host could not accept or
+process a peer message. `SessionController` calls the normal Go On-Chain entry
+point for that error. Rust then applies the same zero-payout remap, producing
+local abandonment instead of a spend when there is nothing to protect. This is
+intentional protocol-host behavior, not a frontend inference. The sole
+exception is an already-issued terminal-handoff command: Rust preserves that
+command until its close message is acknowledged, because abandoning it would
+leave the peer without the cooperative close material.
+
+When a zero-payout responder completes the clean-shutdown spend, Rust emits one
+persisted terminal-handoff command containing `CleanShutdownComplete`. JavaScript
+persists, sends, and replays that exact command until the peer acknowledges its
+message number; only then may it call Rust's completion entry point. Rust then
+performs the ordinary atomic local-abandonment transition. This waits for peer
+receipt of the close material—not for the peer to publish or confirm the
+transaction—and means the peer is solely responsible for the subsequent on-chain close.
+For a zero-payout initiator, receiving `CleanShutdownComplete` proves the peer
+already has every required artifact; Rust therefore abandons immediately and
+does not queue the returned transaction locally.
+
+The dashboard behavior is:
+
+| Situation | Primary action | Why |
+| --- | --- | --- |
+| `ShuttingDown`, `zero_payout: true` | **Abandon**, immediately | This is an explicit escape hatch while the cooperative handshake waits. The Rust status is the authority for this exception; it bypasses the ordinary abandon timer. |
+| `ShuttingDown`, `zero_payout: false` or absent | **Waiting** during the cooperative-close grace period, then **Go On-Chain** | We may still have a payout or an unresolved game, so the user can escalate the cooperative close to normal on-chain resolution. |
+| `OfferSent`, `TransactionPending`, `GoingOnChain`, or `Unrolling` | **Abandon** only after the waiting timeout | These are stalled-state escape hatches, not a payout determination. |
+| `ShutdownTransactionPending`, `zero_payout: true` | **Waiting** | The completed close command is already durable and must remain available until the peer acknowledges it. |
+| Pre-active handshake/counterparty setup | **Cancel** / abandonment as applicable | The frontend sends `session_reject` to release the peer before terminating its local cradle. |
+
+The Rust `go_on_chain` entry point also checks this same zero-payout predicate.
+If it is invoked despite the dashboard rule — for example by a stale UI action
+or another caller — it abandons locally before producing or submitting a new
+on-chain spend. This is a safety property of the protocol host, not a second
+frontend decision.
+
+On the final terminal drain, the JavaScript controller drops queued outbound protocol
+messages, acknowledgements, retries, durability sends, and new watch requests;
+it also replaces already-queued presentation work with presentation events from
+the terminal result. This prevents a final status from racing with stale local
+protocol work. The preceding terminal-handoff command is not terminal and
+intentionally retains its one required outbound message until acknowledged. The terminal signal can arrive
+before React has committed that final status, so Shell performs resolved-display
+cleanup from the status/phase update rather than using the signal to overwrite
+the dashboard snapshot.
 
 ---
 
@@ -411,6 +536,11 @@ receiver contributions before accepting any member. A peer must place every
 member acceptance in the same batch; partial acceptance rejects the batch.
 Cancellation likewise expands to the complete group. Consequently the UI must
 never model a factory group as partly pending, partly live, or partly cancelled.
+The UI retains the ordered group membership through the complete
+`ProposalAccepted` notification wave. If the subsequent aggregate preflight
+emits `InsufficientBalance`, it removes every member from active and
+current-hand presentation atomically, even when the notification identifies
+only one member.
 
 ### Rule B — Game lifecycle (bijection)
 

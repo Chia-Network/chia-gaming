@@ -22,41 +22,29 @@ mod gaming_wasm {
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        chia_dialect, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount,
-        CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
-        CoinsetSpendRecord, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
+        convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend,
+        CoinString, CoinsetCoin, CoinsetSpendBundle,
+        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, PublicKey,
         Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
-    use chia_gaming::utils::map_m;
-
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
     use flate2::Decompress;
     use flate2::FlushDecompress;
-    use chia_gaming::game_session::{
-        GameSession, GameSessionConfig, WatchReport,
+    use chia_gaming::game_session::{GameSession, GameSessionConfig, TerminalHandoffCommand};
+    use chia_gaming::transaction_manager::{
+        CoinStateRecord, ManagerDrain, TransactionManager,
     };
-    use chia_gaming::transaction_manager::{CoinStateRecord, ManagerDrain, TransactionManager};
-    use chia_gaming::session_phases::effects::{GameSessionEvent, GameNotification};
+    use chia_gaming::session_phases::effects::{
+        FailedGameAction, GameSessionEvent, GameNotification,
+    };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::GameProposal;
-    use chia_gaming::session_phases::types::{GameFactory, ToLocalUI};
-
-    struct NullLocalUI;
-    impl ToLocalUI for NullLocalUI {
-        fn notification(
-            &mut self,
-            _notification: &GameNotification,
-        ) -> Result<(), types::Error> {
-            Ok(())
-        }
-    }
+    use chia_gaming::session_phases::types::GameFactory;
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
-
-    use clvmr::run_program;
 
     #[cfg(target_arch = "wasm32")]
     #[global_allocator]
@@ -94,6 +82,13 @@ mod gaming_wasm {
         "puzzle_hash": string,
     };
 
+    export type NeedCoinSpendRequest = {
+        "amount": string,
+        "conditions": Array<{ "opcode": bigint | number, "args": Array<string> }>,
+        "coin_id"?: string,
+        "max_height"?: bigint | number,
+    };
+
     export type GameSessionEvent =
         | { OutboundMessage: string }
         | { OutboundTransaction: SpendBundle }
@@ -101,17 +96,13 @@ mod gaming_wasm {
         | { Log: string }
         | { CoinSolutionRequest: string }
         | { ReceiveError: string }
-        | { NeedCoinSpend: {
-            "amount": bigint,
-            "conditions": Array<{ "opcode": bigint, "args": Array<string> }>,
-            "coin_id"?: string,
-            "max_height"?: bigint,
-          } }
+        | { NeedCoinSpend: NeedCoinSpendRequest }
         | { NeedLauncherCoin: boolean };
 
     export type DrainResult = {
         "events": Array<GameSessionEvent>,
         "watchCoins": Array<{ coin_name: string, coin_string: string }>,
+        "unwatchCoins": Array<{ coin_name: string, coin_string: string }>,
     };
 
     export type GameSessionConfig = {
@@ -147,13 +138,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 1;
-
-    #[derive(Serialize, Deserialize, Default, Debug)]
-    struct JsWatchReport {
-        created_watched: Vec<String>,
-        deleted_watched: Vec<String>,
-    }
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 2;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -485,8 +470,7 @@ mod gaming_wasm {
 
     /// Report the latest confirmed height and raw per-coin chain state to the
     /// manager, which computes the created/deleted diff internally and feeds the
-    /// inner cradle.  Replaces the JS-side `WatchReport` computation that
-    /// `new_block` consumed.
+    /// inner cradle.
     #[wasm_bindgen]
     pub fn report_coin_states(
         cid: i32,
@@ -509,6 +493,17 @@ mod gaming_wasm {
                 .report_coin_states(&mut cradle.allocator, height, &records)
         })?;
         with_game_drain(cid, |_| Ok(()))
+    }
+
+    /// Advance protocol clocks from a confirmed peak without claiming that an
+    /// empty coin list is an authoritative watched-coin snapshot.
+    #[wasm_bindgen]
+    pub fn report_height(cid: i32, height: u64) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+            cradle
+                .cradle
+                .report_height(&mut cradle.allocator, height)
+        })
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
@@ -765,40 +760,9 @@ mod gaming_wasm {
         })
     }
 
-    fn watch_report_from_params(
-        additions: Vec<String>,
-        removals: Vec<String>,
-    ) -> Result<WatchReport, types::Error> {
-        Ok(WatchReport {
-            created_watched: map_m(|s| hex_to_coinstring(s), &additions)?
-                .iter()
-                .cloned()
-                .collect(),
-            deleted_watched: map_m(|s| hex_to_coinstring(s), &removals)?
-                .iter()
-                .cloned()
-                .collect(),
-        })
-    }
-
     fn coin_string_to_hex(cs: &CoinString) -> String {
         let cs_bytes = cs.to_bytes();
         hex::encode(cs_bytes)
-    }
-
-    fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
-        JsWatchReport {
-            created_watched: watch_report
-                .created_watched
-                .iter()
-                .map(coin_string_to_hex)
-                .collect(),
-            deleted_watched: watch_report
-                .deleted_watched
-                .iter()
-                .map(coin_string_to_hex)
-                .collect(),
-        }
     }
 
     fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<CoinsetSpendBundle, JsValue> {
@@ -826,23 +790,6 @@ mod gaming_wasm {
         Ok(CoinsetSpendBundle {
             aggregated_signature: format!("0x{}", hex::encode(aggsig.bytes())),
             coin_spends,
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn new_block(
-        cid: i32,
-        height: u64,
-        additions: Vec<String>,
-        removals: Vec<String>,
-    ) -> Result<JsValue, JsValue> {
-        let watch_report = watch_report_from_params(additions, removals).into_js()?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.new_block(
-                &mut cradle.allocator,
-                height,
-                &watch_report,
-            )
         })
     }
 
@@ -935,7 +882,7 @@ mod gaming_wasm {
         } else {
             None
         };
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_action_drain(cid, game_id.clone(), FailedGameAction::MakeMove, move |cradle: &mut JsGameSession| {
             let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.random());
             cradle.cradle.make_move(
                 &mut cradle.allocator,
@@ -1078,7 +1025,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn accept_settlement(cid: i32, id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_action_drain(cid, game_id.clone(), FailedGameAction::AcceptSettlement, move |cradle: &mut JsGameSession| {
             cradle
                 .cradle
                 .accept_settlement(&mut cradle.allocator, &game_id)
@@ -1095,13 +1042,43 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn abandon(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.abandon()
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn complete_outbound_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.complete_outbound_terminal_handoff()
+        })
+    }
+
+    fn terminal_handoff_command_to_js(command: &TerminalHandoffCommand) -> JsValue {
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &"id".into(), &JsValue::from_str(&command.id.to_string()));
+        let bytes = js_sys::Uint8Array::from(command.message.as_slice());
+        let _ = js_sys::Reflect::set(&obj, &"message".into(), &bytes);
+        obj.into()
+    }
+
+    #[wasm_bindgen]
+    pub fn pending_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            Ok(cradle
+                .cradle
+                .pending_terminal_handoff()
+                .as_ref()
+                .map(terminal_handoff_command_to_js)
+                .unwrap_or(JsValue::NULL))
+        })
+    }
+
+    #[wasm_bindgen]
     pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.go_on_chain(
-                &mut cradle.allocator,
-                &mut NullLocalUI,
-                false,
-            )
+            cradle.cradle.go_on_chain(&mut cradle.allocator, false).map(|_| ())
         })
     }
 
@@ -1174,7 +1151,9 @@ mod gaming_wasm {
 
     #[derive(Serialize)]
     struct JsCoinSpendRequest {
-        amount: u64,
+        /// Decimal rather than a JS number: wallet amounts are u64 and must not
+        /// cross the WASM boundary through IEEE-754.
+        amount: String,
         conditions: Vec<JsRawCoinCondition>,
         coin_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1190,7 +1169,7 @@ mod gaming_wasm {
 
     fn coin_spend_request_to_js(req: &CoinSpendRequest) -> JsCoinSpendRequest {
         JsCoinSpendRequest {
-            amount: req.amount.to_u64(),
+            amount: req.amount.to_u64().to_string(),
             conditions: req.conditions.iter().map(raw_condition_to_js).collect(),
             coin_id: req.coin_id.as_ref().map(|c| hex::encode(c.bytes())),
             max_height: req.max_height,
@@ -1270,6 +1249,10 @@ mod gaming_wasm {
                 let _ = js_sys::Reflect::set(&obj, &"OutboundMessage".into(), &arr);
                 Ok(obj.into())
             }
+            GameSessionEvent::OutboundTerminalMessage(_) => Err(types::Error::StrErr(
+                "OutboundTerminalMessage should be intercepted before JS event serialization"
+                    .to_string(),
+            )),
             GameSessionEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
@@ -1310,16 +1293,52 @@ mod gaming_wasm {
         Ok(events)
     }
 
-    fn manager_drain_to_js(drain: &ManagerDrain) -> Result<JsValue, types::Error> {
+    fn manager_drain_to_js(
+        drain: &ManagerDrain,
+        pending_terminal: Option<TerminalHandoffCommand>,
+        terminal: bool,
+        action_succeeded: bool,
+    ) -> Result<JsValue, types::Error> {
         let events = collect_drain_events(drain)?;
         let watch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.watch_coins))
+            .map_err(|e| types::Error::StrErr(e.to_string()))?;
+        let unwatch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.unwatch_coins))
             .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
-        if drain.terminal {
-            let _ = js_sys::Reflect::set(&obj, &"terminal".into(), &true.into());
+        let _ = js_sys::Reflect::set(&obj, &"unwatchCoins".into(), &unwatch_coins);
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"actionSucceeded".into(),
+            &action_succeeded.into(),
+        );
+        let disposition = js_sys::Object::new();
+        match pending_terminal {
+            None if !terminal => {
+                let _ = js_sys::Reflect::set(&disposition, &"kind".into(), &"active".into());
+            }
+            Some(command) => {
+                let _ = js_sys::Reflect::set(
+                    &disposition,
+                    &"kind".into(),
+                    &"await-outbound-terminal".into(),
+                );
+                let _ = js_sys::Reflect::set(
+                    &disposition,
+                    &"command".into(),
+                    &terminal_handoff_command_to_js(&command),
+                );
+            }
+            None => {
+                let _ = js_sys::Reflect::set(
+                    &disposition,
+                    &"kind".into(),
+                    &"terminal".into(),
+                );
+            }
         }
+        let _ = js_sys::Reflect::set(&obj, &"disposition".into(), &disposition);
         Ok(obj.into())
     }
 
@@ -1327,17 +1346,48 @@ mod gaming_wasm {
     where
         F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
     {
+        with_game_drain_context(cid, None, f)
+    }
+
+    fn with_game_action_drain<F>(
+        cid: i32,
+        game_id: GameID,
+        action: FailedGameAction,
+        f: F,
+    ) -> Result<JsValue, JsValue>
+    where
+        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+    {
+        with_game_drain_context(cid, Some((game_id, action)), f)
+    }
+
+    fn with_game_drain_context<F>(
+        cid: i32,
+        action_context: Option<(GameID, FailedGameAction)>,
+        f: F,
+    ) -> Result<JsValue, JsValue>
+    where
+        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+    {
         with_game(cid, move |cradle: &mut JsGameSession| {
-            if let Err(e) = f(cradle) {
-                let reason = format!("{e:?}");
-                cradle.cradle.push_event(GameSessionEvent::Notification(
-                    GameNotification::ActionFailed {
-                        reason,
-                    },
-                ));
-            }
+            let action_succeeded = match f(cradle) {
+                Ok(()) => true,
+                Err(e) => {
+                    let reason = format!("{e:?}");
+                    cradle.cradle.push_event(GameSessionEvent::Notification(
+                        GameNotification::ActionFailed {
+                            id: action_context.as_ref().map(|(id, _)| id.clone()),
+                            action: action_context.as_ref().map(|(_, action)| *action),
+                            reason,
+                        },
+                    ));
+                    false
+                }
+            };
             let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            manager_drain_to_js(&dr)
+            let pending_terminal = cradle.cradle.pending_terminal_handoff();
+            let terminal = cradle.cradle.is_fully_resolved();
+            manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)
         })
     }
 
@@ -1396,57 +1446,6 @@ mod gaming_wasm {
         }
 
         hex::decode(hex_with_prefix).into_js()
-    }
-
-    #[wasm_bindgen]
-    pub fn convert_coinset_org_block_spend_to_watch_report(
-        parent_coin_info: &str,
-        puzzle_hash: &str,
-        amount: u64,
-        puzzle_reveal: &str,
-        solution: &str,
-    ) -> Result<JsValue, JsValue> {
-        let mut allocator = AllocEncoder::new();
-        let converted_spend = convert_coinset_org_spend_to_spend(
-            parent_coin_info,
-            puzzle_hash,
-            amount,
-            puzzle_reveal,
-            solution,
-        )
-        .into_js()?;
-        let puzzle_reveal_node = converted_spend
-            .bundle
-            .puzzle
-            .to_program()
-            .to_nodeptr(&mut allocator)
-            .into_js()?;
-        let solution_node = converted_spend
-            .bundle
-            .solution
-            .to_nodeptr(&mut allocator)
-            .into_js()?;
-        let coin_string = &converted_spend.coin;
-        let parent_of_created = coin_string.to_coin_id();
-        let run_output = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            puzzle_reveal_node,
-            solution_node,
-            11_000_000_000,
-        )
-        .into_gen()
-        .into_js()?;
-        let conditions = CoinCondition::from_nodeptr(&allocator, run_output.1).into_js()?;
-        let mut watch_result = WatchReport::default();
-        watch_result.deleted_watched.insert(coin_string.clone());
-        for condition in conditions.into_iter() {
-            if let CoinCondition::CreateCoin(ph, amt) = condition {
-                let new_coin = CoinString::from_parts(&parent_of_created, &ph, &amt);
-                watch_result.created_watched.insert(new_coin);
-            }
-        }
-        serde_wasm_bindgen::to_value(&watch_report_to_js(&watch_result)).into_js()
     }
 
     #[wasm_bindgen]

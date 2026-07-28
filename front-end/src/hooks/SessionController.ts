@@ -13,6 +13,7 @@ import {
   ProposeGameParams,
   BlockchainInboundAddressResult,
   WasmEvent,
+  NeedCoinSpendRequest,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import {
@@ -37,7 +38,6 @@ export interface WasmFields {
   pairingToken: string;
   messageNumber: bigint;
   remoteNumber: bigint;
-  channelReady: boolean;
   iStarted: boolean;
   myContribution: string;
   theirContribution: string;
@@ -45,9 +45,7 @@ export interface WasmFields {
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   wasmNotificationHistory: string[];
   diagnosticLog: string[];
-  historicalUnrollCount: bigint | undefined;
   durabilityWarning: string | undefined;
-  activeGameId: string | null;
   activeGameIds: string[];
   handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
@@ -65,6 +63,19 @@ const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
+/** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
+const ACTIVE_DRAIN_EVENT_BUDGET = 100;
+
+function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
+  return status === 'Active'
+    || status === 'ShuttingDown'
+    || status === 'ShutdownTransactionPending'
+    || status === 'GoingOnChain'
+    || status === 'Unrolling'
+    || status === 'ResolvedClean'
+    || status === 'ResolvedUnrolled'
+    || status === 'ResolvedStale';
+}
 
 function extractErrorMessage(e: unknown): string {
   if (e instanceof Error) {
@@ -99,6 +110,10 @@ export class SessionController implements PollingGameSession {
   sendAck: (ackMsgno: bigint) => boolean;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
+  private transactionPublishNerfPolicy: ((
+    nerfed: boolean,
+    apply: (nerfed: boolean) => void,
+  ) => void) | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private lastUnackedResendAt = 0;
@@ -121,7 +136,14 @@ export class SessionController implements PollingGameSession {
   private eventQueue: GameSessionEvent[] = [];
   private drainScheduled = false;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingCoinStates: { peak: bigint; records: CoinStateRecord[] } | null = null;
+  private pendingChainObservations: Array<
+    | { kind: 'coin-states'; peak: bigint; records: CoinStateRecord[] }
+    | { kind: 'height'; peak: bigint }
+  > = [];
+  private resubmitAfterChainSync = false;
+  // Null means blockchain attachment preceded asynchronous cradle restore, so
+  // the restored manager has not yet told us whether a coin snapshot is needed.
+  private resubmitNeedsCoinSnapshot: boolean | null = null;
   launcherProvided: boolean;
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
@@ -145,7 +167,9 @@ export class SessionController implements PollingGameSession {
   private pendingAcks: bigint[] = [];
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
-  activeGameId: string | null = null;
+  private protocolStopped = false;
+  private retired = false;
+  private terminalHandoff: { id: string; msgno: bigint; sent: boolean; acknowledged: boolean } | null = null;
   activeGameIds: string[] = [];
   private _handState!: PersistedGameState | null;
   lastChannelStatus: ChannelStatusPayload | null = null;
@@ -225,9 +249,11 @@ export class SessionController implements PollingGameSession {
       blockchain.attachGameSession(this);
       this.blockchainAttached = true;
     }
+    this.resubmitAfterChainSync = true;
+    this.resubmitNeedsCoinSnapshot = this.cradle
+      ? this.snapshotWatchedCoins().length > 0
+      : null;
     this.flushPendingCoinStates();
-    this.cradle?.resubmit_submitted();
-    this.drainAndSubmitTransactions();
   }
 
   detachBlockchain(blockchain: BlockchainPoller) {
@@ -243,7 +269,19 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    this.retired = true;
     this.cleanShutdownCalled = true;
+    // Retirement is not a manager terminal disposition: detach this session
+    // without stopping a shared poller, but make any in-flight active drain
+    // inert immediately.
+    this.protocolStopped = true;
+    this.terminalHandoff = null;
+    this.eventQueue = [];
+    this.pendingOutboundSends = [];
+    this.pendingAcks = [];
+    this.unackedMessages = [];
+    this.reorderQueue.clear();
+    this.needsImmediateDurability = false;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
@@ -261,7 +299,6 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    this.drainScheduled = false;
     void this.flushDurabilityAndSend();
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
@@ -305,6 +342,13 @@ export class SessionController implements PollingGameSession {
   getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
   isChannelReady(): boolean { return this.channelReady; }
+
+  isOffChainActive(): boolean { return this.lastChannelStatus?.state === 'Active'; }
+
+  restoreChannelStatus(status: ChannelStatusPayload | null): void {
+    this.lastChannelStatus = status;
+    this.channelReady = status !== null && isActivatedChannelStatus(status.state);
+  }
 
   getObservable() {
     return this.rxjsMessageSingleton;
@@ -369,7 +413,18 @@ export class SessionController implements PollingGameSession {
 
   setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
-    this.blockchain?.snapshotGameSessionCoinInterest(this);
+    const command = cradle.pendingTerminalHandoff();
+    if (command) this.queueTerminalHandoff(command);
+    // A blockchain attach may have happened while asynchronous restore had no
+    // cradle. The restored transaction manager's watch snapshot—not that empty
+    // pre-restore state—decides whether height-only sync can resubmit.
+    if (this.resubmitAfterChainSync) {
+      const watchedCoins = this.snapshotWatchedCoins();
+      this.resubmitNeedsCoinSnapshot = watchedCoins.length > 0;
+      this.blockchain?.snapshotGameSessionCoinInterest(this, watchedCoins);
+    } else {
+      this.blockchain?.snapshotGameSessionCoinInterest(this);
+    }
     this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
@@ -384,10 +439,17 @@ export class SessionController implements PollingGameSession {
   }
 
   private flushPendingCoinStates() {
-    if (this.pendingCoinStates) {
-      const { peak, records } = this.pendingCoinStates;
-      this.pendingCoinStates = null;
-      this.deliverCoinStates(peak, records);
+    // Poller attachment can precede asynchronous WASM restore. Retain raw
+    // observations until setGameSession installs the cradle that consumes them.
+    if (!this.cradle) return;
+    const observations = this.pendingChainObservations;
+    this.pendingChainObservations = [];
+    for (const observation of observations) {
+      if (observation.kind === 'coin-states') {
+        this.deliverCoinStates(observation.peak, observation.records);
+      } else {
+        this.deliverHeight(observation.peak);
+      }
     }
   }
 
@@ -431,7 +493,7 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  private async handleNeedCoinSpend(request: any) {
+  private async handleNeedCoinSpend(request: NeedCoinSpendRequest) {
     const blockchain = this.blockchain;
     if (!blockchain) {
       this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
@@ -439,12 +501,12 @@ export class SessionController implements PollingGameSession {
     }
     try {
       const offerAmount = -BigInt(request.amount);
-      const extraConditions = (request.conditions || []).map((c: any) => ({
-        opcode: BigInt(c.opcode),
-        args: c.args,
+      const extraConditions = request.conditions.map(({ opcode, args }) => ({
+        opcode: BigInt(opcode),
+        args,
       }));
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
-      const maxHeight = request.max_height != null ? BigInt(request.max_height) : undefined;
+      const maxHeight = request.max_height === undefined ? undefined : BigInt(request.max_height);
 
       const bundle = await blockchain.rpc.createOfferForIds(
         this.uniqueId,
@@ -550,7 +612,17 @@ export class SessionController implements PollingGameSession {
     // this promise is invisible in CI except as a bare empty-message test
     // failure, which is exactly the symptom we are chasing.
     this.transactionSubmitQueue = this.transactionSubmitQueue
-      .then(() => this.submitTransactionNow(tx))
+      .then(() => {
+        if (this.retired) {
+          log('[wasm] submitTransaction dropped because controller is retired');
+          return;
+        }
+        if (this.transactionPublishNerfed) {
+          log('[wasm] submitTransaction dropped because publishing is nerfed');
+          return;
+        }
+        return this.submitTransactionNow(tx);
+      })
       .catch((e) => { diagStack('transactionSubmitQueue rejected', e); });
   }
 
@@ -578,23 +650,68 @@ export class SessionController implements PollingGameSession {
     if (result === undefined) {
       throw new Error('cradle returned no WasmResult');
     }
+    if (this.protocolStopped) {
+      return;
+    }
+
+    const disposition = result.disposition ?? { kind: 'active' as const };
+    const terminal = disposition.kind === 'terminal';
+    if (terminal) {
+      this.stopProtocolWork();
+    }
 
     const blockchain = this.blockchain;
-    for (const coin of result.watchCoins || []) {
-      blockchain?.watchCoin(this, coin);
+    if (!terminal) {
+      for (const coin of result.watchCoins || []) {
+        blockchain?.watchCoin(this, coin);
+      }
+      for (const coin of result.unwatchCoins || []) {
+        blockchain?.unwatchCoin(this, coin);
+      }
     }
     for (const event of result.events || []) {
-      this.eventQueue.push(event);
+      if (!terminal || this.isTerminalPresentationEvent(event)) {
+        this.eventQueue.push(event);
+      }
+    }
+    if (disposition.kind === 'await-outbound-terminal') {
+      this.queueTerminalHandoff(disposition.command);
     }
 
+    // A terminal manager drain can still contain already-queued on-chain
+    // submissions (for example a mature timeout claim). Actual abandonment
+    // clears that queue in Rust before it reaches this boundary.
     this.drainAndSubmitTransactions();
-    this.scheduleDrain();
-
-    if (result.terminal) {
-      this.blockchain?.stop();
-      this.stopKeepaliveTimer();
-      this.rxjsEmitter?.next({ type: 'terminal' });
+    if (terminal) {
+      this.flushDeferredWork();
+      return;
     }
+    this.scheduleDrain();
+  }
+
+  private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
+    return 'Notification' in event || 'Log' in event || 'ReceiveError' in event;
+  }
+
+  private stopProtocolWork(): void {
+    this.protocolStopped = true;
+    this.blockchain?.stop();
+    this.stopKeepaliveTimer();
+    this.terminalHandoff = null;
+    // A terminal drain is a replacement boundary, not an append-only update:
+    // an older queued status must never render after the terminal result.
+    this.eventQueue = [];
+    this.pendingOutboundSends = [];
+    this.pendingAcks = [];
+    this.unackedMessages = [];
+    this.storedMessages = [];
+    this.reorderQueue.clear();
+    this.needsImmediateDurability = false;
+    if (this.durabilityFlushTimer) {
+      clearTimeout(this.durabilityFlushTimer);
+      this.durabilityFlushTimer = null;
+    }
+    this.durabilityFlushScheduled = false;
   }
 
   private scheduleDrain(): void {
@@ -602,10 +719,35 @@ export class SessionController implements PollingGameSession {
     this.drainScheduled = true;
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
-      this.drainScheduled = false;
-      this.drainOneEvent();
-      this.scheduleDrain();
+      this.drainActiveEventsToQuiescence();
     }, 0);
+  }
+
+  /**
+   * Preserve the macrotask boundary before a normal drain, then consume every
+   * synchronously appended active event in that same task. Keeping
+   * `drainScheduled` set while dispatching makes re-entrant active
+   * `processResult()` calls append to this FIFO rather than schedule a second
+   * task. Terminal results retain their separate queue-clearing flush path.
+   */
+  private drainActiveEventsToQuiescence(): void {
+    try {
+      let drained = 0;
+      while (
+        this.eventQueue.length > 0
+        && !this.protocolStopped
+        && !this.retired
+        && drained < ACTIVE_DRAIN_EVENT_BUDGET
+      ) {
+        this.drainOneEvent();
+        drained += 1;
+      }
+    } finally {
+      this.drainScheduled = false;
+    }
+    if (this.eventQueue.length > 0 && !this.protocolStopped && !this.retired) {
+      this.scheduleDrain();
+    }
   }
 
   private drainOneEvent(): void {
@@ -617,7 +759,9 @@ export class SessionController implements PollingGameSession {
       diagStack('dispatchEvent error', e);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
-    this.scheduleSave();
+    if (!this.retired) {
+      this.scheduleSave();
+    }
   }
 
   flushDeferredWork(): void {
@@ -664,9 +808,25 @@ export class SessionController implements PollingGameSession {
     throw new Error('SessionController pending work did not settle');
   }
 
+  private queueTerminalHandoff(command: { id: string; message: Uint8Array }): void {
+    if (this.terminalHandoff?.id === command.id) return;
+    const existing = this.unackedMessages.find(({ msg }) =>
+      msg.length === command.message.length
+      && msg.every((byte, index) => byte === command.message[index]),
+    );
+    const msgno = existing?.msgno ?? this.messageNumber++;
+    if (!existing) {
+      this.unackedMessages.push({ msgno, msg: command.message });
+      this.pendingOutboundSends.push({ msgno, msg: command.message });
+      this.markNeedsImmediateDurability();
+      this.scheduleDurabilityFlush();
+    }
+    this.terminalHandoff = { id: command.id, msgno, sent: false, acknowledged: false };
+  }
+
   private dispatchEvent(event: GameSessionEvent): void {
     if ('OutboundMessage' in event) {
-      if (this.onChain) return;
+      if (this.protocolStopped || this.onChain) return;
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
       this.pendingOutboundSends.push({ msgno, msg: event.OutboundMessage });
@@ -682,15 +842,13 @@ export class SessionController implements PollingGameSession {
           // array (exempt from the save-time number check, stored losslessly as
           // $bytes) rather than a degraded plain array/object of numbers.
           this.lastChannelStatus = { ...cs, coin: coerceToBytes(cs.coin) } as unknown as ChannelStatusPayload;
-          if (!this.channelReady && cs.state === 'Active') {
-            log('[wasm] channel confirmed on-chain');
+          if (cs.state === 'Active') {
             this.channelReady = true;
           }
         }
       }
       if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
         const acceptedId = String(n.ProposalAccepted.id);
-        this.activeGameId = acceptedId;
         if (!this.activeGameIds.includes(acceptedId)) {
           this.activeGameIds.push(acceptedId);
         }
@@ -700,10 +858,11 @@ export class SessionController implements PollingGameSession {
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
           const endedId = gs.id != null ? String(gs.id) : null;
           this.activeGameIds = this.activeGameIds.filter(id => id !== endedId);
-          if (this.activeGameIds.length === 0) {
-            this.activeGameId = null;
-          }
         }
+      }
+      if (tag === 'GameSettled' && n.GameSettled) {
+        const settledId = String(n.GameSettled.id);
+        this.activeGameIds = this.activeGameIds.filter(id => id !== settledId);
       }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
@@ -750,7 +909,7 @@ export class SessionController implements PollingGameSession {
         await new Promise(r => setTimeout(r, 5000));
         ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
       }
-      if (this.cradle) {
+      if (!this.protocolStopped && this.cradle) {
         const result = ps
           ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
           : this.cradle.report_puzzle_and_solution(coinHex, undefined, undefined);
@@ -766,6 +925,13 @@ export class SessionController implements PollingGameSession {
   // --- Inbound events ---
 
   deliverMessage(msgno: bigint, msg: Uint8Array) {
+    if (this.retired) return;
+    // Terminal Rust state must not consume peer protocol messages, but the host
+    // still acknowledges their transport delivery so the peer can retire them.
+    if (this.protocolStopped) {
+      this.sendAck(msgno);
+      return;
+    }
     this.notePeerActivity();
     if (this.onChain) {
       this.sendAck(msgno);
@@ -806,12 +972,9 @@ export class SessionController implements PollingGameSession {
       const errMsg = extractErrorMessage(e);
       diagStack('deliver_message failed', e);
       this.rxjsEmitter?.next({ type: 'error', error: errMsg });
-      const state = this.lastChannelStatus?.state;
-      const resolved = state === 'ResolvedClean' || state === 'ResolvedUnrolled'
-        || state === 'ResolvedStale' || state === 'Failed';
-      if (!this.onChain && !resolved) {
-        this.goOnChain();
-      }
+      // Rust owns the outcome of a transport failure: its Go On-Chain path may
+      // begin resolution or convert a zero-payout shutdown into abandonment.
+      this.goOnChain();
       return;
     }
     this.pendingAcks.push(msgno);
@@ -828,15 +991,28 @@ export class SessionController implements PollingGameSession {
   }
 
   receiveAck(ackMsgno: bigint) {
+    if (this.retired) return;
     this.notePeerActivity();
+    const terminalCommand = this.terminalHandoff;
+    const terminalAcknowledged = terminalCommand
+      && terminalCommand.sent
+      && ackMsgno >= terminalCommand.msgno;
     const before = this.unackedMessages.length;
-    this.unackedMessages = this.unackedMessages.filter(m => m.msgno > ackMsgno);
+    this.unackedMessages = this.unackedMessages.filter(m =>
+      m.msgno > ackMsgno
+      || (terminalCommand?.msgno === m.msgno && !terminalCommand.sent),
+    );
     if (this.unackedMessages.length !== before) {
       this.scheduleSave();
     }
+    if (terminalAcknowledged) {
+      this.terminalHandoff = { ...terminalCommand, acknowledged: true };
+      this.completeOutboundTerminalHandoffAfterAck(terminalCommand.id);
+    }
   }
 
-  resendUnacked() {
+  resendUnacked(): boolean {
+    if (this.protocolStopped) return false;
     // Hub reconnect / peer keepalive: also retry acks and outbound that failed
     // while the WS was closed (those sit in pending* with needsImmediateDurability,
     // not in unackedMessages).
@@ -847,16 +1023,18 @@ export class SessionController implements PollingGameSession {
     ) {
       this.scheduleDurabilityFlush();
     }
-    if (this.unackedMessages.length === 0) return;
+    if (this.unackedMessages.length === 0) return true;
     const now = Date.now();
-    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return;
+    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return false;
     this.lastUnackedResendAt = now;
     for (const { msgno, msg } of this.unackedMessages) {
       if (!this.sendMessage(msgno, msg)) {
         log(`[wasm] resendUnacked: hub send failed for msgno=${msgno}`);
-        break;
+        return false;
       }
+      this.noteTerminalHandoffSent(msgno);
     }
+    return true;
   }
 
   // --- PollingGameSession: driven by the BlockchainPoller ---
@@ -873,23 +1051,31 @@ export class SessionController implements PollingGameSession {
 
   reportCoinStates(peak: bigint, records: CoinStateRecord[]) {
     if (!this.cradle) {
-      this.pendingCoinStates = { peak, records };
+      this.pendingChainObservations.push({ kind: 'coin-states', peak, records });
       return;
     }
     this.deliverCoinStates(peak, records);
   }
 
-  // Deliver a height tick with no coin-state change (empty delta).  Drives the
-  // handshake's new_block(height) immediately, decoupled from the full
-  // coin-records snapshot in reportCoinStates.  When the cradle isn't ready yet
-  // there is nothing to advance; the pending coin-state path delivers once it is.
   reportNewBlock(peak: bigint) {
-    if (!this.cradle) return;
+    if (!this.cradle) {
+      this.pendingChainObservations.push({ kind: 'height', peak });
+      return;
+    }
+    this.deliverHeight(peak);
+  }
+
+  private deliverHeight(peak: bigint) {
+    log(`[wasm] height-only observation height=${peak}`);
+    if (!this.cradle) {
+      throw new Error('deliverHeight called without cradle');
+    }
     try {
-      const result = this.cradle.new_block(peak);
-      this.processResult(result);
+      this.processResult(this.cradle.report_height(peak));
+      if (this.resubmitNeedsCoinSnapshot === false) this.resubmitAfterFreshChainSync();
     } catch (e) {
-      diagStack('new_block failed', e);
+      diagStack('report_height failed', e);
+      log(`[wasm] report_height failed: ${String(e)}`);
     }
   }
 
@@ -901,10 +1087,19 @@ export class SessionController implements PollingGameSession {
     try {
       const result = this.cradle.report_coin_states(peak, records);
       this.processResult(result);
+      this.resubmitNeedsCoinSnapshot = false;
+      this.resubmitAfterFreshChainSync();
     } catch (e) {
       diagStack('report_coin_states failed', e);
       log(`[wasm] report_coin_states failed: ${String(e)}`);
     }
+  }
+
+  private resubmitAfterFreshChainSync() {
+    if (!this.resubmitAfterChainSync || this.protocolStopped || !this.cradle) return;
+    this.resubmitAfterChainSync = false;
+    this.cradle.resubmit_submitted();
+    this.drainAndSubmitTransactions();
   }
 
   // --- Persistence ---
@@ -944,11 +1139,13 @@ export class SessionController implements PollingGameSession {
   }
 
   private markNeedsImmediateDurability() {
+    if (this.protocolStopped) return;
     this.needsImmediateDurability = true;
     this.scheduleDurabilityFlush();
   }
 
   private scheduleDurabilityFlush() {
+    if (this.protocolStopped) return;
     if (this.durabilityFlushScheduled) return;
     this.durabilityFlushScheduled = true;
     const timer = setTimeout(() => {
@@ -974,6 +1171,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private async performDurabilityFlushAndSend(): Promise<void> {
+    if (this.protocolStopped) return;
     if (!this.needsImmediateDurability && this.pendingOutboundSends.length === 0 && this.pendingAcks.length === 0) {
       return;
     }
@@ -987,9 +1185,9 @@ export class SessionController implements PollingGameSession {
       if (!this.onSaveNeeded) {
         throw new Error('Session persistence callback is unavailable at a protocol delivery boundary');
       }
-      const saveRequest = Promise.resolve(this.onSaveNeeded());
-      void saveRequest.catch(() => {});
       try {
+        const saveRequest = Promise.resolve(this.onSaveNeeded());
+        void saveRequest.catch(() => {});
         // onSaveNeeded must update the in-memory session synchronously before
         // returning its Promise (see flushPendingSave). Flushing first then
         // persists that snapshot; awaiting the Promise only waits for the
@@ -998,7 +1196,7 @@ export class SessionController implements PollingGameSession {
         await saveRequest;
       } catch (error) {
         const detail = extractErrorMessage(error);
-        const warning = `Session storage failed: ${detail}. Protocol messages remain queued and will not be sent until storage succeeds.`;
+        const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
         if (this.durabilityWarning !== warning) {
           this.durabilityWarning = warning;
           this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
@@ -1006,6 +1204,7 @@ export class SessionController implements PollingGameSession {
         throw error;
       }
 
+      if (this.protocolStopped) return;
       const outbound = this.pendingOutboundSends.splice(0, outboundCount);
       const acks = this.pendingAcks.splice(0, ackCount);
       const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
@@ -1013,6 +1212,8 @@ export class SessionController implements PollingGameSession {
       for (const item of outbound) {
         if (!this.sendMessage(item.msgno, item.msg)) {
           failedOutbound.push(item);
+        } else {
+          this.noteTerminalHandoffSent(item.msgno);
         }
       }
       for (const ack of acks) {
@@ -1037,6 +1238,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
 
+    if (this.protocolStopped) return;
     const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
     const acks = this.pendingAcks.splice(0, this.pendingAcks.length);
     const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
@@ -1044,6 +1246,8 @@ export class SessionController implements PollingGameSession {
     for (const item of outbound) {
       if (!this.sendMessage(item.msgno, item.msg)) {
         failedOutbound.push(item);
+      } else {
+        this.noteTerminalHandoffSent(item.msgno);
       }
     }
     for (const ack of acks) {
@@ -1059,6 +1263,31 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  private completeOutboundTerminalHandoffAfterAck(commandId: string): void {
+    if (this.terminalHandoff?.id !== commandId) return;
+    if (!this.cradle) {
+      throw new Error('WASM cradle is unavailable for cooperative terminal handoff');
+    }
+    try {
+      const result = this.cradle.completeOutboundTerminalHandoff();
+      if ((result?.disposition?.kind ?? 'active') !== 'terminal') {
+        throw new Error('cooperative terminal handoff did not produce a terminal result');
+      }
+      this.terminalHandoff = null;
+      this.processResult(result);
+    } catch (error) {
+      const message = extractErrorMessage(error);
+      diagStack('complete terminal handoff failed', error);
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+    }
+  }
+
+  private noteTerminalHandoffSent(msgno: bigint): void {
+    if (this.terminalHandoff?.msgno === msgno) {
+      this.terminalHandoff = { ...this.terminalHandoff, sent: true };
+    }
+  }
+
   getWasmFields(): WasmFields | null {
     // Null means the cradle is not loaded yet (e.g. mid-restore). Serialize
     // failures must throw so callers like durability flush do not treat a
@@ -1071,7 +1300,6 @@ export class SessionController implements PollingGameSession {
       pairingToken: this.pairingToken,
       messageNumber: this.messageNumber,
       remoteNumber: this.remoteNumber,
-      channelReady: this.channelReady,
       iStarted: this.iStarted,
       myContribution: this.myContribution.toString(),
       theirContribution: this.theirContribution.toString(),
@@ -1082,9 +1310,7 @@ export class SessionController implements PollingGameSession {
         WASM_NOTIFICATION_HISTORY_LIMIT,
       ),
       diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
-      historicalUnrollCount: this.cradle.historical_unroll_count?.(),
       durabilityWarning: this.durabilityWarning,
-      activeGameId: this.activeGameId,
       activeGameIds: [...this.activeGameIds],
       handState: this.handState,
       channelStatus: this.lastChannelStatus,
@@ -1116,6 +1342,16 @@ export class SessionController implements PollingGameSession {
 
   setHandState(state: PersistedGameState | null) {
     this.handState = state;
+    this.scheduleSave();
+  }
+
+  /**
+   * Game IDs and hand state are host-side presentation state. An abandoned
+   * session has no per-game terminal events to retire them individually.
+   */
+  clearDerivedGamePresentation(): void {
+    this.activeGameIds = [];
+    this.handState = null;
     this.scheduleSave();
   }
 
@@ -1177,7 +1413,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'game-action-error', gameId, action: 'make-move', error: msg });
     }
   }
 
@@ -1189,7 +1425,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'game-action-error', gameId, action: 'accept-settlement', error: msg });
     }
   }
 
@@ -1220,23 +1456,66 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  goOnChain(): void {
+  abandon(): void {
+    if (!this.cradle) return;
+    try {
+      this.processResult(this.cradle.abandon());
+    } catch (e) {
+      const msg = e instanceof Error ? (e.stack || e.message)
+        : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
+        : String(e);
+      console.error('[wasm] abandon failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
+  }
+
+  goOnChain(): boolean {
     if (!this.cradle) throw new Error('no cradle');
-    this.onChain = true;
     try {
       const result = this.cradle.go_on_chain();
+      const startedOnChain = result?.actionSucceeded === true
+        && result.disposition?.kind === 'active';
+      this.onChain = startedOnChain;
       this.processResult(result);
+      return startedOnChain;
     } catch (e) {
+      this.onChain = false;
       const msg = e instanceof Error ? (e.stack || e.message)
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] goOnChain failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      return false;
     }
   }
 
+  isTransactionPublishNerfed(): boolean {
+    return this.transactionPublishNerfed;
+  }
+
+  setTransactionPublishNerfPolicy(
+    policy: (nerfed: boolean, apply: (nerfed: boolean) => void) => void,
+  ): void {
+    this.transactionPublishNerfPolicy = policy;
+  }
+
+  setTransactionPublishNerfed(nerfed: boolean): void {
+    if (this.transactionPublishNerfPolicy) {
+      this.transactionPublishNerfPolicy(
+        nerfed,
+        (value) => this.applyTransactionPublishNerfed(value),
+      );
+      return;
+    }
+    this.applyTransactionPublishNerfed(nerfed);
+  }
+
+  private applyTransactionPublishNerfed(nerfed: boolean): void {
+    this.transactionPublishNerfed = nerfed;
+    log(`[wasm] transaction publish ${nerfed ? 'nerfed' : 'enabled'}`);
+  }
+
   nerf(): void {
-    this.transactionPublishNerfed = true;
-    log('[wasm] transaction publish nerfed');
+    this.setTransactionPublishNerfed(true);
   }
 }

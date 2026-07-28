@@ -1,4 +1,4 @@
-import { CardRenderProps } from '../../../../types/californiaPoker';
+import { CardRenderProps } from '../../types';
 import { SUIT_COLORS, HALO_FADE_DURATION_MS } from '../constants/constants';
 import CardContent from './CardContent';
 

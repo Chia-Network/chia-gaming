@@ -1,11 +1,11 @@
 import {
   isRestoreBlocked,
-  isTerminalChannelStatus,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
+  shouldReportSessionPhase,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -27,21 +27,21 @@ describe('restore lifecycle gates', () => {
     expect(shouldAdvertiseAvailable('off-chain', false)).toBe(false);
   });
 
+  it('defers a persisted resolved phase until restoration is authoritative', () => {
+    // The first resolved projection comes from the save and must not tear down
+    // the live controller before both restore and hub reconciliation complete.
+    expect(shouldReportSessionPhase('resolved', true, false)).toBe(false);
+
+    // Once the restore gate opens, report the current authoritative phase once.
+    expect(shouldReportSessionPhase('resolved', false, false)).toBe(true);
+    expect(shouldReportSessionPhase('resolved', false, true)).toBe(false);
+  });
+
   it('keeps hub presence busy until the session is resolved', () => {
     expect(shouldReportHubBusy('none')).toBe(false);
     expect(shouldReportHubBusy('resolved')).toBe(false);
     expect(shouldReportHubBusy('off-chain')).toBe(true);
     expect(shouldReportHubBusy('on-chain')).toBe(true);
-  });
-
-  it('recognizes terminal channel states that must not keep the hub busy', () => {
-    expect(isTerminalChannelStatus('Failed')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedClean')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedUnrolled')).toBe(true);
-    expect(isTerminalChannelStatus('ResolvedStale')).toBe(true);
-    expect(isTerminalChannelStatus('Active')).toBe(false);
-    expect(isTerminalChannelStatus('Handshaking')).toBe(false);
-    expect(isTerminalChannelStatus(null)).toBe(false);
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
@@ -51,6 +51,7 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OurWalletMakingOffer')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent', true)).toBe(false);
   });
 
   it('awaits a pending clean-shutdown transaction instead of escalating on-chain', () => {

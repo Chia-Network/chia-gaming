@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -9,21 +9,16 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
 use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
-use crate::common::standard_coin::{
-    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
-};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, PrivateKey,
-    Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::game_session::{
-    report_coin_changes_to_peer, CoinReportPhase, FullCoinSetAdapter, GameSession,
-    GameSessionConfig, MessagePeerQueue, MessagePipe, PeerLifecyclePhase, WatchEntry, WatchReport,
-};
+use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
-    apply_effects, CancelReason, ChannelStatus, Effect, GameNotification, GameSessionEvent,
-    GameStatusKind, SettlementOutcome,
+    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind,
+    SettlementOutcome, UnrollInitiator,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -31,22 +26,14 @@ use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
-use crate::session_phases::OffChainPhase;
 use crate::transaction_manager::TransactionManager;
 use crate::utils::proper_list;
 
 use crate::simulator::Simulator;
 use crate::test_support::calpoker_sim::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{make_debug_games, DebugGameCurry};
-use crate::test_support::peer::peer_harness::run_move;
 use crate::test_support::sim_script::{ProposeTrigger, SimScriptAction};
 use crate::utils::pair_of_array_mut;
-
-// potato handler tests with simulator.
-#[derive(Default)]
-struct SimulatedWalletSpend {
-    watching_coins: HashMap<CoinString, WatchEntry>,
-}
 
 #[derive(Default)]
 pub struct SimulatedPeer {
@@ -59,8 +46,6 @@ pub struct SimulatedPeer {
     outbound_transactions: Vec<SpendBundle>,
 
     messages: Vec<ReadableMove>,
-
-    simulated_wallet_spend: SimulatedWalletSpend,
 }
 
 impl MessagePeerQueue for SimulatedPeer {
@@ -76,91 +61,6 @@ impl MessagePeerQueue for SimulatedPeer {
     fn get_unfunded_offer(&self) -> Option<SpendBundle> {
         self.unfunded_offer.clone()
     }
-}
-
-/// Check the reported coins vs the current coin set and report changes.
-pub fn update_and_report_coins<'a>(
-    allocator: &mut AllocEncoder,
-    coinset_adapter: &mut FullCoinSetAdapter,
-    peers: &mut [OffChainPhase; 2],
-    pipes: &'a mut [SimulatedPeer; 2],
-    simulator: &'a mut Simulator,
-) -> Result<WatchReport, Error> {
-    let current_height = simulator.get_current_height();
-    let current_coins = simulator.get_all_coins()?;
-    let watch_report =
-        coinset_adapter.make_report_from_coin_set_update(current_height as u64, &current_coins)?;
-
-    for who in 0..=1 {
-        {
-            let mut env = ChannelEnv::new(allocator).expect("should work");
-            let mut reported_effects = report_coin_changes_to_peer(
-                &mut env,
-                &mut peers[who],
-                &watch_report,
-                CoinReportPhase::Created,
-            )?;
-            reported_effects.extend(report_coin_changes_to_peer(
-                &mut env,
-                &mut peers[who],
-                &watch_report,
-                CoinReportPhase::Spent,
-            )?);
-            apply_effects(reported_effects, allocator, &mut pipes[who])?;
-        }
-    }
-
-    Ok(watch_report)
-}
-
-fn handle_received_channel_puzzle_hash(
-    env: &mut ChannelEnv<'_>,
-    identity: &ChiaIdentity,
-    peer: &mut OffChainPhase,
-    parent: &CoinString,
-    channel_handler_puzzle_hash: &PuzzleHash,
-) -> Result<Vec<Effect>, Error> {
-    let ch = peer.channel_state()?;
-    let channel_coin = ch.channel_coin();
-    let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
-        amt
-    } else {
-        return Err(Error::StrErr("no channel coin".to_string()));
-    };
-
-    let conditions_clvm = [(
-        CREATE_COIN,
-        (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
-    )]
-    .to_clvm(env.allocator)
-    .into_gen()?;
-
-    let spend = standard_solution_partial(
-        env.allocator,
-        &identity.synthetic_private_key,
-        &parent.to_coin_id(),
-        conditions_clvm,
-        &identity.synthetic_public_key,
-        &env.agg_sig_me_additional_data,
-        false,
-    )
-    .expect("ssp 1");
-
-    peer.channel_offer(
-        env,
-        SpendBundle {
-            name: None,
-            spends: vec![CoinSpend {
-                coin: parent.clone(),
-                bundle: Spend {
-                    puzzle: identity.puzzle.clone(),
-                    solution: spend.solution.clone(),
-                    signature: spend.signature.clone(),
-                },
-            }],
-        },
-    )
-    .map(|effect| effect.into_iter().collect::<Vec<_>>())
 }
 
 fn build_wallet_bundle_for_request(
@@ -265,27 +165,6 @@ impl PacketSender for SimulatedPeer {
     }
 }
 
-impl SimulatedWalletSpend {
-    /// Coin should report its lifecycle until it gets spent, then should be
-    /// de-registered.
-    fn register_coin(
-        &mut self,
-        coin_id: &CoinString,
-        timeout: &Timeout,
-        opt_name: Option<&'static str>,
-    ) -> Result<(), Error> {
-        let name: Option<String> = opt_name.map(str::to_string);
-        self.watching_coins.insert(
-            coin_id.clone(),
-            WatchEntry {
-                timeout_blocks: timeout.clone(),
-                name,
-            },
-        );
-        Ok(())
-    }
-}
-
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(
@@ -296,17 +175,15 @@ impl WalletSpendInterface for SimulatedPeer {
         self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
-    /// Coin should report its lifecycle until it gets spent, then should be
-    /// de-registered.
     fn register_coin(
         &mut self,
-        coin_id: &CoinString,
-        timeout: &Timeout,
-        name: Option<&'static str>,
+        _coin_id: &CoinString,
+        _timeout: &Timeout,
+        _name: Option<&'static str>,
         _spend: Option<SpendBundle>,
+        _semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
-        self.simulated_wallet_spend
-            .register_coin(coin_id, timeout, name)
+        Ok(())
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
@@ -359,99 +236,6 @@ impl ToLocalUI for SimulatedPeer {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handshake(
-    allocator: &mut AllocEncoder,
-    _amount: Amount,
-    coinset_adapter: &mut FullCoinSetAdapter,
-    identities: &[ChiaIdentity; 2],
-    peers: &mut [OffChainPhase; 2],
-    pipes: &mut [SimulatedPeer; 2],
-    parent_coins: &[CoinString],
-    simulator: &mut Simulator,
-) -> Result<(), Error> {
-    let mut i = 0;
-    let mut steps = 0;
-
-    while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
-        let who = i % 2;
-        steps += 1;
-        assert!(steps < 50);
-
-        run_move(allocator, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
-
-        if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
-            pipes[who].channel_puzzle_hash = None;
-            let reported_effects = {
-                let mut env = ChannelEnv::new(allocator).expect("should work");
-                handle_received_channel_puzzle_hash(
-                    &mut env,
-                    &identities[who],
-                    &mut peers[who],
-                    &parent_coins[who],
-                    &ph,
-                )?
-            };
-            apply_effects(reported_effects, allocator, &mut pipes[who])?;
-        }
-
-        if let Some(u) = pipes[who].unfunded_offer.clone() {
-            let reported_effect = {
-                let mut env = ChannelEnv::new(allocator).expect("should work");
-                peers[who].channel_transaction_completion(&mut env, &u)?
-            };
-            if let Some(effect) = reported_effect {
-                apply_effects(vec![effect], allocator, &mut pipes[who])?;
-            }
-
-            let env = ChannelEnv::new(allocator).expect("should work");
-            let mut spends = u.clone();
-            // Create no coins.  The target is already created in the partially funded
-            // transaction.
-            //
-            // XXX break this code out
-            let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
-            let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
-            let solution = solution_for_conditions(env.allocator, empty_conditions)?;
-            let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
-            let signature = sign_agg_sig_me(
-                &identities[who].synthetic_private_key,
-                quoted_empty_hash.bytes(),
-                &parent_coins[who].to_coin_id(),
-                &env.agg_sig_me_additional_data,
-            );
-            spends.spends.push(CoinSpend {
-                coin: parent_coins[who].clone(),
-                bundle: Spend {
-                    puzzle: identities[who].puzzle.clone(),
-                    solution: Program::from_nodeptr(env.allocator, solution)?.into(),
-                    signature,
-                },
-            });
-            let included_result = simulator.push_transactions(env.allocator, &spends.spends)?;
-
-            pipes[who].unfunded_offer = None;
-            assert_eq!(included_result.code, 1);
-
-            simulator.farm_block(&identities[who].puzzle_hash);
-            simulator.farm_block(&identities[who].puzzle_hash);
-
-            update_and_report_coins(allocator, coinset_adapter, peers, pipes, simulator)?;
-        }
-
-        if !pipes[who].outbound_transactions.is_empty() {
-            panic!(
-                "unexpected outbound transactions during handshake for peer {who}: {:?}",
-                pipes[who].outbound_transactions
-            );
-        }
-
-        i += 1;
-    }
-
-    Ok(())
-}
-
 #[derive(Debug)]
 pub struct OpponentMessageInfo {
     pub opponent_move_size: usize,
@@ -484,6 +268,7 @@ pub enum ExpectedNotification {
     GameSettledOpponentCheated,
     GameStatusMovedByUs,
     GameStatusOnChainTurn,
+    GameStatusSubmittingTimeoutClaim,
     GameStatusEndedError,
     ProposalMade,
     ProposalAccepted,
@@ -631,6 +416,14 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                 ) => true,
                 (
                     GameNotification::GameStatus {
+                        status: GameStatusKind::OnChainTheirTurn,
+                        other_params: Some(params),
+                        ..
+                    },
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ) => params.submitting_timeout_claim == Some(true),
+                (
+                    GameNotification::GameStatus {
                         status: GameStatusKind::EndedError,
                         ..
                     },
@@ -686,7 +479,7 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::ProposalAccepted { id, .. } => format!("Notif(ProposalAccepted(id={id:?}))"),
             GameNotification::ProposalCancelled { id, reason } => format!("Notif(ProposalCancelled(id={id:?},reason={reason:?}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
-            GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
+            GameNotification::ActionFailed { reason, .. } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
             GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
         },
@@ -722,6 +515,9 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             ExpectedNotification::GameStatusMovedByUs => "Notif(GameStatusMovedByUs)".to_string(),
             ExpectedNotification::GameStatusOnChainTurn => {
                 "Notif(GameStatusOnChainTurn)".to_string()
+            }
+            ExpectedNotification::GameStatusSubmittingTimeoutClaim => {
+                "Notif(GameStatusSubmittingTimeoutClaim)".to_string()
             }
             ExpectedNotification::GameStatusEndedError => "Notif(GameStatusEndedError)".to_string(),
             ExpectedNotification::ProposalMade => "Notif(ProposalMade)".to_string(),
@@ -810,6 +606,9 @@ pub struct LocalTestUIReceiver {
     pub opponent_messages: Vec<OpponentMessageInfo>,
     pub notifications: Vec<GameNotification>,
     pub events: Vec<TestEvent>,
+    /// Scenario scripts intentionally assert lifecycle states, not each
+    /// semantic-progress refinement within one state.
+    last_event_channel_status: Option<ChannelStatus>,
     pub proposed_game_ids: Vec<GameID>,
     pub accepted_proposal_ids: Vec<GameID>,
     pub received_proposal_ids: Vec<GameID>,
@@ -1003,8 +802,11 @@ impl ToLocalUI for LocalTestUIReceiver {
                         | ChannelStatus::ResolvedStale
                         | ChannelStatus::Failed
                 ) {
-                    self.events
-                        .push(TestEvent::Notification(notification.clone()));
+                    if self.last_event_channel_status.as_ref() != Some(state) {
+                        self.events
+                            .push(TestEvent::Notification(notification.clone()));
+                        self.last_event_channel_status = Some(state.clone());
+                    }
                 }
             }
             other => {
@@ -1320,7 +1122,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
-                cradles[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
+                cradles[i].go_on_chain(allocator, got_error)?;
             }
 
             // Feed the full live coin set so the manager reproduces the
@@ -1346,6 +1148,9 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             {
                 let result = cradles[i].flush_and_collect(allocator)?;
+                let mut terminal_command = cradles[i]
+                    .pending_terminal_handoff()
+                    .map(|command| command.message);
 
                 // Collect coin solution requests, launcher/coin-spend
                 // requests from this flush and all subsequent flushes they
@@ -1434,6 +1239,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     }
                                 }
                             }
+                            GameSessionEvent::OutboundTerminalMessage(_) => {
+                                return Err(Error::StrErr(
+                                    "terminal handoff bypassed TransactionManager disposition"
+                                        .to_string(),
+                                ));
+                            }
                             GameSessionEvent::Notification(n) => {
                                 local_uis[i].notification(n)?;
                             }
@@ -1441,12 +1252,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 eprintln!("SIM receive error p{i}: {e}");
                                 local_uis[i].notification(&GameNotification::ChannelStatus {
                                     state: ChannelStatus::Failed,
+                                    session_disposition: None,
                                     advisory: Some(format!("error receiving peer message: {e}")),
                                     coin: None,
                                     our_balance: None,
                                     their_balance: None,
                                     game_allocated: None,
                                     have_potato: None,
+                                    zero_payout: None,
+                                    unroll_initiator: None,
+                                    semantic_phase: None,
                                 })?;
                             }
                             GameSessionEvent::CoinSolutionRequest(coin) => {
@@ -1456,6 +1271,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 logs[i].push(line.clone());
                             }
                             GameSessionEvent::WatchCoin { .. } => {}
+                        }
+                    }
+
+                    if let Some(message) = terminal_command.as_ref() {
+                        if nerf_messages_for & (1 << i) == 0 {
+                            cradles[i ^ 1].deliver_message(message)?;
+                            cradles[i].complete_outbound_terminal_handoff()?;
                         }
                     }
 
@@ -1492,6 +1314,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     let follow_up = cradles[i].flush_and_collect(allocator)?;
+                    terminal_command = cradles[i]
+                        .pending_terminal_handoff()
+                        .map(|command| command.message);
                     pending_events = follow_up.events;
                 }
 
@@ -1541,8 +1366,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         step_start = std::time::Instant::now();
 
         let should_end = cradles.iter().enumerate().all(|(i, c)| {
-            c.channel_status_terminal()
-                && local_uis[i].all_accepted_games_have_terminal_notification()
+            c.is_fully_resolved() && local_uis[i].all_accepted_games_have_terminal_notification()
         }) && ending.is_none();
         if should_end {
             ending = Some(10);
@@ -2935,8 +2759,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.push(SimScriptAction::CleanShutdown(1));
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
         let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -3174,6 +3003,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     // step e so Bob never sees her final move.  Alice times out.
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "piss_off_complete p1",
@@ -3273,6 +3105,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "after_start p1",
@@ -3292,8 +3127,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             moves.push(SimScriptAction::GoOnChain(1));
             moves.push(SimScriptAction::WaitBlocks(20, 1));
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("should finish");
 
             let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
             let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -3403,6 +3243,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                         ChannelStatus::ResolvedUnrolled,
                     )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "timeout p0",
@@ -3455,8 +3298,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Let both players process blocks so Alice detects & slashes.
         moves.push(SimScriptAction::WaitBlocks(30, 0));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Alice (player 0) should get all the money via slash because
@@ -3526,8 +3374,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             SimScriptAction::WaitBlocks(30, 0),
         ];
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            None,
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Bob (player 1) should get all the money via slash because
@@ -3967,6 +3820,47 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(result2.is_ok());
     }));
 
+    res.push(("test_zero_payout_settlement_auto_clean_shutdown", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Alice's move leaves Bob, the next mover, with no settlement share.
+        // Bob accepts the result, then Alice sees the zero peer payout and
+        // initiates the cooperative close. Bob must hand off the completed
+        // clean-close spend before abandoning locally.
+        let moves = [DebugGameTestMove::new(0, 0)];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|_, cradles| cradles[0].channel_status_terminal() && cradles[1].is_abandoned()),
+            None,
+        )
+        .expect("zero-payout settlement should cleanly close");
+
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "winner should observe the clean shutdown"
+        );
+        assert!(
+            outcome.cradles[1].is_abandoned(),
+            "zero-payout responder must abandon only after handing off the completed close"
+        );
+    }));
+
     res.push(("test_calpoker_shutdown_nerf_alice", &|| {
         let mut allocator = AllocEncoder::new();
 
@@ -3978,8 +3872,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::NerfTransactions(0));
         moves.push(SimScriptAction::CleanShutdown(1));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4053,8 +3952,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::NerfTransactions(1));
         moves.push(SimScriptAction::CleanShutdown(1));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4153,8 +4057,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Wait for the unroll timeout to elapse and reward coins to be created.
         moves.push(SimScriptAction::WaitBlocks(17, 0));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4223,8 +4132,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Wait for the unroll timeout to elapse.
         moves.push(SimScriptAction::WaitBlocks(17, 0));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -4346,6 +4260,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "redo_timeout p1",
@@ -4427,6 +4344,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ], "bob_redo_alice_timeout p1");
         },
@@ -4459,15 +4379,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert_reward_coin_consistency(p0_notifs, "our_turn_timeout p0");
         assert_reward_coin_consistency(p1_notifs, "our_turn_timeout p1");
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_our_side_settlement(*outcome))),
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::TimedOutWaitingForOurMove,
+                    ..
+                }
+            )),
             "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
         );
         assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameSettled {
+                    outcome: SettlementOutcome::OpponentTimedOut,
+                    ..
+                }
+            )),
             "player 0 should get OpponentTimedOut, got: {p0_notifs:?}"
         );
 
@@ -4488,6 +4416,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusSubmittingTimeoutClaim),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "our_turn_timeout p0",
@@ -4886,6 +4815,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ], "nerfed_cheat p1");
         },
@@ -4969,6 +4901,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "accept_finished p1",
@@ -4994,8 +4929,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::WaitBlocks(120, 0));
         moves.push(SimScriptAction::WaitBlocks(5, 1));
 
-        let outcome =
-            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
@@ -5035,7 +4975,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
-            None,
+            Some(200),
         )
         .expect("should finish");
 
@@ -5072,6 +5012,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
             ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
             ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
+            ExpectedEvent::Notification(
+                ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+            ),
             ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
         ], "nerfed_accept p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
@@ -5229,6 +5172,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "before_any_moves p1",
@@ -5303,6 +5249,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ], "opp_cheated p1");
         },
@@ -5405,6 +5354,22 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 p0_balance, p1_balance,
                 "both players should get exactly the same amount back (no game was played): p0={p0_balance} p1={p1_balance}"
             );
+            assert!(outcome.local_uis[0].notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ChannelStatus {
+                    state: ChannelStatus::Unrolling,
+                    unroll_initiator: Some(UnrollInitiator::Opponent),
+                    ..
+                }
+            )));
+            assert!(outcome.local_uis[1].notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ChannelStatus {
+                    state: ChannelStatus::Unrolling,
+                    unroll_initiator: None,
+                    ..
+                }
+            )));
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
@@ -5820,7 +5785,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut allocator,
             &moves,
             None,
-            None,
+            Some(200),
         )
         .expect("should finish");
 
@@ -5872,6 +5837,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(
+                    ExpectedNotification::GameStatusSubmittingTimeoutClaim,
+                ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "go_on_chain_then_move p0",
@@ -6829,7 +6797,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
-            None,
+            Some(200),
         )
         .expect("should finish");
 
@@ -7038,8 +7006,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ..
                 } if params.readable.is_some()
                     && params.mover_share == Some(Amount::default())
+                    && params.game_finished == Some(true)
             )),
-            "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
+            "Bob should receive Alice's terminal move readable, mover_share, and finishing metadata, got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs.iter().any(|n| matches!(

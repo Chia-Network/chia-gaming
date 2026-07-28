@@ -1,4 +1,5 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
+import { isTerminalChannelSnapshot } from '../lib/session/model';
 import {
   deleteSessionRecord,
   readSessionRecord,
@@ -38,6 +39,7 @@ export interface CalpokerHandState {
   isPlayerTurn: boolean;
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+  settlementOutcome?: import('../lib/settlement').SettlementOutcome | null;
 }
 
 export interface PersistedGameState<T = unknown> {
@@ -83,8 +85,9 @@ export interface SessionSave {
   gameSessionId?: string;
   messageNumber?: bigint;
   remoteNumber?: bigint;
-  channelReady?: boolean;
   iStarted?: boolean;
+  /** Display-only role retained after terminal protocol state is cleared. */
+  terminalIStarted?: boolean;
   myContribution?: string;
   theirContribution?: string;
   perGameAmount?: string;
@@ -95,9 +98,7 @@ export interface SessionSave {
   humanHistory?: string[];
   wasmNotificationHistory?: string[];
   diagnosticLog?: string[];
-  historicalUnrollCount?: bigint;
   durabilityWarning?: string;
-  activeGameId?: string | null;
   activeGameIds?: string[];
   currentHandGameIds?: string[];
   gameInstances?: Record<string, {
@@ -105,6 +106,7 @@ export interface SessionSave {
     amount: string;
     coinHex: string | null;
     turnState: string;
+    onChain?: boolean;
     handStatus: string;
     terminal: {
       type: string;
@@ -123,17 +125,19 @@ export interface SessionSave {
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
   gameCoinHex?: string | null;
   gameTurnState?: string;
+  gameOnChain?: boolean;
   gameHandStatus?: string;
   gameTerminalType?: string;
   gameTerminalOutcome?: string;
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
+  /** Actual live coin list frozen when a terminal session tears down. */
+  coinsOfInterest?: Array<{ label: string; id: string }>;
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   dismissedChannelStatus?: string;
-  goOnChainPressed?: boolean;
   cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
@@ -141,8 +145,13 @@ export interface SessionSave {
   betweenHandComposeGameType?: string;
   betweenHandLastTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  betweenHandPendingRetryTerms?: { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandCachedPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
   betweenHandReviewPeerProposal?: { id: string; groupIds: string[]; my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string } | null;
+  /** Ordered member IDs for each locally originated factory proposal group. */
+  outgoingProposalGroupIds?: string[][];
+  /** Ordered member IDs for groups accepted but not yet terminally resolved. */
+  acceptedProposalGroupIds?: string[][];
   outgoingProposalTerms?: Record<string, { my_contribution: string; their_contribution: string; game_timeout?: string; game_type?: string; spacepoker_unit_size?: string }>;
 
   // Timer persistence (epoch ms timestamps)
@@ -162,7 +171,7 @@ const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
  */
 let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 8n;
+export const CURRENT_VERSION = 10n;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
@@ -533,11 +542,8 @@ function loadPreferences(): SessionSave {
   return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
-function isTerminalFinishedChannel(state: string | null | undefined): boolean {
-  return state === 'ResolvedClean'
-    || state === 'ResolvedUnrolled'
-    || state === 'ResolvedStale'
-    || state === 'Failed';
+function isTerminalFinishedChannel(status: ChannelStatusPayload | null | undefined): boolean {
+  return isTerminalChannelSnapshot(status);
 }
 
 /**
@@ -549,7 +555,7 @@ function isResumable(state: SessionSave): boolean {
   return !!(
     state.serializedGameSession
     || state.pairingToken
-    || (state.channelStatus && isTerminalFinishedChannel(state.channelStatus.state))
+    || isTerminalFinishedChannel(state.channelStatus)
   );
 }
 
@@ -885,6 +891,32 @@ export function getBlockchainType(): BlockchainType | undefined {
 export function saveSession(fields: Partial<SessionSave>): Promise<void> {
   return mutate(s => {
     Object.assign(s, fields);
+    capPersistedHistories(s);
+  });
+}
+
+/**
+ * Persist a terminal channel snapshot without any state that could restart its
+ * protocol. Display/history fields supplied by the caller are retained.
+ */
+export function saveTerminalSession(fields: Partial<SessionSave>): Promise<void> {
+  return mutate(s => {
+    Object.assign(s, fields, {
+      serializedGameSession: undefined,
+      gameSessionSchemaVersion: undefined,
+      pairingToken: undefined,
+      sessionPeerId: undefined,
+      gameSessionId: undefined,
+      messageNumber: undefined,
+      remoteNumber: undefined,
+      iStarted: undefined,
+      myContribution: undefined,
+      theirContribution: undefined,
+      perGameAmount: undefined,
+      channelTimeout: undefined,
+      unrollTimeout: undefined,
+      unackedMessages: undefined,
+    });
     capPersistedHistories(s);
   });
 }

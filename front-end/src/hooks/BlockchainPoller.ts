@@ -11,7 +11,6 @@ import {
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
-export const COIN_EVICTION_CONFIRMATION_DEPTH = 32n;
 
 /**
  * A cradle that the poller drives with raw chain state.  The transaction
@@ -24,12 +23,9 @@ export type CoinPollInterest = { coin_name: string; coin_string: string };
 
 export interface PollingGameSession {
   snapshotWatchedCoins(): CoinPollInterest[];
-  reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
-  // Advance to `peak` with no coin-state change.  Lets the poller deliver a
-  // height tick as soon as the height is known, before the (possibly slow) coin
-  // record lookup, so height-only progress (e.g. handshake new_block) isn't
-  // gated on the coin-records RPC.
+  /** Advance protocol clocks without asserting a complete coin snapshot. */
   reportNewBlock(peak: bigint): void;
+  reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
 }
 
 type BalanceCallbacks = {
@@ -54,10 +50,15 @@ export class BlockchainPoller {
   private previousPeakForCoinReport = 0n;
   private registrationScopeKey: string | undefined;
   private balanceCallbacks: BalanceCallbacks | null = null;
+  private balancePollIntervalMs = BALANCE_POLL_INTERVAL_MS;
   private requestLane: AsyncJobQueue;
   private heightPollingScheduler: AsyncPollingScheduler;
   private coinPollingScheduler: AsyncPollingScheduler;
   private balancePollingScheduler: AsyncPollingScheduler;
+  private connectionUnsubscribe: (() => void) | null = null;
+  private connectionActive = true;
+  private connectionEpoch = 0;
+  private pendingRpcRejects = new Set<() => void>();
 
   constructor(blockchain: InternalBlockchainInterface, pollIntervalMs: number, maxBackoffMs?: number) {
     this.adapter = blockchain;
@@ -146,16 +147,39 @@ export class BlockchainPoller {
   }
 
   private enqueueRpc<T>(label: string, run: () => Promise<T> | T, foreground = false): Promise<T> {
+    if (!this.isConnected()) {
+      return Promise.reject(new Error(`RPC request discarded during disconnect: ${label}`));
+    }
+    const connectionEpoch = this.connectionEpoch;
     return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const rejectForDisconnect = () => settle(reject, new Error(`RPC request discarded during disconnect: ${label}`));
+      const settle = <V>(complete: (value: V) => void, value: V) => {
+        if (settled) return;
+        settled = true;
+        this.pendingRpcRejects.delete(rejectForDisconnect);
+        complete(value);
+      };
+      this.pendingRpcRejects.add(rejectForDisconnect);
       const job: AsyncQueueJob = {
         label,
         run: async () => {
+          if (!this.isConnectionEpochActive(connectionEpoch)) {
+            rejectForDisconnect();
+            return;
+          }
           try {
-            resolve(await run());
+            const result = await run();
+            if (!this.isConnectionEpochActive(connectionEpoch)) {
+              rejectForDisconnect();
+              return;
+            }
+            settle(resolve, result);
           } catch (e) {
-            reject(e);
+            settle(reject, e);
           }
         },
+        onDiscard: rejectForDisconnect,
       };
       if (foreground) {
         this.requestLane.enqueueFront(job);
@@ -176,9 +200,12 @@ export class BlockchainPoller {
     this.refreshCoinInterest();
   }
 
-  snapshotGameSessionCoinInterest(cradle: PollingGameSession): void {
+  snapshotGameSessionCoinInterest(
+    cradle: PollingGameSession,
+    watchedCoins = cradle.snapshotWatchedCoins(),
+  ): void {
     if (!this.sessions.has(cradle)) return;
-    this.sessionCoins.set(cradle, cradle.snapshotWatchedCoins());
+    this.sessionCoins.set(cradle, watchedCoins);
     this.refreshCoinInterest();
   }
 
@@ -192,18 +219,32 @@ export class BlockchainPoller {
     this.refreshCoinInterest();
   }
 
+  unwatchCoin(cradle: PollingGameSession, coin: CoinPollInterest): void {
+    if (!this.sessions.has(cradle)) return;
+    const remaining = (this.sessionCoins.get(cradle) ?? []).filter(
+      (existing) => existing.coin_name !== coin.coin_name,
+    );
+    this.sessionCoins.set(cradle, remaining);
+    this.refreshCoinInterest();
+  }
+
   getPeak(): bigint {
     return this.peak;
   }
 
   startBalanceInterest(intervalMs: number, callbacks: BalanceCallbacks): void {
     this.balanceCallbacks = callbacks;
-    this.balancePollingScheduler.start(intervalMs);
+    this.balancePollIntervalMs = intervalMs;
+    this.ensureConnectionListener();
+    if (this.isConnected()) {
+      this.balancePollingScheduler.start(intervalMs);
+    }
   }
 
   stopBalanceInterest(): void {
     this.balancePollingScheduler.stop();
     this.balanceCallbacks = null;
+    this.releaseConnectionListenerIfIdle();
   }
 
   start() {
@@ -212,8 +253,61 @@ export class BlockchainPoller {
     this.firstTick = true;
     this.startedAt = performance.now();
     log(`[blockchain-poller] started, pollMs=${this.pollIntervalMs}`);
-    this.heightPollingScheduler.start(this.pollIntervalMs);
-    this.refreshCoinInterest();
+    this.ensureConnectionListener();
+    this.resumePollingIfConnected();
+  }
+
+  private ensureConnectionListener(): void {
+    if (this.connectionUnsubscribe) return;
+    const unsubscribe = this.adapter.onConnectionChange((connected) => {
+      this.connectionActive = connected;
+      if (connected) {
+        this.resumePollingIfConnected();
+      } else {
+        this.pausePollingForDisconnect();
+      }
+    });
+    if (typeof unsubscribe === 'function') {
+      this.connectionUnsubscribe = unsubscribe;
+    }
+  }
+
+  private releaseConnectionListenerIfIdle(): void {
+    if (this.running || this.balanceCallbacks || !this.connectionUnsubscribe) return;
+    this.connectionUnsubscribe();
+    this.connectionUnsubscribe = null;
+  }
+
+  private pausePollingForDisconnect(): void {
+    this.connectionEpoch++;
+    this.heightPollingScheduler.stop();
+    this.coinPollingScheduler.stop();
+    this.balancePollingScheduler.stop();
+    for (const reject of [...this.pendingRpcRejects]) reject();
+    this.requestLane.clearQueued();
+    // Remote wallet coin registrations are lost with the connection. Clear the
+    // local cache even when a reconnect reuses the same registration scope key.
+    this.registrationScopeKey = undefined;
+    this.registeredNames.clear();
+  }
+
+  private resumePollingIfConnected(): void {
+    if (!this.adapter.isConnected()) return;
+    if (this.running) {
+      this.heightPollingScheduler.start(this.pollIntervalMs);
+      this.refreshCoinInterest();
+    }
+    if (this.balanceCallbacks) {
+      this.balancePollingScheduler.start(this.balancePollIntervalMs);
+    }
+  }
+
+  private isConnected(): boolean {
+    return this.connectionActive && this.adapter.isConnected();
+  }
+
+  private isConnectionEpochActive(connectionEpoch: number): boolean {
+    return connectionEpoch === this.connectionEpoch && this.isConnected();
   }
 
   /**
@@ -224,6 +318,7 @@ export class BlockchainPoller {
     this.running = false;
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();
+    this.releaseConnectionListenerIfIdle();
   }
 
   private collectGameSessionCoins(): Array<{ c: PollingGameSession; coins: CoinPollInterest[] }> {
@@ -231,7 +326,10 @@ export class BlockchainPoller {
   }
 
   private refreshCoinInterest(): void {
-    if (!this.running) return;
+    if (!this.running || !this.isConnected()) {
+      this.coinPollingScheduler.stop();
+      return;
+    }
     const hasCoins = this.collectGameSessionCoins().some(({ coins }) => coins.length > 0);
     if (hasCoins) {
       this.coinPollingScheduler.start(this.pollIntervalMs);
@@ -240,14 +338,17 @@ export class BlockchainPoller {
     }
   }
 
-  private async ensureRegistered(names: string[]) {
+  private async ensureRegistered(names: string[], connectionEpoch: number) {
+    if (!this.isConnectionEpochActive(connectionEpoch)) return;
     this.syncRegistrationScope();
     const newNames = names.filter((n) => !this.registeredNames.has(n));
     if (newNames.length === 0) return;
     try {
       await this.adapter.registerCoins(newNames);
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
       for (const n of newNames) this.registeredNames.add(n);
     } catch (e) {
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
       // Leave unregistered so the next tick retries.
       log(`[blockchain-poller] registerCoins failed, will retry: ${String(e)}`);
     }
@@ -266,18 +367,20 @@ export class BlockchainPoller {
   }
 
   private async runHeightPoll(): Promise<void> {
+    const connectionEpoch = this.connectionEpoch;
+    if (!this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       // Report the latest height even when it decreases: a drop signals a reorg,
       // which the transaction manager detects via height < last_height. Clamping
       // this monotonically would hide reorgs from the manager.
       const previousPeak = this.peak;
       const height = await this.adapter.getHeightInfo();
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
       this.previousPeakForCoinReport = previousPeak;
       this.peak = height;
-
-      // Deliver the height tick immediately, before the (potentially slow) coin
-      // record lookup. A cradle's new_block only needs the height, so cradles
-      // whose watched coins aren't on chain yet can advance right away.
+      // Advance every session as soon as a height is available, independently
+      // of the slower watched-coin lookup. This is deliberately a
+      // manager-owned height-only observation, not an empty coin snapshot.
       for (const { c } of this.collectGameSessionCoins()) {
         c.reportNewBlock(height);
       }
@@ -289,7 +392,7 @@ export class BlockchainPoller {
       }
       this.consecutiveFailures = 0;
     } catch (e) {
-      if (!this.running) return;
+      if (!this.running || !this.isConnectionEpochActive(connectionEpoch)) return;
       this.consecutiveFailures++;
       diagStack('blockchain-poller height failed', e);
       log(`[blockchain-poller] height failed: ${String(e)}`);
@@ -297,6 +400,8 @@ export class BlockchainPoller {
   }
 
   private async runCoinPoll(): Promise<void> {
+    const connectionEpoch = this.connectionEpoch;
+    if (!this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const perSession = this.collectGameSessionCoins();
 
@@ -305,7 +410,8 @@ export class BlockchainPoller {
         for (const { coin_name } of coins) allNames.add(coin_name);
       }
       const names = [...allNames];
-      await this.ensureRegistered(names);
+      await this.ensureRegistered(names, connectionEpoch);
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
       // Only query coins we've successfully registered.  If a backend requires
       // registration, querying an unregistered name can throw and turn a transient
       // register failure into a polling failure loop; registration is retried each
@@ -313,56 +419,39 @@ export class BlockchainPoller {
       const namesToQuery = names.filter((n) => this.registeredNames.has(n));
 
       const records = namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
-      const recordByName = await this.recordMap(records);
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
+      const recordByName = await this.recordMap(records, connectionEpoch);
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
       if (recordByName) {
-        const reportedNames = this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
-        this.evictBuriedSpentCoins(recordByName, reportedNames);
+        this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
       }
       this.consecutiveFailures = 0;
     } catch (e) {
-      if (!this.running) return;
+      if (!this.running || !this.isConnectionEpochActive(connectionEpoch)) return;
       this.consecutiveFailures++;
       diagStack('blockchain-poller coin poll failed', e);
       log(`[blockchain-poller] coin poll failed: ${String(e)}`);
     }
   }
 
-  private evictBuriedSpentCoins(
-    recordByName: Map<string, CoinRecord>,
-    reportedNames: Set<string>,
-  ): void {
-    const evictedNames = new Set<string>();
-    for (const name of reportedNames) {
-      const rec = recordByName.get(name);
-      if (!rec) continue;
-      const spentHeight = rec.spent || rec.spentBlockIndex > 0n ? rec.spentBlockIndex : null;
-      if (spentHeight !== null && this.peak >= spentHeight + COIN_EVICTION_CONFIRMATION_DEPTH) {
-        evictedNames.add(name);
-      }
-    }
-    if (evictedNames.size === 0) return;
-    for (const [cradle, coins] of this.sessionCoins) {
-      this.sessionCoins.set(
-        cradle,
-        coins.filter(({ coin_name }) => !evictedNames.has(coin_name)),
-      );
-    }
-    this.refreshCoinInterest();
-  }
-
   private async runBalancePoll(): Promise<void> {
-    if (!this.balanceCallbacks) return;
+    const connectionEpoch = this.connectionEpoch;
+    if (!this.balanceCallbacks || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const balance = await this.adapter.getBalance();
-      if (this.balancePollingScheduler.isInterested()) {
+      if (this.isConnectionEpochActive(connectionEpoch) && this.balancePollingScheduler.isInterested()) {
         this.balanceCallbacks?.onBalance(balance);
       }
     } catch (e) {
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
       this.balanceCallbacks?.onError?.(e);
     }
   }
 
-  private async recordMap(records: CoinRecord[]): Promise<Map<string, CoinRecord> | null> {
+  private async recordMap(
+    records: CoinRecord[],
+    connectionEpoch: number,
+  ): Promise<Map<string, CoinRecord> | null> {
     const recordByName = new Map<string, CoinRecord>();
     let hasUnmappedRecord = false;
     for (const rec of records) {
@@ -373,6 +462,7 @@ export class BlockchainPoller {
         hasUnmappedRecord = true;
       }
     }
+    if (!this.isConnectionEpochActive(connectionEpoch)) return null;
     for (const name of recordByName.keys()) this.observedNames.add(name);
     return hasUnmappedRecord ? null : recordByName;
   }
@@ -385,14 +475,7 @@ export class BlockchainPoller {
     recordByName: Map<string, CoinRecord>,
     height: bigint,
     previousPeak: bigint,
-  ): Set<string> {
-    const interestCounts = new Map<string, number>();
-    const reportedCounts = new Map<string, number>();
-    for (const { coins } of perSession) {
-      for (const { coin_name } of coins) {
-        interestCounts.set(coin_name, (interestCounts.get(coin_name) ?? 0) + 1);
-      }
-    }
+  ): void {
     for (const { c, coins } of perSession) {
       if (coins.length === 0) {
         continue;
@@ -431,16 +514,10 @@ export class BlockchainPoller {
         const created = rec.confirmedBlockIndex;
         const spent = rec.spent || rec.spentBlockIndex > 0n ? rec.spentBlockIndex : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
-        reportedCounts.set(coin_name, (reportedCounts.get(coin_name) ?? 0) + 1);
       }
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
       c.reportCoinStates(height, csr);
     }
-    const fullyReportedNames = new Set<string>();
-    for (const [name, count] of reportedCounts) {
-      if (count === interestCounts.get(name)) fullyReportedNames.add(name);
-    }
-    return fullyReportedNames;
   }
 
   private currentBackoffMs(): number {

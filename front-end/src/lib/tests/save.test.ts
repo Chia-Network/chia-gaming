@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import {
   saveSession,
+  saveTerminalSession,
   peekSession,
   clearSession,
   clearGameSessionPreservingHistory,
@@ -31,10 +32,11 @@ import {
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   SessionSave,
+  CURRENT_VERSION,
   _resetForTests,
   _writeRawState,
 } from '../../hooks/save';
-import { SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
+import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -79,7 +81,6 @@ const sampleSession: Partial<SessionSave> = {
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
-  channelReady: true,
   iStarted: true,
   activeGameIds: [],
   myContribution: '60',
@@ -112,7 +113,7 @@ afterEach(() => {
 });
 
 describe('session persistence', () => {
-  it('atomically round-trips one raw binary/bigint record through IndexedDB', async () => {
+  it('obfuscates and round-trips one raw binary/bigint record through IndexedDB', async () => {
     const rawBuffer = Uint8Array.from([9, 8, 7]).buffer;
     saveSession({
       ...sampleSession,
@@ -120,7 +121,7 @@ describe('session persistence', () => {
     } as Partial<SessionSave>);
     await flushSessionSave();
 
-    const stored = await new Promise<{ count: number; record: SessionSave & { rawBuffer: ArrayBuffer } }>(
+    const stored = await new Promise<{ count: number; record: unknown }>(
       (resolve, reject) => {
         const open = indexedDB.open(SESSION_DB_NAME, 1);
         open.onerror = () => reject(open.error);
@@ -135,7 +136,7 @@ describe('session persistence', () => {
             db.close();
             resolve({
               count: count.result,
-              record: record.result as SessionSave & { rawBuffer: ArrayBuffer },
+              record: record.result,
             });
           };
         };
@@ -143,10 +144,8 @@ describe('session persistence', () => {
     );
 
     expect(stored.count).toBe(1);
-    expect(stored.record.serializedGameSession).toBeInstanceOf(Uint8Array);
-    expect(stored.record.rawBuffer).toBeInstanceOf(ArrayBuffer);
-    expect(new Uint8Array(stored.record.rawBuffer)).toEqual(new Uint8Array([9, 8, 7]));
-    expect(typeof stored.record.messageNumber).toBe('bigint');
+    expect(stored.record).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(stored.record as Uint8Array)).not.toContain('serializedGameSession');
 
     _resetForTests();
     const loaded = await peekSession() as (SessionSave & { rawBuffer: ArrayBuffer }) | null;
@@ -271,11 +270,31 @@ describe('session persistence', () => {
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 8n,
+      version: CURRENT_VERSION,
       playerId: 'player',
       blockchainType: 'simulator',
     });
     expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
+    expect(hasSavedSessionMarker()).toBe(true);
+  });
+
+  it('rejects v9 session records instead of guessing proposal-group semantics', async () => {
+    localStorage.setItem('appState_savedSession', '1');
+    await writeSessionRecord({
+      version: 9n,
+      playerId: 'player',
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      outgoingProposalTerms: {
+        '11': {
+          my_contribution: '10',
+          their_contribution: '10',
+          game_type: 'factory-pair',
+        },
+      },
+    });
+
+    expect(CURRENT_VERSION).toBe(10n);
+    expect(await peekSession()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
@@ -306,10 +325,101 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
+  it('persists the frozen terminal coin list across reload', async () => {
+    saveTerminalSession({
+      channelStatus: {
+        state: 'ResolvedUnrolled',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: false,
+      },
+      coinsOfInterest: [
+        { label: 'Unroll payout coin', id: 'unroll' },
+        { label: 'Current game coin', id: 'game-a' },
+        { label: 'Current game coin', id: 'game-b' },
+        { label: 'Game payout coin', id: 'payout-a' },
+      ],
+    });
+    await flushSessionSave();
+
+    _resetForTests();
+    expect((await peekSession())?.coinsOfInterest).toEqual([
+      { label: 'Unroll payout coin', id: 'unroll' },
+      { label: 'Current game coin', id: 'game-a' },
+      { label: 'Current game coin', id: 'game-b' },
+      { label: 'Game payout coin', id: 'payout-a' },
+    ]);
+  });
+
+  it('atomically replaces a live session with a nonresumable abandoned snapshot', async () => {
+    saveSession({
+      ...sampleSession,
+      sessionPeerId: 'peer-1',
+      gameSessionId: 'game-1',
+      channelTimeout: '100',
+      unrollTimeout: '50',
+      channelStatus: {
+        state: 'Active',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: true,
+      },
+    });
+    await flushSessionSave();
+
+    saveTerminalSession({
+      channelStatus: {
+        state: 'ShutdownTransactionPending',
+        session_disposition: 'Abandoned',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: false,
+      },
+      humanHistory: ['terminal display retained'],
+      myAlias: 'Alice',
+      opponentAlias: 'Bob',
+    });
+    await flushSessionSave();
+
+    _resetForTests();
+    const loaded = await peekSession();
+    expect(loaded?.channelStatus).toMatchObject({
+      state: 'ShutdownTransactionPending',
+      session_disposition: 'Abandoned',
+    });
+    expect(loaded?.humanHistory).toEqual(['terminal display retained']);
+    expect(loaded?.myAlias).toBe('Alice');
+    expect(loaded?.opponentAlias).toBe('Bob');
+    expect(loaded?.serializedGameSession).toBeUndefined();
+    expect(loaded?.gameSessionSchemaVersion).toBeUndefined();
+    expect(loaded?.pairingToken).toBeUndefined();
+    expect(loaded?.unackedMessages).toBeUndefined();
+    expect(loaded?.sessionPeerId).toBeUndefined();
+    expect(loaded?.gameSessionId).toBeUndefined();
+    expect(loaded?.messageNumber).toBeUndefined();
+    expect(loaded?.remoteNumber).toBeUndefined();
+    expect(loaded?.iStarted).toBeUndefined();
+    expect(loaded?.myContribution).toBeUndefined();
+    expect(loaded?.theirContribution).toBeUndefined();
+    expect(loaded?.perGameAmount).toBeUndefined();
+    expect(loaded?.channelTimeout).toBeUndefined();
+    expect(loaded?.unrollTimeout).toBeUndefined();
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
+  });
+
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
     await writeSessionRecord({
-      version: 8n,
+      version: CURRENT_VERSION,
       playerId: 'player',
     });
     expect(await peekSession()).toBeNull();
@@ -427,20 +537,8 @@ describe('flat state', () => {
     await flushSessionSave();
 
     // Drop sessionId from the IDB record only; preferences still hold sid.
-    const record = await new Promise<SessionSave>((resolve, reject) => {
-      const open = indexedDB.open(SESSION_DB_NAME, 1);
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const db = open.result;
-        const tx = db.transaction('session', 'readonly');
-        const get = tx.objectStore('session').get('current');
-        tx.oncomplete = () => {
-          db.close();
-          resolve(get.result as SessionSave);
-        };
-        tx.onerror = () => reject(tx.error);
-      };
-    });
+    const record = await readSessionRecord();
+    if (!record) throw new Error('Expected a persisted session record');
     delete record.sessionId;
     await writeSessionRecord(record);
 
@@ -664,7 +762,7 @@ describe('flat state', () => {
 
   it('version field is set on fresh state', () => {
     const state = loadState();
-    expect(state.version).toBe(8n);
+    expect(state.version).toBe(CURRENT_VERSION);
   });
 
   it('deletes stale appState wholesale without decoding it', async () => {

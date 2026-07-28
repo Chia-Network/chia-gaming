@@ -66,6 +66,7 @@ export function useHubSocket(
   const [challengeSent, setChallengeSent] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
+  const [initialConnectionFailed, setInitialConnectionFailed] = useState(false);
   const [reconnectBlocked, setReconnectBlocked] = useState(false);
   const [savedAlias, setSavedAlias] = useState<string | null>(null);
   const [aliasLoaded, setAliasLoaded] = useState(false);
@@ -79,6 +80,7 @@ export function useHubSocket(
   const closingRef = useRef(false);
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
   const joinedAliasRef = useRef<string | null>(null);
+  const hasConnectedRef = useRef(false);
 
   useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
 
@@ -118,6 +120,8 @@ export function useHubSocket(
 
     closingRef.current = false;
     setReconnectBlocked(false);
+    setInitialConnectionFailed(false);
+    hasConnectedRef.current = false;
 
     // Monotonic backoff: stay out of Firefox's failure queue during cutovers.
     // Connect timeout is long for the same reason: FF may delay the TCP
@@ -160,6 +164,8 @@ export function useHubSocket(
         });
         setIsConnected(true);
         setHasConnected(true);
+        hasConnectedRef.current = true;
+        setInitialConnectionFailed(false);
         ws.send(JSON.stringify({ type: 'get_alias', session_id: sessionId }));
         hubHsLog('get_alias_send', {
           conn_id: connIdRef.current,
@@ -274,6 +280,9 @@ export function useHubSocket(
         wsRef.current = null;
         pendingWsRef.current = null;
         if (closingRef.current) return;
+        if (!hasConnectedRef.current) {
+          setInitialConnectionFailed(true);
+        }
         if (event.code === 4001) {
           setReconnectBlocked(true);
           return;
@@ -434,6 +443,7 @@ export function useHubSocket(
     challengeSent,
     isConnected,
     isReconnecting,
+    initialConnectionFailed,
     reconnectBlocked,
     savedAlias,
     aliasLoaded,

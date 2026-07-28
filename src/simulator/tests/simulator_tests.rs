@@ -12,7 +12,7 @@ use crate::common::types::{
     PrivateKey, Program, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
     ToQuotedProgram,
 };
-use crate::game_session::{DrainResult, WatchReport};
+use crate::game_session::{CoinObservation, DrainResult};
 use crate::session_phases::effects::GameSessionEvent;
 use crate::simulator::Simulator;
 use crate::transaction_manager::{ManagedGameSession, TransactionManager};
@@ -32,11 +32,11 @@ impl ScriptedGameSession {
 }
 
 impl ManagedGameSession for ScriptedGameSession {
-    fn session_new_block(
+    fn session_observe(
         &mut self,
         _allocator: &mut AllocEncoder,
         _height: u64,
-        _report: &WatchReport,
+        _observations: Option<&[CoinObservation]>,
     ) -> Result<(), crate::common::types::Error> {
         Ok(())
     }
@@ -825,6 +825,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 coin_string: child.clone(),
                 timeout: Timeout::new(100),
                 spend: None,
+                semantic: None,
             },
             GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
         ]);

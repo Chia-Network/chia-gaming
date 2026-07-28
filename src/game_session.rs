@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use clvm_traits::ToClvm;
 
@@ -20,8 +20,9 @@ use crate::common::types::{
     Timeout, ToQuotedProgram,
 };
 use crate::session_phases::effects::{
-    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameSessionEvent, GameSessionEventQueue, ResyncInfo,
+    apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
+    GameNotification, GameSessionEvent, GameSessionEventQueue, ResyncInfo, SessionDisposition,
+    TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
@@ -179,6 +180,9 @@ pub trait PeerLifecyclePhase {
     fn flush_pending_actions(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
+    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
+        None
+    }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         Err(Error::StrErr(
             "no channel handler in this phase".to_string(),
@@ -246,57 +250,19 @@ pub trait MessagePeerQueue {
     fn get_unfunded_offer(&self) -> Option<SpendBundle>;
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WatchEntry {
-    /// Relative timeout age (in blocks).  The transaction manager combines this
-    /// with the coin's reorg-aware birthday to decide ripeness.
-    pub timeout_blocks: Timeout,
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WatchReport {
-    pub created_watched: HashSet<CoinString>,
-    pub deleted_watched: HashSet<CoinString>,
+/// A watched coin lifecycle fact, in the order it must reach the active phase.
+///
+/// A coin first discovered already spent is represented as `Created` followed by
+/// `Spent`, allowing creation to transition the phase before its spend arrives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoinObservation {
+    Created(CoinString),
+    Spent(CoinString),
 }
 
 pub enum WalletBootstrapState {
     PartlySigned(Spend),
     FullySigned(Spend),
-}
-
-/// Normally the blockchain reports additions and subtractions to the coin set.
-/// This allows the simulator and others to be used with the full coin set by computing the
-/// watch report.
-#[derive(Default)]
-pub struct FullCoinSetAdapter {
-    pub current_height: u64,
-    pub current_coins: HashSet<CoinString>,
-}
-
-impl FullCoinSetAdapter {
-    pub fn make_report_from_coin_set_update(
-        &mut self,
-        current_height: u64,
-        current_coins: &[CoinString],
-    ) -> Result<WatchReport, Error> {
-        self.current_height = current_height;
-        let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
-        let created_coins: HashSet<CoinString> = current_coin_set
-            .difference(&self.current_coins)
-            .cloned()
-            .collect();
-        let deleted_coins: HashSet<CoinString> = self
-            .current_coins
-            .difference(&current_coin_set)
-            .cloned()
-            .collect();
-        std::mem::swap(&mut current_coin_set, &mut self.current_coins);
-        Ok(WatchReport {
-            created_watched: created_coins,
-            deleted_watched: deleted_coins,
-        })
-    }
 }
 
 // potato handler tests with simulator.
@@ -338,10 +304,17 @@ pub struct DrainResult {
     pub resync: Option<(usize, bool)>,
 }
 
+/// A signed clean-shutdown message that must be durably handed to the peer
+/// before this local session can be abandoned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalHandoffCommand {
+    pub id: u64,
+    pub message: Vec<u8>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct GameSessionState {
     current_height: u64,
-    watching_coins: HashMap<CoinString, WatchEntry>,
 
     is_initiator: bool,
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -356,6 +329,18 @@ struct GameSessionState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
+    #[serde(default)]
+    session_disposition: Option<SessionDisposition>,
+    #[serde(default)]
+    pending_outbound_terminal: Option<TerminalHandoffCommand>,
+    #[serde(default)]
+    next_terminal_handoff_id: u64,
+    #[serde(default)]
+    channel_creation_expiry: Option<u64>,
+    #[serde(default)]
+    channel_established: bool,
+    #[serde(default)]
+    channel_expired: bool,
 
     #[serde(skip)]
     events: GameSessionEventQueue,
@@ -379,6 +364,9 @@ impl WalletSpendInterface for GameSessionState {
         bundle: &SpendBundle,
         expiry: Option<u64>,
     ) -> Result<(), Error> {
+        if expiry.is_some() {
+            self.channel_creation_expiry = expiry;
+        }
         self.events.push_back(GameSessionEvent::OutboundTransaction(
             bundle.clone(),
             expiry,
@@ -389,22 +377,16 @@ impl WalletSpendInterface for GameSessionState {
         &mut self,
         coin_id: &CoinString,
         timeout: &Timeout,
-        name: Option<&'static str>,
+        _name: Option<&'static str>,
         spend: Option<SpendBundle>,
+        semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
-        self.watching_coins.insert(
-            coin_id.clone(),
-            WatchEntry {
-                timeout_blocks: timeout.clone(),
-                name: name.map(|s| s.to_string()),
-            },
-        );
-
         self.events.push_back(GameSessionEvent::WatchCoin {
             coin_name: coin_id.to_coin_id(),
             coin_string: coin_id.clone(),
             timeout: timeout.clone(),
             spend,
+            semantic,
         });
 
         Ok(())
@@ -506,7 +488,6 @@ impl GameSession {
             state: GameSessionState {
                 is_initiator: config.have_potato,
                 current_height: 0,
-                watching_coins: HashMap::default(),
                 identity: config.identity.clone(),
                 channel_puzzle_hash: None,
                 funding_coin: None,
@@ -517,6 +498,12 @@ impl GameSession {
                 peer_disconnected: false,
                 is_failed: false,
                 is_on_chain: false,
+                session_disposition: None,
+                pending_outbound_terminal: None,
+                next_terminal_handoff_id: 0,
+                channel_creation_expiry: None,
+                channel_established: false,
+                channel_expired: false,
                 events: GameSessionEventQueue::default(),
                 inbound_messages: VecDeque::default(),
             },
@@ -573,41 +560,6 @@ impl ToLocalUI for GameSessionState {
             .push_back(GameSessionEvent::Log(line.to_string()));
         Ok(())
     }
-}
-
-/// Which half of a coin report to dispatch.  A coin that is first observed
-/// already-spent appears in BOTH `created_watched` and `deleted_watched` (see
-/// `TransactionManager::report_coin_states`).  The two halves must be delivered
-/// separately so that any handler transition triggered by `coin_created` is
-/// applied before the matching `coin_spent` is delivered -- otherwise the spend
-/// would still reach the pre-transition (handshake) handler, which ignores it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CoinReportPhase {
-    Created,
-    Spent,
-}
-
-pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
-    env: &mut ChannelEnv<'_>,
-    peer: &mut P,
-    watch_report: &WatchReport,
-    phase: CoinReportPhase,
-) -> Result<Vec<Effect>, Error> {
-    let mut effects = Vec::new();
-    match phase {
-        CoinReportPhase::Created => {
-            for c in watch_report.created_watched.iter() {
-                effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
-            }
-        }
-        CoinReportPhase::Spent => {
-            for d in watch_report.deleted_watched.iter() {
-                effects.extend(peer.coin_spent(env, d)?);
-            }
-        }
-    }
-
-    Ok(effects)
 }
 
 impl GameSession {
@@ -719,7 +671,7 @@ impl GameSession {
 
     /// Labeled coin ids (hex) the dashboard shows above the protocol state so
     /// the user can look them up in a block explorer. Sourced from the active
-    /// phase handler; 0-2 entries in practice.
+    /// phase handler; an on-chain grouped hand can surface multiple entries.
     pub fn coins_of_interest(&self) -> Vec<(String, String)> {
         self.peer
             .coins_of_interest()
@@ -746,27 +698,43 @@ impl GameSession {
         self.state.peer_disconnected
     }
 
-    /// True when the last emitted [`ChannelStatus`] is a terminal channel state (sim `should_end`).
-    pub fn channel_status_terminal(&self) -> bool {
+    pub fn is_abandoned(&self) -> bool {
         matches!(
-            self.last_channel_status.as_ref().map(|s| &s.state),
-            Some(
-                ChannelStatus::ResolvedClean
-                    | ChannelStatus::ResolvedUnrolled
-                    | ChannelStatus::ResolvedStale
-                    | ChannelStatus::Failed,
-            )
+            self.state.session_disposition,
+            Some(SessionDisposition::Abandoned)
         )
     }
 
-    /// True when the session is fully resolved: channel status is terminal and
-    /// no on-chain games are still being played out.
-    pub fn is_fully_resolved(&self) -> bool {
-        self.channel_status_terminal() && !self.peer.has_active_on_chain_games()
+    pub fn pending_terminal_handoff(&self) -> Option<TerminalHandoffCommand> {
+        self.state.pending_outbound_terminal.clone()
     }
 
-    pub fn get_watching_coins(&self) -> Vec<CoinString> {
-        self.state.watching_coins.keys().cloned().collect()
+    /// True when the last emitted [`ChannelStatus`] is a terminal channel state (sim `should_end`).
+    pub fn channel_status_terminal(&self) -> bool {
+        self.state.channel_expired
+            || matches!(
+                self.last_channel_status.as_ref().map(|s| &s.state),
+                Some(
+                    ChannelStatus::ResolvedClean
+                        | ChannelStatus::ResolvedUnrolled
+                        | ChannelStatus::ResolvedStale
+                        | ChannelStatus::Failed,
+                )
+            )
+    }
+
+    /// True when the session is fully resolved: channel status is terminal and
+    /// no on-chain games are still being played out. A terminal channel
+    /// snapshot does not supersede a pending cooperative handoff: the peer
+    /// still needs the persisted close command before this local session may
+    /// drain.
+    pub fn is_fully_resolved(&self) -> bool {
+        matches!(
+            self.state.session_disposition,
+            Some(SessionDisposition::Abandoned)
+        ) || (self.state.session_disposition.is_none()
+            && self.channel_status_terminal()
+            && !self.peer.has_active_on_chain_games())
     }
 
     pub fn provide_launcher_coin(
@@ -806,6 +774,49 @@ impl GameSession {
         Ok(())
     }
 
+    /// Stop participating in this session immediately. This is a local user
+    /// choice, not a protocol transition or a claim about on-chain resolution.
+    pub fn abandon(&mut self) -> Result<(), Error> {
+        if matches!(
+            self.state.session_disposition,
+            Some(SessionDisposition::AwaitOutboundTerminal)
+        ) {
+            return Err(Error::StrErr(
+                "cannot abandon while cooperative terminal handoff is pending".to_string(),
+            ));
+        }
+        self.mark_abandoned();
+        Ok(())
+    }
+
+    fn mark_abandoned(&mut self) {
+        self.state.session_disposition = Some(SessionDisposition::Abandoned);
+        self.state.pending_outbound_terminal = None;
+        self.state.peer_disconnected = true;
+        self.state.inbound_messages.clear();
+        // Abandonment replaces the session's pending presentation with one
+        // terminal snapshot. Older notifications must not race the final
+        // Abandoned status through an asynchronous host.
+        self.state.events.clear();
+        self.state.resync = None;
+        self.emit_channel_status_if_changed();
+    }
+
+    /// Finalize the local half of a zero-payout clean shutdown after the host
+    /// has made the complete close spend available to the peer.
+    pub fn complete_outbound_terminal_handoff(&mut self) -> Result<(), Error> {
+        if !matches!(
+            self.state.session_disposition,
+            Some(SessionDisposition::AwaitOutboundTerminal)
+        ) {
+            return Err(Error::StrErr(
+                "no cooperative terminal handoff is pending".to_string(),
+            ));
+        }
+        self.mark_abandoned();
+        Ok(())
+    }
+
     /// Settle deferred channel-setup work and retry any re-queued messages,
     /// flush potato-gated pending actions, and collect all accumulated events.
     /// Call this after any operation that may have changed state (delivering a
@@ -814,6 +825,12 @@ impl GameSession {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error> {
+        if self.state.session_disposition.is_some() {
+            return Ok(DrainResult {
+                events: std::mem::take(&mut self.state.events),
+                resync: self.state.resync.take(),
+            });
+        }
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
                 let mut env = ChannelEnv::new(allocator)?;
@@ -822,33 +839,35 @@ impl GameSession {
             match recv_result {
                 Ok(effects) => self.process_effects(effects, allocator)?,
                 Err(e) => {
-                    self.state
-                        .events
-                        .push_back(GameSessionEvent::ReceiveError(format!("{e:?}")));
-                    self.state.peer_disconnected = true;
-                    let go_effects = {
-                        let mut env = ChannelEnv::new(allocator)?;
-                        self.peer.go_on_chain(&mut env, true)?
-                    };
-                    self.process_effects(go_effects, allocator)?;
+                    self.handle_peer_protocol_error(allocator, e)?;
                     break;
                 }
             }
+            if self.state.session_disposition.is_some() {
+                self.state.inbound_messages.clear();
+                break;
+            }
         }
 
-        let res = {
+        let res = if self.state.session_disposition.is_some() {
+            None
+        } else {
             let mut env = ChannelEnv::new(allocator)?;
-            self.peer.flush_pending_actions(&mut env)
+            Some(self.peer.flush_pending_actions(&mut env))
         };
         match res {
-            Ok(effects) => self.process_effects(effects, allocator)?,
-            Err(e) => {
+            Some(Ok(effects)) => self.process_effects(effects, allocator)?,
+            Some(Err(e)) => {
+                let action_context = self.peer.take_failed_queued_action();
                 self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
+                        id: action_context.as_ref().map(|(id, _)| *id),
+                        action: action_context.map(|(_, action)| action),
                         reason: format!("{e:?}"),
                     },
                 ));
             }
+            None => {}
         }
 
         Ok(DrainResult {
@@ -885,6 +904,22 @@ impl GameSession {
         if new_state != old_state {
             return true;
         }
+        if new
+            .as_ref()
+            .and_then(|snapshot| snapshot.session_disposition.as_ref())
+            != old
+                .as_ref()
+                .and_then(|snapshot| snapshot.session_disposition.as_ref())
+        {
+            return true;
+        }
+        if new.as_ref().and_then(|snapshot| snapshot.unroll_initiator)
+            != old.as_ref().and_then(|snapshot| snapshot.unroll_initiator)
+            || new.as_ref().and_then(|snapshot| snapshot.semantic_phase)
+                != old.as_ref().and_then(|snapshot| snapshot.semantic_phase)
+        {
+            return true;
+        }
         // In Active state, re-emit on balance changes (potato firings).
         // In other states, suppress same-state re-emissions (e.g. coin
         // changes within Unrolling).
@@ -894,17 +929,47 @@ impl GameSession {
     fn make_channel_status_notification(snap: &ChannelStatusSnapshot) -> GameNotification {
         GameNotification::ChannelStatus {
             state: snap.state.clone(),
+            session_disposition: snap.session_disposition.clone(),
             advisory: snap.advisory.clone(),
             coin: snap.coin.clone(),
             our_balance: snap.our_balance.clone(),
             their_balance: snap.their_balance.clone(),
             game_allocated: snap.game_allocated.clone(),
             have_potato: snap.have_potato,
+            zero_payout: snap.zero_payout,
+            unroll_initiator: snap.unroll_initiator,
+            semantic_phase: snap.semantic_phase,
         }
     }
 
     fn emit_channel_status_if_changed(&mut self) {
-        let snapshot = self.peer.channel_status_snapshot();
+        if self.state.channel_expired {
+            return;
+        }
+        let session_disposition = self.state.session_disposition.clone();
+        let snapshot = if let Some(session_disposition) = session_disposition {
+            let mut snapshot = self
+                .peer
+                .channel_status_snapshot()
+                .or_else(|| self.last_channel_status.clone())
+                .unwrap_or(ChannelStatusSnapshot {
+                    state: ChannelStatus::Handshaking,
+                    session_disposition: None,
+                    advisory: None,
+                    coin: None,
+                    our_balance: None,
+                    their_balance: None,
+                    game_allocated: None,
+                    have_potato: None,
+                    zero_payout: None,
+                    unroll_initiator: None,
+                    semantic_phase: None,
+                });
+            snapshot.session_disposition = Some(session_disposition);
+            Some(snapshot)
+        } else {
+            self.peer.channel_status_snapshot()
+        };
         if Self::should_emit_status(&self.last_channel_status, &snapshot) {
             if let Some(ref snap) = snapshot {
                 match snap.state {
@@ -933,6 +998,111 @@ impl GameSession {
         }
     }
 
+    pub(crate) fn timeout_claim_submitted(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<(), Error> {
+        use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
+
+        match semantic {
+            TimeoutClaimSemantic::ChannelTimeoutFinish => {
+                let changed = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<SpendChannelCoinPhase>()
+                    .is_some_and(|phase| phase.timeout_claim_submitted(semantic));
+                if changed {
+                    self.emit_channel_status_if_changed();
+                }
+            }
+            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+                let notification = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
+                    .and_then(|phase| phase.timeout_claim_status(id, true));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn timeout_claim_rearmed(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<(), Error> {
+        use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
+
+        match semantic {
+            TimeoutClaimSemantic::ChannelTimeoutFinish => {
+                let changed = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<SpendChannelCoinPhase>()
+                    .is_some_and(|phase| phase.timeout_claim_rearmed(semantic));
+                if changed {
+                    self.emit_channel_status_if_changed();
+                }
+            }
+            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+                let notification = self
+                    .peer
+                    .as_any_mut()
+                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
+                    .and_then(|phase| phase.timeout_claim_status(id, false));
+                if let Some(notification) = notification {
+                    self.state
+                        .events
+                        .push_back(GameSessionEvent::Notification(notification));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_channel_creation_expiry(&mut self, height: u64, observations: &[CoinObservation]) {
+        if self.state.channel_expired || self.state.channel_established {
+            return;
+        }
+        if let Ok(channel) = self.peer.channel_state() {
+            if observations.iter().any(
+                |observation| matches!(observation, CoinObservation::Created(coin) if coin == channel.channel_coin()),
+            ) {
+                self.state.channel_established = true;
+                return;
+            }
+        }
+        let Some(expiry) = self.state.channel_creation_expiry else {
+            return;
+        };
+        if height < expiry {
+            return;
+        }
+        self.state.channel_expired = true;
+        self.state.is_failed = true;
+        let snapshot = ChannelStatusSnapshot {
+            state: ChannelStatus::Failed,
+            session_disposition: None,
+            advisory: Some("channel coin not confirmed in time".to_string()),
+            coin: None,
+            our_balance: None,
+            their_balance: None,
+            game_allocated: None,
+            have_potato: None,
+            zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
+        };
+        self.state.events.push_back(GameSessionEvent::Notification(
+            Self::make_channel_status_notification(&snapshot),
+        ));
+        self.last_channel_status = Some(snapshot);
+    }
+
     pub fn push_event(&mut self, event: GameSessionEvent) {
         self.state.events.push_back(event);
     }
@@ -942,9 +1112,32 @@ impl GameSession {
         effects: Vec<Effect>,
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
+        if self.state.session_disposition.is_some() {
+            return Ok(());
+        }
+        let complete_zero_payout_shutdown = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::CompleteZeroPayoutShutdown));
+        let go_on_chain_after_peer_error = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::GoOnChainAfterPeerError));
         let mut passthrough = Vec::new();
         for effect in effects {
-            if matches!(effect, Effect::NeedLauncherCoinId) {
+            if let Effect::QueueTerminalHandoff(coin_spend) = effect {
+                let message = bencodex::to_vec(&PeerMessage::CleanShutdownComplete(coin_spend))
+                    .map_err(|e| Error::StrErr(format!("{e:?}")))?;
+                assert!(
+                    self.state.pending_outbound_terminal.is_none(),
+                    "only one terminal outbound handoff may be pending"
+                );
+                let command = TerminalHandoffCommand {
+                    id: self.state.next_terminal_handoff_id,
+                    message,
+                };
+                self.state.next_terminal_handoff_id += 1;
+                self.state.pending_outbound_terminal = Some(command);
+                self.state.session_disposition = Some(SessionDisposition::AwaitOutboundTerminal);
+            } else if matches!(effect, Effect::NeedLauncherCoinId) {
                 self.state
                     .events
                     .push_back(GameSessionEvent::NeedLauncherCoin);
@@ -952,22 +1145,28 @@ impl GameSession {
                 self.state
                     .events
                     .push_back(GameSessionEvent::NeedCoinSpend(req));
+            } else if matches!(effect, Effect::GoOnChainAfterPeerError) {
+                // `go_on_chain` below owns this transition so the exhausted
+                // side can abandon instead of constructing an unroll spend.
             } else {
                 passthrough.push(effect);
             }
         }
         apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
+        if complete_zero_payout_shutdown {
+            self.mark_abandoned();
+            return Ok(());
+        }
+        if go_on_chain_after_peer_error {
+            self.go_on_chain(allocator, true)?;
+            return Ok(());
+        }
 
         if self.state.peer_disconnected && self.peer.handshake_finished() && !self.state.is_on_chain
         {
-            let go_effects = {
-                let mut env = ChannelEnv::new(allocator)?;
-                self.peer.go_on_chain(&mut env, true)?
-            };
-            if !go_effects.is_empty() {
-                return self.process_effects(go_effects, allocator);
-            }
+            self.go_on_chain(allocator, true)?;
+            return Ok(());
         }
 
         if self.peer.channel_state().is_ok() {
@@ -998,15 +1197,7 @@ impl GameSession {
                         self.detect_phase_transition();
                     }
                     Err(e) => {
-                        self.state
-                            .events
-                            .push_back(GameSessionEvent::ReceiveError(format!("{e:?}")));
-                        self.state.peer_disconnected = true;
-                        let go_effects = {
-                            let mut env = ChannelEnv::new(allocator)?;
-                            self.peer.go_on_chain(&mut env, true)?
-                        };
-                        self.process_effects(go_effects, allocator)?;
+                        self.handle_peer_protocol_error(allocator, e)?;
                         break;
                     }
                 }
@@ -1025,10 +1216,7 @@ impl GameSession {
                         self.detect_phase_transition();
                     }
                     Err(e) => {
-                        self.state
-                            .events
-                            .push_back(GameSessionEvent::ReceiveError(format!("{e:?}")));
-                        self.state.peer_disconnected = true;
+                        self.handle_peer_protocol_error(allocator, e)?;
                         break;
                     }
                 }
@@ -1036,6 +1224,17 @@ impl GameSession {
         }
 
         Ok(())
+    }
+
+    fn handle_peer_protocol_error(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        error: Error,
+    ) -> Result<(), Error> {
+        self.state
+            .events
+            .push_back(GameSessionEvent::ReceiveError(format!("{error:?}")));
+        self.go_on_chain(allocator, true).map(|_| ())
     }
 
     fn create_partial_spend_for_channel_coin(
@@ -1203,30 +1402,6 @@ impl GameSession {
 
     pub fn channel_puzzle_hash(&self) -> Option<PuzzleHash> {
         self.state.channel_puzzle_hash.clone()
-    }
-
-    fn filter_coin_report(&mut self, watch_report: &WatchReport) -> WatchReport {
-        // Pass on creates and deletes that are being watched.
-        let deleted_watched: HashSet<CoinString> = watch_report
-            .deleted_watched
-            .iter()
-            .filter(|c| self.state.watching_coins.contains_key(c))
-            .cloned()
-            .collect();
-        for d in deleted_watched.iter() {
-            self.state.watching_coins.remove(d);
-        }
-        let created_watched: HashSet<CoinString> = watch_report
-            .created_watched
-            .iter()
-            .filter(|c| self.state.watching_coins.contains_key(c))
-            .cloned()
-            .collect();
-
-        WatchReport {
-            created_watched,
-            deleted_watched,
-        }
     }
 }
 
@@ -1446,48 +1621,56 @@ impl GameSession {
         Ok(())
     }
 
-    /// Tell the game cradle that a new block arrived, giving a watch report.
+    /// Tell the game cradle that a new block arrived with ordered watch facts.
     pub fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
         height: u64,
-        report: &WatchReport,
+        observations: &[CoinObservation],
     ) -> Result<(), Error> {
+        if self.state.session_disposition.is_some() {
+            return Ok(());
+        }
         self.state.current_height = height;
-        let filtered_report = self.filter_coin_report(report);
-        // Process creations first and apply any resulting handler transition via
-        // process_effects, THEN process spends against the (possibly now-swapped)
-        // peer.  A channel coin first seen already-spent arrives as a
-        // created-then-spent pair: coin_created transitions a handshake handler
-        // to OffChainPhase, and the spend must reach that new handler.
-        let created_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
-            report_coin_changes_to_peer(
-                &mut env,
-                &mut self.peer,
-                &filtered_report,
-                CoinReportPhase::Created,
-            )?
-        };
-        self.process_effects(created_effects, allocator)?;
-        let spent_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
-            report_coin_changes_to_peer(
-                &mut env,
-                &mut self.peer,
-                &filtered_report,
-                CoinReportPhase::Spent,
-            )?
-        };
-        self.process_effects(spent_effects, allocator)?;
+        for observation in observations {
+            let effects = {
+                let mut env = ChannelEnv::new(allocator)?;
+                match observation {
+                    CoinObservation::Created(coin) => {
+                        self.peer.coin_created(&mut env, coin)?.unwrap_or_default()
+                    }
+                    CoinObservation::Spent(coin) => self.peer.coin_spent(&mut env, coin)?,
+                }
+            };
+            self.process_effects(effects, allocator)?;
+        }
         let height_effects = self.peer.new_block(self.state.current_height)?;
         self.process_effects(height_effects, allocator)?;
+        self.check_channel_creation_expiry(height, observations);
         Ok(())
+    }
+
+    /// Advance handler clocks from a confirmed peak height without accepting a
+    /// watched-coin snapshot. Used when polling is skipped or partial: the
+    /// handshake needs the height to request its funding spend, but an empty
+    /// report must never be mistaken for proof that the channel coin failed to
+    /// appear before its deadline.
+    pub fn new_block_height_only(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        height: u64,
+    ) -> Result<(), Error> {
+        if self.state.session_disposition.is_some() {
+            return Ok(());
+        }
+        self.state.current_height = height;
+        let height_effects = self.peer.new_block(height)?;
+        self.process_effects(height_effects, allocator)
     }
 
     /// Queue a message from the peer for processing by `flush_and_collect`.
     pub fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
-        if self.state.peer_disconnected {
+        if self.state.peer_disconnected || self.state.session_disposition.is_some() {
             return Ok(());
         }
         const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
@@ -1504,19 +1687,47 @@ impl GameSession {
         Ok(())
     }
 
+    /// True if an ordinary go-on-chain request should instead stop this local
+    /// session because no channel payout or active game remains for us.
+    pub fn should_abandon_on_go_on_chain(&self) -> bool {
+        self.peer
+            .channel_state()
+            .ok()
+            .is_some_and(|ch| ch.has_zero_payout())
+    }
+
     /// Trigger going on chain.
     pub fn go_on_chain(
         &mut self,
         allocator: &mut AllocEncoder,
-        _local_ui: &mut dyn ToLocalUI,
         got_error: bool,
     ) -> Result<(), Error> {
+        if matches!(
+            self.state.session_disposition,
+            Some(SessionDisposition::AwaitOutboundTerminal)
+        ) {
+            return Ok(());
+        }
+        if self.state.session_disposition.is_some() {
+            return Ok(());
+        }
+        if self.should_abandon_on_go_on_chain() {
+            self.mark_abandoned();
+            return Ok(());
+        }
         self.state.peer_disconnected = true;
         let reported_effects = {
             let mut env = ChannelEnv::new(allocator)?;
             self.peer.go_on_chain(&mut env, got_error)?
         };
-        self.process_effects(reported_effects, allocator)?;
+        if !reported_effects.is_empty() {
+            self.process_effects(reported_effects, allocator)?;
+        } else {
+            // A phase may update its status (notably handshake failure) without
+            // emitting effects. Synchronize that state without re-entering the
+            // effect pipeline and its peer-disconnect escalation.
+            self.detect_phase_transition();
+        }
         Ok(())
     }
 
@@ -1526,6 +1737,9 @@ impl GameSession {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error> {
+        if self.state.session_disposition.is_some() {
+            return Ok(());
+        }
         let (reported_effects, resync) = {
             let mut env = ChannelEnv::new(allocator)?;
             self.peer
@@ -1558,6 +1772,42 @@ mod sequencing_tests {
     use crate::common::types::CoinID;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    fn unrolling_snapshot(
+        initiator: Option<crate::session_phases::effects::UnrollInitiator>,
+        phase: Option<crate::session_phases::effects::ChannelSemanticPhase>,
+    ) -> Option<ChannelStatusSnapshot> {
+        Some(ChannelStatusSnapshot {
+            state: ChannelStatus::Unrolling,
+            session_disposition: None,
+            advisory: None,
+            coin: None,
+            our_balance: None,
+            their_balance: None,
+            game_allocated: None,
+            have_potato: None,
+            zero_payout: None,
+            unroll_initiator: initiator,
+            semantic_phase: phase,
+        })
+    }
+
+    #[test]
+    fn unrolling_progress_changes_emit_channel_status() {
+        use crate::session_phases::effects::{ChannelSemanticPhase, UnrollInitiator};
+
+        assert!(GameSession::should_emit_status(
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::WaitingTimeout)),
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::SubmittingTimeoutFinish)),
+        ));
+        assert!(GameSession::should_emit_status(
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::WaitingTimeout)),
+            &unrolling_snapshot(
+                Some(UnrollInitiator::Opponent),
+                Some(ChannelSemanticPhase::WaitingTimeout),
+            ),
+        ));
+    }
 
     #[derive(Default)]
     struct Recorder {
@@ -1644,9 +1894,9 @@ mod sequencing_tests {
         }
     }
 
-    /// A channel coin first observed already-spent is reported in BOTH
-    /// `created_watched` and `deleted_watched`.  The cradle processes the created
-    /// phase, applies the handler transition, then processes the spent phase.
+    /// A channel coin first observed already-spent is represented as ordered
+    /// `Created` then `Spent` observations. The cradle processes the creation,
+    /// applies the handler transition, then processes the spend.
     /// This guarantees the spend reaches the post-transition handler rather than
     /// the handshake handler that ignores it.  See
     /// `GameSession::new_block` for the sequencing this mirrors.
@@ -1660,10 +1910,6 @@ mod sequencing_tests {
             &PuzzleHash::from_bytes([8; 32]),
             &Amount::new(1),
         );
-        let mut report = WatchReport::default();
-        report.created_watched.insert(coin.clone());
-        report.deleted_watched.insert(coin.clone());
-
         let handshake_rec = Rc::new(RefCell::new(Recorder::default()));
         let replacement_rec = Rc::new(RefCell::new(Recorder::default()));
         let mut handshake = HandshakeLikeHandler {
@@ -1673,7 +1919,8 @@ mod sequencing_tests {
         };
 
         // Created phase: the handshake handler builds its replacement.
-        report_coin_changes_to_peer(&mut env, &mut handshake, &report, CoinReportPhase::Created)
+        handshake
+            .coin_created(&mut env, &coin)
             .expect("created phase");
         // Transition checkpoint (what detect_phase_transition does inside
         // process_effects between the two phases).
@@ -1681,7 +1928,8 @@ mod sequencing_tests {
             .take_next_phase()
             .expect("coin_created must trigger the transition");
         // Spent phase: delivered to the post-transition handler.
-        report_coin_changes_to_peer(&mut env, &mut replacement, &report, CoinReportPhase::Spent)
+        replacement
+            .coin_spent(&mut env, &coin)
             .expect("spent phase");
 
         assert!(

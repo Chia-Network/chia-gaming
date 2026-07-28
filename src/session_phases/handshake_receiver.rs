@@ -451,6 +451,7 @@ impl HandshakeReceiverPhase {
                     timeout: Timeout::new(1_000_000),
                     name: Some("channel"),
                     spend: None,
+                    semantic: None,
                 });
                 effects.push(Effect::PeerHandshakeD(HandshakePayloadD {
                     signatures: sigs,
@@ -773,6 +774,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         if self.failed {
             return Some(ChannelStatusSnapshot {
                 state: ChannelStatus::Failed,
+                session_disposition: None,
                 advisory: self.failure_advisory.clone(),
                 coin: self
                     .channel_state
@@ -791,6 +793,9 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
                 have_potato: None,
+                zero_payout: None,
+                unroll_initiator: None,
+                semantic_phase: None,
             });
         }
         // The channel-creation expiry -> Failed signal now lives in the
@@ -800,6 +805,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         if self.pending_coin_spend {
             return Some(ChannelStatusSnapshot {
                 state: ChannelStatus::WaitingForHeightToAccept,
+                session_disposition: None,
                 advisory: None,
                 coin: self
                     .channel_state
@@ -818,6 +824,9 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
                 have_potato: None,
+                zero_payout: None,
+                unroll_initiator: None,
+                semantic_phase: None,
             });
         }
         let state = match &self.state {
@@ -845,12 +854,16 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
             };
         Some(ChannelStatusSnapshot {
             state,
+            session_disposition: None,
             advisory: None,
             coin,
             our_balance,
             their_balance,
             game_allocated,
             have_potato: None,
+            zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

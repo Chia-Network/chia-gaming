@@ -23,6 +23,34 @@ export var sessionController: SessionController | null = null;
 /** @deprecated alias for sessionController */
 export { sessionController as blobSingleton };
 export var initStarted = false;
+let transactionPublishNerfed = false;
+const transactionPublishNerfListeners = new Set<(nerfed: boolean) => void>();
+
+function applyTransactionPublishNerfPolicy(nerfed: boolean): void {
+  transactionPublishNerfed = nerfed;
+  for (const listener of transactionPublishNerfListeners) {
+    listener(nerfed);
+  }
+}
+
+export function isTransactionPublishNerfed(): boolean {
+  return transactionPublishNerfed;
+}
+
+export function setTransactionPublishNerfed(nerfed: boolean): void {
+  if (sessionController) {
+    sessionController.setTransactionPublishNerfed(nerfed);
+  } else {
+    applyTransactionPublishNerfPolicy(nerfed);
+  }
+}
+
+export function subscribeTransactionPublishNerfed(
+  listener: (nerfed: boolean) => void,
+): () => void {
+  transactionPublishNerfListeners.add(listener);
+  return () => transactionPublishNerfListeners.delete(listener);
+}
 
 function requireBigIntCounter(value: unknown, label: string): bigint {
     if (typeof value === 'bigint') return value;
@@ -113,7 +141,6 @@ export async function restoreSession(
 
   sc.messageNumber = requireBigIntCounter(save.messageNumber, 'messageNumber');
   sc.remoteNumber = requireBigIntCounter(save.remoteNumber, 'remoteNumber');
-  sc.channelReady = requireBoolean(save.channelReady, 'channelReady');
   sc.iStarted = requireBoolean(save.iStarted, 'iStarted');
   sc.pairingToken = requireString(save.pairingToken, 'pairingToken');
   if (!Array.isArray(save.unackedMessages)) {
@@ -133,11 +160,10 @@ export async function restoreSession(
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
   sc.activeGameIds = [...save.activeGameIds];
-  sc.activeGameId = save.activeGameIds[0] ?? save.activeGameId ?? null;
   sc.handState = save.handState ?? null;
-  sc.lastChannelStatus = save.channelStatus
+  sc.restoreChannelStatus(save.channelStatus
     ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
-    : null;
+    : null);
   sc.myAlias = save.myAlias;
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
@@ -161,7 +187,6 @@ export function getOrCreateSessionController(
   getFee?: () => bigint,
   channelTimeout?: number,
   unrollTimeout?: number,
-  onTerminal?: () => void,
 ): { sessionController: SessionController } {
   if (sessionController) {
     return { sessionController };
@@ -179,20 +204,13 @@ export function getOrCreateSessionController(
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;
+  sessionController.setTransactionPublishNerfPolicy((nerfed, apply) => {
+    applyTransactionPublishNerfPolicy(nerfed);
+    apply(nerfed);
+  });
+  sessionController.setTransactionPublishNerfed(transactionPublishNerfed);
   if (getFee) sessionController.getFee = getFee;
   sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
-
-  if (onTerminal) {
-    const sc = sessionController;
-    const sub = sc.getObservable().subscribe({
-      next: (evt) => {
-        if (evt.type === 'terminal') {
-          sub.unsubscribe();
-          onTerminal();
-        }
-      },
-    });
-  }
 
   registerMessageHandler(
     (msgno: number, msg: Uint8Array) => {

@@ -397,6 +397,11 @@ impl ChannelState {
         !self.live_games.is_empty()
     }
 
+    /// No channel change remains for us and no live game can produce one.
+    pub fn has_zero_payout(&self) -> bool {
+        self.get_our_current_share() == Amount::default() && !self.has_active_games()
+    }
+
     pub fn unroll_puzzle_hash_map(&self) -> &HashMap<PuzzleHash, HistoricalUnrollSpendInfo> {
         &self.unroll_puzzle_hash_map
     }

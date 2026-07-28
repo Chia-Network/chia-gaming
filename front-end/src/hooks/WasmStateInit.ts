@@ -40,10 +40,16 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
 let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
 let loadPromise: Promise<WasmConnection> | null = null;
 
-if (typeof window !== 'undefined') {
-  window.loadWasm = (init: WasmInitFn, wasmConn: WasmConnection) => {
+type WasmLoaderTarget = {
+  loadWasm?: (init: WasmInitFn, wasmConn: WasmConnection) => void;
+  dispatchEvent(event: Event): boolean;
+};
+
+export function registerWasmLoader(target: WasmLoaderTarget): void {
+  target.loadWasm = (init: WasmInitFn, wasmConn: WasmConnection) => {
     storeInitArgs(init, wasmConn);
   };
+  target.dispatchEvent(new Event('chia-gaming-wasm-loader-ready'));
 }
 
 export const readyToInit = new Subject<boolean>();
@@ -56,6 +62,10 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   readyToInit.subscribe(subscriber);
 });
 
+if (typeof window !== 'undefined') {
+  registerWasmLoader(window);
+}
+
 export function storeInitArgs(
   chia_gaming_init_ready: WasmInitFn,
   cg_ready: WasmConnection,
@@ -63,8 +73,6 @@ export function storeInitArgs(
   chia_gaming_init = chia_gaming_init_ready;
   cg = cg_ready;
   readyToInit.next(true);
-  // Kick download/compile as soon as the glue is wired (page load), not on Accept.
-  void ensureWasmLoaded();
 }
 
 async function runWasmLoad(): Promise<WasmConnection> {

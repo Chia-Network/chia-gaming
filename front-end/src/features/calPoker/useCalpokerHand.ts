@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import {
-  CalpokerOutcome,
-} from '../types/ChiaGaming';
-import { SessionController } from './SessionController';
-import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from './save';
-import { GameplayEvent } from './useGameSession';
-import { type SettlementOutcome } from '../lib/settlement';
+import { CalpokerOutcome } from './outcome';
+import { SessionController } from '../../hooks/SessionController';
+import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from '../../hooks/save';
+import { GameplayEvent } from '../../hooks/useGameSession';
+import { type SettlementOutcome } from '../../lib/settlement';
 
 const CALPOKER_PERSISTED_STATE_VERSION = 1n;
 
@@ -79,6 +77,14 @@ export function shouldProcessCalpokerOpponentMoved(
   return !handFinished || !hasOutcome;
 }
 
+export function shouldRestoreCalpokerSelection(
+  moveNumber: string,
+  hasOutcome: boolean,
+  hasSettlementOutcome: boolean,
+): boolean {
+  return moveNumber === '1' && !hasOutcome && !hasSettlementOutcome;
+}
+
 // At the endgame reveal (currentMove >= 2) exactly one player still owes a
 // terminal move: the first mover, whose initial turn is `!iStarted`
 // (iStarted === false) — this is "Alice" in CalpokerOutcome terms. She has just
@@ -109,7 +115,9 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(null);
+  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
+    initialHandState?.settlementOutcome ?? null,
+  );
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -195,9 +203,14 @@ export function useCalpokerHand(
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            setSettlementOutcome(evt.Settled.outcome);
+          handFinishedRef.current = true;
+          setSettlementOutcome(evt.Settled.outcome);
+          const existing = calpokerStateFromPersisted(gameObjectRef.current?.handState);
+          if (existing) {
+            gameObjectRef.current?.setHandState(persistedCalpokerState({
+              ...existing,
+              settlementOutcome: evt.Settled.outcome,
+            }));
           }
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
@@ -274,12 +287,12 @@ export function useCalpokerHand(
     if (playerHand.length > 0) {
       const existing = calpokerStateFromPersisted(gameObject.handState);
       gameObject.setHandState(persistedCalpokerState({
-        playerHand, opponentHand, moveNumber, isPlayerTurn,
+        playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome,
         cardSelections: cardSelectionsRef.current,
         displaySnapshot: existing?.displaySnapshot,
       }));
     }
-  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, gameObject]);
+  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome, gameObject]);
 
   useEffect(() => {
     if (playerHand.length > 0) {

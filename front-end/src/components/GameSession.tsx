@@ -1,20 +1,18 @@
-import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, isValidKrunkStake, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
-import { useCalpokerHand } from '../hooks/useCalpokerHand';
+import { useGameSession, isValidKrunkStake, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, QueuedNotification } from '../hooks/useGameSession';
+import { useCalpokerHand } from '../features/calPoker/useCalpokerHand';
 import { CalpokerDisplaySnapshot, SessionSave } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
-import { CalpokerOutcome, SessionPhase } from '../types/ChiaGaming';
+import { SessionPhase } from '../types/ChiaGaming';
+import { CalpokerOutcome } from '../features/calPoker/outcome';
 import { SessionController, RestoreStatus } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import Calpoker from '../features/calPoker';
 import {
   CalpokerDisplaySnapshotView,
   CalpokerOutcomeView,
-} from '../types/californiaPoker/CaliforniapokerProps';
-import SpacePoker from './SpacePoker';
-import Krunk from './Krunk';
+} from '../features/calPoker/types/CaliforniapokerProps';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
@@ -22,24 +20,26 @@ import {
   gameplayEventNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
+import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import {
   DEFAULT_GAME_TIMEOUT_BLOCKS,
+  PRE_ACTIVE_CHANNEL_STATES,
   selectComposeAmountAfterGameTypeChoice,
-  selectHideGameInterfaceForBetweenHandDialog,
+  selectInertGameInterfaceForBetweenHandDialog,
+  type ChannelStatusModel,
   type SessionModel,
 } from '../lib/session/model';
-import type { ChannelStatus } from '../types/ChiaGaming';
-
-const PRE_ACTIVE_STATES: ReadonlySet<ChannelStatus> = new Set([
-  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
-]);
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
 import { AmountInput } from './AmountInput';
+
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const Calpoker = lazy(() => import('../features/calPoker'));
+const SpacePoker = lazy(() => import('../features/spacePoker/SpacePoker'));
+const Krunk = lazy(() => import('../features/krunk/Krunk'));
 
 interface ErrorBoundaryProps { children: ReactNode; }
 interface ErrorBoundaryState {
@@ -269,7 +269,7 @@ function useViewportClampedDragWithInsets(
 }
 
 
-function ChannelStatusContent({ info }: { info: ChannelStatusInfo }) {
+function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
   return (
     <>
       {info.advisory && (
@@ -315,11 +315,13 @@ function NotificationOverlay({
   onDismiss,
   boundsRef,
   zClass,
+  focusBoundaryPriority,
 }: {
   notification: QueuedNotification;
   onDismiss: () => void;
   boundsRef: RefObject<HTMLElement | null>;
   zClass: string;
+  focusBoundaryPriority: number;
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   const dragControls = useDragControls();
@@ -340,6 +342,7 @@ function NotificationOverlay({
       onDrag={clampToViewport}
       onDragEnd={clampToViewport}
       className={`absolute ${zClass} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2`}
+      data-between-hand-focus-boundary={focusBoundaryPriority}
     >
       <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
         <CardHeader
@@ -351,7 +354,7 @@ function NotificationOverlay({
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
-            <ChannelStatusContent info={notification.payload as ChannelStatusInfo} />
+            <ChannelStatusContent info={notification.payload as ChannelStatusModel} />
           )}
           {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
             <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
@@ -421,7 +424,7 @@ function stringifyCalpokerOutcome(outcome: CalpokerOutcome | undefined): Calpoke
   };
 }
 
-function CalpokerHand({
+export function CalpokerHand({
   gameObject,
   gameId,
   iStarted,
@@ -521,7 +524,7 @@ interface SpacePokerHandProps {
   opponentName?: string;
 }
 
-function SpacePokerHand({
+export function SpacePokerHand({
   gameObject,
   gameId,
   iStarted,
@@ -576,7 +579,7 @@ interface KrunkHandProps {
   opponentName?: string;
 }
 
-function KrunkHand({
+export function KrunkHand({
   gameObject,
   currentHandGameIds,
   activeGameIds,
@@ -853,6 +856,82 @@ function ReviewProposalDialog({
   );
 }
 
+function BetweenHandOverlay({
+  children,
+  restoreFocus,
+}: {
+  children: ReactNode;
+  restoreFocus: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const notificationFocusables = () => Array.from(
+      document.querySelectorAll<HTMLElement>('[data-between-hand-focus-boundary]'),
+    )
+        .sort((a, b) => Number(b.dataset.betweenHandFocusBoundary) - Number(a.dataset.betweenHandFocusBoundary))
+        .flatMap(boundary => Array.from(boundary.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)));
+    const focusable = () => Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      .filter(element => (
+        dialog.contains(element)
+        || element.closest('[data-between-hand-focus-boundary]') !== null
+      ));
+    (notificationFocusables()[0] ?? focusable()[0] ?? dialog).focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      if (elements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      const activeElement = document.activeElement;
+      const activeIndex = elements.indexOf(activeElement as HTMLElement);
+      if (activeIndex === -1) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (previouslyFocused?.isConnected && previouslyFocused !== document.body) {
+        previouslyFocused.focus();
+      } else {
+        restoreFocus();
+      }
+    };
+  }, [restoreFocus]);
+
+  return (
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      role='dialog'
+      aria-modal='true'
+      aria-labelledby='between-hand-dialog-title'
+      className='absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-canvas-bg/90 p-4 focus:outline-none'
+    >
+      <h2 id='between-hand-dialog-title' className='sr-only'>Between-hand proposal</h2>
+      {children}
+    </div>
+  );
+}
+
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
@@ -867,13 +946,20 @@ export interface GameSessionProps {
   onCoinsProviderChange?: (getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
-  onTerminal?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain, onTerminal }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange, onRestoreStatusChange, onSessionModelChange, onProtocolStateProviderChange, onCoinsProviderChange, suppressPhaseReporting, blockchain }) => {
   const uniqueId = getPlayerId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchain, onTerminal);
+  const session = useGameSession(
+    params,
+    uniqueId,
+    peerConn,
+    registerMessageHandler,
+    appendGameLog,
+    sessionSave,
+    blockchain,
+  );
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -897,9 +983,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     return () => onCoinsProviderChange(null);
   }, [session.sessionController, onCoinsProviderChange]);
 
+  const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {
-    if (!onSessionPhaseChange || suppressPhaseReporting) return;
     const phase = session.sessionPhase;
+    if (
+      !onSessionPhaseChange
+      || !shouldReportSessionPhase(
+        phase,
+        !!suppressPhaseReporting,
+        resolvedPhaseReportedRef.current,
+      )
+    ) {
+      return;
+    }
     const settledOutcome = session.gameTerminal.outcome;
     const hasError =
       session.channelStatus.state === 'Failed' ||
@@ -908,6 +1004,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       (session.gameTerminal.type === 'settled'
         && settledOutcome != null
         && isErrorSettlementOutcome(settledOutcome));
+    if (phase === 'resolved') {
+      resolvedPhaseReportedRef.current = true;
+    }
     onSessionPhaseChange(phase, hasError);
   }, [session.sessionPhase, session.channelStatus.state, session.gameTerminal.type, session.gameTerminal.outcome, onSessionPhaseChange, suppressPhaseReporting]);
 
@@ -973,6 +1072,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
+  const restoreGameAreaFocus = useCallback(() => gameAreaRef.current?.focus(), []);
 
   const maxPerHandMojos = (() => {
     const ours = session.channelStatus.ourBalance;
@@ -989,12 +1089,22 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
   const handEverStarted = session.handKey > 0;
   const hasPersistedGameState = !!session.gameSpecificView.handState;
-  const hideGameInterfaceForBetweenHandDialog = selectHideGameInterfaceForBetweenHandDialog(
+  const hasReviewPeerProposal = session.reviewPeerProposal != null;
+  const showBetweenHandOverlay = session.betweenHands
+    && session.channelStatus.state === 'Active'
+    && !session.cleanShutdownStarted
+    && (
+      session.betweenHandMode === 'compose-proposal'
+      || (session.betweenHandMode === 'review-incoming-proposal' && hasReviewPeerProposal)
+    );
+  const gameInterfaceIsInertForBetweenHandDialog = selectInertGameInterfaceForBetweenHandDialog(
     session.betweenHands,
     session.betweenHandMode,
+    hasReviewPeerProposal,
+    showBetweenHandOverlay,
   );
   const gameSpecificView = session.gameSpecificView;
-  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState) && !hideGameInterfaceForBetweenHandDialog;
+  const showGameInterface = handEverStarted && (!!gameSpecificView.displayGameId || hasPersistedGameState);
 
   if (suppressPhaseReporting) {
     return (
@@ -1013,84 +1123,92 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           onDismiss={session.dismissGame}
           boundsRef={channelOverlayBoundsRef}
           zClass='z-40'
+          focusBoundaryPriority={40}
         />
       )}
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
-          <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
+          <div
+            ref={gameAreaRef}
+            tabIndex={-1}
+            inert={gameInterfaceIsInertForBetweenHandDialog}
+            className='relative overflow-hidden z-0 focus:outline-none'
+          >
           {showGameInterface && (
             <GameAreaErrorBoundary
               resetKey={`${gameSpecificView.gameType}:${session.handKey}:${session.activeGameId ?? gameSpecificView.displayGameId ?? ''}`}
             >
-              {gameSpecificView.gameType === 'calpoker' ? (
-                <CalpokerHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                  iStarted={session.iStarted}
-                  playerNumber={session.playerNumber}
-                  gameplayEvent$={session.gameplayEvent$}
-                  onOutcome={session.onHandOutcome}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  perGameAmount={session.currentHandAmount}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : gameSpecificView.gameType === 'spacepoker' ? (
-                <SpacePokerHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                  iStarted={session.iStarted}
-                  gameplayEvent$={session.gameplayEvent$}
-                  betSize={String(session.currentHandAmount)}
-                  unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
-                    ? String(session.lastHandTerms.spacepokerUnitSize)
-                    : undefined}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  perGameAmount={session.currentHandAmount}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : gameSpecificView.gameType === 'krunk' ? (
-                <KrunkHand
-                  key={session.handKey}
-                  gameObject={session.sessionController}
-                  currentHandGameIds={session.currentHandGameIds}
-                  activeGameIds={session.activeGameIds}
-                  iProposedHand={session.iProposedHand}
-                  gameplayEvent$={session.gameplayEvent$}
-                  betSize={session.currentHandAmount}
-                  onTurnChanged={session.onTurnChanged}
-                  appendGameLog={session.appendGameLog}
-                  myName={params.myAlias}
-                  opponentName={params.opponentAlias}
-                />
-              ) : (
-                <div className='flex items-center justify-center py-20'>
-                  <p className='text-canvas-text'>
-                    Game not supported: {gameDisplayName(gameSpecificView.gameType)}
-                  </p>
-                </div>
-              )}
+              <Suspense fallback={<div className='flex items-center justify-center py-20 text-canvas-text'>Loading game…</div>}>
+                {gameSpecificView.gameType === 'calpoker' ? (
+                  <CalpokerHand
+                    key={session.handKey}
+                    gameObject={session.sessionController}
+                    gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                    iStarted={session.iStarted}
+                    playerNumber={session.playerNumber}
+                    gameplayEvent$={session.gameplayEvent$}
+                    onOutcome={session.onHandOutcome}
+                    onTurnChanged={session.onTurnChanged}
+                    appendGameLog={session.appendGameLog}
+                    perGameAmount={session.currentHandAmount}
+                    myName={params.myAlias}
+                    opponentName={params.opponentAlias}
+                  />
+                ) : gameSpecificView.gameType === 'spacepoker' ? (
+                  <SpacePokerHand
+                    key={session.handKey}
+                    gameObject={session.sessionController}
+                    gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
+                    iStarted={session.iStarted}
+                    gameplayEvent$={session.gameplayEvent$}
+                    betSize={String(session.currentHandAmount)}
+                    unitSizeMojos={session.lastHandTerms.gameType === 'spacepoker' && session.lastHandTerms.spacepokerUnitSize
+                      ? String(session.lastHandTerms.spacepokerUnitSize)
+                      : undefined}
+                    onTurnChanged={session.onTurnChanged}
+                    appendGameLog={session.appendGameLog}
+                    perGameAmount={session.currentHandAmount}
+                    myName={params.myAlias}
+                    opponentName={params.opponentAlias}
+                  />
+                ) : gameSpecificView.gameType === 'krunk' ? (
+                  <KrunkHand
+                    key={session.handKey}
+                    gameObject={session.sessionController}
+                    currentHandGameIds={session.currentHandGameIds}
+                    activeGameIds={session.activeGameIds}
+                    iProposedHand={session.iProposedHand}
+                    gameplayEvent$={session.gameplayEvent$}
+                    betSize={session.currentHandAmount}
+                    onTurnChanged={session.onTurnChanged}
+                    appendGameLog={session.appendGameLog}
+                    myName={params.myAlias}
+                    opponentName={params.opponentAlias}
+                  />
+                ) : (
+                  <div className='flex items-center justify-center py-20'>
+                    <p className='text-canvas-text'>
+                      Game not supported: {gameDisplayName(gameSpecificView.gameType)}
+                    </p>
+                  </div>
+                )}
+              </Suspense>
             </GameAreaErrorBoundary>
           )}
 
-          {(!handEverStarted || PRE_ACTIVE_STATES.has(session.channelStatus.state)) && (
+          {(!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
-          {handEverStarted && !PRE_ACTIVE_STATES.has(session.channelStatus.state) && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
+          {handEverStarted && !PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state) && !gameSpecificView.displayGameId && !hasPersistedGameState && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>
           )}
 
-        </div>
+          </div>
 
         {/* Between-hand session controls — only when the channel is Active */}
         {session.betweenHands && session.channelStatus.state === 'Active' && !session.cleanShutdownStarted && (
@@ -1118,20 +1236,23 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                 </Button>
               </div>
             )}
-
-            {session.betweenHandMode === 'compose-proposal' && (
-              <ComposeProposalDialog
-                session={session}
-                maxPerHandMojos={maxPerHandMojos}
-              />
-            )}
-
-            {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <ReviewProposalDialog session={session} />
-            )}
           </>
         )}
       </div>
+
+      {showBetweenHandOverlay && (
+        <BetweenHandOverlay restoreFocus={restoreGameAreaFocus}>
+          {session.betweenHandMode === 'compose-proposal' && (
+            <ComposeProposalDialog
+              session={session}
+              maxPerHandMojos={maxPerHandMojos}
+            />
+          )}
+          {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+            <ReviewProposalDialog session={session} />
+          )}
+        </BetweenHandOverlay>
+      )}
 
       {session.channelQueue[0] && (
         <NotificationOverlay
@@ -1139,6 +1260,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           onDismiss={session.dismissChannel}
           boundsRef={channelOverlayBoundsRef}
           zClass='z-50'
+          focusBoundaryPriority={50}
         />
       )}
     </div>

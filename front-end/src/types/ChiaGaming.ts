@@ -1,7 +1,6 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
-import { cardIdToRankSuit } from './californiaPoker/cardHelpers';
 
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
@@ -36,6 +35,15 @@ export interface CoinStateRecord {
   spent_height: bigint | null;
 }
 
+/** Wallet funding request emitted by the WASM game-session boundary. */
+export interface NeedCoinSpendRequest {
+  /** Exact decimal u64 emitted by WASM; never an IEEE-754 number. */
+  amount: string;
+  conditions: Array<{ opcode: bigint | number; args: string[] }>;
+  coin_id?: string;
+  max_height?: bigint | number;
+}
+
 export type GameSessionEvent =
   | { OutboundMessage: Uint8Array }
   | { OutboundTransaction: SpendBundle }
@@ -43,20 +51,23 @@ export type GameSessionEvent =
   | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
-  | { NeedCoinSpend: {
-      amount: bigint;
-      conditions: Array<{ opcode: bigint; args: string[] }>;
-      coin_id?: string;
-      max_height?: bigint;
-    } }
+  | { NeedCoinSpend: NeedCoinSpendRequest }
   | { NeedLauncherCoin: boolean };
 
 export interface WasmResult {
   events?: GameSessionEvent[];
   watchCoins?: Array<{ coin_name: string; coin_string: string }>;
+  unwatchCoins?: Array<{ coin_name: string; coin_string: string }>;
+  /** Whether the WASM action completed before its result was drained. */
+  actionSucceeded?: boolean;
   ids?: string[];
-  terminal?: boolean;
+  disposition?: WasmDisposition;
 }
+
+export type WasmDisposition =
+  | { kind: 'active' }
+  | { kind: 'await-outbound-terminal'; command: { id: string; message: Uint8Array } }
+  | { kind: 'terminal' };
 
 export type WasmInitFn = (opts?: { module_or_path?: string | URL | Request | Response | Promise<Response> }) => Promise<any>;
 
@@ -126,6 +137,7 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
+  submitting_timeout_claim?: boolean;
 }
 
 export interface GameStatusPayload {
@@ -152,15 +164,29 @@ export type ChannelStatus =
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
   | 'Failed';
 
+export type SessionDisposition = 'AwaitOutboundTerminal' | 'Abandoned';
+
 export interface ChannelStatusPayload {
   state: ChannelStatus;
+  session_disposition?: SessionDisposition | null;
   advisory: string | null;
   coin: unknown;
   our_balance: unknown;
   their_balance: unknown;
   game_allocated: unknown;
   have_potato?: boolean | null;
+  zero_payout?: boolean | null;
+  unroll_initiator?: 'us' | 'opponent' | null;
+  semantic_phase?: ChannelSemanticPhase | null;
 }
+
+export type ChannelSemanticPhase =
+  | 'submitting_channel_spend'
+  | 'resolving_opponent_channel_spend'
+  | 'preempting'
+  | 'waiting_timeout'
+  | 'submitting_timeout_finish'
+  | 'resolving';
 
 export interface ProposalAcceptedPayload {
   id: bigint | number | string;
@@ -173,20 +199,27 @@ export interface MoveRejectedPayload {
   message: string;
 }
 
+export interface ActionFailedPayload {
+  id?: bigint | number | string;
+  action?: 'make_move' | 'accept_settlement';
+  reason: string;
+}
+
 export type WasmNotification = {
-  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected'>]?: Record<string, unknown>;
+  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'>]?: Record<string, unknown>;
 } & {
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
+  ActionFailed?: ActionFailedPayload;
 };
 
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
+  | { type: 'game-action-error'; gameId: string; action: 'make-move' | 'accept-settlement'; error: string }
   | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
-  | { type: 'log'; message: string }
-  | { type: 'terminal' };
+  | { type: 'log'; message: string };
 
 interface GameSessionCreateConfig {
   rng_id: number;
@@ -228,6 +261,7 @@ export interface WasmConnection {
     removals: string[],
   ) => WasmResult | undefined;
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult | undefined;
+  report_height: (cid: number, height: bigint) => WasmResult | undefined;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
   resubmit_submitted: (cid: number) => void;
@@ -263,6 +297,9 @@ export interface WasmConnection {
   cheat: (cid: number, id: string, mover_share: string) => WasmResult | undefined;
   accept_settlement: (cid: number, id: string) => WasmResult | undefined;
   shut_down: (cid: number) => WasmResult | undefined;
+  abandon: (cid: number) => WasmResult | undefined;
+  complete_outbound_terminal_handoff: (cid: number) => WasmResult | undefined;
+  pending_terminal_handoff: (cid: number) => { id: string; message: Uint8Array } | null;
   go_on_chain: (cid: number) => WasmResult | undefined;
   report_puzzle_and_solution: (
     cid: number,
@@ -361,6 +398,18 @@ export class ChiaGame {
     return this.wasm.shut_down(this.session);
   }
 
+  abandon(): WasmResult | undefined {
+    return this.wasm.abandon(this.session);
+  }
+
+  completeOutboundTerminalHandoff(): WasmResult | undefined {
+    return this.wasm.complete_outbound_terminal_handoff(this.session);
+  }
+
+  pendingTerminalHandoff(): { id: string; message: Uint8Array } | null {
+    return this.wasm.pending_terminal_handoff(this.session);
+  }
+
   go_on_chain(): WasmResult | undefined {
     return this.wasm.go_on_chain(this.session);
   }
@@ -442,16 +491,9 @@ export class ChiaGame {
     return this.wasm.report_coin_states(this.session, height, jsonStringify(records));
   }
 
-  /**
-   * Advance to `height` with no coin-state change (an empty created/deleted
-   * delta).  Lets the host deliver a height tick promptly -- driving the
-   * handshake's `new_block(height)` -- without waiting on the slower full
-   * coin-records snapshot reported via `report_coin_states`.  Safe regardless of
-   * which coins exist on chain: an empty delta forwards no coin changes, so it
-   * can never be misread as a coin deletion.
-   */
-  new_block(height: bigint): WasmResult | undefined {
-    return this.wasm.new_block(this.session, height, [], []);
+  /** Advance protocol clocks without treating absent coin data as a snapshot. */
+  report_height(height: bigint): WasmResult | undefined {
+    return this.wasm.report_height(this.session, height);
   }
 
   /** Durable watched-coin snapshot used to seed host polling after attach/restore. */
@@ -485,29 +527,6 @@ export interface WatchReport {
   deleted_watched: string[];
 }
 
-function select_cards_using_bits<T>(card: T[], mask: bigint): T[][] {
-  const result0: T[] = [];
-  const result1: T[] = [];
-  card.forEach((c, i) => {
-    if ((mask & (1n << BigInt(i))) !== 0n) {
-      result1.push(c);
-    } else {
-      result0.push(c);
-    }
-  });
-  return [result0, result1];
-}
-
-function compare_card(a: bigint, b: bigint): number {
-  const aRankSuit = cardIdToRankSuit(a);
-  const bRankSuit = cardIdToRankSuit(b);
-  const rankdiff = aRankSuit.rank - bRankSuit.rank;
-  if (rankdiff === 0) {
-    return aRankSuit.suit - bRankSuit.suit;
-  }
-  return rankdiff;
-}
-
 export interface PeerConnectionResult {
   /** Returns false when the hub WS is not OPEN (frame was not sent). */
   sendMessage: (msgno: number, input: Uint8Array) => boolean;
@@ -517,112 +536,6 @@ export interface PeerConnectionResult {
   sendKeepalive: () => boolean;
   hostLog: (msg: string) => void;
   close: () => void;
-}
-
-export class CalpokerOutcome {
-  alice_discards: bigint;
-  bob_discards: bigint;
-
-  alice_selects: bigint;
-  bob_selects: bigint;
-
-  alice_hand_value: bigint[];
-  bob_hand_value: bigint[];
-
-  win_direction: bigint;
-  my_win_outcome: 'win' | 'lose' | 'tie';
-
-  alice_cards: bigint[];
-  bob_cards: bigint[];
-
-  alice_final_hand: bigint[];
-  bob_final_hand: bigint[];
-
-  alice_used_cards: bigint[];
-  bob_used_cards: bigint[];
-
-  my_cards: bigint[];
-  their_cards: bigint[];
-  my_final_hand: bigint[];
-  their_final_hand: bigint[];
-  my_used_cards: bigint[];
-  their_used_cards: bigint[];
-  my_hand_value: bigint[];
-  their_hand_value: bigint[];
-
-  constructor(
-    iStarted: boolean,
-    myDiscards: bigint,
-    alice_cards: bigint[],
-    bob_cards: bigint[],
-    readableBytes: Uint8Array | number[],
-  ) {
-    const program = Program.deserialize(Uint8Array.from(readableBytes));
-    const result_list = program.toList();
-    this.alice_cards = alice_cards;
-    this.bob_cards = bob_cards;
-
-    this.alice_selects = result_list[1].toBigInt();
-    this.bob_selects = result_list[2].toBigInt();
-    this.alice_hand_value = result_list[3].toList().map(v => v.toBigInt());
-    this.bob_hand_value = result_list[4].toList().map(v => v.toBigInt());
-    let raw_win_direction = result_list[5].toBigInt();
-    if (iStarted) {
-      raw_win_direction *= -1n;
-      this.alice_discards = result_list[0].toBigInt();
-      this.bob_discards = myDiscards;
-    } else {
-      this.alice_discards = myDiscards;
-      this.bob_discards = result_list[0].toBigInt();
-    }
-
-    this.win_direction = raw_win_direction;
-    const alice_win = this.win_direction < 0n;
-
-    if (this.win_direction === 0n) {
-      this.my_win_outcome = 'tie';
-    } else if (alice_win) {
-      this.my_win_outcome = iStarted ? 'win' : 'lose';
-    } else {
-      this.my_win_outcome = iStarted ? 'lose' : 'win';
-    }
-
-    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
-      this.alice_cards,
-      this.alice_discards,
-    );
-    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(
-      this.bob_cards,
-      this.bob_discards,
-    );
-
-    this.alice_final_hand = [...bob_for_alice];
-    alice_for_alice.forEach((c) => this.alice_final_hand.push(c));
-    this.alice_final_hand.sort(compare_card);
-
-    this.bob_final_hand = [...alice_for_bob];
-    bob_for_bob.forEach((c) => this.bob_final_hand.push(c));
-    this.bob_final_hand.sort(compare_card);
-
-    this.alice_used_cards = select_cards_using_bits(
-      this.alice_final_hand,
-      this.alice_selects,
-    )[1];
-    this.bob_used_cards = select_cards_using_bits(
-      this.bob_final_hand,
-      this.bob_selects,
-    )[1];
-
-    const iAmAlice = !iStarted;
-    this.my_cards = iAmAlice ? this.alice_cards : this.bob_cards;
-    this.their_cards = iAmAlice ? this.bob_cards : this.alice_cards;
-    this.my_final_hand = iAmAlice ? this.alice_final_hand : this.bob_final_hand;
-    this.their_final_hand = iAmAlice ? this.bob_final_hand : this.alice_final_hand;
-    this.my_used_cards = iAmAlice ? this.alice_used_cards : this.bob_used_cards;
-    this.their_used_cards = iAmAlice ? this.bob_used_cards : this.alice_used_cards;
-    this.my_hand_value = iAmAlice ? this.alice_hand_value : this.bob_hand_value;
-    this.their_hand_value = iAmAlice ? this.bob_hand_value : this.alice_hand_value;
-  }
 }
 
 export interface BlockchainReport {

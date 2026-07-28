@@ -2,6 +2,7 @@ import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
 import {
   createSessionModel,
+  isPreActiveChannelStatus,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
 } from './session/model';
@@ -34,18 +35,19 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
-/** Channel states that already finished — resume must not keep the hub busy. */
-export function isTerminalChannelStatus(state: string | null | undefined): boolean {
-  return state === 'ResolvedClean'
-    || state === 'ResolvedUnrolled'
-    || state === 'ResolvedStale'
-    || state === 'Failed';
+/**
+ * Phase reports are terminal lifecycle inputs to Shell. A restored save is only
+ * a persisted projection until WASM restoration and hub reconciliation finish,
+ * so it must not cause terminal cleanup. Once unblocked, a resolved phase is
+ * reported once from the current session projection.
+ */
+export function shouldReportSessionPhase(
+  sessionPhase: Exclude<SessionPhase, 'none'>,
+  restoreBlocked: boolean,
+  resolvedReported: boolean,
+): boolean {
+  return !restoreBlocked && (sessionPhase !== 'resolved' || !resolvedReported);
 }
-
-const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
-  'Handshaking', 'WaitingForHeightToOffer', 'WaitingForHeightToAccept',
-  'OurWalletMakingOffer', 'OurWalletMakingOfferAcceptance', 'OfferSent', 'TransactionPending',
-]);
 
 /**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
@@ -56,8 +58,10 @@ const PRE_ACTIVE_CHANNEL_STATES: ReadonlySet<string> = new Set([
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
   channelState: string | null | undefined,
+  abandoning = false,
 ): boolean {
-  const isPreActive = !channelState || PRE_ACTIVE_CHANNEL_STATES.has(channelState);
+  if (abandoning) return false;
+  const isPreActive = isPreActiveChannelStatus(channelState);
   return sessionPhase === 'none' || isPreActive;
 }
 
