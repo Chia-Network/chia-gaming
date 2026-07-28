@@ -40,11 +40,14 @@ tar -xzf "$HUB_TGZ" -C "$HUB_STAGE"
 echo "=== Compressing player app static assets ==="
 # Pre-compress assets so static-server.js can serve .gz files to clients that
 # accept gzip. The original files are kept for clients that do not.
-find "$PLAYER_STAGE" -type f \
-  \( -name '*.html' -o -name '*.js' -o -name '*.mjs' -o -name '*.css' \
-     -o -name '*.json' -o -name '*.wasm' -o -name '*.hex' -o -name '*.dat' \
-     -o -name '*.svg' \) \
-  -exec gzip -k -f {} \;
+# Use gzip -c (stdout) rather than -k/--keep because BSD gzip on macOS does
+# not support -k. -n omits the filename/timestamp header for reproducibility.
+while IFS= read -r -d '' f; do
+    gzip -c -n -f "$f" > "$f.gz" || exit 1
+  done < <(find "$PLAYER_STAGE" -type f \
+    \( -name '*.html' -o -name '*.js' -o -name '*.mjs' -o -name '*.css' \
+       -o -name '*.json' -o -name '*.wasm' -o -name '*.hex' -o -name '*.dat' \
+       -o -name '*.svg' \) -print0)
 
 echo "=== Sanity-checking Krunk files ==="
 for f in \
