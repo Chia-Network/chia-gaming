@@ -21,6 +21,7 @@ import {
   selectShellView,
   selectGameTabDotColor,
   isCleanShutdownInProgress,
+  legacyCoinsOfInterestFromModel,
   sessionAmountsFromSave,
   sessionModelFromSave,
   snapshotFromSessionModel,
@@ -1698,6 +1699,61 @@ describe('session model selectors', () => {
 
     expect(restored.game.currentHandIds).toEqual(['7', '9']);
     expect(restored.game.instances).toEqual(model.game.instances);
+  });
+
+  it('keeps every recoverable multi-game coin distinct for legacy terminal saves', () => {
+    const model = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, coinHex: 'unroll-payout' },
+      },
+      game: {
+        coin: { coinHex: 'game-a', turnState: 'ended' },
+        terminal: {
+          type: 'settled',
+          outcome: 'opponent_timed_out',
+          label: 'Opponent timed out',
+          myReward: '10',
+          rewardCoinHex: 'payout-a',
+        },
+        currentHandIds: ['a', 'b'],
+        instances: {
+          a: {
+            id: 'a',
+            amount: '10',
+            coin: { coinHex: 'game-a', turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'settled',
+              outcome: 'opponent_timed_out',
+              label: 'Opponent timed out',
+              myReward: '10',
+              rewardCoinHex: 'payout-a',
+            },
+          },
+          b: {
+            id: 'b',
+            amount: '10',
+            coin: { coinHex: 'game-b', turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'settled',
+              outcome: 'slashed_opponent',
+              label: 'Slashed opponent',
+              myReward: '10',
+              rewardCoinHex: 'payout-b',
+            },
+          },
+        },
+      },
+    });
+
+    expect(legacyCoinsOfInterestFromModel(model)).toEqual([
+      { label: 'Unroll payout coin', id: 'unroll-payout' },
+      { label: 'Current game coin', id: 'game-a' },
+      { label: 'Game payout coin', id: 'payout-a' },
+      { label: 'Current game coin', id: 'game-b' },
+      { label: 'Game payout coin', id: 'payout-b' },
+    ]);
   });
 
   it('keeps an unrolled session on-chain while an active game is unresolved', () => {

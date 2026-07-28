@@ -81,6 +81,7 @@ import {
   selectGameDashboardView,
   selectGameTabDotColor,
   selectStatusBarBalances,
+  legacyCoinsOfInterestFromModel,
   sessionAmountsFromSave,
   sessionModelFromSave,
   snapshotFromSessionModel,
@@ -626,13 +627,18 @@ const Shell = () => {
   const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
 
   const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
+  const [frozenCoins, setFrozenCoins] = useState<CoinOfInterestEntry[]>([]);
   const handleCoinsProviderChange = useCallback(
     (getter: (() => CoinOfInterestEntry[]) | null) => {
       coinsGetterRef.current = getter;
+      if (getter) setFrozenCoins([]);
     },
     [],
   );
-  const getCoins = useCallback(() => coinsGetterRef.current?.() ?? [], []);
+  const getCoins = useCallback(
+    () => coinsGetterRef.current?.() ?? frozenCoins,
+    [frozenCoins],
+  );
 
   const stablePeerConn: PeerConnectionResult = useMemo(() => ({
     sendMessage: (n, m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
@@ -1812,6 +1818,8 @@ const Shell = () => {
     const finishedModel = model && handState !== model.game.handState
       ? { ...model, game: { ...model.game, handState } }
       : model;
+    const terminalCoins = coinsGetterRef.current?.() ?? frozenCoins;
+    setFrozenCoins(terminalCoins);
     if (finishedModel && finishedModel !== model) {
       dashboardSessionModelRef.current = finishedModel;
       setDashboardSessionModel(finishedModel);
@@ -1846,9 +1854,10 @@ const Shell = () => {
         terminalIStarted: identity.iStarted,
         channelStatus: channelStatusPayloadFromModel(status),
         cleanShutdownStarted: finishedModel.channel.cleanShutdownStarted || undefined,
+        coinsOfInterest: terminalCoins,
       });
     } else {
-      void saveTerminalSession({});
+      void saveTerminalSession({ coinsOfInterest: terminalCoins });
     }
     markSavedSession();
 
@@ -1861,7 +1870,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-  }, [clearSessionTimers, resetPeerRelayState, sessionController]);
+  }, [clearSessionTimers, frozenCoins, resetPeerRelayState, sessionController]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
@@ -1943,6 +1952,7 @@ const Shell = () => {
     const model = sessionModelFromSave(save);
     dashboardSessionModelRef.current = model;
     setDashboardSessionModel(model);
+    setFrozenCoins(save.coinsOfInterest ?? legacyCoinsOfInterestFromModel(model));
     setFinishedSessionIdentity({
       myName: save.myAlias ?? peekAlias() ?? '',
       opponentName: save.opponentAlias,

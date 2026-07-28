@@ -63,6 +63,10 @@ pub struct OnChainPhase {
     was_stale: bool,
     resolved_clean: bool,
     terminal_reward_coin: Option<CoinString>,
+    #[serde(default)]
+    current_game_coins: Vec<(GameID, CoinString)>,
+    #[serde(default)]
+    game_payout_coins: Vec<(GameID, CoinString)>,
     advisory: Option<String>,
 }
 
@@ -93,10 +97,16 @@ pub struct OnChainPhaseArgs {
     pub was_stale: bool,
     pub resolved_clean: bool,
     pub terminal_reward_coin: Option<CoinString>,
+    pub game_payout_coins: Vec<(GameID, CoinString)>,
 }
 
 impl OnChainPhase {
     pub fn new(args: OnChainPhaseArgs) -> Self {
+        let current_game_coins = args
+            .game_map
+            .iter()
+            .map(|(coin, state)| (state.game_id, coin.clone()))
+            .collect();
         OnChainPhase {
             have_potato: args.have_potato,
             channel_timeout: args.channel_timeout,
@@ -118,6 +128,8 @@ impl OnChainPhase {
             was_stale: args.was_stale,
             resolved_clean: args.resolved_clean,
             terminal_reward_coin: args.terminal_reward_coin,
+            current_game_coins,
+            game_payout_coins: args.game_payout_coins,
             advisory: None,
         }
     }
@@ -154,6 +166,8 @@ impl OnChainPhase {
             was_stale,
             resolved_clean,
             terminal_reward_coin,
+            current_game_coins: Vec::new(),
+            game_payout_coins: Vec::new(),
             advisory,
         }
     }
@@ -162,11 +176,32 @@ impl OnChainPhase {
         false
     }
 
+    fn remember_current_game_coin(&mut self, game_id: GameID, coin: CoinString) {
+        self.current_game_coins
+            .retain(|(known_id, _)| *known_id != game_id);
+        self.current_game_coins.push((game_id, coin));
+    }
+
     fn try_emit_terminal(
-        &self,
+        &mut self,
         _game_id: &GameID,
         notification: GameNotification,
     ) -> Option<Effect> {
+        if let GameNotification::GameSettled {
+            id,
+            coin_id: Some(coin),
+            ..
+        } = &notification
+        {
+            if coin
+                .amount()
+                .is_some_and(|amount| amount > Amount::default())
+            {
+                self.game_payout_coins
+                    .retain(|(known_id, _)| known_id != id);
+                self.game_payout_coins.push((*id, coin.clone()));
+            }
+        }
         Some(Effect::Notify(notification))
     }
 
@@ -677,6 +712,7 @@ impl OnChainPhase {
                             ..old_def
                         },
                     );
+                    self.remember_current_game_coin(pending.game_id, new_coin.clone());
 
                     effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: pending.game_id,
@@ -905,6 +941,7 @@ impl OnChainPhase {
                     if let Some((ph, amt)) = created {
                         let new_coin = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
                         let gt = old_definition.game_timeout.clone();
+                        let game_id = old_definition.game_id;
                         self.game_map.insert(
                             new_coin.clone(),
                             OnChainGameState {
@@ -914,6 +951,7 @@ impl OnChainPhase {
                                 ..old_definition
                             },
                         );
+                        self.remember_current_game_coin(game_id, new_coin.clone());
                         effects.push(Effect::Notify(GameNotification::GameStatus {
                             id: old_definition.game_id,
                             status: if !old_definition.our_turn {
@@ -1049,6 +1087,7 @@ impl OnChainPhase {
                         ..old_definition
                     },
                 );
+                self.remember_current_game_coin(game_id, new_coin_id.clone());
 
                 let auto_settle = self.should_auto_settle(&game_id, is_my_turn)?;
                 if auto_settle {
@@ -1209,6 +1248,7 @@ impl OnChainPhase {
                         ..old_definition
                     },
                 );
+                self.remember_current_game_coin(game_id, new_coin_string.clone());
                 let auto_settle = self.should_auto_settle(&game_id, true)?;
                 if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_string) {
@@ -1309,6 +1349,7 @@ impl OnChainPhase {
                         ));
                         let slash_coin = transaction.coin.clone();
                         let gt = old_definition.game_timeout.clone();
+                        let game_id = old_definition.game_id;
                         effects.push(Effect::Notify(GameNotification::GameStatus {
                             id: old_definition.game_id,
                             status: GameStatusKind::IllegalMoveDetected,
@@ -1334,6 +1375,7 @@ impl OnChainPhase {
                                 ..old_definition
                             },
                         );
+                        self.remember_current_game_coin(game_id, slash_coin.clone());
                         effects.push(Effect::RegisterCoin {
                             coin: slash_coin,
                             timeout: gt,
@@ -1872,14 +1914,25 @@ impl PeerLifecyclePhase for OnChainPhase {
         // interest. The forfeit path also prunes game_map, but the explicit
         // game_finished check makes the disappearance reliable regardless.
         let mut coins: Vec<(CoinOfInterest, CoinString)> = self
-            .game_map
+            .current_game_coins
             .iter()
-            .filter(|(_, state)| !state.game_finished)
-            .map(|(coin, _)| (CoinOfInterest::Game, coin.clone()))
+            .map(|(_, coin)| (CoinOfInterest::CurrentGame, coin.clone()))
             .collect();
-        if let Some(reward) = self.terminal_reward_coin.as_ref() {
-            coins.push((CoinOfInterest::GameChange, reward.clone()));
+        if let Some(reward) = self.terminal_reward_coin.as_ref().filter(|coin| {
+            coin.amount()
+                .is_some_and(|amount| amount > Amount::default())
+        }) {
+            coins.push((CoinOfInterest::UnrollPayout, reward.clone()));
         }
+        coins.extend(
+            self.game_payout_coins
+                .iter()
+                .filter(|(_, coin)| {
+                    coin.amount()
+                        .is_some_and(|amount| amount > Amount::default())
+                })
+                .map(|(_, coin)| (CoinOfInterest::GamePayout, coin.clone())),
+        );
         coins
     }
     fn has_active_on_chain_games(&self) -> bool {

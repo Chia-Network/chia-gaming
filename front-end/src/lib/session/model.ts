@@ -5,6 +5,7 @@ import type {
   PeerLiveness,
   SessionDisposition,
   SessionPhase,
+  CoinOfInterestEntry,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { PersistedGameState, SessionSave } from '../../hooks/save';
@@ -1403,4 +1404,26 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
         )
       : undefined,
   };
+}
+
+/** Best-effort display for terminal saves created before `coinsOfInterest`. */
+export function legacyCoinsOfInterestFromModel(model: SessionModel): CoinOfInterestEntry[] {
+  const coins: CoinOfInterestEntry[] = [];
+  const seen = new Set<string>();
+  const add = (label: string, id: string | null) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    coins.push({ label, id });
+  };
+
+  add('Unroll payout coin', model.channel.status.coinHex);
+  for (const id of model.game.currentHandIds) {
+    const instance = model.game.instances[id];
+    if (!instance) continue;
+    add('Current game coin', instance.coin.coinHex);
+    add('Game payout coin', instance.terminal.rewardCoinHex);
+  }
+  add('Current game coin', model.game.coin.coinHex);
+  add('Game payout coin', model.game.terminal.rewardCoinHex);
+  return coins;
 }

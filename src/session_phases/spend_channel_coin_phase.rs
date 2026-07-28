@@ -1066,6 +1066,7 @@ impl SpendChannelCoinPhase {
             was_stale: self.was_stale,
             resolved_clean: false,
             terminal_reward_coin: self.terminal_reward_coin.clone(),
+            game_payout_coins: Vec::new(),
         });
         self.replacement = Some(Box::new(on_chain));
         if let Some(on_chain) = self.replacement.as_mut() {
@@ -1263,8 +1264,11 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 vec![(CoinOfInterest::Unroll, unroll_coin.clone())]
             }
         };
-        if let Some(reward) = self.terminal_reward_coin.as_ref() {
-            coins.push((CoinOfInterest::Change, reward.clone()));
+        if let Some(reward) = self.terminal_reward_coin.as_ref().filter(|coin| {
+            coin.amount()
+                .is_some_and(|amount| amount > Amount::default())
+        }) {
+            coins.push((CoinOfInterest::UnrollPayout, reward.clone()));
         }
         coins
     }

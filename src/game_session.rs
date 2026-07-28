@@ -671,7 +671,7 @@ impl GameSession {
 
     /// Labeled coin ids (hex) the dashboard shows above the protocol state so
     /// the user can look them up in a block explorer. Sourced from the active
-    /// phase handler; 0-2 entries in practice.
+    /// phase handler; an on-chain grouped hand can surface multiple entries.
     pub fn coins_of_interest(&self) -> Vec<(String, String)> {
         self.peer
             .coins_of_interest()

@@ -132,6 +132,8 @@ export interface SessionSave {
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
+  /** Actual live coin list frozen when a terminal session tears down. */
+  coinsOfInterest?: Array<{ label: string; id: string }>;
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: bigint; kind: string; title: string; message: string }>;

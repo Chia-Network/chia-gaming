@@ -264,15 +264,14 @@ pub enum GameNotification {
 
 /// A coin id worth surfacing in the dashboard so the user can look it up in a
 /// block explorer. The active phase handler decides which of these apply; in
-/// practice there are 0-2 at any moment (one channel/settlement-level coin and
-/// at most one game-level coin).
+/// practice this can include multiple simultaneous game coins and payouts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoinOfInterest {
     Channel,
     Unroll,
-    Change,
-    Game,
-    GameChange,
+    UnrollPayout,
+    CurrentGame,
+    GamePayout,
 }
 
 impl CoinOfInterest {
@@ -280,9 +279,9 @@ impl CoinOfInterest {
         match self {
             CoinOfInterest::Channel => "Channel coin",
             CoinOfInterest::Unroll => "Unroll coin",
-            CoinOfInterest::Change => "Change coin",
-            CoinOfInterest::Game => "Game coin",
-            CoinOfInterest::GameChange => "Game change coin",
+            CoinOfInterest::UnrollPayout => "Unroll payout coin",
+            CoinOfInterest::CurrentGame => "Current game coin",
+            CoinOfInterest::GamePayout => "Game payout coin",
         }
     }
 }
@@ -535,5 +534,12 @@ mod tests {
         assert_eq!(restored.zero_payout, None);
         assert_eq!(restored.unroll_initiator, None);
         assert_eq!(restored.semantic_phase, None);
+    }
+
+    #[test]
+    fn coin_of_interest_labels_describe_coin_provenance() {
+        assert_eq!(CoinOfInterest::UnrollPayout.label(), "Unroll payout coin");
+        assert_eq!(CoinOfInterest::CurrentGame.label(), "Current game coin");
+        assert_eq!(CoinOfInterest::GamePayout.label(), "Game payout coin");
     }
 }

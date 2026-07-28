@@ -325,6 +325,35 @@ describe('session persistence', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
+  it('persists the frozen terminal coin list across reload', async () => {
+    saveTerminalSession({
+      channelStatus: {
+        state: 'ResolvedUnrolled',
+        advisory: null,
+        coin: null,
+        our_balance: '60',
+        their_balance: '40',
+        game_allocated: '0',
+        have_potato: false,
+      },
+      coinsOfInterest: [
+        { label: 'Unroll payout coin', id: 'unroll' },
+        { label: 'Current game coin', id: 'game-a' },
+        { label: 'Current game coin', id: 'game-b' },
+        { label: 'Game payout coin', id: 'payout-a' },
+      ],
+    });
+    await flushSessionSave();
+
+    _resetForTests();
+    expect((await peekSession())?.coinsOfInterest).toEqual([
+      { label: 'Unroll payout coin', id: 'unroll' },
+      { label: 'Current game coin', id: 'game-a' },
+      { label: 'Current game coin', id: 'game-b' },
+      { label: 'Game payout coin', id: 'payout-a' },
+    ]);
+  });
+
   it('atomically replaces a live session with a nonresumable abandoned snapshot', async () => {
     saveSession({
       ...sampleSession,
