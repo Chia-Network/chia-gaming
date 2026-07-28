@@ -79,6 +79,7 @@ function sendFile(res, filePath, pathname, gzip = false) {
   };
   if (gzip) {
     headers['Content-Encoding'] = 'gzip';
+    headers['Vary'] = 'Accept-Encoding';
   }
   if (ext === '.wasm') {
     headers['SourceMap'] = path.basename(pathname) + '.map';
