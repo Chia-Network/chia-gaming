@@ -48,7 +48,7 @@ futures-util = { version = "=0.3.32", features = ["sink"], optional = true }
 axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "6eb5962181f176affc5d8bd84ee25de04fefa4b3" }
+chialisp = "0.5.0"
 clvmr = { version = "=0.17.5" }
 toml = "=0.8.23"
 
