@@ -42,9 +42,9 @@ configured, with at least 1000 mojos in your wallet.
   ```bash
   cargo install wasm-pack --version 0.15.0
   ```
-- **Node 20+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
+- **Node 22+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash
-  brew install node@20        # or download from https://nodejs.org
+  brew install node@22        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
   ```
 - **macOS only** — Homebrew LLVM for WASM builds. If present, build scripts
@@ -276,7 +276,7 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `HUB_MAX_MESSAGES_PER_WINDOW` | no      | Maximum control-channel messages per connection per window (default `100`)                              |
 | `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
-| `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `10000000`)                                 |
+| `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
 | `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
 
 #### Simulator
