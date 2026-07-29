@@ -70,7 +70,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, peerGateAfterSessionClear, shouldActivatePeerGate, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, peerGateAfterSessionClear, shouldActivatePeerGate, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSkipPeerGateForSessionConfig, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
@@ -1977,13 +1977,22 @@ const Shell = () => {
   // a cradle / pairingToken checkpoint can appear after hydrate even when
   // blockchainType is unchanged (prefs already said walletconnect).
   // Re-evaluate on those signals. pairingToken-only resumes set
-  // sessionConfig.restoring=false, so depend on the token too.
-  const hasResumableSessionConfig = !!(sessionConfig?.restoring || sessionConfig?.pairingToken);
+  // sessionConfig.restoring=false, so depend on restoreStatus too — but do
+  // not treat a fresh accept's pairingToken (restoreStatus idle) as resume.
+  const hasResumableSessionConfig = shouldSkipPeerGateForSessionConfig(
+    sessionConfig?.restoring,
+    sessionConfig?.pairingToken,
+    restoreStatus,
+  );
   useEffect(() => {
     if (!hubOrigin) return;
     const save = loadState();
-    const resuming = hasResumableSessionConfig
-      || !!(save.serializedGameSession || save.pairingToken);
+    // Cradle in save still skips on hydrate. Do not treat save.pairingToken
+    // alone as resume — startFreshSessionWithPeer persists that token before
+    // phase advances, and using it here would deactivate the gate and let the
+    // sync-mirror clear setBusy(true). pairingToken-only resumes skip via
+    // hasResumableSessionConfig (non-idle restoreStatus).
+    const resuming = hasResumableSessionConfig || !!save.serializedGameSession;
     const gate = shouldActivatePeerGate(blockchainType, resuming);
     setPeerGateActive(gate);
     setHasFullNodePeer(!gate);

@@ -10,6 +10,7 @@ import {
   shouldReportHubBusy,
   shouldReportPresenceBusy,
   shouldReportSessionPhase,
+  shouldSkipPeerGateForSessionConfig,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -66,6 +67,25 @@ describe('restore lifecycle gates', () => {
     expect(shouldActivatePeerGate('simulator', false)).toBe(false);
     expect(shouldActivatePeerGate('simulator', true)).toBe(false);
     expect(shouldActivatePeerGate(undefined, false)).toBe(false);
+  });
+
+  it('does not treat a fresh accept pairingToken as a peer-gate resume', () => {
+    // startFreshSessionWithPeer: pairingToken + restoring=false + restoreStatus idle.
+    // Must not skip — otherwise re-eval deactivates the gate and sync-mirror
+    // clears the busy bit while session phase is still none.
+    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'idle')).toBe(false);
+    expect(shouldActivatePeerGate(
+      'walletconnect',
+      shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'idle'),
+    )).toBe(true);
+    // pairingToken-only resume: performResume sets restoreStatus before config.
+    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'restoring')).toBe(true);
+    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'restored')).toBe(true);
+    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'failed')).toBe(true);
+    // Cradle restore skips regardless of restoreStatus.
+    expect(shouldSkipPeerGateForSessionConfig(true, 'peer_x_1', 'idle')).toBe(true);
+    expect(shouldSkipPeerGateForSessionConfig(true, undefined, 'idle')).toBe(true);
+    expect(shouldSkipPeerGateForSessionConfig(false, undefined, 'restoring')).toBe(false);
   });
 
   it('re-arms the peer gate on idle/terminal clear after a skipped-gate session', () => {

@@ -63,6 +63,22 @@ export function shouldActivatePeerGate(
 }
 
 /**
+ * Whether in-memory sessionConfig should skip the WalletConnect peer gate as a
+ * live resume. Cradle restore sets `restoring`. pairingToken-only resume sets
+ * `pairingToken` with a non-idle `restoreStatus` (performResume). Fresh accepts
+ * also set `pairingToken` with `restoring=false` and `restoreStatus=idle` —
+ * those must not skip, or the peer-gate re-eval deactivates the gate and the
+ * sync-mirror clears the busy bit set by `startFreshSessionWithPeer`.
+ */
+export function shouldSkipPeerGateForSessionConfig(
+  restoring: boolean | undefined,
+  pairingToken: string | undefined,
+  restoreStatus: RestoreStatus,
+): boolean {
+  return !!restoring || (!!pairingToken && restoreStatus !== 'idle');
+}
+
+/**
  * Idle/terminal clear after a session that skipped the peer gate must re-arm
  * it before `presenceBusy` / `setBusy`. The React re-eval effect runs only
  * after commit, so without this sync step the hub is told available while
