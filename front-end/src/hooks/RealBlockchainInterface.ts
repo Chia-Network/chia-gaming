@@ -385,10 +385,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getFullNodePeerCount(): Promise<bigint> {
-    console.log('[wc-blockchain] >>> getFullNodePeerCount');
     try {
       const peerCount = await rpc.getFullNodePeerCount({});
-      console.log('[wc-blockchain] <<< getFullNodePeerCount', { peerCount });
       log(`[wc-blockchain] getFullNodePeerCount peerCount=${peerCount}`);
       return peerCount;
     } catch (e) {
