@@ -89,13 +89,15 @@ const CONNECTION_TTL_MS = 60_000;
 const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
 const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
 const RATE_WINDOW_MS = readPositiveIntegerEnv('HUB_RATE_WINDOW_MS', 10_000);
+// Rust accepts a 10 MiB peer payload; leave room for relay framing and control messages.
+const DEFAULT_GAME_BYTES_PER_WINDOW = 11 * 1024 * 1024;
 const HUB_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('HUB_MAX_MESSAGES_PER_WINDOW', 100),
   maxBytes: readPositiveIntegerEnv('HUB_MAX_BYTES_PER_WINDOW', 1_000_000),
 };
 const GAME_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('GAME_MAX_MESSAGES_PER_WINDOW', 1000),
-  maxBytes: readPositiveIntegerEnv('GAME_MAX_BYTES_PER_WINDOW', 10_000_000),
+  maxBytes: readPositiveIntegerEnv('GAME_MAX_BYTES_PER_WINDOW', DEFAULT_GAME_BYTES_PER_WINDOW),
 };
 const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
 const hubWsServer = new WebSocketServer({ noServer: true });

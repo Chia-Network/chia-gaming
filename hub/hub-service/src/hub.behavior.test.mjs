@@ -41,7 +41,7 @@ async function startHub(env = {}) {
         HUB_MAX_MESSAGES_PER_WINDOW: '100',
         HUB_MAX_BYTES_PER_WINDOW: '1000000',
         GAME_MAX_MESSAGES_PER_WINDOW: '1000',
-        GAME_MAX_BYTES_PER_WINDOW: '10000000',
+        GAME_MAX_BYTES_PER_WINDOW: '11534336',
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -597,6 +597,43 @@ test('game binary relay flood is limited by its cumulative byte budget', async (
     ws.send(frame);
 
     assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('default game byte budget relays a maximum-size protocol message', async () => {
+  const hub = await startHub();
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'secret-max-message-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'secret-max-message-receiver');
+    const payload = Buffer.alloc(10 * 1024 * 1024);
+    const targetId = Buffer.from(receiver.playerId, 'utf8');
+    const frame = Buffer.alloc(4 + targetId.byteLength + payload.byteLength);
+    frame.writeUInt32BE(targetId.byteLength, 0);
+    targetId.copy(frame, 4);
+
+    const relayed = new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for maximum message')),
+        5000,
+      );
+      receiver.game.once('message', (message) => {
+        clearTimeout(timer);
+        resolve(Buffer.from(message));
+      });
+    });
+    sender.game.send(frame);
+
+    const received = await relayed;
+    const fromIdLength = received.readUInt32BE(0);
+    const aliasLengthOffset = 4 + fromIdLength;
+    const aliasLength = received.readUInt32BE(aliasLengthOffset);
+    const payloadOffset = aliasLengthOffset + 4 + aliasLength;
+    assert.equal(received.byteLength - payloadOffset, payload.byteLength);
+
+    await closeWs(sender.game);
+    await closeWs(receiver.game);
   } finally {
     await hub.stop();
   }
