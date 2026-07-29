@@ -107,8 +107,10 @@ if [ "$FORCE_BUILD" -eq 1 ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-    echo "=== Building simulator + chialisp (if needed) ==="
+    echo "=== Building chialisp (if needed) ==="
     ./tools/build-chialisp.sh
+    echo "=== Building simulator ==="
+    cargo build --bin chia-gaming-sim --features sim-server
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Installing JavaScript workspace deps ==="
