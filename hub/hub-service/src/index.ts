@@ -972,7 +972,7 @@ function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): voi
 
   // Relay binary: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
   const fromIdBuf = Buffer.from(meta.playerId, 'utf8');
-  const fromAlias = hub.players[meta.playerId]?.alias ?? meta.playerId;
+  const fromAlias = aliasForPlayer(meta.playerId);
   const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
   const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
   let offset = 0;
