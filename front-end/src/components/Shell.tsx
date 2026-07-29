@@ -1035,7 +1035,9 @@ const Shell = () => {
   /** Stable prop-safe save — recomputing every render deep-clones and can OOM. */
   const sessionSavePropRef = useRef<SessionSave | undefined>(undefined);
   const historyRef = useRef<string[]>(history);
+  const logLinesRef = useRef<string[]>(logLines);
   historyRef.current = history;
+  logLinesRef.current = logLines;
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
@@ -1054,12 +1056,10 @@ const Shell = () => {
   const appendHistory = useCallback(
     (line: string) => {
       deferStateUpdate(() => {
-        setHistory((prev) => {
-          const next = appendRecent(prev, line, HUMAN_HISTORY_LIMIT);
-          historyRef.current = next;
-          saveSession({ humanHistory: next });
-          return next;
-        });
+        const next = appendRecent(historyRef.current, line, HUMAN_HISTORY_LIMIT);
+        historyRef.current = next;
+        setHistory(next);
+        saveSession({ humanHistory: next });
       });
     },
     [deferStateUpdate],
@@ -1368,11 +1368,10 @@ const Shell = () => {
   useEffect(() => {
     return subscribeLog((line) => {
       deferStateUpdate(() => {
-        setLogLines((prev) => {
-          const next = appendRecent(prev, line, DIAGNOSTIC_LOG_LIMIT);
-          saveSession({ diagnosticLog: next });
-          return next;
-        });
+        const next = appendRecent(logLinesRef.current, line, DIAGNOSTIC_LOG_LIMIT);
+        logLinesRef.current = next;
+        setLogLines(next);
+        saveSession({ diagnosticLog: next });
       });
     });
   }, [deferStateUpdate]);
@@ -3416,6 +3415,7 @@ const Shell = () => {
                     onProtocolStateProviderChange={handleProtocolStateProviderChange}
                     onCoinsProviderChange={handleCoinsProviderChange}
                     suppressPhaseReporting={restoreBlocked}
+                    isVisible={activeTab === 'game'}
                   />
                 </GameSessionErrorBoundary>
                 {sessionConsentOverlay}

@@ -763,6 +763,8 @@ export function useGameSession(
   const [gameQueue, setGameQueue] = useState<QueuedNotification[]>(
     () => (restoredModel?.game.queue as QueuedNotification[]) ?? [],
   );
+  const channelQueueRef = useRef(channelQueue);
+  channelQueueRef.current = channelQueue;
   const notifIdRef = useRef(
     maxQueuedNotificationId(
       (restoredModel?.channel.queue ?? []) as QueuedNotification[],
@@ -773,33 +775,31 @@ export function useGameSession(
   const channelCoinEnrichmentVersionRef = useRef(0);
   const gameCoinEnrichmentVersionRef = useRef(new Map<string, number>());
   const pushChannel = useCallback((n: Omit<QueuedNotification, 'id'>) => {
-    setChannelQueue((prev) => {
-      if (n.kind === 'channel-state') {
-        const withoutOldState = prev.filter((e) => e.kind !== 'channel-state');
-        return [...withoutOldState, { ...n, id: ++notifIdRef.current }];
-      }
-      return [...prev, { ...n, id: ++notifIdRef.current }];
-    });
+    const item = { ...n, id: ++notifIdRef.current } as QueuedNotification;
+    setChannelQueue((current) =>
+      n.kind === 'channel-state'
+        ? [...current.filter((entry) => entry.kind !== 'channel-state'), item]
+        : [...current, item],
+    );
   }, []);
 
   const pushGame = useCallback((n: Omit<QueuedNotification, 'id'>) => {
-    setGameQueue((prev) => [...prev, { ...n, id: ++notifIdRef.current }]);
+    const item = { ...n, id: ++notifIdRef.current } as QueuedNotification;
+    setGameQueue((current) => [...current, item]);
   }, []);
 
   const dismissChannel = useCallback(() => {
-    setChannelQueue((prev) => {
-      const dismissed = prev[0];
-      if (dismissed?.kind === 'channel-state') {
-        // Remember: user dismissed the notification for the current channel
-        // state. Don't re-notify for the same state on reload or re-event.
-        setDismissedChannelStatus(channelStatusRef.current);
-      }
-      return prev.slice(1);
-    });
+    const dismissed = channelQueueRef.current[0];
+    if (dismissed?.kind === 'channel-state') {
+      // Remember: user dismissed the notification for the current channel
+      // state. Don't re-notify for the same state on reload or re-event.
+      setDismissedChannelStatus(channelStatusRef.current);
+    }
+    setChannelQueue((current) => current.slice(1));
   }, []);
 
   const dismissGame = useCallback(() => {
-    setGameQueue((prev) => prev.slice(1));
+    setGameQueue((current) => current.slice(1));
   }, []);
   const [gameCoin, setGameCoin] = useState<GameCoinInfo>(() => ({
     coinHex: restoredModel?.game.coin.coinHex ?? null,
@@ -937,6 +937,7 @@ export function useGameSession(
   const expectingCounterProposalRef = useRef<boolean>(false);
   const rejectionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
+  const gameplayEvent$ = useMemo(() => gameplayEventSubject.asObservable(), [gameplayEventSubject]);
 
   const clearExpectingCounterProposal = useCallback(() => {
     expectingCounterProposalRef.current = false;
@@ -2341,7 +2342,7 @@ export function useGameSession(
     activeGameType: gameSessionView.activeGameType,
     displayGameId: gameSessionView.displayGameId,
     sessionController: sc,
-    gameplayEvent$: gameplayEventSubject.asObservable(),
+    gameplayEvent$,
     appendGameLog,
     onHandOutcome,
     onTurnChanged,
