@@ -84,8 +84,8 @@ jobs:
       - name: Build hub-frontend
         run: pnpm --filter chia-gaming-hub-frontend run build
 
-      - name: Build hub-service
-        run: pnpm --filter chia-gaming-hub-service run build
+      - name: Build and test hub-service
+        run: pnpm --filter chia-gaming-hub-service run test
 
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
