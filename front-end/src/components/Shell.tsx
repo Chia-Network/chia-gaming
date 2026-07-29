@@ -3415,7 +3415,6 @@ const Shell = () => {
                     onProtocolStateProviderChange={handleProtocolStateProviderChange}
                     onCoinsProviderChange={handleCoinsProviderChange}
                     suppressPhaseReporting={restoreBlocked}
-                    isVisible={activeTab === 'game'}
                   />
                 </GameSessionErrorBoundary>
                 {sessionConsentOverlay}
