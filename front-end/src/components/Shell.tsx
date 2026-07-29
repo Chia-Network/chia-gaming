@@ -70,7 +70,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, shouldActivatePeerGate, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, peerGateAfterSessionClear, shouldActivatePeerGate, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
@@ -881,6 +881,21 @@ const Shell = () => {
     blockchainTypeRef.current = blockchainType;
   }, [blockchainType]);
 
+  // After a session that skipped the peer gate ends, re-arm the gate
+  // synchronously before presenceBusy/setBusy. The re-eval effect only runs
+  // after React commits, which is too late to block inbound matchmaking.
+  const rearmPeerGateForIdleClear = useCallback(() => {
+    const next = peerGateAfterSessionClear(
+      blockchainTypeRef.current,
+      peerGateActiveRef.current,
+      hasFullNodePeerRef.current,
+    );
+    peerGateActiveRef.current = next.peerGateActive;
+    hasFullNodePeerRef.current = next.hasFullNodePeer;
+    setPeerGateActive(next.peerGateActive);
+    setHasFullNodePeer(next.hasFullNodePeer);
+  }, []);
+
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
   const [connectionSetup, setConnectionSetup] = useState<ConnectionSetup | null>(null);
@@ -1108,8 +1123,9 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
+    rearmPeerGateForIdleClear();
     hubConnRef.current?.setBusy(presenceBusy('none'));
-  }, [clearSessionPreservingHistory, presenceBusy, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+  }, [clearSessionPreservingHistory, presenceBusy, rearmPeerGateForIdleClear, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
   const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
     const conn = hubConnRef.current;
@@ -1830,8 +1846,9 @@ const Shell = () => {
     setRestoreHubReconciled(false);
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
+    rearmPeerGateForIdleClear();
     hubConnRef.current?.setBusy(presenceBusy('none'), alias);
-  }, [clearSessionPreservingHistory, clearSessionTimers, presenceBusy, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
+  }, [clearSessionPreservingHistory, clearSessionTimers, presenceBusy, rearmPeerGateForIdleClear, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const abandonActiveChannel = useCallback(() => {
     abandonPendingRef.current = true;
@@ -1876,6 +1893,9 @@ const Shell = () => {
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');
     setSessionError(hasError);
+    // Re-arm before setBusy: a skipped-gate resume leaves peerGateActiveRef
+    // false until the re-eval effect commits, which would advertise available.
+    rearmPeerGateForIdleClear();
     hubConnRef.current?.setBusy(presenceBusy('resolved'), alias);
 
     // Stop the live peer route and cradle; do not send session_reject and do
@@ -1910,7 +1930,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-  }, [clearSessionTimers, frozenCoins, presenceBusy, resetPeerRelayState, sessionController]);
+  }, [clearSessionTimers, frozenCoins, presenceBusy, rearmPeerGateForIdleClear, resetPeerRelayState, sessionController]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {

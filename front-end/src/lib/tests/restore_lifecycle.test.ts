@@ -1,6 +1,7 @@
 import {
   isAvailableForNewSessionPrompt,
   isRestoreBlocked,
+  peerGateAfterSessionClear,
   shouldActivatePeerGate,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
@@ -65,6 +66,29 @@ describe('restore lifecycle gates', () => {
     expect(shouldActivatePeerGate('simulator', false)).toBe(false);
     expect(shouldActivatePeerGate('simulator', true)).toBe(false);
     expect(shouldActivatePeerGate(undefined, false)).toBe(false);
+  });
+
+  it('re-arms the peer gate on idle/terminal clear after a skipped-gate session', () => {
+    // Resume skipped the gate (active=false, peer "ready" from !gate). Clear must
+    // activate + unverify before presenceBusy can advertise available.
+    const rearmed = peerGateAfterSessionClear('walletconnect', false, true);
+    expect(rearmed).toEqual({ peerGateActive: true, hasFullNodePeer: false });
+    expect(shouldReportPresenceBusy('none', rearmed.peerGateActive, rearmed.hasFullNodePeer)).toBe(true);
+    expect(shouldReportPresenceBusy('resolved', rearmed.peerGateActive, rearmed.hasFullNodePeer)).toBe(true);
+    // Already active: preserve peer-ready (verified or not).
+    expect(peerGateAfterSessionClear('walletconnect', true, true)).toEqual({
+      peerGateActive: true,
+      hasFullNodePeer: true,
+    });
+    expect(peerGateAfterSessionClear('walletconnect', true, false)).toEqual({
+      peerGateActive: true,
+      hasFullNodePeer: false,
+    });
+    // Simulator never gates.
+    expect(peerGateAfterSessionClear('simulator', false, true)).toEqual({
+      peerGateActive: false,
+      hasFullNodePeer: true,
+    });
   });
 
   it('rejects inbound matchmaking while the peer gate holds presence busy', () => {

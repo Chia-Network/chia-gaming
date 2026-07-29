@@ -63,6 +63,30 @@ export function shouldActivatePeerGate(
 }
 
 /**
+ * Idle/terminal clear after a session that skipped the peer gate must re-arm
+ * it before `presenceBusy` / `setBusy`. The React re-eval effect runs only
+ * after commit, so without this sync step the hub is told available while
+ * `peerGateActive` is still false.
+ *
+ * If the gate is already active, keep the current peer-ready bit (do not
+ * force a re-poll). Newly activated gates start unverified.
+ */
+export function peerGateAfterSessionClear(
+  blockchainType: 'simulator' | 'walletconnect' | undefined,
+  peerGateAlreadyActive: boolean,
+  hasFullNodePeer: boolean,
+): { peerGateActive: boolean; hasFullNodePeer: boolean } {
+  if (peerGateAlreadyActive) {
+    return { peerGateActive: true, hasFullNodePeer };
+  }
+  const gate = shouldActivatePeerGate(blockchainType, false);
+  return {
+    peerGateActive: gate,
+    hasFullNodePeer: !gate,
+  };
+}
+
+/**
  * Hub busy bit for lobby presence: session obligation OR the WalletConnect
  * full-node-peer gate. Callers must not push `setBusy(false)` /
  * `shouldReportHubBusy(...)` alone — after session end/cancel the gate can

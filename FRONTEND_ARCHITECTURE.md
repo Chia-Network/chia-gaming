@@ -144,10 +144,14 @@ overwrite the hub-side hub name. Explicit `setBusy(true)` is called when the
 user accepts a session (not when a consent dialog is merely displayed). Idle /
 terminal clear paths must go through `presenceBusy(...)` rather than bare
 `setBusy(false)`, so the peer gate can still hold busy until a full node peer
-is verified. Showing a session-consent dialog does not set busy; local
-availability (`isAvailableForNewSessionPrompt`) still gates inbound
-advisories/proposals as above. When the app later reports that it is not busy,
-the hub sets the player back to `'waiting'`.
+is verified. After a session that skipped the gate (live resume), those clear
+paths must also call `peerGateAfterSessionClear` / `rearmPeerGateForIdleClear`
+synchronously before `presenceBusy` — the React re-eval effect only updates
+`peerGateActive` after commit, which is too late to block inbound matchmaking.
+Showing a session-consent dialog does not set busy; local availability
+(`isAvailableForNewSessionPrompt`) still gates inbound advisories/proposals as
+above. When the app later reports that it is not busy, the hub sets the player
+back to `'waiting'`.
 
 #### Game channel events
 
