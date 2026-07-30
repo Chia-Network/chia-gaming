@@ -2267,6 +2267,18 @@ const Shell = () => {
     }
   }, []);
 
+  const doDisconnectHub = useCallback(() => {
+    hubConnRef.current?.disconnect();
+    hubConnRef.current = null;
+    clearSessionId();
+    setSessionId('');
+    saveHubUrl(undefined);
+    setHubOrigin(null);
+    setIframeUrl('about:blank');
+    setHubLiveness(null);
+    markPeerInactive();
+  }, [markPeerInactive]);
+
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
     if (activeBlockchainRef.current) {
@@ -2290,31 +2302,29 @@ const Shell = () => {
       clearSavedSessionMarker();
     }
     saveSession({ blockchainType: undefined });
-  }, [stopBalancePolling]);
+    doDisconnectHub();
+  }, [stopBalancePolling, doDisconnectHub]);
 
   const handleDisconnectWallet = useCallback(() => {
-    if (sessionPhase !== 'none') {
+    const peerLive = peerLiveness === 'connected' || peerLiveness === 'degraded';
+    if (sessionPhase === 'off-chain' && peerLive) {
       setConfirmDialog({
         title: 'Disconnect wallet?',
-        body: 'You are in a session. Blockchain operations will stall until you reconnect a wallet.',
+        body: 'This will also leave the hub and end your peer connection. Your game stays off-chain — resolve it on-chain from the dashboard if needed.',
+        onConfirm: () => { setConfirmDialog(null); doDisconnectWallet(); },
+      });
+    } else if (sessionPhase !== 'none' || peerLive) {
+      setConfirmDialog({
+        title: 'Disconnect wallet?',
+        body: peerLive
+          ? 'This will also leave the hub and end your peer connection.'
+          : 'This will also leave the hub.',
         onConfirm: () => { setConfirmDialog(null); doDisconnectWallet(); },
       });
     } else {
       doDisconnectWallet();
     }
-  }, [sessionPhase, doDisconnectWallet]);
-
-  const doDisconnectHub = useCallback(() => {
-    hubConnRef.current?.disconnect();
-    hubConnRef.current = null;
-    clearSessionId();
-    setSessionId('');
-    saveHubUrl(undefined);
-    setHubOrigin(null);
-    setIframeUrl('about:blank');
-    setHubLiveness(null);
-    markPeerInactive();
-  }, [markPeerInactive]);
+  }, [sessionPhase, peerLiveness, doDisconnectWallet]);
 
   const handleDisconnectHub = useCallback(() => {
     if ((peerLiveness === 'connected' || peerLiveness === 'degraded') && sessionPhase === 'off-chain') {
