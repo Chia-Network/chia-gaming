@@ -6,18 +6,14 @@ interface GameBottomBarProps {
   doHandleMakeMove: () => void;
 }
 
-const GameBottomBar = ({
-  buttonText,
-  isDisabled,
-  doHandleMakeMove,
-}: GameBottomBarProps) => {
+const GameBottomBar = ({ buttonText, isDisabled, doHandleMakeMove }: GameBottomBarProps) => {
   return (
     <Button
-      variant='solid'
-      color='primary'
+      variant="solid"
+      color="primary"
       onClick={doHandleMakeMove}
       disabled={isDisabled}
-      className='w-auto px-4 py-2'
+      className="w-auto px-4 py-2"
     >
       {buttonText}
     </Button>

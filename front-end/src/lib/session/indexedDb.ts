@@ -6,8 +6,7 @@ const SESSION_DB_VERSION = 1;
 const SESSION_STORE_NAME = 'session';
 const SESSION_RECORD_KEY = 'current';
 const OBFUSCATION_KEY = new Uint8Array([
-  0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b,
-  0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
+  0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b, 0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
 ]);
 const SALT_LEN = 16;
 const ARRAY_BUFFER_TAG = '\0arrayBuffer';
@@ -35,11 +34,11 @@ function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
 
 function toBencodexValue(value: unknown): BencodexValue {
   if (
-    value === null
-    || typeof value === 'boolean'
-    || typeof value === 'bigint'
-    || typeof value === 'string'
-    || value instanceof Uint8Array
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint' ||
+    typeof value === 'string' ||
+    value instanceof Uint8Array
   ) {
     return value;
   }
@@ -123,7 +122,12 @@ function deobfuscateSessionRecord(masked: Uint8Array): SessionSave {
     plaintext[i] = ciphertext[i] ^ stream[i];
   }
   const record = fromBencodexValue(decode(plaintext));
-  if (!record || typeof record !== 'object' || Array.isArray(record) || record instanceof Uint8Array) {
+  if (
+    !record ||
+    typeof record !== 'object' ||
+    Array.isArray(record) ||
+    record instanceof Uint8Array
+  ) {
     throw new Error('Obfuscated session record did not decode to an object');
   }
   return record as SessionSave;
@@ -148,8 +152,10 @@ function openDatabase(): Promise<IDBDatabase> {
 function transactionComplete(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error('Session transaction aborted'));
-    transaction.onerror = () => reject(transaction.error ?? new Error('Session transaction failed'));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('Session transaction aborted'));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error('Session transaction failed'));
   });
 }
 
@@ -157,7 +163,8 @@ function deleteDatabase(): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
     request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error ?? new Error('Failed to delete stale session database'));
+    request.onerror = () =>
+      reject(request.error ?? new Error('Failed to delete stale session database'));
     request.onblocked = () => reject(new Error('Stale session database deletion was blocked'));
   });
 }
@@ -187,7 +194,7 @@ export async function readSessionRecord(): Promise<SessionSave | null> {
     }
     // Records written before save obfuscation remain readable. The next
     // persistence write replaces them with the masked binary format.
-    return record && typeof record === 'object' ? record as SessionSave : null;
+    return record && typeof record === 'object' ? (record as SessionSave) : null;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'NotFoundError') {
       db.close();
@@ -207,10 +214,9 @@ export async function writeSessionRecord(record: SessionSave): Promise<void> {
   const db = await openDatabase();
   try {
     const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
-    transaction.objectStore(SESSION_STORE_NAME).put(
-      obfuscateSessionRecord(record),
-      SESSION_RECORD_KEY,
-    );
+    transaction
+      .objectStore(SESSION_STORE_NAME)
+      .put(obfuscateSessionRecord(record), SESSION_RECORD_KEY);
     await transactionComplete(transaction);
   } finally {
     db.close();

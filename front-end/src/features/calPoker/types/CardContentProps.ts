@@ -1,4 +1,4 @@
-import { CardValueSuit } from "./CardValueSuit";
+import { CardValueSuit } from './CardValueSuit';
 
 interface CardContentProps {
   card: CardValueSuit;

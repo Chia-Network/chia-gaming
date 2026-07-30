@@ -73,7 +73,9 @@ class WalletState {
     const chains = namespace.chains ?? [];
     const account = accounts.find((candidate) => candidate.startsWith(`${CHAIN_ID}:`)) ?? null;
     const chainGranted = chains.includes(CHAIN_ID) || !!account;
-    const methodsGranted = REQUIRED_NAMESPACES.chia.methods.every((method) => methods.includes(method));
+    const methodsGranted = REQUIRED_NAMESPACES.chia.methods.every((method) =>
+      methods.includes(method),
+    );
 
     return account && chainGranted && methodsGranted ? account : null;
   }

@@ -1,6 +1,6 @@
 import { MovingCardProps } from '../../types';
-import { SUIT_COLORS, SWAP_MOVE_DURATION_MS } from "../constants/constants";
-import CardContent from "./CardContent";
+import { SUIT_COLORS, SWAP_MOVE_DURATION_MS } from '../constants/constants';
+import CardContent from './CardContent';
 
 function MovingCard(props: MovingCardProps) {
   const { cardData, showAnimation } = props;

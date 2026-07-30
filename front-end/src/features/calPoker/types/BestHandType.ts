@@ -1,5 +1,5 @@
-import { CardValueSuit } from "./CardValueSuit";
-import { FormatHandProps } from "./FormatHandProps";
+import { CardValueSuit } from './CardValueSuit';
+import { FormatHandProps } from './FormatHandProps';
 
 interface BestHandType {
   cards: CardValueSuit[];

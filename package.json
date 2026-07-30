@@ -1,0 +1,20 @@
+{
+  "name": "chia-gaming",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "format": "prettier --write 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
+    "format:check": "prettier --check 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "pnpm run lint --fix"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.8.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.8.0",
+    "prettier": "3.5.3",
+    "typescript-eslint": "8.65.0"
+  }
+}

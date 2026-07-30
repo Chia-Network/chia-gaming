@@ -9,7 +9,7 @@ import App from './App';
 import installThemeSyncListener from './utils/themeSyncListener';
 
 // install listener immediately
-const uninstallThemeListener = installThemeSyncListener();
+installThemeSyncListener();
 // ask parent for theme (no-op if not embedded)
 try {
   if (window.parent && window.parent !== window) {
@@ -23,6 +23,3 @@ const container = document.getElementById('root');
 const root = createRoot(container!);
 
 root.render(<App />);
-
-// Optional: leave listener installed for life of page; if unmount logic
-// ever added, call `uninstallThemeListener()` to remove.

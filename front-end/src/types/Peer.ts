@@ -4,8 +4,4 @@ export enum InclusionStatus {
   Failed = 3,
 }
 
-export type Peer = [
-  peerId: string,
-  inclusionStatus: InclusionStatus,
-  errorMessage: string | null,
-];
+export type Peer = [peerId: string, inclusionStatus: InclusionStatus, errorMessage: string | null];

@@ -1,8 +1,19 @@
 import { cardIdToRankSuit } from '../../types';
 
 const LOG_RANKS: Record<number, string> = {
-  14: 'A', 13: 'K', 12: 'Q', 11: 'J', 10: 'T',
-  9: '9', 8: '8', 7: '7', 6: '6', 5: '5', 4: '4', 3: '3', 2: '2',
+  14: 'A',
+  13: 'K',
+  12: 'Q',
+  11: 'J',
+  10: 'T',
+  9: '9',
+  8: '8',
+  7: '7',
+  6: '6',
+  5: '5',
+  4: '4',
+  3: '3',
+  2: '2',
 };
 
 // Bridge order: spades(1) > hearts(2) > diamonds(3) > clubs(4)
@@ -39,14 +50,16 @@ function isFlushOrStraight(handValue: bigint[]): boolean {
   if (handValue[0] === 5n) return true;
   if (handValue.length < 3) return false;
   // flush: (3 1 3 ...) or straight: (3 1 2 ...)
-  if (handValue[0] === 3n && handValue[1] === 1n && (handValue[2] === 3n || handValue[2] === 2n)) return true;
+  if (handValue[0] === 3n && handValue[1] === 1n && (handValue[2] === 3n || handValue[2] === 2n))
+    return true;
   return false;
 }
 
 function isWheel(handValue: bigint[]): boolean {
   // straight (3 1 2 high_card) or straight flush (5 high_card) with high_card === 5
   if (handValue[0] === 5n && handValue[1] === 5n) return true;
-  if (handValue[0] === 3n && handValue[1] === 1n && handValue[2] === 2n && handValue[3] === 5n) return true;
+  if (handValue[0] === 3n && handValue[1] === 1n && handValue[2] === 2n && handValue[3] === 5n)
+    return true;
   return false;
 }
 
@@ -85,5 +98,5 @@ export function orderUsedCardsForLog(usedCards: bigint[], handValue: bigint[]): 
     return b.rank - a.rank;
   });
 
-  return groups.flatMap(g => g.cards);
+  return groups.flatMap((g) => g.cards);
 }
