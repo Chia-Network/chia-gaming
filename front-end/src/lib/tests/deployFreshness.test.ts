@@ -7,12 +7,16 @@ import {
   resolveDeployAssetUrl,
 } from '../deployFreshness';
 
-function docWithBase(href: string | null, baseURI = 'http://localhost:3002/'): {
+function docWithBase(
+  href: string | null,
+  baseURI = 'http://localhost:3002/',
+): {
   querySelector: Document['querySelector'];
   baseURI: string;
 } {
   return {
-    baseURI: href && href.startsWith('http') ? href : href ? `http://localhost:3002${href}` : baseURI,
+    baseURI:
+      href && href.startsWith('http') ? href : href ? `http://localhost:3002${href}` : baseURI,
     querySelector: (selector: string) => {
       if (selector !== 'base' || href === null) return null;
       return {
@@ -45,11 +49,15 @@ describe('deployFreshness', () => {
         'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
         'http://localhost:3002/app/123/',
       ),
-    ).toBe('http://localhost:3002/app/123/clsp/games/calpoker/calpoker_include_calpoker_factory.hex');
+    ).toBe(
+      'http://localhost:3002/app/123/clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
+    );
   });
 
   it('resolveDeployAssetUrl leaves absolute and root-relative URLs alone', () => {
-    expect(resolveDeployAssetUrl('/clsp/x.hex', 'http://localhost:3002/app/123/')).toBe('/clsp/x.hex');
+    expect(resolveDeployAssetUrl('/clsp/x.hex', 'http://localhost:3002/app/123/')).toBe(
+      '/clsp/x.hex',
+    );
     expect(resolveDeployAssetUrl('https://cdn.example/x.hex')).toBe('https://cdn.example/x.hex');
   });
 
@@ -59,9 +67,7 @@ describe('deployFreshness', () => {
       json: async () => ({ basePath: '/app/same' }),
     })) as unknown as typeof fetch;
 
-    await expect(
-      isStaleDeploy(fetchImpl, 'http://localhost:3002/app/same/'),
-    ).resolves.toBe(false);
+    await expect(isStaleDeploy(fetchImpl, 'http://localhost:3002/app/same/')).resolves.toBe(false);
     expect(fetchImpl).toHaveBeenCalledWith('/build-meta.json', { cache: 'no-store' });
   });
 
@@ -71,9 +77,7 @@ describe('deployFreshness', () => {
       json: async () => ({ basePath: '/app/new/' }),
     })) as unknown as typeof fetch;
 
-    await expect(
-      isStaleDeploy(fetchImpl, 'http://localhost:3002/app/old/'),
-    ).resolves.toBe(true);
+    await expect(isStaleDeploy(fetchImpl, 'http://localhost:3002/app/old/')).resolves.toBe(true);
   });
 
   it('isStaleDeploy is false when there is no page base', async () => {
@@ -95,10 +99,18 @@ describe('deployFreshness', () => {
     const store = new Map<string, string>();
     const memoryStorage = {
       getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => { store.set(key, value); },
-      removeItem: (key: string) => { store.delete(key); },
-      clear: () => { store.clear(); },
-      get length() { return store.size; },
+      setItem: (key: string, value: string) => {
+        store.set(key, value);
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      get length() {
+        return store.size;
+      },
       key: (i: number) => [...store.keys()][i] ?? null,
     };
     Object.defineProperty(globalThis, 'sessionStorage', {
@@ -119,7 +131,9 @@ describe('deployFreshness', () => {
       { isStale: async () => true, reload },
     );
     await Promise.race([
-      pending.then(() => { throw new Error('should not settle'); }),
+      pending.then(() => {
+        throw new Error('should not settle');
+      }),
       new Promise((resolve) => setTimeout(resolve, 20)),
     ]);
     expect(reload).toHaveBeenCalled();

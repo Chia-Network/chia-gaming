@@ -21,7 +21,8 @@ function toPlainObject(value: BencodexValue): unknown {
   if (isDictionary(value)) {
     const out: Record<string, unknown> = {};
     for (const [key, item] of value.entries()) {
-      out[typeof key === 'string' ? key : new TextDecoder().decode(key as Uint8Array)] = toPlainObject(item);
+      out[typeof key === 'string' ? key : new TextDecoder().decode(key as Uint8Array)] =
+        toPlainObject(item);
     }
     return out;
   }
@@ -62,11 +63,13 @@ class MockWebSocket {
     if (typeof data === 'string') {
       this.sentJson.push(JSON.parse(data));
     } else if (data instanceof Uint8Array) {
-      if (data[0] === 0x64) this.sentControl.push(toPlainObject(decodeBencodex(data) as BencodexValue));
+      if (data[0] === 0x64)
+        this.sentControl.push(toPlainObject(decodeBencodex(data) as BencodexValue));
       else this.sentBinary.push(data);
     } else if (data instanceof ArrayBuffer) {
       const bytes = new Uint8Array(data);
-      if (bytes[0] === 0x64) this.sentControl.push(toPlainObject(decodeBencodex(bytes) as BencodexValue));
+      if (bytes[0] === 0x64)
+        this.sentControl.push(toPlainObject(decodeBencodex(bytes) as BencodexValue));
       else this.sentBinary.push(bytes);
     }
   }
@@ -85,14 +88,20 @@ class MockWebSocket {
     // Inbound binary format: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
     const fromIdBuf = new TextEncoder().encode(fromId);
     const aliasBuf = new TextEncoder().encode(fromAlias ?? fromId);
-    const frame = new ArrayBuffer(4 + fromIdBuf.byteLength + 4 + aliasBuf.byteLength + payload.byteLength);
+    const frame = new ArrayBuffer(
+      4 + fromIdBuf.byteLength + 4 + aliasBuf.byteLength + payload.byteLength,
+    );
     const view = new DataView(frame);
     const bytes = new Uint8Array(frame);
     let offset = 0;
-    view.setUint32(offset, fromIdBuf.byteLength, false); offset += 4;
-    bytes.set(fromIdBuf, offset); offset += fromIdBuf.byteLength;
-    view.setUint32(offset, aliasBuf.byteLength, false); offset += 4;
-    bytes.set(aliasBuf, offset); offset += aliasBuf.byteLength;
+    view.setUint32(offset, fromIdBuf.byteLength, false);
+    offset += 4;
+    bytes.set(fromIdBuf, offset);
+    offset += fromIdBuf.byteLength;
+    view.setUint32(offset, aliasBuf.byteLength, false);
+    offset += 4;
+    bytes.set(aliasBuf, offset);
+    offset += aliasBuf.byteLength;
     bytes.set(payload, offset);
     this.onmessage?.({ data: frame });
   }
@@ -114,10 +123,7 @@ const originalWebSocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 
 // Imports
 // ---------------------------------------------------------------------------
 
-import {
-  HubConnection,
-  HubConnectionCallbacks,
-} from '../../services/HubConnection';
+import { HubConnection, HubConnectionCallbacks } from '../../services/HubConnection';
 
 let hubDisconnectCount = 0;
 let expectedHubDisconnects = 0;
@@ -139,7 +145,10 @@ afterAll(() => {
   }
 });
 
-function makeCallbacks(presence?: { busy: boolean; alias?: string }): HubConnectionCallbacks & Record<string, jest.Mock> {
+function makeCallbacks(presence?: {
+  busy: boolean;
+  alias?: string;
+}): HubConnectionCallbacks & Record<string, jest.Mock> {
   return {
     onAdvisoryStart: jest.fn(),
     onPeerMessage: jest.fn(),
@@ -147,7 +156,9 @@ function makeCallbacks(presence?: { busy: boolean; alias?: string }): HubConnect
     onDeliveryFailure: jest.fn(),
     onRegistered: jest.fn(),
     onHubAttention: jest.fn(),
-    onHubDisconnected: jest.fn(() => { hubDisconnectCount++; }),
+    onHubDisconnected: jest.fn(() => {
+      hubDisconnectCount++;
+    }),
     onHubReconnected: jest.fn(),
     onHubActivity: jest.fn(),
     getPresence: jest.fn(() => presence ?? { busy: false }),
@@ -209,7 +220,9 @@ describe('connection setup', () => {
     await Promise.resolve();
 
     const ws = MockWebSocket.instance!;
-    expect(ws.sentControl).toEqual([{ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' }]);
+    expect(ws.sentControl).toEqual([
+      { type: 'identify', session_id: 's1', busy: true, alias: 'Alice' },
+    ]);
   });
 });
 
@@ -300,7 +313,11 @@ describe('binary message relay', () => {
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    const appMessage = { type: 'session_proposal', proposer_amount: '500', responder_amount: '500' };
+    const appMessage = {
+      type: 'session_proposal',
+      proposer_amount: '500',
+      responder_amount: '500',
+    };
     const payload = encodeBencodex(appMessage);
     MockWebSocket.instance!._fireBinaryInbound('p_sender', payload);
     expect(cb.onPeerAppMessage).toHaveBeenCalledWith('p_sender', 'p_sender', appMessage);
@@ -362,7 +379,11 @@ describe('outbound message format', () => {
     const ws = MockWebSocket.instance!;
     ws.sentBinary = [];
 
-    conn.sendPeerAppMessage('p_target', { type: 'session_proposal', proposer_amount: '100', responder_amount: '100' });
+    conn.sendPeerAppMessage('p_target', {
+      type: 'session_proposal',
+      proposer_amount: '100',
+      responder_amount: '100',
+    });
     expect(ws.sentBinary).toHaveLength(1);
 
     const frame = ws.sentBinary[0];
@@ -372,7 +393,11 @@ describe('outbound message format', () => {
     expect(targetId).toBe('p_target');
     const payloadBytes = frame.slice(4 + targetIdLen);
     const parsed = toPlainObject(decodeBencodex(payloadBytes) as BencodexValue);
-    expect(parsed).toEqual({ type: 'session_proposal', proposer_amount: '100', responder_amount: '100' });
+    expect(parsed).toEqual({
+      type: 'session_proposal',
+      proposer_amount: '100',
+      responder_amount: '100',
+    });
   });
 });
 
@@ -433,7 +458,7 @@ describe('setBusy', () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     (cb.getPresence as jest.Mock).mockReturnValue({ busy: true });
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedHubDisconnects = 1;
 
@@ -455,7 +480,7 @@ describe('setBusy', () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
     (cb.getPresence as jest.Mock).mockReturnValue({ busy: true, alias: 'Alice' });
-    const conn = makeConnection('http://t', 's1', cb);
+    makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedHubDisconnects = 1;
 
@@ -467,7 +492,12 @@ describe('setBusy', () => {
     const ws2 = MockWebSocket.instance!;
     expect(ws2).not.toBe(ws1);
     const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
-    expect(identifyMsg).toMatchObject({ type: 'identify', session_id: 's1', busy: true, alias: 'Alice' });
+    expect(identifyMsg).toMatchObject({
+      type: 'identify',
+      session_id: 's1',
+      busy: true,
+      alias: 'Alice',
+    });
     jest.useRealTimers();
   });
 });

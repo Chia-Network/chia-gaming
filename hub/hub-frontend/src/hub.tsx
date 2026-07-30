@@ -72,11 +72,7 @@ const HubScreen = () => {
     cancelChallenge,
     setHubAlias,
     publicId,
-  } = useHubSocket(
-    window.location.origin,
-    uniqueId,
-    sessionId,
-  );
+  } = useHubSocket(window.location.origin, uniqueId, sessionId);
 
   const autoJoinedRef = useRef(false);
   useEffect(() => {
@@ -98,7 +94,7 @@ const HubScreen = () => {
         unique_id: uniqueId,
       });
     }
-  }, [aliasLoaded, savedAlias, joinHub]);
+  }, [aliasLoaded, savedAlias, joinHub, sessionId, uniqueId]);
 
   function confirmAlias() {
     const trimmed = myAlias.trim();
@@ -115,12 +111,13 @@ const HubScreen = () => {
     joinHub(trimmed);
   }
 
-  function commitEdit(e: any) {
-    const value = e.target.value;
+  function commitEdit(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
     setEditingAlias(false);
-    setMyAlias(value);
-    notifyParentAlias(value.trim());
-    setHubAlias(publicId ?? '', value);
+    setMyAlias(trimmed);
+    notifyParentAlias(trimmed);
+    setHubAlias(publicId ?? '', trimmed);
   }
 
   useEffect(() => {
@@ -129,8 +126,8 @@ const HubScreen = () => {
     if (!isTimeoutInRange(channel_timeout) || !isTimeoutInRange(unroll_timeout)) {
       console.warn(
         `[hub] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
-        `timeouts out of range (channel=${channel_timeout}, unroll=${unroll_timeout}, ` +
-        `allowed=${MIN_TIMEOUT_BLOCKS}–${MAX_TIMEOUT_BLOCKS})`,
+          `timeouts out of range (channel=${channel_timeout}, unroll=${unroll_timeout}, ` +
+          `allowed=${MIN_TIMEOUT_BLOCKS}–${MAX_TIMEOUT_BLOCKS})`,
       );
       declineChallenge(pendingChallenge.challenge_id);
       return;
@@ -138,13 +135,15 @@ const HubScreen = () => {
     if (!isAmountValid(challenger_amount) || !isAmountValid(target_amount)) {
       console.warn(
         `[hub] auto-declining challenge ${pendingChallenge.challenge_id}: ` +
-        `invalid amounts (challenger=${challenger_amount}, target=${target_amount})`,
+          `invalid amounts (challenger=${challenger_amount}, target=${target_amount})`,
       );
       declineChallenge(pendingChallenge.challenge_id);
     }
   }, [pendingChallenge, declineChallenge]);
 
-  const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(null);
+  const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(
+    null,
+  );
   const [challengeAmount, setChallengeAmount] = useState('100');
   const [asymmetricAmounts, setAsymmetricAmounts] = useState(false);
   const [challengerAmount, setChallengerAmount] = useState('100');
@@ -163,18 +162,27 @@ const HubScreen = () => {
     if (!challengeTarget || !timeoutsValid) return;
     const myAmt = asymmetricAmounts ? challengerAmount : challengeAmount;
     const theirAmt = asymmetricAmounts ? targetAmount : challengeAmount;
-    sendChallenge(challengeTarget.id, myAmt, theirAmt, challengeChannelTimeout, challengeUnrollTimeout);
+    sendChallenge(
+      challengeTarget.id,
+      myAmt,
+      theirAmt,
+      challengeChannelTimeout,
+      challengeUnrollTimeout,
+    );
     setChallengeTarget(null);
   }
 
-  const timeoutsValid = isTimeoutInRange(challengeChannelTimeout) && isTimeoutInRange(challengeUnrollTimeout);
+  const timeoutsValid =
+    isTimeoutInRange(challengeChannelTimeout) && isTimeoutInRange(challengeUnrollTimeout);
 
   if (initialConnectionFailed) {
     return (
       <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex items-center justify-center">
         <div className="w-full max-w-sm space-y-3 text-center">
           <h2 className="text-xl font-bold text-canvas-text-contrast">Unable to connect to hub</h2>
-          <p className="text-sm text-canvas-text">Check the hub URL and its availability. Retrying automatically…</p>
+          <p className="text-sm text-canvas-text">
+            Check the hub URL and its availability. Retrying automatically…
+          </p>
         </div>
       </div>
     );
@@ -206,13 +214,7 @@ const HubScreen = () => {
             onChange={(e) => setMyAlias(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && confirmAlias()}
           />
-          <Button
-            variant="solid"
-            color="primary"
-            size="default"
-            onClick={confirmAlias}
-            fullWidth
-          >
+          <Button variant="solid" color="primary" size="default" onClick={confirmAlias} fullWidth>
             Join Hub
           </Button>
         </div>
@@ -238,11 +240,11 @@ const HubScreen = () => {
               placeholder="Enter new alias"
               value={myAlias}
               onChange={(e) => setMyAlias(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
-              onBlur={commitEdit}
+              onKeyDown={(e) => e.key === 'Enter' && commitEdit(e.currentTarget.value)}
+              onBlur={(e) => commitEdit(e.currentTarget.value)}
             />
             <button
-              onClick={commitEdit}
+              onClick={() => commitEdit(myAlias)}
               aria-label="save-alias"
               className="px-4 py-2 rounded bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover font-medium"
             >
@@ -274,18 +276,17 @@ const HubScreen = () => {
 
       <div className="border-b border-canvas-line mb-4" />
 
-      {pendingChallenge
-        && isTimeoutInRange(pendingChallenge.channel_timeout)
-        && isTimeoutInRange(pendingChallenge.unroll_timeout)
-        && isAmountValid(pendingChallenge.challenger_amount)
-        && isAmountValid(pendingChallenge.target_amount)
-        && (
-        <IncomingChallengeDialog
-          challenge={pendingChallenge}
-          onAccept={() => acceptChallenge(pendingChallenge.challenge_id)}
-          onDecline={() => declineChallenge(pendingChallenge.challenge_id)}
-        />
-      )}
+      {pendingChallenge &&
+        isTimeoutInRange(pendingChallenge.channel_timeout) &&
+        isTimeoutInRange(pendingChallenge.unroll_timeout) &&
+        isAmountValid(pendingChallenge.challenger_amount) &&
+        isAmountValid(pendingChallenge.target_amount) && (
+          <IncomingChallengeDialog
+            challenge={pendingChallenge}
+            onAccept={() => acceptChallenge(pendingChallenge.challenge_id)}
+            onDecline={() => declineChallenge(pendingChallenge.challenge_id)}
+          />
+        )}
 
       {challengeTarget && (
         <div className="mb-4 p-4 rounded-lg bg-canvas-bg border border-canvas-border space-y-3">
@@ -352,7 +353,9 @@ const HubScreen = () => {
                 value={challengeChannelTimeout}
                 onChange={(e) => setChallengeChannelTimeout(e.target.value)}
                 className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
-                  isTimeoutInRange(challengeChannelTimeout) ? 'border-canvas-border' : 'border-red-500'
+                  isTimeoutInRange(challengeChannelTimeout)
+                    ? 'border-canvas-border'
+                    : 'border-red-500'
                 }`}
               />
             </label>
@@ -365,7 +368,9 @@ const HubScreen = () => {
                 value={challengeUnrollTimeout}
                 onChange={(e) => setChallengeUnrollTimeout(e.target.value)}
                 className={`mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border outline-none ${
-                  isTimeoutInRange(challengeUnrollTimeout) ? 'border-canvas-border' : 'border-red-500'
+                  isTimeoutInRange(challengeUnrollTimeout)
+                    ? 'border-canvas-border'
+                    : 'border-red-500'
                 }`}
               />
             </label>
@@ -376,7 +381,13 @@ const HubScreen = () => {
             </p>
           )}
           <div className="flex gap-2">
-            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge} disabled={!timeoutsValid}>
+            <Button
+              variant="solid"
+              color="primary"
+              size="sm"
+              onClick={submitChallenge}
+              disabled={!timeoutsValid}
+            >
               Send Challenge
             </Button>
             <Button variant="solid" size="sm" onClick={() => setChallengeTarget(null)}>
@@ -396,17 +407,18 @@ const HubScreen = () => {
       )}
       {reconnectBlocked ? (
         <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
-          This player is active in another tab/window. Close the other tab or use a separate browser profile for Alice/Bob.
+          This player is active in another tab/window. Close the other tab or use a separate browser
+          profile for Alice/Bob.
         </div>
-      ) : isReconnecting && (
-        <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
-          Reconnecting to hub...
-        </div>
+      ) : (
+        isReconnecting && (
+          <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
+            Reconnecting to hub...
+          </div>
+        )
       )}
 
-      <h3 className="text-lg font-semibold text-canvas-text-contrast mb-3">
-        Connected Players
-      </h3>
+      <h3 className="text-lg font-semibold text-canvas-text-contrast mb-3">Connected Players</h3>
 
       {players.length === 0 ? (
         <div className="text-center py-8 text-canvas-text">
@@ -423,9 +435,7 @@ const HubScreen = () => {
             </>
           ) : (
             <>
-              <h6 className="text-lg font-medium text-canvas-text-contrast">
-                Waiting for Hub
-              </h6>
+              <h6 className="text-lg font-medium text-canvas-text-contrast">Waiting for Hub</h6>
               <p className="text-sm text-canvas-text">No hub update received yet...</p>
             </>
           )}
@@ -454,19 +464,29 @@ const HubScreen = () => {
 
                 {isUnavailable ? (
                   <span className="text-sm text-canvas-text italic">
-                    {player.status === 'playing' ? `Playing vs ${player.opponent_alias}` : 'In Session'}
+                    {player.status === 'playing'
+                      ? `Playing vs ${player.opponent_alias}`
+                      : 'In Session'}
                   </span>
-                ) : !isMe && (
-                  <Button
-                    variant="solid"
-                    color="primary"
-                    size="sm"
-                    disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget || iAmUnavailable}
-                    onClick={() => openChallengeDialog(player.id, player.alias)}
-                    leadingIcon={<Swords className="w-4 h-4" />}
-                  >
-                    Challenge
-                  </Button>
+                ) : (
+                  !isMe && (
+                    <Button
+                      variant="solid"
+                      color="primary"
+                      size="sm"
+                      disabled={
+                        reconnectBlocked ||
+                        !isConnected ||
+                        challengeSent ||
+                        !!challengeTarget ||
+                        iAmUnavailable
+                      }
+                      onClick={() => openChallengeDialog(player.id, player.alias)}
+                      leadingIcon={<Swords className="w-4 h-4" />}
+                    >
+                      Challenge
+                    </Button>
+                  )
                 )}
               </div>
             );
@@ -498,11 +518,22 @@ function IncomingChallengeDialog({
         ) : (
           <>
             Their buy-in: {formatAmount(challenge.challenger_amount)}
-            <br />Your buy-in: {formatAmount(challenge.target_amount)}
+            <br />
+            Your buy-in: {formatAmount(challenge.target_amount)}
           </>
         )}
-        {challenge.channel_timeout && <><br />Channel timeout: {challenge.channel_timeout} blocks</>}
-        {challenge.unroll_timeout && <><br />Unroll timeout: {challenge.unroll_timeout} blocks</>}
+        {challenge.channel_timeout && (
+          <>
+            <br />
+            Channel timeout: {challenge.channel_timeout} blocks
+          </>
+        )}
+        {challenge.unroll_timeout && (
+          <>
+            <br />
+            Unroll timeout: {challenge.unroll_timeout} blocks
+          </>
+        )}
       </p>
       <div className="flex gap-2">
         <Button variant="solid" color="primary" size="sm" onClick={onAccept}>

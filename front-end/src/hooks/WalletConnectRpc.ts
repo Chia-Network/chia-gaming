@@ -3,18 +3,9 @@ import {
   CreateOfferForIdsRequest,
   CreateOfferForIdsResponse,
 } from '../types/rpc/CreateOfferForIds';
-import {
-  GetNextAddressRequest,
-  GetNextAddressResponse,
-} from '../types/rpc/GetNextAddress';
-import {
-  GetWalletBalanceRequest,
-  GetWalletBalanceResponse,
-} from '../types/rpc/GetWalletBalance';
-import {
-  GetHeightInfoRequest,
-  GetHeightInfoResponse,
-} from '../types/rpc/GetHeightInfo';
+import { GetNextAddressRequest, GetNextAddressResponse } from '../types/rpc/GetNextAddress';
+import { GetWalletBalanceRequest, GetWalletBalanceResponse } from '../types/rpc/GetWalletBalance';
+import { GetHeightInfoRequest, GetHeightInfoResponse } from '../types/rpc/GetHeightInfo';
 import {
   CreateNewRemoteWalletRequest,
   CreateNewRemoteWalletResponse,
@@ -31,14 +22,8 @@ import {
   GetPuzzleAndSolutionRequest,
   GetPuzzleAndSolutionResponse,
 } from '../types/rpc/GetPuzzleAndSolution';
-import {
-  PushTransactionsRequest,
-  PushTransactionsResponse,
-} from '../types/rpc/PushTransactions';
-import {
-  SelectCoinsRequest,
-  SelectCoinsResponse,
-} from '../types/rpc/SelectCoins';
+import { PushTransactionsRequest, PushTransactionsResponse } from '../types/rpc/PushTransactions';
+import { SelectCoinsRequest, SelectCoinsResponse } from '../types/rpc/SelectCoins';
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 
@@ -58,11 +43,19 @@ function getErrorText(err: unknown): string {
       const parts = [obj.message];
       if ('code' in obj) parts.push(`code=${String(obj.code)}`);
       if ('data' in obj && obj.data !== undefined) {
-        try { parts.push(`data=${jsonStringify(obj.data)}`); } catch { /* skip */ }
+        try {
+          parts.push(`data=${jsonStringify(obj.data)}`);
+        } catch {
+          /* skip */
+        }
       }
       return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0];
     }
-    try { return jsonStringify(err); } catch { /* fall through */ }
+    try {
+      return jsonStringify(err);
+    } catch {
+      /* fall through */
+    }
   }
   return String(err);
 }
@@ -153,7 +146,9 @@ async function waitForRelayerConnected(): Promise<void> {
     };
     const onConnect = () => finish();
     const timer = setTimeout(() => {
-      fail(new Error(`WalletConnect relayer did not connect after ${WC_RELAY_CONNECT_TIMEOUT_MS}ms`));
+      fail(
+        new Error(`WalletConnect relayer did not connect after ${WC_RELAY_CONNECT_TIMEOUT_MS}ms`),
+      );
     }, WC_RELAY_CONNECT_TIMEOUT_MS);
 
     relayer.on('relayer_connect', onConnect);
@@ -161,7 +156,7 @@ async function waitForRelayerConnected(): Promise<void> {
   });
 }
 
-type PreparedRpc<T> = {
+type PreparedRpc = {
   method: ChiaMethod;
   params: Record<string, unknown>;
   data: object;
@@ -171,22 +166,19 @@ type PreparedRpc<T> = {
 
 class WalletConnectRpcClient {
   request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
-    let prepared: PreparedRpc<T>;
+    let prepared: PreparedRpc;
     try {
       prepared = this.prepareRpc(method, data);
     } catch (e) {
       return Promise.reject(e);
     }
-    return this.runPreparedRpc(prepared).catch((e) => {
+    return this.runPreparedRpc<T>(prepared).catch((e) => {
       this.logRpcError(prepared, e);
       throw walletConnectError(method, getErrorText(e), e);
     });
   }
 
-  private prepareRpc<T, D extends object>(
-    method: ChiaMethod,
-    data: D,
-  ): PreparedRpc<T> {
+  private prepareRpc<D extends object>(method: ChiaMethod, data: D): PreparedRpc {
     if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
     if (!walletConnectState.getSession()) throw new Error('Session is not connected');
 
@@ -215,7 +207,7 @@ class WalletConnectRpcClient {
     };
   }
 
-  private async runPreparedRpc<T>(prepared: PreparedRpc<T>): Promise<T> {
+  private async runPreparedRpc<T>(prepared: PreparedRpc): Promise<T> {
     const session = walletConnectState.getSession();
     const client = walletConnectState.getClient();
     if (!session) throw new Error('Session is not connected');
@@ -229,31 +221,31 @@ class WalletConnectRpcClient {
       );
     }
 
-    try {
-      const raw = await client.request({
-        topic: session.topic,
-        chainId: walletConnectState.getChainId(),
-        request: { method: prepared.method, params: prepared.params },
-      });
-      const result = this.normalizeResult(prepared, raw);
-      if (shouldLogRpcTraffic(prepared.method)) {
-        const elapsed = Date.now() - prepared.enqueuedAt;
-        log(`[WC RPC] ← ${prepared.method} ok ${elapsed}ms result=${summarizeRpcValue(result)}`);
-      }
-      return result;
-    } catch (e) {
-      throw e;
+    const raw = await client.request({
+      topic: session.topic,
+      chainId: walletConnectState.getChainId(),
+      request: { method: prepared.method, params: prepared.params },
+    });
+    const result = this.normalizeResult<T>(prepared, raw);
+    if (shouldLogRpcTraffic(prepared.method)) {
+      const elapsed = Date.now() - prepared.enqueuedAt;
+      log(`[WC RPC] ← ${prepared.method} ok ${elapsed}ms result=${summarizeRpcValue(result)}`);
     }
+    return result;
   }
 
-  private normalizeResult<T>(prepared: PreparedRpc<T>, raw: unknown): T {
+  private normalizeResult<T>(prepared: PreparedRpc, raw: unknown): T {
     const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
     if (result?.error) {
       const errorText = toDebugJson(result.error);
       const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
       if (shouldLogRpcError(prepared.method)) {
-        console.error(`[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}]\n  error: ${errorText}\n${trace}`);
-        log(`[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}] error=${errorText}`);
+        console.error(
+          `[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}]\n  error: ${errorText}\n${trace}`,
+        );
+        log(
+          `[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}] error=${errorText}`,
+        );
       }
       throw walletConnectError(prepared.method, errorText, result.error);
     }
@@ -262,7 +254,7 @@ class WalletConnectRpcClient {
     return result as T;
   }
 
-  private logRpcError(prepared: PreparedRpc<unknown>, e: unknown): void {
+  private logRpcError(prepared: PreparedRpc, e: unknown): void {
     const elapsed = Date.now() - prepared.enqueuedAt;
     const errText = getErrorText(e);
     if (shouldLogRpcError(prepared.method)) {
@@ -274,15 +266,11 @@ class WalletConnectRpcClient {
       console.error(`[WC RPC error] ${prepared.method} paramKeys=[${prepared.paramKeys}]`, e);
     }
   }
-
 }
 
 export const walletConnectRpcClient = new WalletConnectRpcClient();
 
-async function request<T, D extends object = object>(
-  method: ChiaMethod,
-  data: D,
-): Promise<T> {
+async function request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
   return walletConnectRpcClient.request<T, D>(method, data);
 }
 
@@ -291,17 +279,11 @@ async function getWallets(data: GetWalletsRequest) {
 }
 
 async function getWalletBalance(data: GetWalletBalanceRequest) {
-  return await request<GetWalletBalanceResponse>(
-    ChiaMethod.GetWalletBalance,
-    data,
-  );
+  return await request<GetWalletBalanceResponse>(ChiaMethod.GetWalletBalance, data);
 }
 
 async function getNextAddress(data: GetNextAddressRequest) {
-  return await request<GetNextAddressResponse>(
-    ChiaMethod.GetNextAddress,
-    data,
-  );
+  return await request<GetNextAddressResponse>(ChiaMethod.GetNextAddress, data);
 }
 
 async function selectCoins(data: SelectCoinsRequest) {
@@ -313,10 +295,7 @@ async function getHeightInfo(data: GetHeightInfoRequest) {
 }
 
 async function createOfferForIds(data: CreateOfferForIdsRequest) {
-  return await request<CreateOfferForIdsResponse>(
-    ChiaMethod.CreateOfferForIds,
-    data,
-  );
+  return await request<CreateOfferForIdsResponse>(ChiaMethod.CreateOfferForIds, data);
 }
 
 async function pushTransactions(data: PushTransactionsRequest) {
@@ -324,31 +303,19 @@ async function pushTransactions(data: PushTransactionsRequest) {
 }
 
 async function createNewRemoteWallet(data: CreateNewRemoteWalletRequest) {
-  return await request<CreateNewRemoteWalletResponse>(
-    ChiaMethod.CreateNewRemoteWallet,
-    data,
-  );
+  return await request<CreateNewRemoteWalletResponse>(ChiaMethod.CreateNewRemoteWallet, data);
 }
 
 async function registerRemoteCoins(data: RegisterRemoteCoinsRequest) {
-  return await request<RegisterRemoteCoinsResponse>(
-    ChiaMethod.RegisterRemoteCoins,
-    data,
-  );
+  return await request<RegisterRemoteCoinsResponse>(ChiaMethod.RegisterRemoteCoins, data);
 }
 
 async function getCoinRecordsByNames(data: GetCoinRecordsByNamesRequest) {
-  return await request<GetCoinRecordsByNamesResponse>(
-    ChiaMethod.GetCoinRecordsByNames,
-    data,
-  );
+  return await request<GetCoinRecordsByNamesResponse>(ChiaMethod.GetCoinRecordsByNames, data);
 }
 
 async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
-  return await request<GetPuzzleAndSolutionResponse>(
-    ChiaMethod.GetPuzzleAndSolution,
-    data,
-  );
+  return await request<GetPuzzleAndSolutionResponse>(ChiaMethod.GetPuzzleAndSolution, data);
 }
 
 export const rpc = {

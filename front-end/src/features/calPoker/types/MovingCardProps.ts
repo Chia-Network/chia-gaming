@@ -1,4 +1,4 @@
-import { CardValueSuit } from "./CardValueSuit";
+import { CardValueSuit } from './CardValueSuit';
 
 interface MovingCardData {
   id: string;
@@ -11,11 +11,11 @@ interface MovingCardData {
   height: number;
   direction: string;
   zIndex: number;
-};
+}
 
 interface MovingCardProps {
   cardData: MovingCardData;
   showAnimation: boolean;
-};
+}
 
 export type { MovingCardProps, MovingCardData };

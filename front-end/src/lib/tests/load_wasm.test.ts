@@ -1,32 +1,9 @@
-import {
-  init,
-  config_scaffold,
-  create_game_session,
-  deliver_message,
-  cache_file,
-  chia_identity,
-  Spend,
-  CoinSpend,
-  SpendBundle,
-  IChiaIdentity,
-  DrainResult,
-} from '../../../node-pkg/chia_gaming_wasm.js';
 import { Subscription } from 'rxjs';
-import {
-  WasmStateInit,
-  storeInitArgs,
-  _resetWasmLoadForTests,
-} from '../../hooks/WasmStateInit';
-import { getSearchParams, empty, getRandomInt, getEvenHexString } from './testUtil';
+import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import {
-  PeerConnectionResult,
-  WasmEvent,
-} from '../../types/ChiaGaming';
+import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
-import {
-  fakeBlockchainInfo,
-} from '../../hooks/FakeBlockchainInterface';
+import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import {
   _resetForTests as resetSaveState,
   flushSessionSave,
@@ -40,15 +17,15 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
 import 'fake-indexeddb/auto';
-// @ts-ignore
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
-// @ts-ignore
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import { resolve } from 'path';
-// @ts-ignore
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
 function rooted(name: string) {
-  // @ts-ignore
+  // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
   return resolve(__dirname, '../../../..', name);
 }
 
@@ -56,20 +33,27 @@ async function fetchPreset(key: string): Promise<Uint8Array> {
   return new Uint8Array(fs.readFileSync(rooted(key)));
 }
 
-function preset_file(name: string) {
-  cache_file(name, new Uint8Array(fs.readFileSync(rooted(name))));
+interface SimpleMessage {
+  msgno: number;
+  msg: Uint8Array;
 }
-
-interface SimpleMessage { msgno: number; msg: Uint8Array };
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
   return {
     getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => { store.set(key, value); },
-    removeItem: (key: string) => { store.delete(key); },
-    clear: () => { store.clear(); },
-    get length() { return store.size; },
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    get length() {
+      return store.size;
+    },
     key: (i: number) => [...store.keys()][i] ?? null,
   };
 }
@@ -93,7 +77,9 @@ function describeThrown(e: unknown): string {
   // Empty/undefined/non-Error rejections are exactly the opaque case that
   // produced blank CI failures, so record the shape explicitly.
   const shape = `typeof=${typeof e} ctor=${
-    e && typeof e === 'object' ? ((e as { constructor?: { name?: string } }).constructor?.name ?? '?') : 'n/a'
+    e && typeof e === 'object'
+      ? ((e as { constructor?: { name?: string } }).constructor?.name ?? '?')
+      : 'n/a'
   }`;
   try {
     return `non-Error thrown (${shape}): ${JSON.stringify(e)}`;
@@ -108,20 +94,26 @@ function describeThrown(e: unknown): string {
 // append lands on disk immediately and survives the worker dying; a later shell
 // step `cat`s this file into the live Actions log.  The path is overridable so
 // the workflow and the test agree on it.
-const DIAG_FILE = process.env.LOAD_WASM_DIAG_FILE
-  || resolve(__dirname, '../../..', 'load_wasm_diag.log');
+const DIAG_FILE =
+  process.env.LOAD_WASM_DIAG_FILE || resolve(__dirname, '../../..', 'load_wasm_diag.log');
 
 function diagFileWrite(line: string): void {
   try {
     fs.appendFileSync(DIAG_FILE, line.endsWith('\n') ? line : line + '\n');
-  } catch { /* never let logging throw */ }
+  } catch {
+    /* never let logging throw */
+  }
 }
 
 // Write to the durable file first (must survive teardown), then to stderr for
 // live visibility during the test.
 function diagAll(line: string): void {
   diagFileWrite(line);
-  try { process.stderr.write(line + '\n'); } catch { /* ignore */ }
+  try {
+    process.stderr.write(line + '\n');
+  } catch {
+    /* ignore */
+  }
 }
 
 function testLog(message: string): void {
@@ -151,7 +143,11 @@ function onProcessExit(code: number): void {
 
 beforeAll(() => {
   // Truncate any stale file from a previous run so the cat shows only this run.
-  try { fs.writeFileSync(DIAG_FILE, `DIAG_LOADWASM diag file start ${new Date().toISOString()}\n`); } catch { /* ignore */ }
+  try {
+    fs.writeFileSync(DIAG_FILE, `DIAG_LOADWASM diag file start ${new Date().toISOString()}\n`);
+  } catch {
+    /* ignore */
+  }
   // Route the cradle/poller/blockchain diagnostics (which go through the shared
   // log module's diagStack/diagNote) into the same durable file.
   setDiagSink(diagFileWrite);
@@ -237,7 +233,7 @@ afterEach(async () => {
   } catch (e) {
     const desc = describeThrown(e);
     testLog(`CLEANUP FAILURE: ${desc}`);
-    throw new Error(`[load_wasm cleanup failed]\n${desc}`);
+    throw new Error(`[load_wasm cleanup failed]\n${desc}`, { cause: e });
   }
 });
 
@@ -274,7 +270,7 @@ class SessionControllerAdapter {
   }
 
   outbound_messages(): Array<SimpleMessage> {
-    let w = this.waiting_messages;
+    const w = this.waiting_messages;
     this.waiting_messages = [];
     return w;
   }
@@ -316,10 +312,7 @@ async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Prom
   await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
 }
 
-function assertCradleRoundTrip(
-  stage: string,
-  controller: SessionController,
-): Uint8Array {
+function assertCradleRoundTrip(stage: string, controller: SessionController): Uint8Array {
   const wasmFields = controller.getWasmFields();
   const serialized = wasmFields?.serializedGameSession;
   assert.ok(serialized instanceof Uint8Array, `${stage}: expected serialized cradle bytes`);
@@ -335,17 +328,14 @@ function assertCradleRoundTrip(
   const state = controller.getProtocolStatePretty() ?? 'unknown';
   const protocolType = state.split('\n', 1)[0];
   try {
-    const restoredId = WholeWasmObject.restore_session(
-      serialized,
-      `reload-regression-${stage}`,
-    );
+    const restoredId = WholeWasmObject.restore_session(serialized, `reload-regression-${stage}`);
     assert.equal(typeof restoredId, 'number');
     const reserialized = WholeWasmObject.serialize_game_session(restoredId);
     assert.deepEqual(
       serialized,
       ownedFingerprint,
       `${stage}: serialized cradle bytes mutated after further WASM use ` +
-      `(byteLength=${serialized.byteLength} byteOffset=${serialized.byteOffset})`,
+        `(byteLength=${serialized.byteLength} byteOffset=${serialized.byteOffset})`,
     );
     assert.deepEqual(
       reserialized,
@@ -355,12 +345,13 @@ function assertCradleRoundTrip(
   } catch (e) {
     throw new Error(
       `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
-      `protocol=${state}\n${describeThrown(e)}`,
+        `protocol=${state}\n${describeThrown(e)}`,
+      { cause: e },
     );
   }
   testLog(
     `${stage}: bytes=${serialized.byteLength} byteOffset=${serialized.byteOffset} ` +
-    `protocol=${protocolType}`,
+      `protocol=${protocolType}`,
   );
   return serialized;
 }
@@ -374,8 +365,8 @@ async function action_with_messages(
   cradle1: SessionControllerAdapter,
   cradle2: SessionControllerAdapter,
 ) {
-  let cradles = [cradle1, cradle2];
-  let subscriptions: Subscription[] = [];
+  const cradles = [cradle1, cradle2];
+  const subscriptions: Subscription[] = [];
 
   // The poller drives each cradle's coin polling directly via report_coin_states.
   cradles.forEach((c) => {
@@ -384,19 +375,23 @@ async function action_with_messages(
 
   let evt_results: Array<boolean> = cradles.map((c) => c.observedActiveStatus());
   cradles.forEach((cradle, index) => {
-    subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
-      next: (evt: WasmEvent) => {
-        if (evt.type === 'notification' && evt.data) {
-          const tag = typeof evt.data === 'object' ? Object.keys(evt.data)[0] : null;
-          if (tag === 'ChannelStatus') {
-            const cs = (evt.data as Record<string, Record<string, unknown>>).ChannelStatus;
-            if (cs?.state === 'Active') {
-              evt_results[index] = true;
+    subscriptions.push(
+      addActiveSubscription(
+        cradle.getObservable().subscribe({
+          next: (evt: WasmEvent) => {
+            if (evt.type === 'notification' && evt.data) {
+              const tag = typeof evt.data === 'object' ? Object.keys(evt.data)[0] : null;
+              if (tag === 'ChannelStatus') {
+                const cs = (evt.data as Record<string, Record<string, unknown>>).ChannelStatus;
+                if (cs?.state === 'Active') {
+                  evt_results[index] = true;
+                }
+              }
             }
-          }
-        }
-      },
-    })));
+          },
+        }),
+      ),
+    );
   });
   try {
     let iterations = 0;
@@ -405,7 +400,7 @@ async function action_with_messages(
       iterations++;
       let deliveredOutbound = false;
       for (let c = 0; c < 2; c++) {
-        let outbound = cradles[c].outbound_messages();
+        const outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
           deliveredOutbound = true;
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
@@ -425,18 +420,20 @@ async function action_with_messages(
       if (Date.now() - startedAt > 30_000) {
         throw new Error(
           `handshake loop timed out after ${iterations} iterations` +
-          ` connected=${fakeBlockchainInfo.isConnected()}` +
-          ` ready=${cradles.map((c) => c.handshaked()).join(',')}` +
-          ` active=${cradles.map((c) => c.observedActiveStatus()).join(',')}` +
-          ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}` +
-          ` states=${cradles.map(debugCradleState).join(' | ')}`,
+            ` connected=${fakeBlockchainInfo.isConnected()}` +
+            ` ready=${cradles.map((c) => c.handshaked()).join(',')}` +
+            ` active=${cradles.map((c) => c.observedActiveStatus()).join(',')}` +
+            ` outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}` +
+            ` states=${cradles.map(debugCradleState).join(' | ')}`,
         );
       }
     }
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
-      throw new Error(`we expected running state in both cradles, got active=${evt_results.join(',')} ready=${cradles.map((c) => c.handshaked()).join(',')}`);
+      throw new Error(
+        `we expected running state in both cradles, got active=${evt_results.join(',')} ready=${cradles.map((c) => c.handshaked()).join(',')}`,
+      );
     }
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
@@ -457,7 +454,7 @@ async function initSessionController(
   const theirContribution = 100n;
 
   await fakeBlockchainInfo.registerUser(uniqueId);
-  let gameObject = new SessionController(
+  const gameObject = new SessionController(
     blockchain,
     uniqueId,
     myContribution,
@@ -469,7 +466,6 @@ async function initSessionController(
 
   return gameObject;
 }
-
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -522,7 +518,7 @@ it(
 
       const cradle1 = addActiveCradle(new SessionControllerAdapter());
       const cradle2 = addActiveCradle(new SessionControllerAdapter());
-      let peer_conn1: PeerConnectionResult = {
+      const peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
           return true;
@@ -532,19 +528,21 @@ it(
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init1 = new WasmStateInit(fetchPreset);
+      const wasm_init1 = new WasmStateInit(fetchPreset);
       storeInitArgs(async () => {}, WholeWasmObject);
-      let wasm_blob1 = await initSessionController(
+      const wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
         true,
         peer_conn1,
-        wasm_init1
+        wasm_init1,
       );
       wasm_blob1.onSaveNeeded = () => {
         const fields = wasm_blob1.getWasmFields();
         if (!fields) {
-          return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+          return Promise.reject(
+            new Error('Cannot persist session: WASM cradle serialization failed'),
+          );
         }
         return saveSession({
           ...fields,
@@ -554,7 +552,7 @@ it(
       cradle1.set_blob(wasm_blob1);
       testLog('after cradle1 init');
 
-      let peer_conn2: PeerConnectionResult = {
+      const peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
           return true;
@@ -564,18 +562,20 @@ it(
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init2 = new WasmStateInit(fetchPreset);
-      let wasm_blob2 = await initSessionController(
+      const wasm_init2 = new WasmStateInit(fetchPreset);
+      const wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',
         false,
         peer_conn2,
-        wasm_init2
+        wasm_init2,
       );
       wasm_blob2.onSaveNeeded = () => {
         const fields = wasm_blob2.getWasmFields();
         if (!fields) {
-          return Promise.reject(new Error('Cannot persist session: WASM cradle serialization failed'));
+          return Promise.reject(
+            new Error('Cannot persist session: WASM cradle serialization failed'),
+          );
         }
         return saveSession({
           ...fields,
@@ -665,7 +665,7 @@ it(
       assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
       testLog(
         `reload regression makingOfferAcceptance=${makingOfferAcceptanceBytes.byteLength}` +
-        ` restored=${reloaded.serializedGameSession.byteLength}`,
+          ` restored=${reloaded.serializedGameSession.byteLength}`,
       );
 
       testLog('before action_with_messages');
@@ -674,7 +674,7 @@ it(
     } catch (e) {
       const desc = describeThrown(e);
       testLog(`TEST FAILURE: ${desc}`);
-      throw new Error(`[load_wasm loads failed]\n${desc}`);
+      throw new Error(`[load_wasm loads failed]\n${desc}`, { cause: e });
     } finally {
       offConnectionLog();
     }

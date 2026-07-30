@@ -36,4 +36,4 @@ const formatHandDescription = (rank: FormatHandProps) => {
   return formatters[score]();
 };
 
-export default formatHandDescription
+export default formatHandDescription;

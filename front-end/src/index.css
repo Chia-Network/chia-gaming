@@ -1,51 +1,50 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @custom-variant dark (&:is(.dark *));
 /* LIGHT THEME */
 :root {
-
   /* CANVAS */
- --canvas-base: #F9FAF8;
-  --canvas-bg-subtle: #ECEEE9;
-  --canvas-bg: #E5E8E3;
-  --canvas-bg-hover: #DBDED8;
-  --canvas-bg-active: #D1D4CE;
-  --canvas-line: #C7CAC4;
-  --canvas-border: #BABDB7;
-  --canvas-border-hover: #A0A39D;
+  --canvas-base: #f9faf8;
+  --canvas-bg-subtle: #eceee9;
+  --canvas-bg: #e5e8e3;
+  --canvas-bg-hover: #dbded8;
+  --canvas-bg-active: #d1d4ce;
+  --canvas-line: #c7cac4;
+  --canvas-border: #babdb7;
+  --canvas-border-hover: #a0a39d;
   --canvas-solid: #828580;
   --canvas-solid-hover: #757874;
-  --canvas-text: #4F524D;
-  --canvas-text-contrast: #191A18;
+  --canvas-text: #4f524d;
+  --canvas-text-contrast: #191a18;
   --canvas-on-canvas: #fff;
 
- /* PRIMARY */
-  --primary-base: #FDFBFB;
-  --primary-bg-subtle: #F5EDEF;
-  --primary-bg: #EBDFE2;
-  --primary-bg-hover: #E0D2D6;
-  --primary-bg-active: #D5C4CA;
-  --primary-line: #F59AB2;
-  --primary-border: #E6809C;
-  --primary-border-hover: #D05C80;
-  --primary-solid: #D93068;
-  --primary-solid-hover: #C82A5E;
-  --primary-text: #A82052;
+  /* PRIMARY */
+  --primary-base: #fdfbfb;
+  --primary-bg-subtle: #f5edef;
+  --primary-bg: #ebdfe2;
+  --primary-bg-hover: #e0d2d6;
+  --primary-bg-active: #d5c4ca;
+  --primary-line: #f59ab2;
+  --primary-border: #e6809c;
+  --primary-border-hover: #d05c80;
+  --primary-solid: #d93068;
+  --primary-solid-hover: #c82a5e;
+  --primary-text: #a82052;
   --primary-text-contrast: #461028;
   --primary-on-primary: #fff;
 
- /* SECONDARY */
-  --secondary-base: #FCFCFE;
-  --secondary-bg-subtle: #F7F9FC;
-  --secondary-bg: #EDF1F9;
-  --secondary-bg-hover: #E3E9F5;
-  --secondary-bg-active: #D9E0EF;
-  --secondary-line: #CDD6E8;
-  --secondary-border: #BCC8DE;
-  --secondary-border-hover: #A3B2D0;
-  --secondary-solid: #42506C;
-  --secondary-solid-hover: #33415C;
+  /* SECONDARY */
+  --secondary-base: #fcfcfe;
+  --secondary-bg-subtle: #f7f9fc;
+  --secondary-bg: #edf1f9;
+  --secondary-bg-hover: #e3e9f5;
+  --secondary-bg-active: #d9e0ef;
+  --secondary-line: #cdd6e8;
+  --secondary-border: #bcc8de;
+  --secondary-border-hover: #a3b2d0;
+  --secondary-solid: #42506c;
+  --secondary-solid-hover: #33415c;
   --secondary-text: #586784;
-  --secondary-text-contrast: #252C3B;
+  --secondary-text-contrast: #252c3b;
   --secondary-on-secondary: #fff;
 
   /* SUCCESS */
@@ -109,53 +108,51 @@
   --info-on-info: #ffffff;
 }
 
-
 /* DARK THEME */
 .dark {
-
-   /* CANVAS */
-  --canvas-base: #0D120F;
-  --canvas-bg-subtle: #151A17;
-  --canvas-bg: #1D2420;
-  --canvas-bg-hover: #222B25;
-  --canvas-bg-active: #28322C;
-  --canvas-line: #2F3B34;
-  --canvas-border: #3A4841;
-  --canvas-border-hover: #4E6157;
-  --canvas-solid: #5A6F62;
-  --canvas-solid-hover: #687C70;
-  --canvas-text: #A4B5AC;
-  --canvas-text-contrast: #EAEEE9;
-  --canvas-on-canvas: #FFF;
+  /* CANVAS */
+  --canvas-base: #0d120f;
+  --canvas-bg-subtle: #151a17;
+  --canvas-bg: #1d2420;
+  --canvas-bg-hover: #222b25;
+  --canvas-bg-active: #28322c;
+  --canvas-line: #2f3b34;
+  --canvas-border: #3a4841;
+  --canvas-border-hover: #4e6157;
+  --canvas-solid: #5a6f62;
+  --canvas-solid-hover: #687c70;
+  --canvas-text: #a4b5ac;
+  --canvas-text-contrast: #eaeee9;
+  --canvas-on-canvas: #fff;
 
   /* PRIMARY */
-  --primary-base: #15100F;
-  --primary-bg-subtle: #1D1518;
-  --primary-bg: #281C20;
+  --primary-base: #15100f;
+  --primary-bg-subtle: #1d1518;
+  --primary-bg: #281c20;
   --primary-bg-hover: #322428;
-  --primary-bg-active: #3C2C32;
-  --primary-line: #52243C;
-  --primary-border: #64304A;
-  --primary-border-hover: #7A3E5C;
-  --primary-solid: #D93068;
-  --primary-solid-hover: #E8487C;
-  --primary-text: #F0608E;
-  --primary-text-contrast: #FCD0E0;
+  --primary-bg-active: #3c2c32;
+  --primary-line: #52243c;
+  --primary-border: #64304a;
+  --primary-border-hover: #7a3e5c;
+  --primary-solid: #d93068;
+  --primary-solid-hover: #e8487c;
+  --primary-text: #f0608e;
+  --primary-text-contrast: #fcd0e0;
   --primary-on-primary: #fff;
 
-/* SECONDARY */
-  --secondary-base: #0E1117;
+  /* SECONDARY */
+  --secondary-base: #0e1117;
   --secondary-bg-subtle: #161920;
-  --secondary-bg: #1E2532;
-  --secondary-bg-hover: #262F41;
-  --secondary-bg-active: #2F3A4F;
-  --secondary-line: #3A465E;
+  --secondary-bg: #1e2532;
+  --secondary-bg-hover: #262f41;
+  --secondary-bg-active: #2f3a4f;
+  --secondary-line: #3a465e;
   --secondary-border: #475572;
-  --secondary-border-hover: #5A6C8E;
-  --secondary-solid: #42506C;
+  --secondary-border-hover: #5a6c8e;
+  --secondary-solid: #42506c;
   --secondary-solid-hover: #354159;
-  --secondary-text: #A8B8D9;
-  --secondary-text-contrast: #E2EBFD;
+  --secondary-text: #a8b8d9;
+  --secondary-text-contrast: #e2ebfd;
   --secondary-on-secondary: #fff;
 
   /* SUCCESS */
@@ -217,7 +214,6 @@
   --info-text: #52a9ff;
   --info-text-contrast: #eaf6ff;
   --info-on-info: #ffffff;
-
 }
 @theme inline {
   --color-canvas-base: var(--canvas-base);
@@ -317,24 +313,24 @@
   --color-info-text: var(--info-text);
   --color-info-text-contrast: var(--info-text-contrast);
   --color-info-on-info: var(--info-on-info);
-
 }
 /* tailwind import removed (using directives above) */
 
 /* Reset body and html to prevent scrollbar issues on root container */
-html, body {
-	margin: 0;
-	padding: 0;
-	width: 100%;
-	height: 100%;
-	overflow-x: hidden; /* Prevent outer scrollbar */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden; /* Prevent outer scrollbar */
 }
 
 #root {
-	margin: 0;
-	padding: 0;
-	width: 100%;
-	height: 100%;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
 }
 
 @layer components {
@@ -363,11 +359,11 @@ html, body {
 
 .card-face.card-dimmed {
   background-color: #fff;
-  color: #B0B0B0;
+  color: #b0b0b0;
 }
 
 .dark .card-face.card-dimmed {
-  background-color: #B0B0B0;
+  background-color: #b0b0b0;
   color: #888;
 }
 
@@ -393,8 +389,14 @@ html, body {
   animation: moveCard ease-in-out forwards;
 }
 @keyframes moveCard {
-  from { left: var(--start-x); top: var(--start-y); }
-  to { left: var(--end-x); top: var(--end-y); }
+  from {
+    left: var(--start-x);
+    top: var(--start-y);
+  }
+  to {
+    left: var(--end-x);
+    top: var(--end-y);
+  }
 }
 
 input.no-spinners::-webkit-outer-spin-button,
@@ -402,40 +404,39 @@ input.no-spinners::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
-input.no-spinners[type=number] {
+input.no-spinners[type='number'] {
   -moz-appearance: textfield;
 }
 
 /* Softened opposite-theme canvas for dialog overlays */
 .theme-inverted {
-  --canvas-base: #222B25;
-  --canvas-bg-subtle: #28322C;
-  --canvas-bg: #2F3B34;
-  --canvas-bg-hover: #3A4841;
-  --canvas-bg-active: #4E6157;
-  --canvas-line: #4E6157;
-  --canvas-border: #5A6F62;
-  --canvas-border-hover: #687C70;
-  --canvas-solid: #A4B5AC;
-  --canvas-solid-hover: #EAEEE9;
-  --canvas-text: #A4B5AC;
-  --canvas-text-contrast: #EAEEE9;
-  --canvas-on-canvas: #FFF;
-}
-
-.dark .theme-inverted {
-  --canvas-base: #D1D4CE;
-  --canvas-bg-subtle: #DBDED8;
-  --canvas-bg: #D1D4CE;
-  --canvas-bg-hover: #C7CAC4;
-  --canvas-bg-active: #BABDB7;
-  --canvas-line: #BABDB7;
-  --canvas-border: #A0A39D;
-  --canvas-border-hover: #828580;
-  --canvas-solid: #4F524D;
-  --canvas-solid-hover: #191A18;
-  --canvas-text: #4F524D;
-  --canvas-text-contrast: #191A18;
+  --canvas-base: #222b25;
+  --canvas-bg-subtle: #28322c;
+  --canvas-bg: #2f3b34;
+  --canvas-bg-hover: #3a4841;
+  --canvas-bg-active: #4e6157;
+  --canvas-line: #4e6157;
+  --canvas-border: #5a6f62;
+  --canvas-border-hover: #687c70;
+  --canvas-solid: #a4b5ac;
+  --canvas-solid-hover: #eaeee9;
+  --canvas-text: #a4b5ac;
+  --canvas-text-contrast: #eaeee9;
   --canvas-on-canvas: #fff;
 }
 
+.dark .theme-inverted {
+  --canvas-base: #d1d4ce;
+  --canvas-bg-subtle: #dbded8;
+  --canvas-bg: #d1d4ce;
+  --canvas-bg-hover: #c7cac4;
+  --canvas-bg-active: #babdb7;
+  --canvas-line: #babdb7;
+  --canvas-border: #a0a39d;
+  --canvas-border-hover: #828580;
+  --canvas-solid: #4f524d;
+  --canvas-solid-hover: #191a18;
+  --canvas-text: #4f524d;
+  --canvas-text-contrast: #191a18;
+  --canvas-on-canvas: #fff;
+}

@@ -66,17 +66,27 @@ export class PeerSession implements PeerConnectionResult {
     return sent;
   }
 
-  hostLog(_msg: string): void { /* no-op */ }
-  close(): void { /* no-op; destroy() handles real cleanup */ }
+  hostLog(_msg: string): void {
+    /* no-op */
+  }
+  close(): void {
+    /* no-op; destroy() handles real cleanup */
+  }
 
   // --- Liveness ---
 
-  get liveness(): PeerLiveness { return this._liveness; }
-  get lastActivity(): number { return this._lastActivity; }
+  get liveness(): PeerLiveness {
+    return this._liveness;
+  }
+  get lastActivity(): number {
+    return this._lastActivity;
+  }
 
   onLivenessChange(listener: (liveness: PeerLiveness) => void): () => void {
     this.livenessListeners.add(listener);
-    return () => { this.livenessListeners.delete(listener); };
+    return () => {
+      this.livenessListeners.delete(listener);
+    };
   }
 
   private setLiveness(next: PeerLiveness) {
@@ -158,7 +168,9 @@ export class PeerSession implements PeerConnectionResult {
       else this.messageBuffer.push({ tag, msgno: 0, data: new Uint8Array(0) });
       return true;
     }
-    log(`[PeerSession] reject peer frame tag=0x${tag.toString(16)} len=${payload.length} from=${fromId}`);
+    log(
+      `[PeerSession] reject peer frame tag=0x${tag.toString(16)} len=${payload.length} from=${fromId}`,
+    );
     return false;
   }
 
@@ -171,7 +183,9 @@ export class PeerSession implements PeerConnectionResult {
 
   // --- Lifecycle ---
 
-  isDestroyed(): boolean { return this.destroyed; }
+  isDestroyed(): boolean {
+    return this.destroyed;
+  }
 
   destroy(): void {
     if (this.destroyed) return;
@@ -187,5 +201,5 @@ export class PeerSession implements PeerConnectionResult {
 export function generateSessionId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }

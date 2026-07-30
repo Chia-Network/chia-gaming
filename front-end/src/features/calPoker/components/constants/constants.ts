@@ -8,12 +8,12 @@ const RANK_SYMBOLS: Record<number, string> = {
   13: 'K',
 };
 const GameColors = {
-    win: 'green',
-    lose: 'red',
-    tie: '#ccc',
-    success: '#363',
-    warning: '#633',
-  };
+  win: 'green',
+  lose: 'red',
+  tie: '#ccc',
+  success: '#363',
+  warning: '#633',
+};
 // OKHSL colors: hue in degrees, saturation 100%, lightness as specified
 const SUIT_COLORS = {
   Q: 'oklch(70% 0.3 90)', // Gold (90° hue, 70% lightness)
@@ -71,6 +71,5 @@ export {
   BUTTON_ACTIVE,
   BUTTON_DISABLED,
   RANK_SYMBOLS,
-  GameColors
+  GameColors,
 };
-

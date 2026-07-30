@@ -117,7 +117,9 @@ beforeEach(() => {
   };
   // File-only timeline so an opaque rejection (no stack) can be placed relative
   // to the test sequence and file boundaries within this worker.
-  fileWrite(`DBG_SUITE > start [${shortFile(proc.__DBG_SUITE_CURRENT.file)}] ${proc.__DBG_SUITE_CURRENT.test}`);
+  fileWrite(
+    `DBG_SUITE > start [${shortFile(proc.__DBG_SUITE_CURRENT.file)}] ${proc.__DBG_SUITE_CURRENT.test}`,
+  );
 });
 
 afterEach(() => {
