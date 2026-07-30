@@ -2,6 +2,7 @@ import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
+  shouldCancelAttemptOnHubDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
@@ -52,6 +53,24 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent', true)).toBe(false);
+    // Finished sessions keep freeze/terminal save even if channelState is null
+    // (null is otherwise treated as pre-active).
+    expect(shouldCancelOnPeerUnreachable('resolved', 'ResolvedClean')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('resolved', null)).toBe(false);
+  });
+
+  it('hub disconnect cancels only pre-active attempts, not pending invites on a resolved freeze', () => {
+    // Pending advisory alone (no PeerSession / pairingToken yet).
+    expect(shouldCancelAttemptOnHubDisconnect(false, 'resolved', 'ResolvedClean')).toBe(false);
+    expect(shouldCancelAttemptOnHubDisconnect(false, 'none', null)).toBe(false);
+    // Pending proposal creates PeerSession before accept — still must not wipe
+    // a finished session when phase is resolved.
+    expect(shouldCancelAttemptOnHubDisconnect(true, 'resolved', 'ResolvedClean')).toBe(false);
+    expect(shouldCancelAttemptOnHubDisconnect(true, 'resolved', null)).toBe(false);
+    // Real pre-active matchmaking still cancels.
+    expect(shouldCancelAttemptOnHubDisconnect(true, 'none', null)).toBe(true);
+    expect(shouldCancelAttemptOnHubDisconnect(true, 'off-chain', 'Handshaking')).toBe(true);
+    expect(shouldCancelAttemptOnHubDisconnect(true, 'off-chain', 'Active')).toBe(false);
   });
 
   it('awaits a pending clean-shutdown transaction instead of escalating on-chain', () => {

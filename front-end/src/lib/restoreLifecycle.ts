@@ -59,6 +59,10 @@ export function shouldReportSessionPhase(
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
  * Active (or further), delivery_failure only degrades peer liveness — the peer
  * may be mid-reload. See CONNECTIVITY.md peer degradation.
+ *
+ * Resolved finished sessions never cancel: invites are allowed afterward while
+ * the dashboard freeze and terminal save must stay for Resume. A null channel
+ * state is otherwise treated as pre-active, so phase must win here.
  */
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
@@ -66,8 +70,24 @@ export function shouldCancelOnPeerUnreachable(
   abandoning = false,
 ): boolean {
   if (abandoning) return false;
+  if (sessionPhase === 'resolved') return false;
   const isPreActive = isPreActiveChannelStatus(channelState);
   return sessionPhase === 'none' || isPreActive;
+}
+
+/**
+ * Hub/wallet disconnect should hard-cancel only a real pre-active matchmaking
+ * attempt. A pending advisory/proposal alone is not enough — after a resolved
+ * game, consent prompts are allowed while the finished freeze + terminal save
+ * must remain for Resume.
+ */
+export function shouldCancelAttemptOnHubDisconnect(
+  hasAttempt: boolean,
+  sessionPhase: SessionPhase,
+  channelState: string | null | undefined,
+  abandoning = false,
+): boolean {
+  return hasAttempt && shouldCancelOnPeerUnreachable(sessionPhase, channelState, abandoning);
 }
 
 /**

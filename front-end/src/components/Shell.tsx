@@ -81,6 +81,7 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isRestoreBlocked,
+  shouldCancelAttemptOnHubDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
@@ -2492,7 +2493,9 @@ const Shell = () => {
   const doDisconnectHub = useCallback(() => {
     // Tear down pending consent / pre-active matchmaking while the hub socket
     // is still up (setBusy + session_reject). Active off-chain sessions stay
-    // mounted — only peer liveness degrades below.
+    // mounted — only peer liveness degrades below. Resolved finished sessions
+    // keep their dashboard freeze + terminal save: a pending invite after a
+    // game is consent-only and must not trigger cancelAttemptedSession.
     const channelState = dashboardSessionModelRef.current?.channel.status.state;
     const hasPendingPrompt =
       pendingAdvisoryRef.current !== null || pendingProposalRef.current !== null;
@@ -2500,21 +2503,21 @@ const Shell = () => {
       peerSessionRef.current !== null ||
       !!sessionConfigRef.current?.pairingToken ||
       !!sessionSaveRef.current?.pairingToken;
-    const shouldCancel =
-      hasPendingPrompt ||
-      (hasAttempt &&
-        shouldCancelOnPeerUnreachable(
-          sessionPhaseRef.current,
-          channelState,
-          abandonPendingRef.current,
-        ));
-    if (shouldCancel) {
+    const shouldCancel = shouldCancelAttemptOnHubDisconnect(
+      hasAttempt,
+      sessionPhaseRef.current,
+      channelState,
+      abandonPendingRef.current,
+    );
+    if (hasPendingPrompt || shouldCancel) {
       const peerId =
         peerSessionRef.current?.peerId ??
         pendingProposalRef.current?.from_id ??
         pendingAdvisoryRef.current?.peer_id ??
         sessionSaveRef.current?.sessionPeerId;
       if (peerId) sendSessionReject(peerId);
+    }
+    if (shouldCancel) {
       // Drop hubUrl before clearSession (via cancelAttemptedSession). Otherwise
       // clearSession snapshots/re-marks Resume from the still-set preference,
       // and a later saveHubUrl(undefined) can miss the sync mutate path once
@@ -2522,8 +2525,13 @@ const Shell = () => {
       saveHubUrl(undefined);
       cancelAttemptedSession();
     } else {
-      setPendingAdvisoryState(null);
-      setPendingProposalState(null);
+      if (hasPendingPrompt) {
+        setPendingAdvisoryState(null);
+        setPendingProposalState(null);
+        // Proposal path creates PeerSession before accept; drop it without
+        // clearSessionPreservingHistory (keeps terminal snapshot / freeze).
+        resetPeerRelayState();
+      }
       saveHubUrl(undefined);
     }
 
@@ -2538,6 +2546,7 @@ const Shell = () => {
   }, [
     cancelAttemptedSession,
     markPeerInactive,
+    resetPeerRelayState,
     sendSessionReject,
     setPendingAdvisoryState,
     setPendingProposalState,
