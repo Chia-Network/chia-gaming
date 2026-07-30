@@ -2268,6 +2268,36 @@ const Shell = () => {
   }, []);
 
   const doDisconnectHub = useCallback(() => {
+    // Tear down pending consent / pre-active matchmaking while the hub socket
+    // is still up (setBusy + session_reject). Active off-chain sessions stay
+    // mounted — only peer liveness degrades below.
+    const channelState = dashboardSessionModelRef.current?.channel.status.state;
+    const hasPendingPrompt =
+      pendingAdvisoryRef.current !== null || pendingProposalRef.current !== null;
+    const hasAttempt =
+      peerSessionRef.current !== null
+      || !!sessionConfigRef.current?.pairingToken
+      || !!sessionSaveRef.current?.pairingToken;
+    if (
+      hasPendingPrompt
+      || (hasAttempt && shouldCancelOnPeerUnreachable(
+        sessionPhaseRef.current,
+        channelState,
+        abandonPendingRef.current,
+      ))
+    ) {
+      const peerId =
+        peerSessionRef.current?.peerId
+        ?? pendingProposalRef.current?.from_id
+        ?? pendingAdvisoryRef.current?.peer_id
+        ?? sessionSaveRef.current?.sessionPeerId;
+      if (peerId) sendSessionReject(peerId);
+      cancelAttemptedSession();
+    } else {
+      setPendingAdvisoryState(null);
+      setPendingProposalState(null);
+    }
+
     hubConnRef.current?.disconnect();
     hubConnRef.current = null;
     clearSessionId();
@@ -2277,7 +2307,13 @@ const Shell = () => {
     setIframeUrl('about:blank');
     setHubLiveness(null);
     markPeerInactive();
-  }, [markPeerInactive]);
+  }, [
+    cancelAttemptedSession,
+    markPeerInactive,
+    sendSessionReject,
+    setPendingAdvisoryState,
+    setPendingProposalState,
+  ]);
 
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
