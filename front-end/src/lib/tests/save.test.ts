@@ -28,6 +28,7 @@ import {
   shouldOfferResumeOrStartOver,
   markSavedSession,
   clearSavedSessionMarker,
+  setHubUrl,
   markAutoResumeOnce,
   peekAutoResumeOnce,
   clearAutoResumeOnce,
@@ -677,6 +678,43 @@ describe('flat state', () => {
 
     expect(hasSavedSessionMarker()).toBe(true);
     expect(await peekSession()).toMatchObject({ hubUrl: 'http://localhost:3003' });
+  });
+
+  it('clearing hubUrl and blockchainType before clearSession drops Resume after a cancelled pairing attempt', async () => {
+    // Mirrors doDisconnectWallet + doDisconnectHub: prefs must be dropped
+    // before clearSession, otherwise clearSession re-marks from hubUrl /
+    // blockchainType and boot offers Resume with nothing left to resume.
+    markSavedSession();
+    saveSession({
+      pairingToken: 'tok-pending',
+      blockchainType: 'simulator',
+      hubUrl: 'http://localhost:3003',
+    });
+    await flushSessionSave();
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
+
+    saveSession({ blockchainType: undefined });
+    setHubUrl(undefined);
+    await clearSession();
+
+    expect(hasSavedSessionMarker()).toBe(false);
+    expect(shouldOfferResumeOrStartOver()).toBe(false);
+    expect(await peekSession()).toBeNull();
+  });
+
+  it('clearSession before clearing hubUrl re-marks Resume (disconnect ordering hazard)', async () => {
+    markSavedSession();
+    saveSession({
+      pairingToken: 'tok-pending',
+      hubUrl: 'http://localhost:3003',
+    });
+    await flushSessionSave();
+
+    await clearSession();
+    setHubUrl(undefined);
+
+    expect(hasSavedSessionMarker()).toBe(true);
+    expect(shouldOfferResumeOrStartOver()).toBe(true);
   });
 
   it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-cradle handshake', async () => {

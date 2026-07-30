@@ -2278,31 +2278,36 @@ const Shell = () => {
       peerSessionRef.current !== null
       || !!sessionConfigRef.current?.pairingToken
       || !!sessionSaveRef.current?.pairingToken;
-    if (
+    const shouldCancel =
       hasPendingPrompt
       || (hasAttempt && shouldCancelOnPeerUnreachable(
         sessionPhaseRef.current,
         channelState,
         abandonPendingRef.current,
-      ))
-    ) {
+      ));
+    if (shouldCancel) {
       const peerId =
         peerSessionRef.current?.peerId
         ?? pendingProposalRef.current?.from_id
         ?? pendingAdvisoryRef.current?.peer_id
         ?? sessionSaveRef.current?.sessionPeerId;
       if (peerId) sendSessionReject(peerId);
+      // Drop hubUrl before clearSession (via cancelAttemptedSession). Otherwise
+      // clearSession snapshots/re-marks Resume from the still-set preference,
+      // and a later saveHubUrl(undefined) can miss the sync mutate path once
+      // resumable fields are already wiped.
+      saveHubUrl(undefined);
       cancelAttemptedSession();
     } else {
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
+      saveHubUrl(undefined);
     }
 
     hubConnRef.current?.disconnect();
     hubConnRef.current = null;
     clearSessionId();
     setSessionId('');
-    saveHubUrl(undefined);
     setHubOrigin(null);
     setIframeUrl('about:blank');
     setHubLiveness(null);
@@ -2326,10 +2331,13 @@ const Shell = () => {
     setWalletConnected(false);
     setBlockchainType(undefined);
     setBalance(undefined);
-    // Pre-game wallet disconnect: drop the boot marker so reload does not
-    // force Resume just for a prior blockchainType. Mid-session / resumable
-    // state must keep the marker — otherwise boot skips Resume while the
-    // cradle remains in IDB and can be clobbered by incidental saves.
+    // Clear blockchainType before hub teardown/cancel so clearSession does not
+    // re-mark Resume from a wallet preference that this disconnect is dropping.
+    saveSession({ blockchainType: undefined });
+    doDisconnectHub();
+    // After possible matchmaking cancel: drop the boot marker when nothing
+    // durable remains. Checking before doDisconnectHub kept the marker for
+    // pairing attempts that cancel just tore down.
     const hasResumableSession =
       sessionPhaseRef.current !== 'none'
       || !!(sessionSaveRef.current?.serializedGameSession || sessionSaveRef.current?.pairingToken)
@@ -2337,8 +2345,6 @@ const Shell = () => {
     if (!hasResumableSession) {
       clearSavedSessionMarker();
     }
-    saveSession({ blockchainType: undefined });
-    doDisconnectHub();
   }, [stopBalancePolling, doDisconnectHub]);
 
   const handleDisconnectWallet = useCallback(() => {
