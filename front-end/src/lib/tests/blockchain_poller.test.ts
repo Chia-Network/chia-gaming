@@ -685,13 +685,15 @@ describe('BlockchainPoller', () => {
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
-    const expectedReports = [{
-      peak: 100n,
-      records: [
-        { coin: 'coin-a', created_height: 10n, spent_height: null },
-        { coin: 'coin-b', created_height: 10n, spent_height: null },
-      ],
-    }];
+    const expectedReports = [
+      {
+        peak: 100n,
+        records: [
+          { coin: 'coin-a', created_height: 10n, spent_height: null },
+          { coin: 'coin-b', created_height: 10n, spent_height: null },
+        ],
+      },
+    ];
     expect(reports).toEqual(expectedReports);
     expect(heightOnlyPeaks).toEqual([100n, 100n]);
   });

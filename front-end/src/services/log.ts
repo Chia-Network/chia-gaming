@@ -57,4 +57,3 @@ export function diagStack(context: string, e: unknown): void {
   // eslint-disable-next-line no-console
   console.error(`[error] ${context}: ${name}: ${message}\n${stack}`);
 }
-

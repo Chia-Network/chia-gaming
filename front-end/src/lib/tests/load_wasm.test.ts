@@ -236,7 +236,7 @@ function assertCradleRoundTrip(stage: string, controller: SessionController): Ui
   } catch (e) {
     throw new Error(
       `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
-      `protocol=${state}\n${String(e)}`,
+        `protocol=${state}\n${String(e)}`,
     );
   }
   return serialized;
