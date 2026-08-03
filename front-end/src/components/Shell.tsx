@@ -36,6 +36,7 @@ import {
   shouldOfferResumeOrStartOver,
   hydrateSessionCacheFromDisk,
   markSavedSession,
+  clearSavedSessionMarker,
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   loadState,
@@ -2612,6 +2613,17 @@ const Shell = () => {
     walletConnectedRef.current = false;
     setBlockchainType(undefined);
     setBalance(undefined);
+    // Pre-game wallet disconnect: drop the boot marker so reload does not
+    // force Resume just for a prior blockchainType. Mid-session / resumable
+    // state must keep the marker — otherwise boot skips Resume while the
+    // cradle remains in IDB and can be clobbered by incidental saves.
+    const hasResumableSession =
+      sessionPhaseRef.current !== 'none' ||
+      !!(sessionSaveRef.current?.serializedGameSession || sessionSaveRef.current?.pairingToken) ||
+      !!sessionConfigRef.current?.pairingToken;
+    if (!hasResumableSession) {
+      clearSavedSessionMarker();
+    }
     // Clear blockchainType before cancel so clearSession's async tail does not
     // re-mark Resume from a wallet preference this disconnect is dropping.
     saveSession({ blockchainType: undefined });
