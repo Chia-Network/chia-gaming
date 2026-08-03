@@ -36,7 +36,16 @@ export function shouldAdvertiseAvailable(
   );
 }
 
-export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
+/**
+ * Without a wallet the player cannot fund or resolve a channel, so we advertise
+ * busy to the hub regardless of session phase — the lobby must not offer matches
+ * we cannot play. With a wallet, busy tracks the broader session obligation.
+ */
+export function shouldReportHubBusy(
+  sessionPhase: SessionPhase,
+  walletConnected = true,
+): boolean {
+  if (!walletConnected) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 

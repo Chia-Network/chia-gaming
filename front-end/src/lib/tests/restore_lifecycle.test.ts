@@ -45,6 +45,16 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('on-chain')).toBe(true);
   });
 
+  it('reports busy whenever the wallet is disconnected, even with no session', () => {
+    expect(shouldReportHubBusy('none', false)).toBe(true);
+    expect(shouldReportHubBusy('resolved', false)).toBe(true);
+    expect(shouldReportHubBusy('off-chain', false)).toBe(true);
+    expect(shouldReportHubBusy('on-chain', false)).toBe(true);
+    // Explicit walletConnected=true matches the default behavior.
+    expect(shouldReportHubBusy('none', true)).toBe(false);
+    expect(shouldReportHubBusy('off-chain', true)).toBe(true);
+  });
+
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
     expect(shouldCancelOnPeerUnreachable('none', null)).toBe(true);
     expect(shouldCancelOnPeerUnreachable('none', 'Handshaking')).toBe(true);

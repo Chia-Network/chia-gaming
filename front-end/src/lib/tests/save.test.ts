@@ -693,9 +693,10 @@ describe('flat state', () => {
   });
 
   it('clearing hubUrl and blockchainType before clearSession drops Resume after a cancelled pairing attempt', async () => {
-    // Mirrors doDisconnectWallet + doDisconnectHub: prefs must be dropped
-    // before clearSession, otherwise clearSession re-marks from hubUrl /
-    // blockchainType and boot offers Resume with nothing left to resume.
+    // Mirrors hub disconnect after the wallet is already gone: both prefs must
+    // be dropped before clearSession, otherwise clearSession's async tail
+    // re-marks from hubUrl / blockchainType and boot offers Resume with nothing
+    // left to resume.
     markSavedSession();
     saveSession({
       pairingToken: 'tok-pending',
@@ -714,7 +715,7 @@ describe('flat state', () => {
     expect(await peekSession()).toBeNull();
   });
 
-  it('clearSession before clearing hubUrl re-marks Resume (disconnect ordering hazard)', async () => {
+  it('clearSession before clearing hubUrl re-marks Resume (hub disconnect ordering hazard)', async () => {
     markSavedSession();
     saveSession({
       pairingToken: 'tok-pending',
