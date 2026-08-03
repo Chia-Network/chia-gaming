@@ -16,13 +16,15 @@ function timestamp(): string {
 export function log(line: string) {
   const stamped = `[${timestamp()}] ${line}`;
   buffer = appendRecent(buffer, stamped, DIAGNOSTIC_LOG_LIMIT);
-  listeners.forEach(fn => fn(stamped));
+  listeners.forEach((fn) => fn(stamped));
 }
 
 export function subscribeLog(fn: Listener): () => void {
   buffer.forEach(fn);
   listeners.add(fn);
-  return () => { listeners.delete(fn); };
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 /**
@@ -55,7 +57,11 @@ function diagWrite(line: string): void {
   // Durable sink first: it must capture the line even if everything below is
   // about to die.
   if (extraDiagSink) {
-    try { extraDiagSink(line); } catch { /* never let logging throw */ }
+    try {
+      extraDiagSink(line);
+    } catch {
+      /* never let logging throw */
+    }
   }
   try {
     const proc = (typeof process !== 'undefined' ? process : undefined) as
@@ -65,8 +71,9 @@ function diagWrite(line: string): void {
       proc.stderr.write(line + '\n');
       return;
     }
-  } catch { /* fall through to console */ }
-  // eslint-disable-next-line no-console
+  } catch {
+    /* fall through to console */
+  }
   console.error(line);
 }
 
@@ -94,7 +101,8 @@ export function diagStack(context: string, e: unknown): void {
     } catch {
       message = String(e);
     }
-    stack = new Error('(non-Error thrown; stack captured at diagStack call site)').stack ?? '(no stack)';
+    stack =
+      new Error('(non-Error thrown; stack captured at diagStack call site)').stack ?? '(no stack)';
   }
   diagWrite(`DIAG_LOADWASM ${context}: ${name}: ${message}\n${stack}`);
 }

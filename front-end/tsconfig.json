@@ -12,7 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "module": "ESNext",
-     "baseUrl": ".",
+    "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     },

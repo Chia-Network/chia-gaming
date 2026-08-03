@@ -23,7 +23,7 @@ async function getFreePort() {
   });
 }
 
-async function startHub() {
+async function startHub(env = {}) {
   const port = await getFreePort();
   const dir = mkdtempSync(path.join(tmpdir(), 'hub-behavior-'));
   const child = spawn(
@@ -31,7 +31,19 @@ async function startHub() {
     ['dist/index-rollup.cjs', '--self', `http://127.0.0.1:${port}`, '--dir', dir],
     {
       cwd: path.resolve(import.meta.dirname, '..'),
-      env: { ...process.env, PORT: String(port) },
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HUB_MAX_TOTAL_CONNECTIONS: '2000',
+        HUB_MAX_CONNECTIONS_PER_IP: '8',
+        HUB_TRUST_PROXY: '0',
+        HUB_RATE_WINDOW_MS: '10000',
+        HUB_MAX_MESSAGES_PER_WINDOW: '100',
+        HUB_MAX_BYTES_PER_WINDOW: '1000000',
+        GAME_MAX_MESSAGES_PER_WINDOW: '1000',
+        GAME_MAX_BYTES_PER_WINDOW: '11534336',
+        ...env,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -64,15 +76,18 @@ async function startHub() {
   };
 }
 
-async function openWs(origin, pathName) {
-  const ws = new WebSocket(`${origin.replace(/^http/, 'ws')}${pathName}`);
+async function openWs(origin, pathName, options) {
+  const ws = new WebSocket(`${origin.replace(/^http/, 'ws')}${pathName}`, options);
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out connecting ${pathName}`)), 2_000);
     ws.once('open', () => {
       clearTimeout(timer);
       resolve(undefined);
     });
-    ws.once('error', reject);
+    ws.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
   return ws;
 }
@@ -145,6 +160,14 @@ async function closeWs(ws) {
   });
 }
 
+async function nextClose(ws) {
+  return new Promise((resolve) => {
+    ws.once('close', (code, reason) => {
+      resolve({ code, reason: reason.toString() });
+    });
+  });
+}
+
 async function joinHub(origin, sessionId, alias, extra = {}) {
   const ws = await openWs(origin, '/ws/hub');
   sendJson(ws, { type: 'join', session_id: sessionId, alias, ...extra });
@@ -208,8 +231,14 @@ test('public hub updates never include the secret nonce', async () => {
     const { ws, id } = await joinHub(hub.origin, secret, 'Alice');
     const update = await nextJson(ws, (msg) => msg.type === 'hub_update');
     assert.equal(JSON.stringify(update).includes(secret), false);
-    assert.equal(update.players.some((player) => player.id === id), true);
-    assert.equal(update.players.some((player) => 'session_id' in player), false);
+    assert.equal(
+      update.players.some((player) => player.id === id),
+      true,
+    );
+    assert.equal(
+      update.players.some((player) => 'session_id' in player),
+      false,
+    );
     await closeWs(ws);
   } finally {
     await hub.stop();
@@ -254,7 +283,12 @@ test('challenge authority and availability come from bound sessions', async () =
     const bobGame = await identifyGame(hub.origin, 'secret-bob-match');
     const carolGame = await identifyGame(hub.origin, 'secret-carol-match');
 
-    sendJson(alice.ws, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
+    sendJson(alice.ws, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+    });
     const challenge = await nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
 
     // Carol cannot accept Bob's challenge (she's not the target)
@@ -284,7 +318,12 @@ test('challenge authority and availability come from bound sessions', async () =
     // Carol cannot challenge Bob (he's now busy)
     const carolError = nextJson(carol.ws, (msg) => msg.type === 'error');
     const carolResolved = nextJson(carol.ws, (msg) => msg.type === 'challenge_resolved');
-    sendJson(carol.ws, { type: 'challenge', target_id: bob.id, challenger_amount: '100', target_amount: '100' });
+    sendJson(carol.ws, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+    });
     const error = await carolError;
     assert.match(error.error, /active session/);
     const resolved = await carolResolved;
@@ -446,6 +485,155 @@ test('identify ignores client-supplied player_id and assigns from the secret', a
     assert.notEqual(registered.player_id, 'p_attacker_chosen_id_abcdef');
     assert.match(registered.player_id, /^p_/);
     await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('total connection cap rejects excess upgrades and recovers after close', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '2',
+    HUB_MAX_CONNECTIONS_PER_IP: '10',
+  });
+  try {
+    const hubSocket = await openWs(hub.origin, '/ws/hub');
+    const gameSocket = await openWs(hub.origin, '/ws/game');
+
+    await assert.rejects(openWs(hub.origin, '/ws/hub'), /Unexpected server response: 503/);
+
+    await closeWs(hubSocket);
+    const replacement = await openWs(hub.origin, '/ws/hub');
+
+    await closeWs(replacement);
+    await closeWs(gameSocket);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('per-IP connection cap uses trusted forwarded addresses only when configured', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '10',
+    HUB_MAX_CONNECTIONS_PER_IP: '1',
+    HUB_TRUST_PROXY: '1',
+  });
+  try {
+    const first = await openWs(hub.origin, '/ws/hub', {
+      headers: { 'x-forwarded-for': '203.0.113.1' },
+    });
+
+    await assert.rejects(
+      openWs(hub.origin, '/ws/game', {
+        headers: { 'x-forwarded-for': '203.0.113.1' },
+      }),
+      /Unexpected server response: 503/,
+    );
+
+    const differentIp = await openWs(hub.origin, '/ws/game', {
+      headers: { 'x-forwarded-for': '203.0.113.2' },
+    });
+
+    await closeWs(first);
+    const replacement = await openWs(hub.origin, '/ws/hub', {
+      headers: { 'x-forwarded-for': '203.0.113.1' },
+    });
+
+    await closeWs(replacement);
+    await closeWs(differentIp);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('per-IP connection cap ignores forwarded addresses from untrusted clients', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '10',
+    HUB_MAX_CONNECTIONS_PER_IP: '1',
+  });
+  try {
+    const first = await openWs(hub.origin, '/ws/hub', {
+      headers: { 'x-forwarded-for': '203.0.113.1' },
+    });
+
+    await assert.rejects(
+      openWs(hub.origin, '/ws/game', {
+        headers: { 'x-forwarded-for': '203.0.113.2' },
+      }),
+      /Unexpected server response: 503/,
+    );
+
+    await closeWs(first);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('hub message flood closes the connection with a distinct rate-limit code', async () => {
+  const hub = await startHub({ HUB_MAX_MESSAGES_PER_WINDOW: '2' });
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const closed = nextClose(ws);
+
+    sendJson(ws, { type: 'keepalive' });
+    sendJson(ws, { type: 'keepalive' });
+    sendJson(ws, { type: 'keepalive' });
+
+    assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('game binary relay flood is limited by its cumulative byte budget', async () => {
+  const hub = await startHub({ GAME_MAX_BYTES_PER_WINDOW: '100' });
+  try {
+    const ws = await openWs(hub.origin, '/ws/game');
+    const closed = nextClose(ws);
+    const frame = Buffer.alloc(80);
+    frame.writeUInt32BE(1, 0);
+    frame.write('x', 4);
+
+    ws.send(frame);
+    ws.send(frame);
+
+    assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('default game byte budget relays a maximum-size protocol message', async () => {
+  const hub = await startHub();
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'secret-max-message-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'secret-max-message-receiver');
+    const payload = Buffer.alloc(10 * 1024 * 1024);
+    const targetId = Buffer.from(receiver.playerId, 'utf8');
+    const frame = Buffer.alloc(4 + targetId.byteLength + payload.byteLength);
+    frame.writeUInt32BE(targetId.byteLength, 0);
+    targetId.copy(frame, 4);
+
+    const relayed = new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for maximum message')),
+        5000,
+      );
+      receiver.game.once('message', (message) => {
+        clearTimeout(timer);
+        resolve(Buffer.from(message));
+      });
+    });
+    sender.game.send(frame);
+
+    const received = await relayed;
+    const fromIdLength = received.readUInt32BE(0);
+    const aliasLengthOffset = 4 + fromIdLength;
+    const aliasLength = received.readUInt32BE(aliasLengthOffset);
+    const payloadOffset = aliasLengthOffset + 4 + aliasLength;
+    assert.equal(received.byteLength - payloadOffset, payload.byteLength);
+
+    await closeWs(sender.game);
+    await closeWs(receiver.game);
   } finally {
     await hub.stop();
   }

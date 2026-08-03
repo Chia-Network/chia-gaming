@@ -69,12 +69,18 @@ describe('restore lifecycle gates', () => {
   it('rejects inbound matchmaking while awaiting a full node peer', () => {
     // Idle session + no pending prompts, but awaiting a peer → unavailable.
     expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true)).toBe(
+      false,
+    );
     // Peer verified → available when otherwise idle.
     expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false)).toBe(true);
-    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, false)).toBe(true);
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, false)).toBe(
+      true,
+    );
     // Session obligation or pending matchmaking still blocks.
-    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false)).toBe(
+      false,
+    );
     expect(isAvailableForNewSessionPrompt('none', true, false, false, false, false)).toBe(false);
     expect(isAvailableForNewSessionPrompt('none', false, true, false, false, false)).toBe(false);
     expect(isAvailableForNewSessionPrompt('none', false, false, true, false, false)).toBe(false);

@@ -68,8 +68,8 @@ export class CalpokerOutcome {
 
     this.alice_selects = resultList[1].toBigInt();
     this.bob_selects = resultList[2].toBigInt();
-    this.alice_hand_value = resultList[3].toList().map(value => value.toBigInt());
-    this.bob_hand_value = resultList[4].toList().map(value => value.toBigInt());
+    this.alice_hand_value = resultList[3].toList().map((value) => value.toBigInt());
+    this.bob_hand_value = resultList[4].toList().map((value) => value.toBigInt());
     let rawWinDirection = resultList[5].toBigInt();
     if (iStarted) {
       rawWinDirection *= -1n;
@@ -82,20 +82,14 @@ export class CalpokerOutcome {
 
     this.win_direction = rawWinDirection;
     const aliceWins = this.win_direction < 0n;
-    this.my_win_outcome = this.win_direction === 0n
-      ? 'tie'
-      : aliceWins === iStarted
-        ? 'win'
-        : 'lose';
+    this.my_win_outcome =
+      this.win_direction === 0n ? 'tie' : aliceWins === iStarted ? 'win' : 'lose';
 
     const [aliceForAlice, aliceForBob] = selectCardsUsingBits(
       this.alice_cards,
       this.alice_discards,
     );
-    const [bobForBob, bobForAlice] = selectCardsUsingBits(
-      this.bob_cards,
-      this.bob_discards,
-    );
+    const [bobForBob, bobForAlice] = selectCardsUsingBits(this.bob_cards, this.bob_discards);
 
     this.alice_final_hand = [...bobForAlice, ...aliceForAlice].sort(compareCards);
     this.bob_final_hand = [...aliceForBob, ...bobForBob].sort(compareCards);

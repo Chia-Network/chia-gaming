@@ -18,18 +18,16 @@ import {
 
 describe('Space Poker terminal UX', () => {
   it('attributes only actual opponent folds and no-reveal flags', () => {
-    expect(opponentTerminalAction(
-      { handler: SpHandler.MidRound, myTurn: false, N: 2n },
-    )).toBe('fold');
-    expect(opponentTerminalAction(
-      { handler: SpHandler.End, myTurn: false, N: 1n },
-    )).toBe('concede');
-    expect(opponentTerminalAction(
-      { handler: SpHandler.End, myTurn: true, N: 1n },
-    )).toBeNull();
-    expect(opponentTerminalAction(
-      { handler: SpHandler.Showdown, myTurn: false, N: 0n },
-    )).toBeNull();
+    expect(opponentTerminalAction({ handler: SpHandler.MidRound, myTurn: false, N: 2n })).toBe(
+      'fold',
+    );
+    expect(opponentTerminalAction({ handler: SpHandler.End, myTurn: false, N: 1n })).toBe(
+      'concede',
+    );
+    expect(opponentTerminalAction({ handler: SpHandler.End, myTurn: true, N: 1n })).toBeNull();
+    expect(
+      opponentTerminalAction({ handler: SpHandler.Showdown, myTurn: false, N: 0n }),
+    ).toBeNull();
   });
 
   it('removes only the failed optimistic terminal action', () => {
@@ -66,11 +64,7 @@ describe('Space Poker terminal UX', () => {
   });
 
   it('forwards a scoped terminal action failure to gameplay', () => {
-    expect(gameplayEventForGameActionError(
-      '42',
-      'accept-settlement',
-      'cannot accept',
-    )).toEqual({
+    expect(gameplayEventForGameActionError('42', 'accept-settlement', 'cannot accept')).toEqual({
       GameError: {
         gameId: '42',
         action: 'accept-settlement',
@@ -81,11 +75,13 @@ describe('Space Poker terminal UX', () => {
   });
 
   it('forwards only scoped ActionFailed notifications to terminal rollback', () => {
-    expect(gameplayEventForActionFailed({
-      id: '42',
-      action: 'make_move',
-      reason: 'cannot reveal',
-    })).toEqual({
+    expect(
+      gameplayEventForActionFailed({
+        id: '42',
+        action: 'make_move',
+        reason: 'cannot reveal',
+      }),
+    ).toEqual({
       GameError: {
         gameId: '42',
         action: 'make-move',
@@ -97,14 +93,20 @@ describe('Space Poker terminal UX', () => {
   });
 
   it('maps only voluntary settlement outcomes to terminal poker actions', () => {
-    expect(voluntarySpacepokerSettlementAction(
-      'accept_settlement',
-      { handler: SpHandler.MidRound, myTurn: false, N: 2n },
-    )).toEqual({ player: 'opponent', action: 'fold' });
-    expect(voluntarySpacepokerSettlementAction(
-      'we_accepted',
-      { handler: SpHandler.End, myTurn: false, N: 1n },
-    )).toEqual({ player: 'you', action: 'concede' });
+    expect(
+      voluntarySpacepokerSettlementAction('accept_settlement', {
+        handler: SpHandler.MidRound,
+        myTurn: false,
+        N: 2n,
+      }),
+    ).toEqual({ player: 'opponent', action: 'fold' });
+    expect(
+      voluntarySpacepokerSettlementAction('we_accepted', {
+        handler: SpHandler.End,
+        myTurn: false,
+        N: 1n,
+      }),
+    ).toEqual({ player: 'you', action: 'concede' });
 
     for (const outcome of [
       'settled_cleanly',
@@ -113,10 +115,13 @@ describe('Space Poker terminal UX', () => {
       'slashed_opponent',
       'opponent_slashed_us',
     ] as const) {
-      expect(voluntarySpacepokerSettlementAction(
-        outcome,
-        { handler: SpHandler.MidRound, myTurn: false, N: 2n },
-      )).toBeNull();
+      expect(
+        voluntarySpacepokerSettlementAction(outcome, {
+          handler: SpHandler.MidRound,
+          myTurn: false,
+          N: 2n,
+        }),
+      ).toBeNull();
     }
   });
 
@@ -146,18 +151,16 @@ describe('Space Poker terminal UX', () => {
     };
 
     // Successful local reveal settlement clears pending but preserves history.
-    expect(retainsRevealedTerminalPresentation(
-      localReveal, 'none', 'accept_settlement',
-    )).toBe(true);
-    expect(retainsRevealedTerminalPresentation(
-      null, 'revealed', 'we_accepted',
-    )).toBe(true);
-    expect(retainsRevealedTerminalPresentation(
-      localReveal, 'revealed', 'opponent_timed_out',
-    )).toBe(false);
-    expect(retainsRevealedTerminalPresentation(
-      localReveal, 'revealed', 'slashed_opponent',
-    )).toBe(false);
+    expect(retainsRevealedTerminalPresentation(localReveal, 'none', 'accept_settlement')).toBe(
+      true,
+    );
+    expect(retainsRevealedTerminalPresentation(null, 'revealed', 'we_accepted')).toBe(true);
+    expect(retainsRevealedTerminalPresentation(localReveal, 'revealed', 'opponent_timed_out')).toBe(
+      false,
+    );
+    expect(retainsRevealedTerminalPresentation(localReveal, 'revealed', 'slashed_opponent')).toBe(
+      false,
+    );
     // A late action error cannot roll back after the acknowledgement cleared pending.
     expect(pendingTerminalActionMatchesFailure(null, 'make-move')).toBe(false);
   });
@@ -169,26 +172,21 @@ describe('Space Poker terminal UX', () => {
       'conceded-by-you',
       'conceded-by-opponent',
     ] as const) {
-      expect(retainsVoluntaryTerminalPresentation(
-        terminalState, 'accept_settlement',
-      )).toBe(true);
-      expect(retainsVoluntaryTerminalPresentation(
-        terminalState, 'we_accepted',
-      )).toBe(true);
-      expect(retainsVoluntaryTerminalPresentation(
-        terminalState, 'opponent_timed_out',
-      )).toBe(false);
-      expect(retainsVoluntaryTerminalPresentation(
-        terminalState, 'slashed_opponent',
-      )).toBe(false);
+      expect(retainsVoluntaryTerminalPresentation(terminalState, 'accept_settlement')).toBe(true);
+      expect(retainsVoluntaryTerminalPresentation(terminalState, 'we_accepted')).toBe(true);
+      expect(retainsVoluntaryTerminalPresentation(terminalState, 'opponent_timed_out')).toBe(false);
+      expect(retainsVoluntaryTerminalPresentation(terminalState, 'slashed_opponent')).toBe(false);
     }
   });
 
   it('keeps concede separate from a showdown reveal', () => {
-    expect(voluntarySpacepokerSettlementAction(
-      'accept_settlement',
-      { handler: SpHandler.End, myTurn: true, N: 1n },
-    )).toEqual({ player: 'you', action: 'concede' });
+    expect(
+      voluntarySpacepokerSettlementAction('accept_settlement', {
+        handler: SpHandler.End,
+        myTurn: true,
+        N: 1n,
+      }),
+    ).toEqual({ player: 'you', action: 'concede' });
   });
 
   it('blocks automatic retry until a user retry or authoritative update', () => {

@@ -17,9 +17,6 @@ function sleepMs(ms: number): Promise<void> {
 
 function getWebSocketClass(): any {
   if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
-  // Node.js < 22 doesn't have a built-in WebSocket global; fall back to the ws package.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  try { return require('ws'); } catch { /* not available */ }
   throw new Error('No WebSocket implementation available');
 }
 
@@ -69,11 +66,22 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         if (settled) return;
         settled = true;
         log(`[sim-blockchain] connect: timeout (${Math.round(performance.now() - t0)}ms)`);
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
         reject(new Error(`WebSocket connection to ${this.wsUrl} timed out`));
       }, FakeBlockchainInterface.CONNECT_TIMEOUT_MS);
       ws.onopen = () => {
-        if (settled) { try { ws.close(); } catch { /* ignore */ } return; }
+        if (settled) {
+          try {
+            ws.close();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
         settled = true;
         clearTimeout(connectTimeout);
         log(`[sim-blockchain] connect: connected (${Math.round(performance.now() - t0)}ms)`);
@@ -85,7 +93,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         settled = true;
         clearTimeout(connectTimeout);
         log(`[sim-blockchain] connect: error (${Math.round(performance.now() - t0)}ms)`);
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
         reject(new Error(`WebSocket connection to ${this.wsUrl} failed`));
       };
       ws.onclose = () => {
@@ -94,7 +106,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         this.setupComplete = false;
         this.fireConnectionChange(false);
         if (this.pending.size > 0) {
-          diagNote(`FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`);
+          diagNote(
+            `FakeBlockchain onclose: rejecting ${this.pending.size} pending request(s) with "WebSocket closed" (ids=${[...this.pending.keys()].join(',')})`,
+          );
         }
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
@@ -110,7 +124,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         if (this.ws !== ws) return;
         const raw = typeof evt === 'string' ? evt : evt.data;
         let data: any;
-        try { data = jsonParse(raw); } catch (e) { diagStack('FakeBlockchain onmessage JSON parse failed', e); return; }
+        try {
+          data = jsonParse(raw);
+        } catch (e) {
+          diagStack('FakeBlockchain onmessage JSON parse failed', e);
+          return;
+        }
 
         if (data.event === 'block') {
           for (const resolve of this.blockWaiters) resolve();
@@ -160,19 +179,26 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         } catch (err) {
           if (this.deleted) break;
           if (this.ws) {
-            try { this.ws.close(); } catch { /* ignore */ }
+            try {
+              this.ws.close();
+            } catch {
+              /* ignore */
+            }
             this.ws = null;
           }
           this.setupComplete = false;
           this.fireConnectionChange(false);
-          const base = FakeBlockchainInterface.RECONNECT_DELAYS[
-            Math.min(this.reconnectAttempt, FakeBlockchainInterface.RECONNECT_DELAYS.length - 1)
-          ];
+          const base =
+            FakeBlockchainInterface.RECONNECT_DELAYS[
+              Math.min(this.reconnectAttempt, FakeBlockchainInterface.RECONNECT_DELAYS.length - 1)
+            ];
           const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
           this.reconnectAttempt++;
           // Expected transient while reconnecting (e.g. sim not up yet); a plain
           // log is enough -- no stack dump, which would bury real signal.
-          log(`[sim-blockchain] connect failed: ${err}, backoff ${jitter}ms (attempt ${this.reconnectAttempt})`);
+          log(
+            `[sim-blockchain] connect failed: ${err}, backoff ${jitter}ms (attempt ${this.reconnectAttempt})`,
+          );
           await sleepMs(jitter);
         }
       }
@@ -210,7 +236,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.reconnectAttempt = 0;
   }
 
-  async spend(blob: string, _spendBundle: unknown, _source?: string, _fee?: bigint): Promise<string> {
+  async spend(
+    blob: string,
+    _spendBundle: unknown,
+    _source?: string,
+    _fee?: bigint,
+  ): Promise<string> {
     const status_array = await this.sendRequest('spend', { blob });
     if (!Array.isArray(status_array) || status_array.length < 1) {
       throw new Error('status result array was empty');
@@ -306,7 +337,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = true;
     this.autoReconnect = false;
     if (this.ws) {
-      try { this.ws.close(); } catch { /* ignore */ }
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
       this.ws = null;
     }
     this.setupComplete = false;
@@ -321,7 +356,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (connected === this.lastConnectedState) return;
     this.lastConnectedState = connected;
     for (const cb of this.connectionListeners) {
-      try { cb(connected); } catch { /* ignore */ }
+      try {
+        cb(connected);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -355,10 +394,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   onConnectionChange(cb: (connected: boolean) => void): () => void {
     this.connectionListeners.add(cb);
-    return () => { this.connectionListeners.delete(cb); };
+    return () => {
+      this.connectionListeners.delete(cb);
+    };
   }
 }
 
-export const fakeBlockchainInfo = new FakeBlockchainInterface(
-  BLOCKCHAIN_WS_URL,
-);
+export const fakeBlockchainInfo = new FakeBlockchainInterface(BLOCKCHAIN_WS_URL);

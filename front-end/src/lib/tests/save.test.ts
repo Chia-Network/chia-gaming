@@ -50,17 +50,20 @@ function makeStorage(): Storage {
   const store = new Map<string, string>();
   return {
     getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => { store.set(key, value); },
-    removeItem: (key: string) => { store.delete(key); },
-    clear: () => { store.clear(); },
-    get length() { return store.size; },
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    get length() {
+      return store.size;
+    },
     key: (i: number) => [...store.keys()][i] ?? null,
   };
-}
-
-async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
 }
 
 function setTestGlobal(key: string, value: unknown) {
@@ -121,34 +124,34 @@ describe('session persistence', () => {
     } as Partial<SessionSave>);
     await flushSessionSave();
 
-    const stored = await new Promise<{ count: number; record: unknown }>(
-      (resolve, reject) => {
-        const open = indexedDB.open(SESSION_DB_NAME, 1);
-        open.onerror = () => reject(open.error);
-        open.onsuccess = () => {
-          const db = open.result;
-          const tx = db.transaction('session', 'readonly');
-          const store = tx.objectStore('session');
-          const count = store.count();
-          const record = store.get('current');
-          tx.onerror = () => reject(tx.error);
-          tx.oncomplete = () => {
-            db.close();
-            resolve({
-              count: count.result,
-              record: record.result,
-            });
-          };
+    const stored = await new Promise<{ count: number; record: unknown }>((resolve, reject) => {
+      const open = indexedDB.open(SESSION_DB_NAME, 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('session', 'readonly');
+        const store = tx.objectStore('session');
+        const count = store.count();
+        const record = store.get('current');
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => {
+          db.close();
+          resolve({
+            count: count.result,
+            record: record.result,
+          });
         };
-      },
-    );
+      };
+    });
 
     expect(stored.count).toBe(1);
     expect(stored.record).toBeInstanceOf(Uint8Array);
-    expect(new TextDecoder().decode(stored.record as Uint8Array)).not.toContain('serializedGameSession');
+    expect(new TextDecoder().decode(stored.record as Uint8Array)).not.toContain(
+      'serializedGameSession',
+    );
 
     _resetForTests();
-    const loaded = await peekSession() as (SessionSave & { rawBuffer: ArrayBuffer }) | null;
+    const loaded = (await peekSession()) as (SessionSave & { rawBuffer: ArrayBuffer }) | null;
     expect(loaded).toMatchObject(sampleSession);
     expect(loaded?.serializedGameSession).toBeInstanceOf(Uint8Array);
     expect(loaded?.rawBuffer).toBeInstanceOf(ArrayBuffer);
@@ -220,7 +223,6 @@ describe('session persistence', () => {
     clearAutoResumeOnce();
     expect(peekAutoResumeOnce()).toBe(false);
   });
-
 
   it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
     saveSession(sampleSession);
@@ -446,11 +448,12 @@ describe('session persistence', () => {
     await flushSessionSave();
 
     expect(localStorage.getItem('appState')).toBeNull();
-    const localValues = Array.from(
-      { length: localStorage.length },
-      (_, i) => localStorage.getItem(localStorage.key(i)!),
+    const localValues = Array.from({ length: localStorage.length }, (_, i) =>
+      localStorage.getItem(localStorage.key(i)!),
     ).join('\n');
-    expect(localValues).not.toMatch(/serializedGameSession|unackedMessages|\$bytes|000102ff|AAEC\/w==/);
+    expect(localValues).not.toMatch(
+      /serializedGameSession|unackedMessages|\$bytes|000102ff|AAEC\/w==/,
+    );
   });
 
   it('persists only the configured recent history entries', async () => {
@@ -546,10 +549,13 @@ describe('flat state', () => {
     setTestGlobal('localStorage', makeStorage());
     // Re-seed preferences with the original sid (reset cleared module cache;
     // localStorage mock is fresh — write prefs as boot would see them).
-    localStorage.setItem('appPreferences', JSON.stringify({
-      playerId: 'player-keep-sid',
-      sessionId: sid,
-    }));
+    localStorage.setItem(
+      'appPreferences',
+      JSON.stringify({
+        playerId: 'player-keep-sid',
+        sessionId: sid,
+      }),
+    );
     localStorage.setItem('appState_savedSession', '1');
 
     const loaded = await peekSession();
@@ -573,9 +579,12 @@ describe('flat state', () => {
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
     // Prefs have no sessionId — the remint-before-hydrate bug would mint here.
-    localStorage.setItem('appPreferences', JSON.stringify({
-      playerId: 'player-idb-sid',
-    }));
+    localStorage.setItem(
+      'appPreferences',
+      JSON.stringify({
+        playerId: 'player-idb-sid',
+      }),
+    );
     localStorage.setItem('appState_savedSession', '1');
 
     expect(() => getSessionId()).toThrow(/before ensureHubIdentity/);
@@ -603,11 +612,14 @@ describe('flat state', () => {
 
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
-    localStorage.setItem('appPreferences', JSON.stringify({
-      playerId: 'player-local',
-      sessionId: sid,
-      myHubPlayerId: 'p_stable_abc',
-    }));
+    localStorage.setItem(
+      'appPreferences',
+      JSON.stringify({
+        playerId: 'player-local',
+        sessionId: sid,
+        myHubPlayerId: 'p_stable_abc',
+      }),
+    );
     localStorage.setItem('appState_savedSession', '1');
 
     await ensureHubIdentity();
@@ -897,16 +909,23 @@ describe('hard reset', () => {
 
   it('starts deletion for every IndexedDB database returned by the browser', async () => {
     const deleteDatabase = jest.fn((_name: string) => {
-      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      const request: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        onblocked?: () => void;
+        error?: unknown;
+      } = {};
       setTimeout(() => request.onsuccess?.(), 0);
       return request;
     });
     setTestGlobal('indexedDB', {
-      databases: jest.fn().mockResolvedValue([
-        { name: 'app-state' },
-        { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
-        { name: undefined },
-      ]),
+      databases: jest
+        .fn()
+        .mockResolvedValue([
+          { name: 'app-state' },
+          { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
+          { name: undefined },
+        ]),
       deleteDatabase,
     });
 
@@ -922,7 +941,12 @@ describe('hard reset', () => {
   it('deletes known IndexedDB databases when enumeration is unavailable (e.g. Safari)', async () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const deleteDatabase = jest.fn((_name: string) => {
-      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      const request: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        onblocked?: () => void;
+        error?: unknown;
+      } = {};
       setTimeout(() => request.onsuccess?.(), 0);
       return request;
     });
@@ -941,15 +965,24 @@ describe('hard reset', () => {
   it('logs but does not throw when hard reset storage APIs fail', async () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const local = makeStorage();
-    local.clear = () => { throw new Error('local clear failed'); };
+    local.clear = () => {
+      throw new Error('local clear failed');
+    };
     const session = makeStorage();
-    session.clear = () => { throw new Error('session clear failed'); };
+    session.clear = () => {
+      throw new Error('session clear failed');
+    };
     setTestGlobal('localStorage', local);
     setTestGlobal('sessionStorage', session);
     setTestGlobal('indexedDB', {
       databases: jest.fn().mockRejectedValue(new Error('database list failed')),
       deleteDatabase: jest.fn((_name: string) => {
-        const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+        const request: {
+          onsuccess?: () => void;
+          onerror?: () => void;
+          onblocked?: () => void;
+          error?: unknown;
+        } = {};
         setTimeout(() => request.onsuccess?.(), 0);
         return request;
       }),
@@ -963,13 +996,21 @@ describe('hard reset', () => {
 
   it('deletes known databases before waiting on enumeration', async () => {
     const deleteDatabase = jest.fn((_name: string) => {
-      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      const request: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        onblocked?: () => void;
+        error?: unknown;
+      } = {};
       setTimeout(() => request.onsuccess?.(), 0);
       return request;
     });
     let releaseEnumeration: ((value: Array<{ name?: string }>) => void) | undefined;
     setTestGlobal('indexedDB', {
-      databases: () => new Promise((resolve) => { releaseEnumeration = resolve; }),
+      databases: () =>
+        new Promise((resolve) => {
+          releaseEnumeration = resolve;
+        }),
       deleteDatabase,
     });
 
@@ -1031,7 +1072,4 @@ describe('hub alert', () => {
   });
 });
 
-describe('game saves', () => {
-
-
-});
+describe('game saves', () => {});

@@ -12,23 +12,28 @@ export function isRestoreBlocked(
   restoreStatus: RestoreStatus,
   hubReconciled: boolean,
 ): boolean {
-  return selectRestoreBlocked(createSessionModel({
-    restore: { restoring, status: restoreStatus, hubReconciled, error: null },
-  }));
+  return selectRestoreBlocked(
+    createSessionModel({
+      restore: { restoring, status: restoreStatus, hubReconciled, error: null },
+    }),
+  );
 }
 
 export function shouldAdvertiseAvailable(
   sessionPhase: SessionPhase,
   restoreBlocked: boolean,
 ): boolean {
-  return selectShouldAdvertiseAvailable(createSessionModel({
-    restore: {
-      restoring: restoreBlocked,
-      status: restoreBlocked ? 'restoring' : 'restored',
-      hubReconciled: !restoreBlocked,
-      error: null,
-    },
-  }), sessionPhase);
+  return selectShouldAdvertiseAvailable(
+    createSessionModel({
+      restore: {
+        restoring: restoreBlocked,
+        status: restoreBlocked ? 'restoring' : 'restored',
+        hubReconciled: !restoreBlocked,
+        error: null,
+      },
+    }),
+    sessionPhase,
+  );
 }
 
 export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
@@ -88,11 +93,13 @@ export function isAvailableForNewSessionPrompt(
   hasReservedPeerId: boolean,
   awaitingFullNodePeer: boolean,
 ): boolean {
-  return !shouldReportPresenceBusy(sessionPhase, awaitingFullNodePeer)
-    && !pendingAdvisory
-    && !pendingProposal
-    && !hasLivePeerSession
-    && !hasReservedPeerId;
+  return (
+    !shouldReportPresenceBusy(sessionPhase, awaitingFullNodePeer) &&
+    !pendingAdvisory &&
+    !pendingProposal &&
+    !hasLivePeerSession &&
+    !hasReservedPeerId
+  );
 }
 
 /**

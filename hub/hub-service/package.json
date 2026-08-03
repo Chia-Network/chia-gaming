@@ -6,12 +6,10 @@
     "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/index.js --platform=node --bundle --outfile=dist/index-rollup.cjs",
     "start": "node dist/index-rollup.cjs",
     "dev": "ts-node-dev --respawn src/index.ts",
-    "test": "pnpm run build && node --test src/*.test.mjs",
-    "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'",
-    "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'"
+    "test": "pnpm run build && node --test src/*.test.mjs"
   },
   "dependencies": {
-    "chia-gaming-bencodex": "file:../../shared/bencodex",
+    "chia-gaming-bencodex": "workspace:*",
     "cors": "2.8.5",
     "express": "5.1.0",
     "minimist": "1.2.8",
@@ -24,7 +22,6 @@
     "@types/node": "24.6.2",
     "@types/ws": "8.18.1",
     "esbuild": "0.25.11",
-    "prettier": "3.5.3",
     "ts-node-dev": "2.0.0",
     "typescript": "5.9.3"
   }

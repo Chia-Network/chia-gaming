@@ -22,7 +22,16 @@ export interface ChallengeReceived {
 type InboundMessage =
   | { type: 'hub_update'; players: Player[] }
   | { type: 'joined'; id: string; alias: string }
-  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; challenger_amount: string; target_amount: string; channel_timeout?: string; unroll_timeout?: string }
+  | {
+      type: 'challenge_received';
+      challenge_id: string;
+      from_id: string;
+      from_alias: string;
+      challenger_amount: string;
+      target_amount: string;
+      channel_timeout?: string;
+      unroll_timeout?: string;
+    }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
   | { type: 'alias_result'; alias: string | null }
   | { type: 'keepalive' }
@@ -42,7 +51,7 @@ export function hubHsLog(event: string, fields?: Record<string, unknown>) {
       parts.push(`${k}=${String(v)}`);
     }
   }
-  console.log(parts.join(' '));
+  console.warn(parts.join(' '));
 }
 
 function toWsUrl(input: string): string {
@@ -54,11 +63,7 @@ function toWsUrl(input: string): string {
   return url.toString();
 }
 
-export function useHubSocket(
-  hubUrl: string,
-  uniqueId: string,
-  sessionId: string,
-) {
+export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string) {
   const connIdRef = useRef<number>(nextHubConnId++);
   const [players, setPlayers] = useState<Player[]>([]);
   const [hubUpdateReceived, setHubUpdateReceived] = useState(false);
@@ -82,34 +87,40 @@ export function useHubSocket(
   const joinedAliasRef = useRef<string | null>(null);
   const hasConnectedRef = useRef(false);
 
-  useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
+  useEffect(() => {
+    uniqueIdRef.current = uniqueId;
+  }, [uniqueId]);
 
-  const send = useCallback((payload: Record<string, unknown>, queueIfClosed = true) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      if (queueIfClosed) {
-        pendingOutboundRef.current.push(payload);
-        hubHsLog('outbound_buffered', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          type: String(payload.type ?? 'unknown'),
-          buffered_len: pendingOutboundRef.current.length,
-        });
+  const send = useCallback(
+    (payload: Record<string, unknown>, queueIfClosed = true) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (queueIfClosed) {
+          pendingOutboundRef.current.push(payload);
+          hubHsLog('outbound_buffered', {
+            conn_id: connIdRef.current,
+            session_id: sessionId,
+            type: String(payload.type ?? 'unknown'),
+            buffered_len: pendingOutboundRef.current.length,
+          });
+        }
+        return false;
       }
-      return false;
-    }
-    hubHsLog('outbound_sent', {
-      conn_id: connIdRef.current,
-      session_id: sessionId,
-      type: String(payload.type ?? 'unknown'),
-    });
-    ws.send(JSON.stringify(payload));
-    return true;
-  }, [sessionId]);
+      hubHsLog('outbound_sent', {
+        conn_id: connIdRef.current,
+        session_id: sessionId,
+        type: String(payload.type ?? 'unknown'),
+      });
+      ws.send(JSON.stringify(payload));
+      return true;
+    },
+    [sessionId],
+  );
 
   useEffect(() => {
     if (!uniqueId) return;
 
+    const connId = connIdRef.current;
     const wsUrl = toWsUrl(hubUrl);
     hubHsLog('connection_init', {
       conn_id: connIdRef.current,
@@ -147,7 +158,11 @@ export function useHubSocket(
           session_id: sessionId,
           elapsed_ms: Date.now() - connectStartedAt,
         });
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       }, CONNECT_TIMEOUT_MS);
 
       ws.onopen = () => {
@@ -287,9 +302,8 @@ export function useHubSocket(
           setReconnectBlocked(true);
           return;
         }
-        const base = RECONNECT_DELAYS[
-          Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS.length - 1)
-        ];
+        const base =
+          RECONNECT_DELAYS[Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS.length - 1)];
         const delay = Math.round(base * (0.75 + Math.random() * 0.5));
         reconnectAttemptRef.current++;
         hubHsLog('reconnect_timer_set', {
@@ -316,15 +330,27 @@ export function useHubSocket(
           session_id: sessionId,
           connect_elapsed_ms: Date.now() - connectStartedAt,
         });
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       };
     };
 
     connect();
 
     const onBeforeUnload = () => {
-      try { wsRef.current?.close(); } catch { /* ignore */ }
-      try { pendingWsRef.current?.close(); } catch { /* ignore */ }
+      try {
+        wsRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        pendingWsRef.current?.close();
+      } catch {
+        /* ignore */
+      }
     };
     window.addEventListener('beforeunload', onBeforeUnload);
 
@@ -332,7 +358,7 @@ export function useHubSocket(
       window.removeEventListener('beforeunload', onBeforeUnload);
       closingRef.current = true;
       hubHsLog('connection_cleanup', {
-        conn_id: connIdRef.current,
+        conn_id: connId,
         session_id: sessionId,
       });
       setIsConnected(false);
@@ -345,8 +371,16 @@ export function useHubSocket(
         keepaliveTimerRef.current = null;
       }
       send({ type: 'leave', id: uniqueId }, false);
-      try { wsRef.current?.close(); } catch { /* ignore */ }
-      try { pendingWsRef.current?.close(); } catch { /* ignore */ }
+      try {
+        wsRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        pendingWsRef.current?.close();
+      } catch {
+        /* ignore */
+      }
       wsRef.current = null;
       pendingWsRef.current = null;
       pendingOutboundRef.current = [];
@@ -363,11 +397,14 @@ export function useHubSocket(
         session_id: sessionId,
         alias_len: trimmed.length,
       });
-      send({
-        type: 'join',
-        session_id: sessionId,
-        alias: trimmed,
-      }, false);
+      send(
+        {
+          type: 'join',
+          session_id: sessionId,
+          alias: trimmed,
+        },
+        false,
+      );
     },
     [send, sessionId],
   );
@@ -380,7 +417,13 @@ export function useHubSocket(
   );
 
   const sendChallenge = useCallback(
-    (targetId: string, challengerAmount: string, targetAmount: string, channelTimeout?: string, unrollTimeout?: string) => {
+    (
+      targetId: string,
+      challengerAmount: string,
+      targetAmount: string,
+      channelTimeout?: string,
+      unrollTimeout?: string,
+    ) => {
       const payload: Record<string, unknown> = {
         type: 'challenge',
         target_id: targetId,

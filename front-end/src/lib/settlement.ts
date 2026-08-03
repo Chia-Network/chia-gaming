@@ -54,20 +54,20 @@ export function settlementLabel(outcome: SettlementOutcome): string {
 
 export function isForfeitOutcome(outcome: SettlementOutcome): boolean {
   return (
-    outcome === 'forfeited_skipped_reveal'
-    || outcome === 'forfeited_opponent_won'
-    || outcome === 'forfeited_we_accepted'
+    outcome === 'forfeited_skipped_reveal' ||
+    outcome === 'forfeited_opponent_won' ||
+    outcome === 'forfeited_we_accepted'
   );
 }
 
 /** Outcomes that should surface as session-level error attention. */
 export function isErrorSettlementOutcome(outcome: SettlementOutcome): boolean {
   return (
-    isForfeitOutcome(outcome)
-    || outcome === 'timed_out_waiting_for_our_move'
-    || outcome === 'attempt_to_move_failed'
-    || outcome === 'opponent_slashed_us'
-    || outcome === 'opponent_cheated'
+    isForfeitOutcome(outcome) ||
+    outcome === 'timed_out_waiting_for_our_move' ||
+    outcome === 'attempt_to_move_failed' ||
+    outcome === 'opponent_slashed_us' ||
+    outcome === 'opponent_cheated'
   );
 }
 
@@ -105,9 +105,9 @@ export function calpokerTimeoutBadge(
     return null;
   }
   if (
-    outcome === 'accept_settlement'
-    || outcome === 'we_accepted'
-    || outcome === 'settled_cleanly'
+    outcome === 'accept_settlement' ||
+    outcome === 'we_accepted' ||
+    outcome === 'settled_cleanly'
   ) {
     return null;
   }
@@ -126,9 +126,9 @@ export function calpokerSettlementVerb(outcome: SettlementOutcome): string {
   if (isForfeitOutcome(outcome)) return 'forfeited';
   if (outcome === 'attempt_to_move_failed') return 'moved too late';
   if (
-    outcome === 'accept_settlement'
-    || outcome === 'we_accepted'
-    || outcome === 'settled_cleanly'
+    outcome === 'accept_settlement' ||
+    outcome === 'we_accepted' ||
+    outcome === 'settled_cleanly'
   ) {
     return 'settled';
   }
@@ -139,10 +139,7 @@ export function calpokerSettlementVerb(outcome: SettlementOutcome): string {
 }
 
 /** Short in-game status line for Krunk (and similar). */
-export function krunkSettlementStatus(
-  outcome: SettlementOutcome,
-  opponentLabel: string,
-): string {
+export function krunkSettlementStatus(outcome: SettlementOutcome, opponentLabel: string): string {
   switch (outcome) {
     case 'accept_settlement':
     case 'we_accepted':
@@ -169,7 +166,11 @@ export function krunkSettlementStatus(
 
 export function parseSettlementShare(value: unknown): string | null {
   if (value == null) return null;
-  if (typeof value === 'object' && value !== null && 'Amount' in (value as Record<string, unknown>)) {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'Amount' in (value as Record<string, unknown>)
+  ) {
     return String((value as Record<string, unknown>).Amount);
   }
   if (typeof value === 'object' && value !== null && 'amt' in (value as Record<string, unknown>)) {

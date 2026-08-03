@@ -69,7 +69,9 @@ export type WasmDisposition =
   | { kind: 'await-outbound-terminal'; command: { id: string; message: Uint8Array } }
   | { kind: 'terminal' };
 
-export type WasmInitFn = (opts?: { module_or_path?: string | URL | Request | Response | Promise<Response> }) => Promise<any>;
+export type WasmInitFn = (opts?: {
+  module_or_path?: string | URL | Request | Response | Promise<Response>;
+}) => Promise<any>;
 
 export interface CoinsetOrgBlockSpend {
   coin: { parent_coin_info: string; puzzle_hash: string; amount: bigint };
@@ -101,22 +103,24 @@ type StateIdentifier = 'starting' | 'running';
 
 export interface GameSessionParams {
   iStarted: boolean;
-  myContribution: bigint;      // my share of the channel
-  theirContribution: bigint;   // opponent's share of the channel
-  perGameAmount: bigint;       // mojos per hand
+  myContribution: bigint; // my share of the channel
+  theirContribution: bigint; // opponent's share of the channel
+  perGameAmount: bigint; // mojos per hand
   restoring?: boolean;
   pairingToken?: string;
   myAlias?: string;
   opponentAlias?: string;
-  channelTimeout?: bigint;     // blocks, for channel coin
-  unrollTimeout?: bigint;      // blocks, for unroll coin
+  channelTimeout?: bigint; // blocks, for channel coin
+  unrollTimeout?: bigint; // blocks, for unroll coin
 }
 
 type WasmNotificationTag =
   | 'ChannelStatus'
   | 'GameStatus'
   | 'GameSettled'
-  | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
+  | 'ProposalMade'
+  | 'ProposalAccepted'
+  | 'ProposalCancelled'
   | 'InsufficientBalance'
   | 'MoveRejected'
   | 'ActionFailed';
@@ -157,11 +161,21 @@ export interface GameSettledPayload {
 }
 
 export type ChannelStatus =
-  | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
-  | 'OurWalletMakingOffer' | 'OurWalletMakingOfferAcceptance' | 'OfferSent' | 'TransactionPending'
-  | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
-  | 'GoingOnChain' | 'Unrolling'
-  | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
+  | 'Handshaking'
+  | 'WaitingForHeightToOffer'
+  | 'WaitingForHeightToAccept'
+  | 'OurWalletMakingOffer'
+  | 'OurWalletMakingOfferAcceptance'
+  | 'OfferSent'
+  | 'TransactionPending'
+  | 'Active'
+  | 'ShuttingDown'
+  | 'ShutdownTransactionPending'
+  | 'GoingOnChain'
+  | 'Unrolling'
+  | 'ResolvedClean'
+  | 'ResolvedUnrolled'
+  | 'ResolvedStale'
   | 'Failed';
 
 export type SessionDisposition = 'AwaitOutboundTerminal' | 'Abandoned';
@@ -206,7 +220,10 @@ export interface ActionFailedPayload {
 }
 
 export type WasmNotification = {
-  [K in Exclude<WasmNotificationTag, 'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'>]?: Record<string, unknown>;
+  [K in Exclude<
+    WasmNotificationTag,
+    'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'
+  >]?: Record<string, unknown>;
 } & {
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
@@ -216,7 +233,12 @@ export type WasmNotification = {
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
-  | { type: 'game-action-error'; gameId: string; action: 'make-move' | 'accept-settlement'; error: string }
+  | {
+      type: 'game-action-error';
+      gameId: string;
+      action: 'make-move' | 'accept-settlement';
+      error: string;
+    }
   | { type: 'durability-error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string };
@@ -283,9 +305,17 @@ export interface WasmConnection {
   coin_string_to_name: (hex_coinstring: string) => string;
 
   // Game
-  propose_games: (cid: number, games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]) => WasmResult | undefined;
+  propose_games: (
+    cid: number,
+    games: Omit<ProposeGameParams, 'parameters'>[],
+    parameters_list: Uint8Array[],
+  ) => WasmResult | undefined;
   accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
-  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
+  accept_proposal_and_move: (
+    cid: number,
+    id: string,
+    readable: Uint8Array,
+  ) => WasmResult | undefined;
   cancel_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -328,16 +358,16 @@ export class ChiaGame {
   waiting_messages: Uint8Array[];
   session: number;
 
-  constructor(
-    wasm: WasmConnection,
-    sessionId: number,
-  ) {
+  constructor(wasm: WasmConnection, sessionId: number) {
     this.wasm = wasm;
     this.waiting_messages = [] as Uint8Array[];
     this.session = sessionId;
   }
 
-  propose_games(games: Omit<ProposeGameParams, 'parameters'>[], parameters_list: Uint8Array[]): WasmResult | undefined {
+  propose_games(
+    games: Omit<ProposeGameParams, 'parameters'>[],
+    parameters_list: Uint8Array[],
+  ): WasmResult | undefined {
     return this.wasm.propose_games(this.session, games, parameters_list);
   }
 
@@ -426,7 +456,11 @@ export class ChiaGame {
     return this.wasm.make_move(this.session, id, readable);
   }
 
-  make_move_with_entropy_for_testing(id: string, readable: Uint8Array, new_entropy: string): WasmResult | undefined {
+  make_move_with_entropy_for_testing(
+    id: string,
+    readable: Uint8Array,
+    new_entropy: string,
+  ): WasmResult | undefined {
     return this.wasm.make_move_with_entropy_for_testing(this.session, id, readable, new_entropy);
   }
 
@@ -452,7 +486,9 @@ export class ChiaGame {
 
   provide_launcher_coin(hex_launcher_coin: string): WasmResult | undefined {
     const maybeProvide = (
-      this.wasm as unknown as { provide_launcher_coin?: (cid: number, coin: string) => WasmResult | undefined }
+      this.wasm as unknown as {
+        provide_launcher_coin?: (cid: number, coin: string) => WasmResult | undefined;
+      }
     ).provide_launcher_coin;
     if (typeof maybeProvide !== 'function') return undefined;
     return maybeProvide(this.session, hex_launcher_coin);
@@ -460,7 +496,9 @@ export class ChiaGame {
 
   provide_coin_spend_bundle(bundle_json: string): WasmResult | undefined {
     const maybeProvide = (
-      this.wasm as unknown as { provide_coin_spend_bundle?: (cid: number, bundle: string) => WasmResult | undefined }
+      this.wasm as unknown as {
+        provide_coin_spend_bundle?: (cid: number, bundle: string) => WasmResult | undefined;
+      }
     ).provide_coin_spend_bundle;
     if (typeof maybeProvide !== 'function') return undefined;
     return maybeProvide(this.session, bundle_json);
@@ -472,7 +510,9 @@ export class ChiaGame {
 
   wallet_callback_failed(reason: string): WasmResult | undefined {
     const maybeFail = (
-      this.wasm as unknown as { wallet_callback_failed?: (cid: number, reason: string) => WasmResult | undefined }
+      this.wasm as unknown as {
+        wallet_callback_failed?: (cid: number, reason: string) => WasmResult | undefined;
+      }
     ).wallet_callback_failed;
     if (typeof maybeFail !== 'function') return undefined;
     return maybeFail(this.session, reason);

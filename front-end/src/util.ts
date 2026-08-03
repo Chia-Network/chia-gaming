@@ -75,7 +75,6 @@ export function normalizeCoinStringHex(coinString: string) {
   return normalized;
 }
 
-
 function clvm_enlist(clvms: string[]): string {
   const result = [];
 
@@ -100,11 +99,7 @@ function clvm_length(atom: string): string {
 }
 
 function spend_to_clvm(spend: Spend): string {
-  const spend_clvm = clvm_enlist([
-    spend.puzzle,
-    spend.solution,
-    clvm_length(spend.signature),
-  ]);
+  const spend_clvm = clvm_enlist([spend.puzzle, spend.solution, clvm_length(spend.signature)]);
   return spend_clvm;
 }
 
@@ -117,12 +112,9 @@ function coin_spend_to_clvm(coinspend: CoinSpend): string {
 }
 
 export function spend_bundle_to_clvm(sbundle: SpendBundle): string {
-  const bundle_clvm = clvm_enlist(
-    sbundle.spends.map((s) => coin_spend_to_clvm(s)),
-  );
+  const bundle_clvm = clvm_enlist(sbundle.spends.map((s) => coin_spend_to_clvm(s)));
   return bundle_clvm;
 }
-
 
 export function formatAmount(mojos: bigint): string {
   if (mojos < 1_000_000n) {

@@ -18,7 +18,11 @@ const mockWalletConnectState = {
   getObservable: () => ({
     subscribe: ({ next }: { next: (evt: any) => void }) => {
       mockWalletListeners.add(next);
-      return { unsubscribe: () => { mockWalletListeners.delete(next); } };
+      return {
+        unsubscribe: () => {
+          mockWalletListeners.delete(next);
+        },
+      };
     },
   }),
   init: jest.fn(async () => {}),
@@ -60,10 +64,18 @@ function makeStorage(): Storage {
   const store = new Map<string, string>();
   return {
     getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => { store.set(key, value); },
-    removeItem: (key: string) => { store.delete(key); },
-    clear: () => { store.clear(); },
-    get length() { return store.size; },
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    get length() {
+      return store.size;
+    },
     key: (i: number) => [...store.keys()][i] ?? null,
   };
 }
@@ -96,7 +108,7 @@ describe('RealBlockchainInterface', () => {
     mockWalletConnectState.disconnect.mockClear();
   });
 
-  async function connectAndWait(blockchain: RealBlockchainInterface) {
+  async function connectAndWait(_blockchain: RealBlockchainInterface) {
     mockWalletSession = { topic: 'wallet-1' };
     for (const next of mockWalletListeners) {
       next({ stateName: 'connected', connected: true, sessions: 1 });
@@ -241,9 +253,12 @@ describe('RealBlockchainInterface', () => {
       const address = encodePuzzleHashToBech32m('11'.repeat(32));
       mockGetNextAddress.mockResolvedValue(address);
       let resolveWallets!: (value: unknown) => void;
-      mockGetWallets.mockImplementation(() => new Promise((resolve) => {
-        resolveWallets = resolve;
-      }));
+      mockGetWallets.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveWallets = resolve;
+          }),
+      );
 
       const blockchain = new RealBlockchainInterface();
       blockchain.onConnectionChange(() => {});
@@ -288,9 +303,11 @@ describe('RealBlockchainInterface', () => {
 
     mockGetCoinRecordsByNames.mockImplementation(async ({ names }: { names: string[] }) => {
       if (names[0] === missingName) {
-        throw new Error(encodedWalletConnectError({
-          error: `Coin ID ${missingName} not found`,
-        }));
+        throw new Error(
+          encodedWalletConnectError({
+            error: `Coin ID ${missingName} not found`,
+          }),
+        );
       }
       return { coinRecords: [record] };
     });
@@ -352,69 +369,80 @@ describe('RealBlockchainInterface', () => {
     mockPushTransactions.mockResolvedValue({ success: true });
 
     await blockchain.rememberLocalRemovals({
-      coin_spends: [{
-        coin: {
-          parent_coin_info: `0x${parentCoinInfo}`,
-          puzzle_hash: `0x${puzzleHash}`,
-          amount,
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${parentCoinInfo}`,
+            puzzle_hash: `0x${puzzleHash}`,
+            amount,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
         },
-        puzzle_reveal: '0x80',
-        solution: '0x80',
-      }, {
-        coin: {
-          parent_coin_info: `0x${rootCoinId}`,
-          puzzle_hash: `0x${'33'.repeat(32)}`,
-          amount: 50n,
+        {
+          coin: {
+            parent_coin_info: `0x${rootCoinId}`,
+            puzzle_hash: `0x${'33'.repeat(32)}`,
+            amount: 50n,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
         },
-        puzzle_reveal: '0x80',
-        solution: '0x80',
-      }],
+      ],
       aggregated_signature: '0x00',
     });
 
     const submittedBundle = {
-      coin_spends: [{
-        coin: {
-          parent_coin_info: `0x${parentCoinInfo}`,
-          puzzle_hash: `0x${puzzleHash}`,
-          amount,
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${parentCoinInfo}`,
+            puzzle_hash: `0x${puzzleHash}`,
+            amount,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
         },
-        puzzle_reveal: '0x80',
-        solution: '0x80',
-      }, {
-        coin: {
-          parent_coin_info: `0x${rootCoinId}`,
-          puzzle_hash: `0x${'33'.repeat(32)}`,
-          amount: 50n,
+        {
+          coin: {
+            parent_coin_info: `0x${rootCoinId}`,
+            puzzle_hash: `0x${'33'.repeat(32)}`,
+            amount: 50n,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
         },
-        puzzle_reveal: '0x80',
-        solution: '0x80',
-      }, {
-        coin: {
-          parent_coin_info: `0x${peerParentCoinInfo}`,
-          puzzle_hash: `0x${peerPuzzleHash}`,
-          amount: peerAmount,
+        {
+          coin: {
+            parent_coin_info: `0x${peerParentCoinInfo}`,
+            puzzle_hash: `0x${peerPuzzleHash}`,
+            amount: peerAmount,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
         },
-        puzzle_reveal: '0x80',
-        solution: '0x80',
-      }],
+      ],
       aggregated_signature: '0x00',
     };
     await expect(
       blockchain.spend('80', submittedBundle, 'submitTransaction', 10n),
     ).resolves.toEqual({ success: true });
 
-    expect(mockPushTransactions).toHaveBeenCalledWith(expect.objectContaining({
-      fee: 10n,
-      transactions: [
-        expect.objectContaining({
-          removals: [{
-            parent_coin_info: `0x${parentCoinInfo}`,
-            puzzle_hash: `0x${puzzleHash}`,
-            amount,
-          }],
-        }),
-      ],
-    }));
+    expect(mockPushTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fee: 10n,
+        transactions: [
+          expect.objectContaining({
+            removals: [
+              {
+                parent_coin_info: `0x${parentCoinInfo}`,
+                puzzle_hash: `0x${puzzleHash}`,
+                amount,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
   });
 });

@@ -29,14 +29,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
   const gameType = handState?.gameType ?? model.game.activeGameType;
-  const gameId = model.game.lastDisplayedId
-    ?? model.game.currentHandIds[0]
-    ?? model.game.activeIds[0]
-    ?? 'finished';
-  const frozenBridge = useMemo(
-    () => createFrozenHandBridge(handState),
-    [model.game.handKey, handState],
-  );
+  const gameId =
+    model.game.lastDisplayedId ??
+    model.game.currentHandIds[0] ??
+    model.game.activeIds[0] ??
+    'finished';
+  const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
   const noopTurnChanged = useCallback((_gameId: string, _isMyTurn: boolean) => {}, []);
   const noopLog = useCallback((_line: string) => {}, []);
   const noopOutcome = useCallback((_outcome: CalpokerOutcome) => {}, []);
@@ -44,8 +42,8 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   if (!display.canRemountHand || !handState) {
     return (
       <div
-        className='flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid'
-        data-testid='finished-session-fallback'
+        className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+        data-testid="finished-session-fallback"
       >
         {display.terminalLabel ?? 'No hand details available'}
       </div>
@@ -64,8 +62,8 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
 
   return (
     <div
-      className='relative h-full w-full min-h-0 pointer-events-none'
-      data-testid='finished-session-game-view'
+      className="relative h-full w-full min-h-0 pointer-events-none"
+      data-testid="finished-session-game-view"
       aria-disabled
       inert
     >
@@ -82,9 +80,11 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
           {...commonProps}
           gameId={gameId}
           betSize={String(model.betweenHand.lastTerms.myContribution)}
-          unitSizeMojos={model.betweenHand.lastTerms.gameType === 'spacepoker'
-            ? String(model.betweenHand.lastTerms.spacepokerUnitSize ?? 0n)
-            : undefined}
+          unitSizeMojos={
+            model.betweenHand.lastTerms.gameType === 'spacepoker'
+              ? String(model.betweenHand.lastTerms.spacepokerUnitSize ?? 0n)
+              : undefined
+          }
           perGameAmount={model.betweenHand.lastTerms.myContribution}
         />
       ) : gameType === 'krunk' ? (
@@ -96,7 +96,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
           betSize={model.betweenHand.lastTerms.myContribution}
         />
       ) : (
-        <div className='flex items-center justify-center py-20 text-canvas-text'>
+        <div className="flex items-center justify-center py-20 text-canvas-text">
           Game details unavailable
         </div>
       )}
