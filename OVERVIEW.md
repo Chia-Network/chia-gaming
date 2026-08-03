@@ -669,8 +669,9 @@ The dictionary tree and its signatures are generated once at build time by
 dictionary changes. Regenerating requires rebuilding chialisp afterward
 (`./cb.sh`).
 
-The `.dat` file uses a `.dat` extension (not `.hex`) because the chialisp build
-script deletes all `*.hex` files under `clsp/` before rebuilding.
+The `.dat` file uses a `.dat` extension (not `.hex`) because `tools/build-chialisp.sh`
+deletes all `*.hex` files under `clsp/` before rebuilding to ensure a clean output
+tree.
 
 #### Atomic factory proposals
 

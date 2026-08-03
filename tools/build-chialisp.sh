@@ -6,37 +6,49 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-CACHE_FILE=".build-chialisp.cache"
+STATE_FILE=".build-chialisp.state"
+CURRENT_STATE=$(mktemp)
+trap 'rm -f "$CURRENT_STATE"' EXIT
 
-# Track all chialisp source files (entry points + imports + includes) plus the
-# compile manifest itself -- adding/removing an entry in chialisp.toml must
-# trigger a rebuild even when no .clsp source changed.
-current_stamps() {
-    { find clsp -name '*.clsp' -o -name '*.clinc'; echo chialisp.toml; } | while read -r f; do
-        echo "$f $(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)"
-    done | sort
+write_state() {
+    local destination=$1
+    {
+        echo "version 1"
+        {
+            find clsp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+            printf '%s\n' \
+                build.rs Cargo.toml Cargo.lock chialisp.toml \
+                tools/build-chialisp.sh
+        } | LC_ALL=C sort | while IFS= read -r file; do
+            printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
+        done
+        find clsp -type f -name '*.hex' -print | LC_ALL=C sort | while IFS= read -r file; do
+            printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
+        done
+    } > "$destination"
 }
-
-needs_build=0
-
-if [ ! -f "$CACHE_FILE" ]; then
-    needs_build=1
-else
-    if [ "$(current_stamps)" != "$(sort "$CACHE_FILE")" ]; then
-        needs_build=1
-    fi
-fi
 
 echo "=== Building chialisp (via cargo build.rs) ==="
 
-if [ "$needs_build" -eq 1 ]; then
-    SECONDS=0
-    find clsp -name '*.hex' -delete
-    cp build.rs.disabled build.rs
-    trap 'rm -f "$REPO_ROOT/build.rs"' EXIT
-    cargo build --features sim-server
-    echo "Build took: ${SECONDS} seconds"
-    current_stamps > "$CACHE_FILE"
-else
+write_state "$CURRENT_STATE"
+if [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
     echo "Chialisp is up to date (skipping build)"
+    exit 0
 fi
+
+SECONDS=0
+find clsp -name '*.hex' -delete
+
+# CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
+# input, so this forces one Chialisp compile without deleting Cargo's package
+# cache. Ordinary cargo commands leave it unset and never compile Chialisp.
+CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
+
+if ! find clsp -type f -name '*.hex' -print -quit | grep -q .; then
+    echo "Error: Chialisp build produced no .hex files" >&2
+    exit 1
+fi
+
+write_state "$CURRENT_STATE"
+mv "$CURRENT_STATE" "$STATE_FILE"
+echo "Build took: ${SECONDS} seconds"

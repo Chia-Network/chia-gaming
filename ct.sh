@@ -14,11 +14,12 @@ else
     RUN_AUX_TESTS=1
 fi
 
-echo "=== Building rust + chialisp ==="
-cargo build --features sim-server
-echo "Build took: ${SECONDS} seconds"
-
+echo "=== Building chialisp ==="
 ./tools/build-chialisp.sh
+
+echo "=== Building simulator ==="
+cargo build --bin chia-gaming-sim --features sim-server
+echo "Build took: ${SECONDS} seconds"
 
 echo "=== Running rust tests ==="
 cargo test --lib --features sim-server -- --nocapture
