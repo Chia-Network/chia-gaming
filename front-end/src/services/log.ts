@@ -27,65 +27,15 @@ export function subscribeLog(fn: Listener): () => void {
   };
 }
 
-/**
- * Optional extra diagnostic sink.  The CI failure we chase fires while the jest
- * worker is dying, when stderr/console output is lost.  A test (which has `fs`)
- * registers a sink here that appends synchronously to a file on disk -- that
- * survives the worker death, and a later shell step `cat`s the file into the
- * live GitHub Actions log.  Kept out of this (browser-shared) module so we
- * never import `fs` here.
- */
-let extraDiagSink: ((line: string) => void) | null = null;
-
-export function setDiagSink(fn: ((line: string) => void) | null): void {
-  extraDiagSink = fn;
-}
-
-/**
- * Teardown-proof diagnostic sink.
- *
- * The errors we care about most fire *after* the jest test environment is torn
- * down (the late unhandled rejection in load_wasm).  jest patches
- * `global.console`, so a console.* call at that point hits "Cannot log after
- * tests are done" and the line is dropped -- precisely the error we are chasing
- * never gets logged.  `process.stderr.write` is a raw stream jest does NOT
- * patch and it targets the real process, so it survives teardown.  The
- * registered sink (a synchronous file append in tests) survives even a dying
- * worker.  Fall back to console.error only in the browser.
- */
-function diagWrite(line: string): void {
-  // Durable sink first: it must capture the line even if everything below is
-  // about to die.
-  if (extraDiagSink) {
-    try {
-      extraDiagSink(line);
-    } catch {
-      /* never let logging throw */
-    }
-  }
-  try {
-    const proc = (typeof process !== 'undefined' ? process : undefined) as
-      | { stderr?: { write?: (s: string) => void } }
-      | undefined;
-    if (proc?.stderr && typeof proc.stderr.write === 'function') {
-      proc.stderr.write(line + '\n');
-      return;
-    }
-  } catch {
-    /* fall through to console */
-  }
-  console.error(line);
-}
-
-/** Diagnostic: a single greppable note (no stack). Teardown-proof. */
+/** Log a single error-context note. */
 export function diagNote(message: string): void {
-  diagWrite(`DIAG_LOADWASM ${message}`);
+  console.warn(`[error] ${message}`);
 }
 
 /**
- * Diagnostic: write a full stack trace with a greppable prefix.  Non-Error
- * throws (strings, wasm RuntimeErrors, rejected events) are wrapped so we still
- * capture a stack at the catch site rather than just an opaque message.
+ * Log an error with a full stack trace. Uses console.error so tests can spy on
+ * and suppress expected error-path output. Non-Error throws are wrapped so the
+ * catch site is recorded rather than just an opaque message.
  */
 export function diagStack(context: string, e: unknown): void {
   let name = 'Error';
@@ -101,8 +51,7 @@ export function diagStack(context: string, e: unknown): void {
     } catch {
       message = String(e);
     }
-    stack =
-      new Error('(non-Error thrown; stack captured at diagStack call site)').stack ?? '(no stack)';
+    stack = new Error('(non-Error thrown; stack captured at catch site)').stack ?? '(no stack)';
   }
-  diagWrite(`DIAG_LOADWASM ${context}: ${name}: ${message}\n${stack}`);
+  console.error(`[error] ${context}: ${name}: ${message}\n${stack}`);
 }

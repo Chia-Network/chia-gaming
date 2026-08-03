@@ -160,6 +160,7 @@ function createReadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefined
   (cradle.report_coin_states as jest.Mock).mockClear();
   sentMessages.length = 0;
   sentAcks.length = 0;
+  trackedBlobs.push(blob);
 
   return { blob, cradle, sentMessages, sentAcks };
 }
@@ -189,10 +190,13 @@ function createUnreadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefin
       unackedMessages: blob.unackedMessages,
     });
 
+  trackedBlobs.push(blob);
+
   return { blob, cradle, sentMessages, sentAcks };
 }
 
 let activeBlob: SessionController | null = null;
+const trackedBlobs: SessionController[] = [];
 
 function setTestGlobal(key: string, value: unknown) {
   Object.defineProperty(globalThis, key, {
@@ -213,15 +217,31 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (activeBlob) {
-    await activeBlob.flushPendingWork();
-    activeBlob.cleanup();
-    activeBlob.onSaveNeeded = null;
-  }
+  const toFlush = activeBlob;
   activeBlob = null;
-  resetSaveState();
-  clearTestGlobal('localStorage');
-  clearTestGlobal('sessionStorage');
+  const tracked = trackedBlobs;
+  trackedBlobs.length = 0;
+  try {
+    if (toFlush) {
+      try {
+        await toFlush.flushPendingWork();
+      } finally {
+        toFlush.cleanup();
+      }
+    }
+    for (const blob of tracked) {
+      if (blob === toFlush) continue;
+      try {
+        await blob.flushPendingWork();
+      } finally {
+        blob.cleanup();
+      }
+    }
+  } finally {
+    resetSaveState();
+    clearTestGlobal('localStorage');
+    clearTestGlobal('sessionStorage');
+  }
 });
 
 function transactionSubmitQueue(blob: SessionController): Promise<void> {
@@ -425,6 +445,7 @@ describe('lifecycle flush', () => {
 
 describe('game action failure events', () => {
   it('scopes failed terminal submissions to their game and action', () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
     (
       cradle as unknown as {
@@ -459,6 +480,7 @@ describe('game action failure events', () => {
       action: 'accept-settlement',
       error: 'cannot accept settlement',
     });
+    errorSpy.mockRestore();
   });
 });
 
@@ -1057,6 +1079,7 @@ describe('abandon calls Rust through cradle', () => {
   });
 
   it('keeps the controller available when Rust rejects abandonment', () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(
@@ -1086,6 +1109,7 @@ describe('abandon calls Rust through cradle', () => {
     expect((blob as any).cradle).toBe(cradle);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('terminal handoff awaits acknowledgement');
+    errorSpy.mockRestore();
   });
 });
 
@@ -1365,6 +1389,7 @@ describe('terminal protocol cleanup', () => {
   });
 
   it('leaves a failed terminal completion recoverable without scheduling retries', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
     (cradle.completeOutboundTerminalHandoff as jest.Mock)
       .mockImplementationOnce(() => {
@@ -1391,6 +1416,7 @@ describe('terminal protocol cleanup', () => {
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(2);
     expect((blob as any).protocolStopped).toBe(true);
+    errorSpy.mockRestore();
   });
 
   it('hands off the final clean-close message before Rust terminalizes locally', async () => {
@@ -1520,6 +1546,7 @@ describe('terminal protocol cleanup', () => {
 
 describe('transaction submission', () => {
   it('routes controller nerfs through the singleton policy and notifies subscribers', () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const updates: boolean[] = [];
@@ -1545,6 +1572,7 @@ describe('transaction submission', () => {
 
     unsubscribe();
     destroySessionController();
+    errorSpy.mockRestore();
   });
 
   it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
@@ -1729,6 +1757,7 @@ describe('transaction submission', () => {
   });
 
   it('hydrates without blockchain and replays retained submissions on later attach', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const spend = jest.fn().mockResolvedValue('');
     const blockchain = new BlockchainPoller(
       {
@@ -1775,6 +1804,7 @@ describe('transaction submission', () => {
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(3);
     expect(spend).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
+    errorSpy.mockRestore();
   });
 
   it('waits for the restored manager coin snapshot before resubmitting after early attach', () => {
