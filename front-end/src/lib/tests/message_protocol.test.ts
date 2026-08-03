@@ -217,25 +217,31 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (activeBlob) {
-    try {
-      await activeBlob.flushPendingWork();
-    } finally {
-      activeBlob.cleanup();
-    }
-  }
-  for (const blob of trackedBlobs) {
-    try {
-      await blob.flushPendingWork();
-    } finally {
-      blob.cleanup();
-    }
-  }
-  trackedBlobs.length = 0;
+  const toFlush = activeBlob;
   activeBlob = null;
-  resetSaveState();
-  clearTestGlobal('localStorage');
-  clearTestGlobal('sessionStorage');
+  const tracked = trackedBlobs;
+  trackedBlobs.length = 0;
+  try {
+    if (toFlush) {
+      try {
+        await toFlush.flushPendingWork();
+      } finally {
+        toFlush.cleanup();
+      }
+    }
+    for (const blob of tracked) {
+      if (blob === toFlush) continue;
+      try {
+        await blob.flushPendingWork();
+      } finally {
+        blob.cleanup();
+      }
+    }
+  } finally {
+    resetSaveState();
+    clearTestGlobal('localStorage');
+    clearTestGlobal('sessionStorage');
+  }
 });
 
 function transactionSubmitQueue(blob: SessionController): Promise<void> {
