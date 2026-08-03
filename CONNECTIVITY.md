@@ -299,13 +299,14 @@ session finishes, the player can become not busy and available for new matches
 while a previous result remains visible until a new session replaces it.
 
 The app is available for a new session when hub presence is not busy
-(`shouldReportPresenceBusy` — session obligation or WalletConnect full-node-peer
-gate) and there is no consent prompt, reserved peer id, buffered handshake, or
-live message handler (`isAvailableForNewSessionPrompt()`). While the peer gate
-holds presence busy, the lobby iframe is hidden and inbound `advisory_start` /
-`session_proposal` must still be declined even if the game WebSocket is live. A
-consent prompt is a temporary unavailable state for inbound matchmaking even
-though it does not by itself set hub `busy`. While unavailable:
+(`shouldReportPresenceBusy` — session obligation, or on WalletConnect while the
+wallet has no verified full-node peer) and there is no consent prompt, reserved
+peer id, buffered handshake, or live message handler
+(`isAvailableForNewSessionPrompt()`). The app still connects to the hub normally
+while awaiting a full-node peer; it simply advertises busy, and inbound
+`advisory_start` / `session_proposal` must still be declined even if the game
+WebSocket is live. A consent prompt is a temporary unavailable state for inbound
+matchmaking even though it does not by itself set hub `busy`. While unavailable:
 
 - further `advisory_start` messages are **ignored** (hub-originated; do not
   `session_reject` the peer);

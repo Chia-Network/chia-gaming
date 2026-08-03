@@ -70,7 +70,7 @@ import {
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isRestoreBlocked, peerGateAfterSessionClear, shouldActivatePeerGate, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSkipPeerGateForSessionConfig, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
+import { isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt, isAwaitingFullNodePeer, isRestoreBlocked, shouldCancelOnPeerUnreachable, shouldMountGameSession, shouldReportPresenceBusy, shouldSwitchToHubOnResolved } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
@@ -649,17 +649,16 @@ const Shell = () => {
   }), []);
 
   const [walletConnected, setWalletConnected] = useState(false);
-  const [hasFullNodePeer, setHasFullNodePeer] = useState(false);
-  const [peerGateActive, setPeerGateActive] = useState(false);
-  // Mirrors of the peer-gate state for synchronous consumers (getPresence is
-  // called from the HubConnection constructor and on every reconnect).
+  // Whether the WalletConnect wallet has a verified full node peer. Read
+  // synchronously by getPresence (called from the HubConnection constructor and
+  // on every reconnect) and by isAvailableForNewSessionPrompt, so it lives in a
+  // ref rather than state — no UI depends on it, only the hub busy bit does.
   const hasFullNodePeerRef = useRef(false);
-  const peerGateActiveRef = useRef(false);
-  // Busy bit reported to the hub: session obligation OR peer gate.
-  // All setBusy paths that might clear availability must go through this
-  // (not bare false / shouldReportHubBusy alone).
+  // Busy bit reported to the hub: session obligation OR the WalletConnect
+  // full-node-peer wait. All setBusy paths that might clear availability must
+  // go through this (not bare false / shouldReportHubBusy alone).
   const presenceBusy = useCallback((phase: SessionPhase) =>
-    shouldReportPresenceBusy(phase, peerGateActiveRef.current, hasFullNodePeerRef.current), []);
+    shouldReportPresenceBusy(phase, isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current)), []);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
@@ -881,21 +880,6 @@ const Shell = () => {
     blockchainTypeRef.current = blockchainType;
   }, [blockchainType]);
 
-  // After a session that skipped the peer gate ends, re-arm the gate
-  // synchronously before presenceBusy/setBusy. The re-eval effect only runs
-  // after React commits, which is too late to block inbound matchmaking.
-  const rearmPeerGateForIdleClear = useCallback(() => {
-    const next = peerGateAfterSessionClear(
-      blockchainTypeRef.current,
-      peerGateActiveRef.current,
-      hasFullNodePeerRef.current,
-    );
-    peerGateActiveRef.current = next.peerGateActive;
-    hasFullNodePeerRef.current = next.hasFullNodePeer;
-    setPeerGateActive(next.peerGateActive);
-    setHasFullNodePeer(next.hasFullNodePeer);
-  }, []);
-
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
   const [connectionSetup, setConnectionSetup] = useState<ConnectionSetup | null>(null);
@@ -1071,8 +1055,7 @@ const Shell = () => {
       pendingProposalRef.current !== null,
       peerSessionRef.current !== null,
       !!sessionSaveRef.current?.sessionPeerId,
-      peerGateActiveRef.current,
-      hasFullNodePeerRef.current,
+      isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
     );
   }, []);
 
@@ -1123,9 +1106,8 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-    rearmPeerGateForIdleClear();
     hubConnRef.current?.setBusy(presenceBusy('none'));
-  }, [clearSessionPreservingHistory, presenceBusy, rearmPeerGateForIdleClear, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
+  }, [clearSessionPreservingHistory, presenceBusy, resetPeerRelayState, setPendingAdvisoryState, setPendingProposalState]);
 
   const startFreshSessionWithPeer = useCallback(async (request: SessionStartRequest & { gameSessionId?: string }) => {
     const conn = hubConnRef.current;
@@ -1402,19 +1384,6 @@ const Shell = () => {
     const hubSessionId = getSessionId();
     setSessionId(hubSessionId);
 
-    // Skip the gate when restoring a live session (cradle or pairingToken).
-    // Callers must not open the hub during autoResuming before IndexedDB
-    // hydrate fills these fields.
-    const save = loadState();
-    const resuming = !!(save.serializedGameSession || save.pairingToken);
-    const gate = shouldActivatePeerGate(blockchainTypeRef.current, resuming);
-    setPeerGateActive(gate);
-    setHasFullNodePeer(!gate);   // simulator/resume => immediately "ready"
-    // Set the refs synchronously: the HubConnection constructor below calls
-    // getPresence() immediately, before the state updates above have applied.
-    peerGateActiveRef.current = gate;
-    hasFullNodePeerRef.current = !gate;
-
     setHubOrigin(origin);
     saveHubUrl(origin);
     const hubUrl = `${origin}/?session=${hubSessionId}&uniqueId=${uniqueId}`;
@@ -1546,7 +1515,7 @@ const Shell = () => {
           saveSession({ myHubPlayerId: playerId });
           if (save) save.myHubPlayerId = playerId;
           const terminalSave = !!save && isTerminalSavedChannel(save);
-          // Match getPresence: session/restore obligation OR the peer gate.
+          // Match getPresence: session/restore obligation OR the full-node-peer wait.
           const restoreBusy = presenceBusy(sessionPhaseRef.current)
             || (!terminalSave && !!(save?.serializedGameSession || save?.pairingToken || save?.sessionPeerId));
           if (!peerSessionRef.current && save?.sessionPeerId && conn) {
@@ -1555,8 +1524,8 @@ const Shell = () => {
             setRestoreHubReconciled(true);
             // Restore never goes through startFreshSessionWithPeer, which is
             // otherwise the only place that marks the hub busy. Use restoreBusy
-            // (session/peer-gate presence); terminal saves stay available unless
-            // the peer gate still requires busy.
+            // (session/presence); terminal saves stay available unless the
+            // full-node-peer wait still requires busy.
             conn.setBusy(restoreBusy, save.myAlias ?? peekAlias());
           } else if (save?.serializedGameSession || save?.pairingToken) {
             setRestoreHubReconciled(true);
@@ -1643,19 +1612,10 @@ const Shell = () => {
 
   // Auto-connect to saved hub once this tab owns the app lease. Also while
   // autoResuming (blank UI) so session restore can reconcile before first paint.
-  // During autoResuming, wait until performResume has applied sessionConfig —
-  // otherwise connectToHub can run before IndexedDB hydrate fills cradle /
-  // pairingToken and leave the WalletConnect peer gate stuck on.
-  // Derive a boolean so clearing sessionConfig later (session end) does not
-  // re-fire this effect and tear down a live hub connection.
-  const autoResumeHydrated = bootState.kind !== 'autoResuming' || !!sessionConfig;
   useEffect(() => {
     if (bootState.kind !== 'ready' && bootState.kind !== 'autoResuming') {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
-      return;
-    }
-    if (!autoResumeHydrated) {
       return;
     }
     const url = getHubUrl();
@@ -1666,7 +1626,7 @@ const Shell = () => {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
     };
-  }, [bootState.kind, connectToHub, autoResumeHydrated]);
+  }, [bootState.kind, connectToHub]);
 
   // Shared connection completion
   const completeConnection = useCallback((
@@ -1846,9 +1806,8 @@ const Shell = () => {
     setRestoreHubReconciled(false);
     setPendingAdvisoryState(null);
     setPendingProposalState(null);
-    rearmPeerGateForIdleClear();
     hubConnRef.current?.setBusy(presenceBusy('none'), alias);
-  }, [clearSessionPreservingHistory, clearSessionTimers, presenceBusy, rearmPeerGateForIdleClear, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
+  }, [clearSessionPreservingHistory, clearSessionTimers, presenceBusy, resetPeerRelayState, sendSessionReject, setPendingAdvisoryState, setPendingProposalState]);
 
   const abandonActiveChannel = useCallback(() => {
     abandonPendingRef.current = true;
@@ -1893,9 +1852,6 @@ const Shell = () => {
     sessionPhaseRef.current = 'resolved';
     setSessionPhase('resolved');
     setSessionError(hasError);
-    // Re-arm before setBusy: a skipped-gate resume leaves peerGateActiveRef
-    // false until the re-eval effect commits, which would advertise available.
-    rearmPeerGateForIdleClear();
     hubConnRef.current?.setBusy(presenceBusy('resolved'), alias);
 
     // Stop the live peer route and cradle; do not send session_reject and do
@@ -1930,7 +1886,7 @@ const Shell = () => {
     setRestoreStatus('idle');
     setRestoreError(null);
     setRestoreHubReconciled(false);
-  }, [clearSessionTimers, frozenCoins, presenceBusy, rearmPeerGateForIdleClear, resetPeerRelayState, sessionController]);
+  }, [clearSessionTimers, frozenCoins, presenceBusy, resetPeerRelayState, sessionController]);
 
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     if (phase === 'resolved') {
@@ -1972,69 +1928,28 @@ const Shell = () => {
 
   const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus, restoreHubReconciled);
 
-  // connectToHub snapshots the peer gate at hub-connect time, but the
-  // wallet can be connected or switched while the hub is already up — and
-  // a cradle / pairingToken checkpoint can appear after hydrate even when
-  // blockchainType is unchanged (prefs already said walletconnect).
-  // Re-evaluate on those signals. pairingToken-only resumes set
-  // sessionConfig.restoring=false, so depend on restoreStatus too — but do
-  // not treat a fresh accept's pairingToken (restoreStatus idle) as resume.
-  const hasResumableSessionConfig = shouldSkipPeerGateForSessionConfig(
-    sessionConfig?.restoring,
-    sessionConfig?.pairingToken,
-    restoreStatus,
-  );
+  // Poll the WalletConnect wallet for a full node peer while the hub is up. We
+  // connect to the hub normally but advertise busy (presenceBusy) until a peer
+  // is verified. Once verified we stop polling; if the wallet disconnects it can
+  // no longer vouch for a peer, so drop back to not-ready (busy) until it
+  // reconnects and the poll re-verifies. Simulator never awaits a peer.
   useEffect(() => {
-    if (!hubOrigin) return;
-    const save = loadState();
-    // Cradle in save still skips on hydrate. Do not treat save.pairingToken
-    // alone as resume — startFreshSessionWithPeer persists that token before
-    // phase advances, and using it here would deactivate the gate and let the
-    // sync-mirror clear setBusy(true). pairingToken-only resumes skip via
-    // hasResumableSessionConfig (non-idle restoreStatus).
-    const resuming = hasResumableSessionConfig || !!save.serializedGameSession;
-    const gate = shouldActivatePeerGate(blockchainType, resuming);
-    setPeerGateActive(gate);
-    setHasFullNodePeer(!gate);
-    // Set the refs synchronously (as connectToHub does): getPresence can
-    // run on a hub reconnect before the state updates above have applied,
-    // and must not report a stale not-busy while the gate should be active.
-    peerGateActiveRef.current = gate;
-    hasFullNodePeerRef.current = !gate;
-  }, [blockchainType, hubOrigin, hasResumableSessionConfig]);
-
-  // While the peer gate is active, poll the wallet for a full node peer every 5s
-  // and only mark ready (visible in the lobby) once one is present.
-  // If the wallet disconnects while the gate is active, the poll can no longer
-  // vouch for a full node peer, so drop back to not-ready (busy + waiting gate)
-  // until the wallet reconnects and the poll re-verifies.
-  useEffect(() => {
-    if (!peerGateActive || !hubOrigin) return;
+    if (blockchainType !== 'walletconnect' || !hubOrigin) return;
+    const alias = () =>
+      sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
+    // isAvailableForNewSessionPrompt / getPresence read hasFullNodePeerRef
+    // synchronously (e.g. inbound session_proposal, or getPresence on a hub
+    // reconnect), so update the ref and push the busy bit together.
+    const applyPeerReady = (ready: boolean) => {
+      hasFullNodePeerRef.current = ready;
+      hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current), alias());
+    };
     if (!walletConnected) {
-      // Sync the ref before setState (same as connectToHub): getPresence can
-      // run on a hub reconnect before React applies the new hasFullNodePeer
-      // state, and must not report a stale not-busy.
-      hasFullNodePeerRef.current = false;
-      setHasFullNodePeer(false);
-      hubConnRef.current?.setBusy(
-        presenceBusy(sessionPhaseRef.current),
-        sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
-      );
+      applyPeerReady(false);
       return;
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const alias = () =>
-      sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
-    // Sync the ref before setState (same as the wallet-disconnect branch):
-    // isAvailableForNewSessionPrompt / getPresence read the refs synchronously
-    // and can run before React applies hasFullNodePeer state (e.g. inbound
-    // session_proposal while a zero-count poll result is still pending commit).
-    const applyPeerReady = (ready: boolean) => {
-      hasFullNodePeerRef.current = ready;
-      setHasFullNodePeer(ready);
-      hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current), alias());
-    };
     const check = async () => {
       try {
         const count = await getActiveBlockchain().rpc.getFullNodePeerCount();
@@ -2049,23 +1964,7 @@ const Shell = () => {
     };
     check();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [peerGateActive, hubOrigin, walletConnected, presenceBusy]);
-
-  // Keep the synchronous presence mirrors fresh and push a busy update to the
-  // hub whenever the full-node-peer gate opens or closes.
-  // When the gate is active, a disconnected wallet cannot vouch for peers —
-  // treat as not-ready even if hasFullNodePeer state is still true (e.g. peer
-  // verified and wallet dropped in the same render), so this effect cannot
-  // overwrite a synchronous clear from the poll effect with stale state.
-  useEffect(() => {
-    peerGateActiveRef.current = peerGateActive;
-    const peerReady = peerGateActive ? (hasFullNodePeer && walletConnected) : hasFullNodePeer;
-    hasFullNodePeerRef.current = peerReady;
-    hubConnRef.current?.setBusy(
-      presenceBusy(sessionPhaseRef.current),
-      sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
-    );
-  }, [peerGateActive, hasFullNodePeer, walletConnected, presenceBusy]);
+  }, [blockchainType, hubOrigin, walletConnected, presenceBusy]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -3146,19 +3045,12 @@ const Shell = () => {
               {hubConnectionError && (
                 <p className='px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle'>{hubConnectionError}</p>
               )}
-              {peerGateActive && !hasFullNodePeer ? (
-                <div className='flex flex-col items-center justify-center w-full flex-1 gap-4 p-6'>
-                  <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
-                  <p className='text-sm text-canvas-text animate-pulse'>Waiting for full node peer</p>
-                </div>
-              ) : (
-                <iframe
-                  id='hub-iframe'
-                  className='bg-canvas-bg-subtle'
-                  style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
-                  src={iframeUrl}
-                />
-              )}
+              <iframe
+                id='hub-iframe'
+                className='bg-canvas-bg-subtle'
+                style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                src={iframeUrl}
+              />
             </>
           ) : (
             <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />

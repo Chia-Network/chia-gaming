@@ -50,75 +50,33 @@ export function shouldReportSessionPhase(
 }
 
 /**
- * Whether the WalletConnect full-node-peer gate should hold lobby presence
- * busy. Simulator never gates. A live-session resume skips the gate — cradle
- * or pairingToken checkpoint already cleared (or never needed) that pre-match
- * check. Callers must pass true for either durable field, not cradle alone.
+ * Whether WalletConnect presence should report busy because the wallet has no
+ * full-node peer yet. Simulator never awaits a peer. The app still connects to
+ * the hub normally; it just advertises busy until a peer is verified.
  */
-export function shouldActivatePeerGate(
+export function isAwaitingFullNodePeer(
   blockchainType: 'simulator' | 'walletconnect' | undefined,
-  hasResumableSession: boolean,
-): boolean {
-  return blockchainType === 'walletconnect' && !hasResumableSession;
-}
-
-/**
- * Whether in-memory sessionConfig should skip the WalletConnect peer gate as a
- * live resume. Cradle restore sets `restoring`. pairingToken-only resume sets
- * `pairingToken` with a non-idle `restoreStatus` (performResume). Fresh accepts
- * also set `pairingToken` with `restoring=false` and `restoreStatus=idle` —
- * those must not skip, or the peer-gate re-eval deactivates the gate and the
- * sync-mirror clears the busy bit set by `startFreshSessionWithPeer`.
- */
-export function shouldSkipPeerGateForSessionConfig(
-  restoring: boolean | undefined,
-  pairingToken: string | undefined,
-  restoreStatus: RestoreStatus,
-): boolean {
-  return !!restoring || (!!pairingToken && restoreStatus !== 'idle');
-}
-
-/**
- * Idle/terminal clear after a session that skipped the peer gate must re-arm
- * it before `presenceBusy` / `setBusy`. The React re-eval effect runs only
- * after commit, so without this sync step the hub is told available while
- * `peerGateActive` is still false.
- *
- * If the gate is already active, keep the current peer-ready bit (do not
- * force a re-poll). Newly activated gates start unverified.
- */
-export function peerGateAfterSessionClear(
-  blockchainType: 'simulator' | 'walletconnect' | undefined,
-  peerGateAlreadyActive: boolean,
   hasFullNodePeer: boolean,
-): { peerGateActive: boolean; hasFullNodePeer: boolean } {
-  if (peerGateAlreadyActive) {
-    return { peerGateActive: true, hasFullNodePeer };
-  }
-  const gate = shouldActivatePeerGate(blockchainType, false);
-  return {
-    peerGateActive: gate,
-    hasFullNodePeer: !gate,
-  };
+): boolean {
+  return blockchainType === 'walletconnect' && !hasFullNodePeer;
 }
 
 /**
  * Hub busy bit for lobby presence: session obligation OR the WalletConnect
- * full-node-peer gate. Callers must not push `setBusy(false)` /
- * `shouldReportHubBusy(...)` alone — after session end/cancel the gate can
- * still require busy until a full node peer is verified.
+ * full-node-peer wait. Callers must not push `setBusy(false)` /
+ * `shouldReportHubBusy(...)` alone — until a full node peer is verified the
+ * WalletConnect wallet must keep advertising busy.
  */
 export function shouldReportPresenceBusy(
   sessionPhase: SessionPhase,
-  peerGateActive: boolean,
-  hasFullNodePeer: boolean,
+  awaitingFullNodePeer: boolean,
 ): boolean {
-  return shouldReportHubBusy(sessionPhase) || (peerGateActive && !hasFullNodePeer);
+  return shouldReportHubBusy(sessionPhase) || awaitingFullNodePeer;
 }
 
 /**
  * Whether inbound matchmaking may open a consent prompt.
- * Must stay aligned with `shouldReportPresenceBusy` for session + peer-gate,
+ * Must stay aligned with `shouldReportPresenceBusy` for session + peer wait,
  * and also exclude temporary local matchmaking state that does not always
  * set hub `busy` (pending advisory/proposal, live peer session, reserved peer).
  */
@@ -128,10 +86,9 @@ export function isAvailableForNewSessionPrompt(
   pendingProposal: boolean,
   hasLivePeerSession: boolean,
   hasReservedPeerId: boolean,
-  peerGateActive: boolean,
-  hasFullNodePeer: boolean,
+  awaitingFullNodePeer: boolean,
 ): boolean {
-  return !shouldReportPresenceBusy(sessionPhase, peerGateActive, hasFullNodePeer)
+  return !shouldReportPresenceBusy(sessionPhase, awaitingFullNodePeer)
     && !pendingAdvisory
     && !pendingProposal
     && !hasLivePeerSession

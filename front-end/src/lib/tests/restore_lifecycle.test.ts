@@ -1,8 +1,7 @@
 import {
   isAvailableForNewSessionPrompt,
+  isAwaitingFullNodePeer,
   isRestoreBlocked,
-  peerGateAfterSessionClear,
-  shouldActivatePeerGate,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelOnPeerUnreachable,
@@ -10,7 +9,6 @@ import {
   shouldReportHubBusy,
   shouldReportPresenceBusy,
   shouldReportSessionPhase,
-  shouldSkipPeerGateForSessionConfig,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -49,81 +47,38 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('on-chain')).toBe(true);
   });
 
-  it('keeps presence busy after session end/cancel while the peer gate is unverified', () => {
-    // Session alone would advertise available — peer gate must still hold busy.
-    expect(shouldReportPresenceBusy('none', true, false)).toBe(true);
-    expect(shouldReportPresenceBusy('resolved', true, false)).toBe(true);
-    // Gate inactive or peer verified → session phase decides.
-    expect(shouldReportPresenceBusy('none', false, false)).toBe(false);
-    expect(shouldReportPresenceBusy('resolved', true, true)).toBe(false);
-    expect(shouldReportPresenceBusy('off-chain', false, true)).toBe(true);
-    expect(shouldReportPresenceBusy('on-chain', true, false)).toBe(true);
+  it('keeps presence busy while WalletConnect awaits a full node peer', () => {
+    // Session alone would advertise available — the peer wait must still hold busy.
+    expect(shouldReportPresenceBusy('none', true)).toBe(true);
+    expect(shouldReportPresenceBusy('resolved', true)).toBe(true);
+    // Peer verified (not awaiting) → session phase decides.
+    expect(shouldReportPresenceBusy('none', false)).toBe(false);
+    expect(shouldReportPresenceBusy('resolved', false)).toBe(false);
+    expect(shouldReportPresenceBusy('off-chain', false)).toBe(true);
+    expect(shouldReportPresenceBusy('on-chain', false)).toBe(true);
   });
 
-  it('activates the WalletConnect peer gate only when not resuming a live session', () => {
-    // Callers pass true for cradle OR pairingToken — both skip the pre-match gate.
-    expect(shouldActivatePeerGate('walletconnect', false)).toBe(true);
-    expect(shouldActivatePeerGate('walletconnect', true)).toBe(false);
-    expect(shouldActivatePeerGate('simulator', false)).toBe(false);
-    expect(shouldActivatePeerGate('simulator', true)).toBe(false);
-    expect(shouldActivatePeerGate(undefined, false)).toBe(false);
+  it('awaits a full node peer only on WalletConnect without a verified peer', () => {
+    expect(isAwaitingFullNodePeer('walletconnect', false)).toBe(true);
+    expect(isAwaitingFullNodePeer('walletconnect', true)).toBe(false);
+    expect(isAwaitingFullNodePeer('simulator', false)).toBe(false);
+    expect(isAwaitingFullNodePeer('simulator', true)).toBe(false);
+    expect(isAwaitingFullNodePeer(undefined, false)).toBe(false);
   });
 
-  it('does not treat a fresh accept pairingToken as a peer-gate resume', () => {
-    // startFreshSessionWithPeer: pairingToken + restoring=false + restoreStatus idle.
-    // Must not skip — otherwise re-eval deactivates the gate and sync-mirror
-    // clears the busy bit while session phase is still none.
-    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'idle')).toBe(false);
-    expect(shouldActivatePeerGate(
-      'walletconnect',
-      shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'idle'),
-    )).toBe(true);
-    // pairingToken-only resume: performResume sets restoreStatus before config.
-    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'restoring')).toBe(true);
-    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'restored')).toBe(true);
-    expect(shouldSkipPeerGateForSessionConfig(false, 'peer_x_1', 'failed')).toBe(true);
-    // Cradle restore skips regardless of restoreStatus.
-    expect(shouldSkipPeerGateForSessionConfig(true, 'peer_x_1', 'idle')).toBe(true);
-    expect(shouldSkipPeerGateForSessionConfig(true, undefined, 'idle')).toBe(true);
-    expect(shouldSkipPeerGateForSessionConfig(false, undefined, 'restoring')).toBe(false);
-  });
-
-  it('re-arms the peer gate on idle/terminal clear after a skipped-gate session', () => {
-    // Resume skipped the gate (active=false, peer "ready" from !gate). Clear must
-    // activate + unverify before presenceBusy can advertise available.
-    const rearmed = peerGateAfterSessionClear('walletconnect', false, true);
-    expect(rearmed).toEqual({ peerGateActive: true, hasFullNodePeer: false });
-    expect(shouldReportPresenceBusy('none', rearmed.peerGateActive, rearmed.hasFullNodePeer)).toBe(true);
-    expect(shouldReportPresenceBusy('resolved', rearmed.peerGateActive, rearmed.hasFullNodePeer)).toBe(true);
-    // Already active: preserve peer-ready (verified or not).
-    expect(peerGateAfterSessionClear('walletconnect', true, true)).toEqual({
-      peerGateActive: true,
-      hasFullNodePeer: true,
-    });
-    expect(peerGateAfterSessionClear('walletconnect', true, false)).toEqual({
-      peerGateActive: true,
-      hasFullNodePeer: false,
-    });
-    // Simulator never gates.
-    expect(peerGateAfterSessionClear('simulator', false, true)).toEqual({
-      peerGateActive: false,
-      hasFullNodePeer: true,
-    });
-  });
-
-  it('rejects inbound matchmaking while the peer gate holds presence busy', () => {
-    // Idle session + no pending prompts, but peers unverified → unavailable.
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, false)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false)).toBe(false);
-    // Gate open / peer verified → available when otherwise idle.
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(true);
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, false)).toBe(true);
+  it('rejects inbound matchmaking while awaiting a full node peer', () => {
+    // Idle session + no pending prompts, but awaiting a peer → unavailable.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true)).toBe(false);
+    // Peer verified → available when otherwise idle.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false)).toBe(true);
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, false)).toBe(true);
     // Session obligation or pending matchmaking still blocks.
-    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false, true)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, false, true)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, false, true)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, false, true)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, false, true)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, false)).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, false)).toBe(false);
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
