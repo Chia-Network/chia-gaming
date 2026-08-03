@@ -29,7 +29,6 @@ export function subscribeLog(fn: Listener): () => void {
 
 /** Log a single error-context note. */
 export function diagNote(message: string): void {
-  // eslint-disable-next-line no-console
   console.warn(`[error] ${message}`);
 }
 
@@ -54,6 +53,5 @@ export function diagStack(context: string, e: unknown): void {
     }
     stack = new Error('(non-Error thrown; stack captured at catch site)').stack ?? '(no stack)';
   }
-  // eslint-disable-next-line no-console
   console.error(`[error] ${context}: ${name}: ${message}\n${stack}`);
 }

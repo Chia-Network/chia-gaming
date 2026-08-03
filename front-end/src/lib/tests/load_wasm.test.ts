@@ -124,7 +124,7 @@ afterEach(async () => {
     // it fails here with a real message instead of escaping past afterAll.
     await new Promise<void>((r) => setTimeout(r, 300));
   } catch (e) {
-    throw new Error(`[load_wasm cleanup failed]\n${String(e)}`);
+    throw new Error(`[load_wasm cleanup failed]\n${String(e)}`, { cause: e });
   }
 });
 
@@ -217,7 +217,6 @@ function assertCradleRoundTrip(stage: string, controller: SessionController): Ui
   // later WASM activity would mutate these bytes in place.
   const ownedFingerprint = Uint8Array.from(serialized);
   const state = controller.getProtocolStatePretty() ?? 'unknown';
-  const protocolType = state.split('\n', 1)[0];
   try {
     const restoredId = WholeWasmObject.restore_session(serialized, `reload-regression-${stage}`);
     assert.equal(typeof restoredId, 'number');
@@ -237,6 +236,7 @@ function assertCradleRoundTrip(stage: string, controller: SessionController): Ui
     throw new Error(
       `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
         `protocol=${state}\n${String(e)}`,
+      { cause: e },
     );
   }
   return serialized;
@@ -542,7 +542,7 @@ it(
 
       await action_with_messages(poller, cradle1, cradle2);
     } catch (e) {
-      throw new Error(`[load_wasm loads failed]\n${String(e)}`);
+      throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
   120 * 1000,
