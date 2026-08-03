@@ -41,10 +41,7 @@ export function shouldAdvertiseAvailable(
  * busy to the hub regardless of session phase — the lobby must not offer matches
  * we cannot play. With a wallet, busy tracks the broader session obligation.
  */
-export function shouldReportHubBusy(
-  sessionPhase: SessionPhase,
-  walletConnected = true,
-): boolean {
+export function shouldReportHubBusy(sessionPhase: SessionPhase, walletConnected = true): boolean {
   if (!walletConnected) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }

@@ -1670,10 +1670,16 @@ const Shell = () => {
               // otherwise the only place that marks the hub busy. Terminal
               // (Failed/Resolved*) saves stay available — unless the wallet is
               // gone, in which case we cannot play and must report busy.
-              conn.setBusy(!terminalSave || !walletConnectedRef.current, save.myAlias ?? peekAlias());
+              conn.setBusy(
+                !terminalSave || !walletConnectedRef.current,
+                save.myAlias ?? peekAlias(),
+              );
             } else if (save?.serializedGameSession || save?.pairingToken) {
               setRestoreHubReconciled(true);
-              conn.setBusy(!terminalSave || !walletConnectedRef.current, save.myAlias ?? peekAlias());
+              conn.setBusy(
+                !terminalSave || !walletConnectedRef.current,
+                save.myAlias ?? peekAlias(),
+              );
             }
             if (peerSessionRef.current && sessionController) {
               sessionController.resendUnacked();
@@ -2058,7 +2064,10 @@ const Shell = () => {
       sessionPhaseRef.current = 'resolved';
       setSessionPhase('resolved');
       setSessionError(hasError);
-      hubConnRef.current?.setBusy(shouldReportHubBusy('resolved', walletConnectedRef.current), alias);
+      hubConnRef.current?.setBusy(
+        shouldReportHubBusy('resolved', walletConnectedRef.current),
+        alias,
+      );
 
       // Stop the live peer route and cradle; do not send session_reject and do
       // not wipe the dashboard model (that would flash "No Session").
