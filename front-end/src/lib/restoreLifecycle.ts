@@ -85,12 +85,12 @@ export function shouldCancelOnPeerUnreachable(
 }
 
 /**
- * Hub/wallet disconnect should hard-cancel only a real pre-active matchmaking
- * attempt. A pending advisory/proposal alone is not enough — after a resolved
- * game, consent prompts are allowed while the finished freeze + terminal save
- * must remain for Resume.
+ * Wallet or hub disconnect should hard-cancel only a real pre-active
+ * matchmaking attempt. A pending advisory/proposal alone is not enough — after
+ * a resolved game, consent prompts are allowed while the finished freeze +
+ * terminal save must remain for Resume.
  */
-export function shouldCancelAttemptOnHubDisconnect(
+export function shouldCancelAttemptOnDisconnect(
   hasAttempt: boolean,
   sessionPhase: SessionPhase,
   channelState: string | null | undefined,

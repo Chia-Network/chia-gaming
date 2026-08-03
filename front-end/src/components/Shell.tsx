@@ -38,7 +38,6 @@ import {
   markSavedSession,
   peekAutoResumeOnce,
   clearAutoResumeOnce,
-  clearSavedSessionMarker,
   loadState,
   SessionSave,
   getDefaultFee,
@@ -81,7 +80,7 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isRestoreBlocked,
-  shouldCancelAttemptOnHubDisconnect,
+  shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
@@ -2541,7 +2540,7 @@ const Shell = () => {
         peerSessionRef.current !== null ||
         !!sessionConfigRef.current?.pairingToken ||
         !!sessionSaveRef.current?.pairingToken;
-      const shouldCancel = shouldCancelAttemptOnHubDisconnect(
+      const shouldCancel = shouldCancelAttemptOnDisconnect(
         hasAttempt,
         sessionPhaseRef.current,
         channelState,
@@ -2615,16 +2614,6 @@ const Shell = () => {
       shouldReportHubBusy(sessionPhaseRef.current, false),
       sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
     );
-    // Drop the boot marker when nothing durable remains after a cancelled
-    // pairing attempt. With hubUrl still set, boot offers Resume regardless, so
-    // this only matters once the hub is later disconnected too.
-    const hasResumableSession =
-      sessionPhaseRef.current !== 'none' ||
-      !!(sessionSaveRef.current?.serializedGameSession || sessionSaveRef.current?.pairingToken) ||
-      !!sessionConfigRef.current?.pairingToken;
-    if (!hasResumableSession) {
-      clearSavedSessionMarker();
-    }
   }, [stopBalancePolling, cancelPendingMatchmaking]);
 
   const handleDisconnectWallet = useCallback(() => {
