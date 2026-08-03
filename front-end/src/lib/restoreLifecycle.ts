@@ -47,6 +47,29 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase, walletConnected 
 }
 
 /**
+ * Full hub presence busy signal (matches Shell getPresence).
+ *
+ * During restore, `sessionPhase` is often still `none` until WASM reports, so
+ * phase alone is not enough: a non-terminal cradle (serialized session or
+ * pairing token) must keep us busy so the lobby does not offer matches
+ * mid-resume. Terminal Failed/Resolved* cradles do not.
+ */
+export function shouldReportHubBusyPresence(
+  sessionPhase: SessionPhase,
+  walletConnected: boolean,
+  opts: {
+    restoring: boolean;
+    terminalSave: boolean;
+    hasCradle: boolean;
+  },
+): boolean {
+  return (
+    shouldReportHubBusy(sessionPhase, walletConnected) ||
+    (opts.restoring && !opts.terminalSave && opts.hasCradle)
+  );
+}
+
+/**
  * Phase reports are terminal lifecycle inputs to Shell. A restored save is only
  * a persisted projection until WASM restoration and hub reconciliation finish,
  * so it must not cause terminal cleanup. Once unblocked, a resolved phase is

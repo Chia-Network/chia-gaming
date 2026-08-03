@@ -186,7 +186,7 @@ Specific rules:
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
 | Disconnect | Always | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection kept. Pending pre-Active matchmaking cancelled. App reports `busy`. Session save preserved. |
-| Reconnect (same or different) | Always | None | Stalled operations resume. `busy` recomputed from session phase. Session continues. |
+| Reconnect (same or different) | Always | None | Stalled operations resume. `busy` recomputed from session phase and any in-progress non-terminal restore cradle. Session continues. |
 
 ### Hub
 
@@ -421,7 +421,8 @@ The hub does not create a session. It can only advise and relay:
   until a wallet is reconnected. While walletless the app reports `busy`
   (`shouldReportHubBusy(phase, false)` forces busy regardless of phase) and
   cancels any pending pre-Active matchmaking attempt; wallet reconnect
-  recomputes presence from the session phase. (`Shell.tsx`)
+  recomputes presence from the session phase and any in-progress non-terminal
+  restore cradle (phase alone is often still `none` mid-resume). (`Shell.tsx`)
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via

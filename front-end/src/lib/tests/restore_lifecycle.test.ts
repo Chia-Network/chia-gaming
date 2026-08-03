@@ -6,6 +6,7 @@ import {
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
+  shouldReportHubBusyPresence,
   shouldReportSessionPhase,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
@@ -53,6 +54,56 @@ describe('restore lifecycle gates', () => {
     // Explicit walletConnected=true matches the default behavior.
     expect(shouldReportHubBusy('none', true)).toBe(false);
     expect(shouldReportHubBusy('off-chain', true)).toBe(true);
+  });
+
+  it('keeps hub presence busy for a non-terminal restore cradle even when phase is still none', () => {
+    // Wallet reconnect mid-resume: phase has not advanced yet, but the cradle
+    // means we must not advertise available.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: true,
+        terminalSave: false,
+        hasCradle: true,
+      }),
+    ).toBe(true);
+    // Terminal Failed/Resolved* cradle must not keep us busy once wallet is back.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: true,
+        terminalSave: true,
+        hasCradle: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReportHubBusyPresence('resolved', true, {
+        restoring: true,
+        terminalSave: true,
+        hasCradle: true,
+      }),
+    ).toBe(false);
+    // No cradle / not restoring: phase alone decides (with wallet).
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReportHubBusyPresence('off-chain', true, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+      }),
+    ).toBe(true);
+    // Walletless still forces busy even with no cradle.
+    expect(
+      shouldReportHubBusyPresence('none', false, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+      }),
+    ).toBe(true);
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {

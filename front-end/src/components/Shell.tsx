@@ -85,6 +85,7 @@ import {
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
+  shouldReportHubBusyPresence,
   shouldSwitchToHubOnResolved,
 } from '../lib/restoreLifecycle';
 import {
@@ -311,6 +312,20 @@ function savedChannelStatus(save: SessionSave): SessionModel['channel']['status'
 
 function isTerminalSavedChannel(save: SessionSave): boolean {
   return isTerminalChannelSnapshot(save.channelStatus);
+}
+
+/** Hub busy from phase, wallet, and any in-progress non-terminal restore cradle. */
+function hubBusyFromSessionState(
+  phase: SessionPhase,
+  walletConnected: boolean,
+  restoring: boolean,
+  save: SessionSave | null | undefined,
+): boolean {
+  return shouldReportHubBusyPresence(phase, walletConnected, {
+    restoring,
+    terminalSave: !!save && isTerminalSavedChannel(save),
+    hasCradle: !!(save?.serializedGameSession || save?.pairingToken),
+  });
 }
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
@@ -1470,10 +1485,16 @@ const Shell = () => {
         setWalletAlert(false);
         setWalletConnected(true);
         walletConnectedRef.current = true;
-        // Wallet reconnected: recompute presence so the walletless busy
-        // override is lifted once we can fund/resolve again.
+        // Wallet reconnected: recompute presence (phase + restore cradle) so the
+        // walletless busy override is lifted once we can fund/resolve again —
+        // but stay busy mid-resume while phase is still none.
         hubConnRef.current?.setBusy(
-          shouldReportHubBusy(sessionPhaseRef.current, true),
+          hubBusyFromSessionState(
+            sessionPhaseRef.current,
+            true,
+            !!sessionConfigRef.current?.restoring,
+            sessionSaveRef.current,
+          ),
           sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
         );
         const poller = activeBlockchainPoller;
@@ -1712,17 +1733,16 @@ const Shell = () => {
             lastHubActivityRef.current = Date.now();
           },
           getPresence: () => {
-            const phase = sessionPhaseRef.current;
             const save = sessionSaveRef.current;
-            const restoring = !!sessionConfigRef.current?.restoring;
-            const terminalSave = !!save && isTerminalSavedChannel(save);
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
-            const busy =
-              shouldReportHubBusy(phase, walletConnectedRef.current) ||
-              (restoring && !terminalSave && !!(save?.serializedGameSession || save?.pairingToken));
             return {
-              busy,
+              busy: hubBusyFromSessionState(
+                sessionPhaseRef.current,
+                walletConnectedRef.current,
+                !!sessionConfigRef.current?.restoring,
+                save,
+              ),
               // Prefer session aliases, then the hub-synced prefs alias. Never call
               // getAlias() here — inventing Player_* would pollute identify/set_busy.
               alias: sessionConfigRef.current?.myAlias ?? save?.myAlias ?? peekAlias(),
@@ -1830,10 +1850,16 @@ const Shell = () => {
       if (options.switchToHub) {
         setActiveTab('hub');
       }
-      // Wallet is back: drop the walletless busy override and report presence
-      // from the session phase alone.
+      // Wallet is back: drop the walletless busy override and recompute presence
+      // from phase + any in-progress non-terminal restore cradle (phase alone is
+      // often still `none` mid-resume).
       hubConnRef.current?.setBusy(
-        shouldReportHubBusy(sessionPhaseRef.current, true),
+        hubBusyFromSessionState(
+          sessionPhaseRef.current,
+          true,
+          !!sessionConfigRef.current?.restoring,
+          sessionSaveRef.current,
+        ),
         sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
       );
       startBalancePolling(bcType);
