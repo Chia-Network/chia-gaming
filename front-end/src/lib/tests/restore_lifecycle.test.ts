@@ -8,6 +8,7 @@ import {
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportPresenceBusy,
+  shouldReportRestoreObligationBusy,
   shouldReportSessionPhase,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
@@ -56,6 +57,21 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportPresenceBusy('resolved', false)).toBe(false);
     expect(shouldReportPresenceBusy('off-chain', false)).toBe(true);
     expect(shouldReportPresenceBusy('on-chain', false)).toBe(true);
+  });
+
+  it('keeps presence busy for non-terminal restore while phase is still none', () => {
+    // Mid-resume: phase alone would clear busy once a full-node peer is verified.
+    expect(shouldReportRestoreObligationBusy(true, false, true, false)).toBe(true);
+    expect(shouldReportRestoreObligationBusy(true, false, false, true)).toBe(true);
+    // Terminal save / not restoring / no cradle → no restore obligation.
+    expect(shouldReportRestoreObligationBusy(true, true, true, false)).toBe(false);
+    expect(shouldReportRestoreObligationBusy(false, false, true, false)).toBe(false);
+    expect(shouldReportRestoreObligationBusy(true, false, false, false)).toBe(false);
+    // Combined with peer-ready (not awaiting): restore must still hold busy.
+    expect(
+      shouldReportPresenceBusy('none', false) ||
+        shouldReportRestoreObligationBusy(true, false, true, false),
+    ).toBe(true);
   });
 
   it('awaits a full node peer only on WalletConnect without a verified peer', () => {

@@ -80,6 +80,22 @@ export function shouldReportPresenceBusy(
 }
 
 /**
+ * Extra hub-busy obligation while a non-terminal session restore is in progress.
+ * Resume keeps `sessionPhase` at `none` until the live session starts, so phase
+ * alone cannot hold busy — callers that push `setBusy` (getPresence, identify,
+ * full-node-peer ready) must OR this in. A leftover cradle after resolve must
+ * not keep us busy (`restoring` gates that).
+ */
+export function shouldReportRestoreObligationBusy(
+  restoring: boolean,
+  terminalSave: boolean,
+  hasSerializedGameSession: boolean,
+  hasPairingToken: boolean,
+): boolean {
+  return restoring && !terminalSave && (hasSerializedGameSession || hasPairingToken);
+}
+
+/**
  * Whether inbound matchmaking may open a consent prompt.
  * Must stay aligned with `shouldReportPresenceBusy` for session + peer wait,
  * and also exclude temporary local matchmaking state that does not always

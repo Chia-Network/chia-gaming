@@ -86,6 +86,7 @@ import {
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportPresenceBusy,
+  shouldReportRestoreObligationBusy,
   shouldSwitchToHubOnResolved,
 } from '../lib/restoreLifecycle';
 import {
@@ -1654,6 +1655,8 @@ const Shell = () => {
             if (save) save.myHubPlayerId = playerId;
             const terminalSave = !!save && isTerminalSavedChannel(save);
             // Match getPresence: session/restore obligation OR the full-node-peer wait.
+            // Broader than getPresence: also covers pairingToken-only / reserved peer
+            // before `restoring` is set on sessionConfig.
             const restoreBusy =
               presenceBusy(sessionPhaseRef.current) ||
               (!terminalSave &&
@@ -1707,13 +1710,17 @@ const Shell = () => {
           getPresence: () => {
             const phase = sessionPhaseRef.current;
             const save = sessionSaveRef.current;
-            const restoring = !!sessionConfigRef.current?.restoring;
             const terminalSave = !!save && isTerminalSavedChannel(save);
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
             const busy =
               presenceBusy(phase) ||
-              (restoring && !terminalSave && !!(save?.serializedGameSession || save?.pairingToken));
+              shouldReportRestoreObligationBusy(
+                !!sessionConfigRef.current?.restoring,
+                terminalSave,
+                !!save?.serializedGameSession,
+                !!save?.pairingToken,
+              );
             return {
               busy,
               // Prefer session aliases, then the hub-synced prefs alias. Never call
@@ -2148,10 +2155,22 @@ const Shell = () => {
       sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     // isAvailableForNewSessionPrompt / getPresence read hasFullNodePeerRef
     // synchronously (e.g. inbound session_proposal, or getPresence on a hub
-    // reconnect), so update the ref and push the busy bit together.
+    // reconnect), so update the ref and push the busy bit together. Match
+    // getPresence: peer-ready must not clear restore obligation while phase is
+    // still `none` during resume.
     const applyPeerReady = (ready: boolean) => {
       hasFullNodePeerRef.current = ready;
-      hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current), alias());
+      const save = sessionSaveRef.current;
+      const terminalSave = !!save && isTerminalSavedChannel(save);
+      const busy =
+        presenceBusy(sessionPhaseRef.current) ||
+        shouldReportRestoreObligationBusy(
+          !!sessionConfigRef.current?.restoring,
+          terminalSave,
+          !!save?.serializedGameSession,
+          !!save?.pairingToken,
+        );
+      hubConnRef.current?.setBusy(busy, alias());
     };
     if (!walletConnected) {
       applyPeerReady(false);
