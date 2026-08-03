@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Chia Gaming</title>
   </head>
   <body id="body">
@@ -13,7 +13,9 @@
     <script>
       (function () {
         fetch('/build-meta.json')
-          .then(function (r) { return r.json(); })
+          .then(function (r) {
+            return r.json();
+          })
           .then(function (meta) {
             var base = document.createElement('base');
             base.href = meta.basePath;
@@ -38,7 +40,7 @@
               'import * as cg from "./chia_gaming_wasm.js";',
               'const deliver = () => window.loadWasm(cg.default, cg);',
               'if (window.loadWasm) deliver();',
-              'else window.addEventListener("chia-gaming-wasm-loader-ready", deliver, { once: true });'
+              'else window.addEventListener("chia-gaming-wasm-loader-ready", deliver, { once: true });',
             ].join('\n');
             document.body.appendChild(wasm);
 

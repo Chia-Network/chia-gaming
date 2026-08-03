@@ -89,7 +89,9 @@ describe('WalletConnect RPC adapter', () => {
       error: { message: 'boom', code: 123 },
     });
 
-    await expect(rpc.getHeightInfo({})).rejects.toThrow('WalletConnect RPC chia_getHeightInfo failed');
+    await expect(rpc.getHeightInfo({})).rejects.toThrow(
+      'WalletConnect RPC chia_getHeightInfo failed',
+    );
     consoleError.mockRestore();
   });
 });

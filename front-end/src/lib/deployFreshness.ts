@@ -22,8 +22,9 @@ export function basePathKey(pathOrUrl: string): string {
  * Prefers the IDL `href` (absolute) so resolution matches document.baseURI.
  */
 export function pageBasePath(
-  doc: Pick<Document, 'querySelector' | 'baseURI'> | null =
-    typeof document !== 'undefined' ? document : null,
+  doc: Pick<Document, 'querySelector' | 'baseURI'> | null = typeof document !== 'undefined'
+    ? document
+    : null,
 ): string | null {
   if (!doc) return null;
   const el = doc.querySelector('base') as HTMLBaseElement | null;
@@ -73,7 +74,7 @@ export async function isStaleDeploy(
   try {
     const resp = await fetchImpl('/build-meta.json', { cache: 'no-store' });
     if (!resp.ok) return false;
-    const meta = await resp.json() as { basePath?: unknown };
+    const meta = (await resp.json()) as { basePath?: unknown };
     if (typeof meta.basePath !== 'string') return false;
     return basePathKey(meta.basePath) !== basePathKey(currentBase);
   } catch {
@@ -99,8 +100,12 @@ export async function recoverFromMissingDeployAsset(
   hooks: DeployRecoveryHooks = {},
 ): Promise<never> {
   const checkStale = hooks.isStale ?? (() => isStaleDeploy());
-  const reload = hooks.reload ?? (() => { window.location.reload(); });
-  if (status === 404 && await checkStale()) {
+  const reload =
+    hooks.reload ??
+    (() => {
+      window.location.reload();
+    });
+  if (status === 404 && (await checkStale())) {
     // Ensure Resume survives the reload even if a concurrent clearSession()
     // had dropped the marker while starting a fresh session. Auto-resume so
     // the user is not prompted for a deploy cutover they did not initiate.

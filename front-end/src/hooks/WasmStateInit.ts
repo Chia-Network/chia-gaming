@@ -1,15 +1,10 @@
-import {
-  WasmConnection,
-  WasmInitFn,
-  ChiaGame,
-  RngId,
-} from '../types/ChiaGaming';
+import { WasmConnection, WasmInitFn, ChiaGame, RngId } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 
-var chia_gaming_init: WasmInitFn | undefined = undefined;
-var cg: WasmConnection | undefined = undefined;
-var logInitialized = false;
+let chia_gaming_init: WasmInitFn | undefined = undefined;
+let cg: WasmConnection | undefined = undefined;
+let logInitialized = false;
 
 /** Manual mirror of native startup loads (game_collection + channel/referee). Not auto-traced. */
 export const PRESET_FILES = [
@@ -27,12 +22,7 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
   const url = resolveDeployAssetUrl(fetchUrl);
   const resp = await fetch(url);
   if (!resp.ok) {
-    await recoverFromMissingDeployAsset(
-      'fetchPreset',
-      url,
-      resp.status,
-      resp.statusText,
-    );
+    await recoverFromMissingDeployAsset('fetchPreset', url, resp.status, resp.statusText);
   }
   return new Uint8Array(await resp.arrayBuffer());
 }
@@ -66,10 +56,7 @@ if (typeof window !== 'undefined') {
   registerWasmLoader(window);
 }
 
-export function storeInitArgs(
-  chia_gaming_init_ready: WasmInitFn,
-  cg_ready: WasmConnection,
-) {
+export function storeInitArgs(chia_gaming_init_ready: WasmInitFn, cg_ready: WasmConnection) {
   chia_gaming_init = chia_gaming_init_ready;
   cg = cg_ready;
   readyToInit.next(true);
@@ -89,10 +76,7 @@ async function runWasmLoad(): Promise<WasmConnection> {
     })),
   );
 
-  const [, presets] = await Promise.all([
-    initFn({ module_or_path: WASM_URL }),
-    presetFetches,
-  ]);
+  const [, presets] = await Promise.all([initFn({ module_or_path: WASM_URL }), presetFetches]);
 
   if (!logInitialized) {
     logInitialized = true;
@@ -152,9 +136,7 @@ export class WasmStateInit {
   wasmConnection: WasmConnection | undefined;
   fetchPreset: (key: string) => Promise<Uint8Array>;
 
-  constructor(
-    fetchPreset: (key: string) => Promise<Uint8Array>,
-  ) {
+  constructor(fetchPreset: (key: string) => Promise<Uint8Array>) {
     this.fetchPreset = fetchPreset;
     presetFetcher = fetchPreset;
   }
@@ -167,15 +149,11 @@ export class WasmStateInit {
   }
 
   createRng(seed: string): RngId | undefined {
-    let rng_handle = this.wasmConnection?.create_rng(seed);
+    const rng_handle = this.wasmConnection?.create_rng(seed);
     if (rng_handle) {
       return new RngId(rng_handle);
     }
     return undefined;
-  }
-
-  getChiaIdentity(rngSeed: string) {
-    // return this.wasmConnection?.chia_identity(rngSeed);
   }
 
   createGame(
@@ -187,7 +165,7 @@ export class WasmStateInit {
     rewardPuzzleHash: string,
     channelTimeout = 15,
     unrollTimeout = 15,
-  ): { game: ChiaGame, puzzleHash: string } {
+  ): { game: ChiaGame; puzzleHash: string } {
     const result = wasm.create_game_session({
       rng_id: rngId,
       have_potato: have_potato,
@@ -204,14 +182,11 @@ export class WasmStateInit {
     };
   }
 
-  deserializeGame(
-    wasm: WasmConnection,
-    serializedGame: Uint8Array,
-  ): ChiaGame {
+  deserializeGame(wasm: WasmConnection, serializedGame: Uint8Array): ChiaGame {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);
-    const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
-    let chiaGameId = wasm.restore_session(serializedGame, seedHex);
+    const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
+    const chiaGameId = wasm.restore_session(serializedGame, seedHex);
     return new ChiaGame(wasm, chiaGameId);
   }
 }

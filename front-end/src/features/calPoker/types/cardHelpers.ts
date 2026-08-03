@@ -27,10 +27,7 @@ function rget<T>(array: T[], start: number, end: number, def: T): T[] {
   return result;
 }
 
-export function handValueToDescription(
-  handValue: bigint[],
-  myCards: bigint[],
-): OutcomeHandType {
+export function handValueToDescription(handValue: bigint[], _myCards: bigint[]): OutcomeHandType {
   const handType = rget(handValue, 0, 3, 0n);
 
   // Hand encoding from onehandcalc.clinc:

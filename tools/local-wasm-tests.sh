@@ -25,7 +25,6 @@ fi
 
 FE_DIR="$REPO_ROOT/front-end"
 WASM_DIR="$REPO_ROOT/wasm"
-HUB_FRONTEND_DIR="$REPO_ROOT/hub/hub-frontend"
 
 SKIP_BUILD=0
 SKIP_NATIVE=0
@@ -68,13 +67,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building WASM (nodejs target for tests, profile $WASM_PROFILE) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" "$WASM_PROFILE" --target=nodejs)
 
-    echo "=== Installing hub workspace deps ==="
-    (cd "$REPO_ROOT/hub" && pnpm install --frozen-lockfile)
+    echo "=== Installing JavaScript workspace deps ==="
+    pnpm install --frozen-lockfile
     echo "=== Building hub-frontend ==="
-    (cd "$HUB_FRONTEND_DIR" && pnpm run build)
-
-    echo "=== Installing gaming-fe deps ==="
-    (cd "$FE_DIR" && pnpm install --frozen-lockfile)
+    pnpm --filter chia-gaming-hub-frontend run build
 
     if [ "$SKIP_NATIVE" -eq 0 ]; then
         echo "=== Building simulator ==="
@@ -83,7 +79,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 echo "=== Running hub-service tests ==="
-(cd "$REPO_ROOT/hub/hub-service" && pnpm run test)
+pnpm --filter chia-gaming-hub-service run test
 
 # Use a per-run port so a browser connected to the development simulator cannot
 # reconnect to the test simulator and submit transactions from unrelated state.
@@ -116,11 +112,10 @@ if ! curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
 fi
 
 echo "=== Running tests ==="
-cd "$FE_DIR"
 if [[ "$(node --help)" == *"--no-experimental-webstorage"* ]]; then
     export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage"
 fi
 # We just guaranteed the sim is up; a "no sim" skip here would hide a broken
 # harness, so make it a hard failure to match CI.
 export LOAD_WASM_REQUIRE_SIM=1
-pnpm run test
+pnpm --filter chia-gaming-fe run test

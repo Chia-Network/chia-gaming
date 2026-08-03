@@ -16,13 +16,15 @@ function timestamp(): string {
 export function log(line: string) {
   const stamped = `[${timestamp()}] ${line}`;
   buffer = appendRecent(buffer, stamped, DIAGNOSTIC_LOG_LIMIT);
-  listeners.forEach(fn => fn(stamped));
+  listeners.forEach((fn) => fn(stamped));
 }
 
 export function subscribeLog(fn: Listener): () => void {
   buffer.forEach(fn);
   listeners.add(fn);
-  return () => { listeners.delete(fn); };
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 /** Log a single error-context note. */

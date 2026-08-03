@@ -34,7 +34,7 @@ describe('delayed PeerSession message-handler binding', () => {
 
     // Resume path: GameSession registers handlers while peerSession is still null.
     let peerSession: PeerSession | null = null;
-    let pendingHandler: MessageHandler | null = handler;
+    const pendingHandler: MessageHandler | null = handler;
     bindPeerMessageHandler(peerSession, pendingHandler);
     expect(delivered).toEqual([]);
 

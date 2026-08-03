@@ -178,17 +178,22 @@ export class AsyncPollingScheduler {
           this.target.onError?.(e);
         } finally {
           this.inFlight = false;
-          if (!this.interested) return;
-          if (generation !== this.generation) {
-            this.enqueueIfIdle();
-            return;
+          if (this.interested) {
+            if (generation !== this.generation) {
+              this.enqueueIfIdle();
+            } else {
+              if (this.target.getNextIntervalMs) {
+                this.timer.intervalMs = this.target.getNextIntervalMs();
+              }
+              scheduleGapTimer(
+                this.timer,
+                () => {
+                  if (generation === this.generation) this.enqueueIfIdle();
+                },
+                this.interested,
+              );
+            }
           }
-          if (this.target.getNextIntervalMs) {
-            this.timer.intervalMs = this.target.getNextIntervalMs();
-          }
-          scheduleGapTimer(this.timer, () => {
-            if (generation === this.generation) this.enqueueIfIdle();
-          }, this.interested);
         }
       },
     });

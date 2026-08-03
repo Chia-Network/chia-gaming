@@ -40,12 +40,20 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup pnpm
         run: |
           corepack enable
           corepack prepare pnpm@10.33.0 --activate
+
+      - name: Install repository tooling
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting and lint
+        run: |
+          pnpm run format:check
+          pnpm run lint
 
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
@@ -71,20 +79,13 @@ jobs:
           wasm-pack build --out-dir=../front-end/node-pkg --release --target=nodejs
 
       - name: Build gaming-fe
-        run: |
-          cd front-end
-          pnpm install --frozen-lockfile && pnpm run build
+        run: pnpm --filter chia-gaming-fe run build
 
       - name: Build hub-frontend
-        run: |
-          cd hub
-          pnpm install --frozen-lockfile
-          pnpm --filter chia-gaming-hub-frontend run build
+        run: pnpm --filter chia-gaming-hub-frontend run build
 
-      - name: Build hub-service
-        run: |
-          cd hub
-          pnpm --filter chia-gaming-hub-service run build
+      - name: Build and test hub-service
+        run: pnpm --filter chia-gaming-hub-service run test
 
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
@@ -130,7 +131,7 @@ jobs:
           fi
 
           # Do not let a non-zero test exit abort the step before we dump logs.
-          (cd front-end && pnpm run test)
+          pnpm --filter chia-gaming-fe run test
           rc=$?
 
           kill "$SIM_PID" 2>/dev/null || true

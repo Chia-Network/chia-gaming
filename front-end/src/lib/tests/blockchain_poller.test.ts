@@ -12,8 +12,7 @@ function makeRpc(heights: bigint[]): InternalBlockchainInterface {
     } as unknown as InternalBlockchainInterface,
     {
       get: (target, prop) =>
-        (target as Record<string, unknown>)[prop as string] ??
-        (() => Promise.resolve(undefined)),
+        (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
     },
   );
 }
@@ -90,8 +89,7 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const reportedPeaks: bigint[] = [];
@@ -154,8 +152,7 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const cradle: PollingGameSession = {
@@ -202,8 +199,7 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const poller = new BlockchainPoller(rpc, 1000);
@@ -260,8 +256,7 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const poller = new BlockchainPoller(rpc, 1000);
@@ -305,8 +300,7 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const poller = new BlockchainPoller(rpc, 1000);
@@ -326,14 +320,11 @@ describe('BlockchainPoller', () => {
     const balances: bigint[] = [];
     const rpc = new Proxy(
       {
-        getBalance: jest.fn()
-          .mockResolvedValueOnce(10n)
-          .mockResolvedValueOnce(20n),
+        getBalance: jest.fn().mockResolvedValueOnce(10n).mockResolvedValueOnce(20n),
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const poller = new BlockchainPoller(rpc, 1000);
@@ -362,7 +353,9 @@ describe('BlockchainPoller', () => {
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
-        return () => { onConnectionChange = undefined; };
+        return () => {
+          onConnectionChange = undefined;
+        };
       },
     } as unknown as InternalBlockchainInterface;
     const cradle: PollingGameSession = {
@@ -404,7 +397,8 @@ describe('BlockchainPoller', () => {
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstHeight = deferred<bigint>();
-    const getHeightInfo = jest.fn()
+    const getHeightInfo = jest
+      .fn()
       .mockReturnValueOnce(firstHeight.promise)
       .mockResolvedValueOnce(101n);
     const rpc = {
@@ -412,7 +406,9 @@ describe('BlockchainPoller', () => {
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
-        return () => { onConnectionChange = undefined; };
+        return () => {
+          onConnectionChange = undefined;
+        };
       },
     } as unknown as InternalBlockchainInterface;
     const poller = new BlockchainPoller(rpc, 1000);
@@ -437,7 +433,8 @@ describe('BlockchainPoller', () => {
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstRegistration = deferred<void>();
-    const registerCoins = jest.fn()
+    const registerCoins = jest
+      .fn()
       .mockReturnValueOnce(firstRegistration.promise)
       .mockResolvedValueOnce(undefined);
     const rpc = {
@@ -447,7 +444,9 @@ describe('BlockchainPoller', () => {
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
-        return () => { onConnectionChange = undefined; };
+        return () => {
+          onConnectionChange = undefined;
+        };
       },
     } as unknown as InternalBlockchainInterface;
     const cradle: PollingGameSession = {
@@ -483,7 +482,9 @@ describe('BlockchainPoller', () => {
       isConnected: () => true,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
-        return () => { onConnectionChange = undefined; };
+        return () => {
+          onConnectionChange = undefined;
+        };
       },
     } as unknown as InternalBlockchainInterface;
     const cradle: PollingGameSession = {
@@ -521,7 +522,9 @@ describe('BlockchainPoller', () => {
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
-        return () => { onConnectionChange = undefined; };
+        return () => {
+          onConnectionChange = undefined;
+        };
       },
     } as unknown as InternalBlockchainInterface;
     const poller = new BlockchainPoller(rpc, 1000);
@@ -532,9 +535,12 @@ describe('BlockchainPoller', () => {
 
     connected = false;
     onConnectionChange?.(false);
-    await expect(walletRequest).rejects.toThrow('RPC request discarded during disconnect: selectCoins');
-    await expect(poller.rpc.selectCoins('wallet', 1n))
-      .rejects.toThrow('RPC request discarded during disconnect: selectCoins');
+    await expect(walletRequest).rejects.toThrow(
+      'RPC request discarded during disconnect: selectCoins',
+    );
+    await expect(poller.rpc.selectCoins('wallet', 1n)).rejects.toThrow(
+      'RPC request discarded during disconnect: selectCoins',
+    );
     expect(selectCoins).not.toHaveBeenCalled();
 
     height.resolve(100n);
@@ -557,8 +563,7 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
     const cradle: PollingGameSession = {
@@ -596,11 +601,13 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
-    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const reports: Array<{
+      peak: bigint;
+      records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }>;
+    }> = [];
     const heightOnlyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-buried' }],
@@ -651,11 +658,13 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
-    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const reports: Array<{
+      peak: bigint;
+      records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }>;
+    }> = [];
     const heightOnlyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [
@@ -709,11 +718,13 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
-    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const reports: Array<{
+      peak: bigint;
+      records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }>;
+    }> = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: nameA, coin_string: 'coin-a' }],
       reportCoinStates: (peak, records) => {
@@ -751,11 +762,13 @@ describe('BlockchainPoller', () => {
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
-          (target as Record<string, unknown>)[prop as string] ??
-          (() => Promise.resolve(undefined)),
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
       },
     );
-    const reports: Array<{ peak: bigint; records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }> }> = [];
+    const reports: Array<{
+      peak: bigint;
+      records: Array<{ coin: string; created_height: bigint | null; spent_height: bigint | null }>;
+    }> = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-spent' }],
       reportCoinStates: (peak, records) => {
@@ -769,9 +782,11 @@ describe('BlockchainPoller', () => {
 
     await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
 
-    expect(reports).toEqual([{
-      peak: 100n,
-      records: [{ coin: 'coin-spent', created_height: 10n, spent_height: 42n }],
-    }]);
+    expect(reports).toEqual([
+      {
+        peak: 100n,
+        records: [{ coin: 'coin-spent', created_height: 10n, spent_height: 42n }],
+      },
+    ]);
   });
 });

@@ -42,9 +42,9 @@ configured, with at least 1000 mojos in your wallet.
   ```bash
   cargo install wasm-pack --version 0.15.0
   ```
-- **Node 20+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
+- **Node 22+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash
-  brew install node@20        # or download from https://nodejs.org
+  brew install node@22        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
   ```
 - **macOS only** — Homebrew LLVM for WASM builds. If present, build scripts
@@ -156,7 +156,8 @@ applied.
 ### 3. Player app (frontend JS/CSS)
 
 ```bash
-(cd front-end && pnpm install --frozen-lockfile && pnpm run build)
+pnpm install --frozen-lockfile
+pnpm --filter chia-gaming-fe run build
 ```
 
 Outputs `dist/js/index-rollup.js` and `dist/css/index.css`.
@@ -164,8 +165,7 @@ Outputs `dist/js/index-rollup.js` and `dist/css/index.css`.
 ### 4. Hub frontend
 
 ```bash
-(cd hub && pnpm install --frozen-lockfile)
-(cd hub && pnpm --filter chia-gaming-hub-frontend run build)
+pnpm --filter chia-gaming-hub-frontend run build
 ```
 
 Outputs `hub/hub-frontend/public/index.js` and
@@ -174,7 +174,7 @@ Outputs `hub/hub-frontend/public/index.js` and
 ### 5. Hub service
 
 ```bash
-(cd hub && pnpm --filter chia-gaming-hub-service run build)
+pnpm --filter chia-gaming-hub-service run build
 ```
 
 Outputs `hub/hub-service/dist/index-rollup.cjs`.
@@ -264,12 +264,20 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
   --dir hub/hub-frontend/serve
 ```
 
-| Flag / env  | Required | Purpose                                                                                        |
-| ----------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `--self`    | yes      | Public HTTP origin of this hub (used for WebSocket URL derivation)                         |
-| `--dir`     | yes      | Root directory to serve static hub files from                                                |
-| `--verbose` | no       | Verbose logging                                                                                |
-| `PORT`      | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                   |
+| Flag / env                   | Required | Purpose                                                                                                |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `--self`                     | yes      | Public HTTP origin of this hub (used for WebSocket URL derivation)                                     |
+| `--dir`                      | yes      | Root directory to serve static hub files from                                                          |
+| `--verbose`                  | no       | Verbose logging                                                                                        |
+| `PORT`                       | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                              |
+| `HUB_MAX_TOTAL_CONNECTIONS`  | no       | Maximum combined hub and game WebSocket connections (default `2000`)                                   |
+| `HUB_MAX_CONNECTIONS_PER_IP` | no       | Maximum combined WebSocket connections per client IP (default `8`)                                     |
+| `HUB_RATE_WINDOW_MS`         | no       | Window used by both per-connection message and byte budgets (default `10000`)                           |
+| `HUB_MAX_MESSAGES_PER_WINDOW` | no      | Maximum control-channel messages per connection per window (default `100`)                              |
+| `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
+| `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
+| `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
+| `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
 
 #### Simulator
 
@@ -325,6 +333,18 @@ load — not when a session is accepted — via relative paths under
 `basePath`.
 - `**--self` must match the public URL.** The hub uses it to derive
 WebSocket URLs. Mismatches cause connection failures.
+- **Connection limits.** Tune `HUB_MAX_TOTAL_CONNECTIONS` and
+`HUB_MAX_CONNECTIONS_PER_IP` for the deployment. When the hub is reachable only
+through a trusted reverse proxy, set `HUB_TRUST_PROXY=1` and configure the proxy
+to replace `X-Forwarded-For` with the connecting client's address. Never enable
+this setting while clients can connect directly, because they could spoof the
+header and bypass the per-IP limit.
+- **WebSocket rate limits.** Each connection has message and cumulative byte
+budgets over `HUB_RATE_WINDOW_MS`. The `HUB_MAX_*_PER_WINDOW` variables apply to
+the control channel, while `GAME_MAX_*_PER_WINDOW` apply to the game relay.
+Exceeding either budget closes the connection with WebSocket code `4008` and
+reason `rate_limited`. Tune these limits together so the byte budget permits the
+largest valid frame expected by the deployment.
 - **Caching rules.** Only root URLs (`index.html`, `build-meta.json`,
 favicon, etc.) stay stable across rebuilds; each deploy mints a new
 `/app/<nonce>/` tree. Configure your production web server (nginx,

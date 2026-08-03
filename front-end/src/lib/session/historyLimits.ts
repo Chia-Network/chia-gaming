@@ -7,7 +7,5 @@ export function recentEntries<T>(entries: readonly T[], limit: number): T[] {
 }
 
 export function appendRecent<T>(entries: readonly T[], entry: T, limit: number): T[] {
-  return entries.length < limit
-    ? [...entries, entry]
-    : [...entries.slice(-(limit - 1)), entry];
+  return entries.length < limit ? [...entries, entry] : [...entries.slice(-(limit - 1)), entry];
 }
