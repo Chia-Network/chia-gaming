@@ -32,7 +32,11 @@ EOF
 chmod +x "$FAKE_BIN/cargo"
 
 run_build() {
-    (cd "$REPO" && PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-chialisp.sh)
+    (cd "$REPO" && GITHUB_ACTIONS= PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-chialisp.sh)
+}
+
+run_github_actions_build() {
+    (cd "$REPO" && GITHUB_ACTIONS=true PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-chialisp.sh)
 }
 
 compile_count() {
@@ -59,20 +63,23 @@ assert_count 1
 run_build
 assert_count 1
 
-printf '%s\n' '(mod (X) X)' > "$REPO/clsp/example.clsp"
-run_build
+run_github_actions_build
 assert_count 2
 
-rm "$REPO/clsp/example.hex"
+printf '%s\n' '(mod (X) X)' > "$REPO/clsp/example.clsp"
 run_build
 assert_count 3
 
-printf '%s\n' corrupted > "$REPO/clsp/example.hex"
+rm "$REPO/clsp/example.hex"
 run_build
 assert_count 4
 
-printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
+printf '%s\n' corrupted > "$REPO/clsp/example.hex"
 run_build
 assert_count 5
+
+printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
+run_build
+assert_count 6
 
 echo "build-chialisp regression tests passed"

@@ -31,7 +31,9 @@ write_state() {
 echo "=== Building chialisp (via cargo build.rs) ==="
 
 write_state "$CURRENT_STATE"
-if [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    echo "GitHub Actions detected; forcing Chialisp build"
+elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
     echo "Chialisp is up to date (skipping build)"
     exit 0
 fi
