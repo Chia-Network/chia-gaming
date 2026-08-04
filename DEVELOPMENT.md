@@ -71,6 +71,16 @@ fail with clang errors.
 ./tools/local-wasm-tests.sh
 ```
 
+## Git Hooks
+
+To install the repo's versioned pre-commit hook in your local checkout:
+
+```bash
+tools/install-git-hooks.sh
+```
+
+The hook builds Chialisp and runs `./ct.sh` before allowing a commit.
+
 
 # Running from tarball or zipfile
 
