@@ -114,6 +114,10 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent', true)).toBe(false);
+    // Phase 'none' with a known Active/post-active channel is a blocked restore,
+    // not a pre-active matchmaking attempt; delivery failures should degrade.
+    expect(shouldCancelOnPeerUnreachable('none', 'Active')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('none', 'ShuttingDown')).toBe(false);
     // Finished sessions keep freeze/terminal save even if channelState is null
     // (null is otherwise treated as pre-active).
     expect(shouldCancelOnPeerUnreachable('resolved', 'ResolvedClean')).toBe(false);
@@ -132,6 +136,10 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelAttemptOnDisconnect(true, 'none', null)).toBe(true);
     expect(shouldCancelAttemptOnDisconnect(true, 'off-chain', 'Handshaking')).toBe(true);
     expect(shouldCancelAttemptOnDisconnect(true, 'off-chain', 'Active')).toBe(false);
+    // Mid-resume: phase is still 'none' while WASM restore is blocked, but the
+    // persisted channel is already Active. Wallet/hub disconnect must not cancel.
+    expect(shouldCancelAttemptOnDisconnect(true, 'none', 'Active')).toBe(false);
+    expect(shouldCancelAttemptOnDisconnect(true, 'none', 'ShuttingDown')).toBe(false);
   });
 
   it('awaits a pending clean-shutdown transaction instead of escalating on-chain', () => {

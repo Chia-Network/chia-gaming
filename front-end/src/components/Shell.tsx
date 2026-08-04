@@ -2564,12 +2564,17 @@ const Shell = () => {
   // Shared by wallet and hub disconnect. Active off-chain sessions stay mounted
   // (only pre-Active attempts cancel); resolved finished sessions keep their
   // dashboard freeze + terminal save — a pending invite after a game is
-  // consent-only and must not trigger cancelAttemptedSession. When the hub is
-  // being torn down (preserveHub=false), hubUrl is dropped before clearSession
-  // so clearSession's async tail does not re-mark Resume from a stale hub pref.
+  // consent-only and must not trigger cancelAttemptedSession. While restore is
+  // blocked, phase is still 'none' and the live dashboard model is not yet
+  // populated, so fall back to the persisted channel status when deciding whether
+  // the attempt is pre-Active. When the hub is being torn down (preserveHub=false),
+  // hubUrl is dropped before clearSession so clearSession's async tail does not
+  // re-mark Resume from a stale hub pref.
   const cancelPendingMatchmaking = useCallback(
     ({ preserveHub }: { preserveHub: boolean }) => {
-      const channelState = dashboardSessionModelRef.current?.channel.status.state;
+      const channelState =
+        dashboardSessionModelRef.current?.channel.status.state ??
+        (sessionSaveRef.current ? savedChannelStatus(sessionSaveRef.current) : null);
       const hasPendingPrompt =
         pendingAdvisoryRef.current !== null || pendingProposalRef.current !== null;
       const hasAttempt =

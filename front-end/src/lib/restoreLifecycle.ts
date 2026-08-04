@@ -90,8 +90,10 @@ export function shouldReportSessionPhase(
  * may be mid-reload. See CONNECTIVITY.md peer degradation.
  *
  * Resolved finished sessions never cancel: invites are allowed afterward while
- * the dashboard freeze and terminal save must stay for Resume. A null channel
- * state is otherwise treated as pre-active, so phase must win here.
+ * the dashboard freeze and terminal save must stay for Resume. A null/undefined
+ * channel state is treated as pre-active; a known Active/post-active channel wins
+ * over the 'none' phase so that a blocked restore is not mistaken for a pre-active
+ * attempt.
  */
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
@@ -100,8 +102,7 @@ export function shouldCancelOnPeerUnreachable(
 ): boolean {
   if (abandoning) return false;
   if (sessionPhase === 'resolved') return false;
-  const isPreActive = isPreActiveChannelStatus(channelState);
-  return sessionPhase === 'none' || isPreActive;
+  return isPreActiveChannelStatus(channelState);
 }
 
 /**
