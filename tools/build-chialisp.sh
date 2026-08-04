@@ -44,7 +44,9 @@ find clsp -name '*.hex' -delete
 # cache. Ordinary cargo commands leave it unset and never compile Chialisp.
 CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
 
-if ! find clsp -type f -name '*.hex' -print -quit | grep -q .; then
+# Prefer head -n 1 over find's early-exit primary: that primary is GNU-only
+# and is rejected by macOS BSD find.
+if ! find clsp -type f -name '*.hex' -print | head -n 1 | grep -q .; then
     echo "Error: Chialisp build produced no .hex files" >&2
     exit 1
 fi
