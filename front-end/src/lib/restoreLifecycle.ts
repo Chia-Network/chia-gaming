@@ -84,11 +84,8 @@ export function shouldReportHubBusyPresence(
   },
 ): boolean {
   return (
-    shouldReportHubBusy(
-      sessionPhase,
-      walletConnected,
-      opts.awaitingFullNodePeer ?? false,
-    ) || (opts.restoring && !opts.terminalSave && opts.hasCradle)
+    shouldReportHubBusy(sessionPhase, walletConnected, opts.awaitingFullNodePeer ?? false) ||
+    (opts.restoring && !opts.terminalSave && opts.hasCradle)
   );
 }
 

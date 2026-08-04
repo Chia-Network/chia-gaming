@@ -1766,10 +1766,7 @@ const Shell = () => {
                 walletConnectedRef.current,
                 !!sessionConfigRef.current?.restoring,
                 save,
-                isAwaitingFullNodePeer(
-                  blockchainTypeRef.current,
-                  hasFullNodePeerRef.current,
-                ),
+                isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
               ),
               // Prefer session aliases, then the hub-synced prefs alias. Never call
               // getAlias() here — inventing Player_* would pollute identify/set_busy.

@@ -147,20 +147,20 @@ describe('restore lifecycle gates', () => {
 
   it('rejects inbound matchmaking while awaiting a full node peer or walletless', () => {
     // Idle session + no pending prompts, but awaiting a peer → unavailable.
-    expect(
-      isAvailableForNewSessionPrompt('none', false, false, false, false, true, true),
-    ).toBe(false);
-    expect(
-      isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, true),
-    ).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, true)).toBe(
+      false,
+    );
     // Walletless → unavailable even with peer ready.
-    expect(
-      isAvailableForNewSessionPrompt('none', false, false, false, false, false, false),
-    ).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, false)).toBe(
+      false,
+    );
     // Peer verified + wallet → available when otherwise idle.
-    expect(
-      isAvailableForNewSessionPrompt('none', false, false, false, false, true, false),
-    ).toBe(true);
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, false)).toBe(
+      true,
+    );
     expect(
       isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false),
     ).toBe(true);
@@ -168,18 +168,18 @@ describe('restore lifecycle gates', () => {
     expect(
       isAvailableForNewSessionPrompt('off-chain', false, false, false, false, true, false),
     ).toBe(false);
-    expect(
-      isAvailableForNewSessionPrompt('none', true, false, false, false, true, false),
-    ).toBe(false);
-    expect(
-      isAvailableForNewSessionPrompt('none', false, true, false, false, true, false),
-    ).toBe(false);
-    expect(
-      isAvailableForNewSessionPrompt('none', false, false, true, false, true, false),
-    ).toBe(false);
-    expect(
-      isAvailableForNewSessionPrompt('none', false, false, false, true, true, false),
-    ).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, true, false)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, true, false)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, true, false)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, true, false)).toBe(
+      false,
+    );
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
