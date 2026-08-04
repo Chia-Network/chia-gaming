@@ -5,7 +5,7 @@
   "scripts": {
     "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/index.js --platform=node --bundle --outfile=dist/index-rollup.cjs",
     "start": "node dist/index-rollup.cjs",
-    "dev": "ts-node-dev --respawn src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "test": "pnpm run build && node --test src/*.test.mjs"
   },
   "dependencies": {
@@ -13,16 +13,16 @@
     "cors": "2.8.5",
     "express": "5.1.0",
     "minimist": "1.2.8",
-    "ws": "8.21.0"
+    "ws": "8.21.2"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",
-    "@types/express": "5.0.5",
+    "@types/express": "5.0.6",
     "@types/minimist": "1.2.5",
     "@types/node": "24.6.2",
     "@types/ws": "8.18.1",
-    "esbuild": "0.25.11",
-    "ts-node-dev": "2.0.0",
+    "esbuild": "0.28.1",
+    "tsx": "^4.23.5",
     "typescript": "5.9.3"
   }
 }
