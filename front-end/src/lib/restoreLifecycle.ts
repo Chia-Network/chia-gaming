@@ -36,8 +36,60 @@ export function shouldAdvertiseAvailable(
   );
 }
 
-export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
+/**
+ * Without a wallet the player cannot fund or resolve a channel, so we advertise
+ * busy to the hub regardless of session phase — the lobby must not offer matches
+ * we cannot play. On WalletConnect, the same applies until a full-node peer is
+ * verified (`awaitingFullNodePeer`). With a wallet (and peer, when required),
+ * busy tracks the broader session obligation.
+ */
+export function shouldReportHubBusy(
+  sessionPhase: SessionPhase,
+  walletConnected = true,
+  awaitingFullNodePeer = false,
+): boolean {
+  if (!walletConnected || awaitingFullNodePeer) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
+}
+
+/**
+ * Whether WalletConnect presence should report busy because the wallet has no
+ * full-node peer yet. Simulator never awaits a peer. The app still connects to
+ * the hub normally; it just advertises busy until a peer is verified.
+ */
+export function isAwaitingFullNodePeer(
+  blockchainType: 'simulator' | 'walletconnect' | undefined,
+  hasFullNodePeer: boolean,
+): boolean {
+  return blockchainType === 'walletconnect' && !hasFullNodePeer;
+}
+
+/**
+ * Full hub presence busy signal (matches Shell getPresence).
+ *
+ * During restore, `sessionPhase` is often still `none` until WASM reports, so
+ * phase alone is not enough: a non-terminal cradle (serialized session or
+ * pairing token) must keep us busy so the lobby does not offer matches
+ * mid-resume. Terminal Failed/Resolved* cradles do not. WalletConnect also
+ * stays busy while awaiting a verified full-node peer.
+ */
+export function shouldReportHubBusyPresence(
+  sessionPhase: SessionPhase,
+  walletConnected: boolean,
+  opts: {
+    restoring: boolean;
+    terminalSave: boolean;
+    hasCradle: boolean;
+    awaitingFullNodePeer?: boolean;
+  },
+): boolean {
+  return (
+    shouldReportHubBusy(
+      sessionPhase,
+      walletConnected,
+      opts.awaitingFullNodePeer ?? false,
+    ) || (opts.restoring && !opts.terminalSave && opts.hasCradle)
+  );
 }
 
 /**
@@ -55,49 +107,8 @@ export function shouldReportSessionPhase(
 }
 
 /**
- * Whether WalletConnect presence should report busy because the wallet has no
- * full-node peer yet. Simulator never awaits a peer. The app still connects to
- * the hub normally; it just advertises busy until a peer is verified.
- */
-export function isAwaitingFullNodePeer(
-  blockchainType: 'simulator' | 'walletconnect' | undefined,
-  hasFullNodePeer: boolean,
-): boolean {
-  return blockchainType === 'walletconnect' && !hasFullNodePeer;
-}
-
-/**
- * Hub busy bit for lobby presence: session obligation OR the WalletConnect
- * full-node-peer wait. Callers must not push `setBusy(false)` /
- * `shouldReportHubBusy(...)` alone — until a full node peer is verified the
- * WalletConnect wallet must keep advertising busy.
- */
-export function shouldReportPresenceBusy(
-  sessionPhase: SessionPhase,
-  awaitingFullNodePeer: boolean,
-): boolean {
-  return shouldReportHubBusy(sessionPhase) || awaitingFullNodePeer;
-}
-
-/**
- * Extra hub-busy obligation while a non-terminal session restore is in progress.
- * Resume keeps `sessionPhase` at `none` until the live session starts, so phase
- * alone cannot hold busy — callers that push `setBusy` (getPresence, identify,
- * full-node-peer ready) must OR this in. A leftover cradle after resolve must
- * not keep us busy (`restoring` gates that).
- */
-export function shouldReportRestoreObligationBusy(
-  restoring: boolean,
-  terminalSave: boolean,
-  hasSerializedGameSession: boolean,
-  hasPairingToken: boolean,
-): boolean {
-  return restoring && !terminalSave && (hasSerializedGameSession || hasPairingToken);
-}
-
-/**
  * Whether inbound matchmaking may open a consent prompt.
- * Must stay aligned with `shouldReportPresenceBusy` for session + peer wait,
+ * Must stay aligned with `shouldReportHubBusy` for session + wallet + peer wait,
  * and also exclude temporary local matchmaking state that does not always
  * set hub `busy` (pending advisory/proposal, live peer session, reserved peer).
  */
@@ -107,10 +118,11 @@ export function isAvailableForNewSessionPrompt(
   pendingProposal: boolean,
   hasLivePeerSession: boolean,
   hasReservedPeerId: boolean,
+  walletConnected: boolean,
   awaitingFullNodePeer: boolean,
 ): boolean {
   return (
-    !shouldReportPresenceBusy(sessionPhase, awaitingFullNodePeer) &&
+    !shouldReportHubBusy(sessionPhase, walletConnected, awaitingFullNodePeer) &&
     !pendingAdvisory &&
     !pendingProposal &&
     !hasLivePeerSession &&
@@ -123,6 +135,12 @@ export function isAvailableForNewSessionPrompt(
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
  * Active (or further), delivery_failure only degrades peer liveness — the peer
  * may be mid-reload. See CONNECTIVITY.md peer degradation.
+ *
+ * Resolved finished sessions never cancel: invites are allowed afterward while
+ * the dashboard freeze and terminal save must stay for Resume. A null/undefined
+ * channel state is treated as pre-active; a known Active/post-active channel wins
+ * over the 'none' phase so that a blocked restore is not mistaken for a pre-active
+ * attempt.
  */
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
@@ -130,8 +148,23 @@ export function shouldCancelOnPeerUnreachable(
   abandoning = false,
 ): boolean {
   if (abandoning) return false;
-  const isPreActive = isPreActiveChannelStatus(channelState);
-  return sessionPhase === 'none' || isPreActive;
+  if (sessionPhase === 'resolved') return false;
+  return isPreActiveChannelStatus(channelState);
+}
+
+/**
+ * Wallet or hub disconnect should hard-cancel only a real pre-active
+ * matchmaking attempt. A pending advisory/proposal alone is not enough — after
+ * a resolved game, consent prompts are allowed while the finished freeze +
+ * terminal save must remain for Resume.
+ */
+export function shouldCancelAttemptOnDisconnect(
+  hasAttempt: boolean,
+  sessionPhase: SessionPhase,
+  channelState: string | null | undefined,
+  abandoning = false,
+): boolean {
+  return hasAttempt && shouldCancelOnPeerUnreachable(sessionPhase, channelState, abandoning);
 }
 
 /**

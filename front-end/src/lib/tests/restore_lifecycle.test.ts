@@ -4,11 +4,11 @@ import {
   isRestoreBlocked,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
+  shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
-  shouldReportPresenceBusy,
-  shouldReportRestoreObligationBusy,
+  shouldReportHubBusyPresence,
   shouldReportSessionPhase,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
@@ -48,29 +48,92 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('on-chain')).toBe(true);
   });
 
-  it('keeps presence busy while WalletConnect awaits a full node peer', () => {
-    // Session alone would advertise available — the peer wait must still hold busy.
-    expect(shouldReportPresenceBusy('none', true)).toBe(true);
-    expect(shouldReportPresenceBusy('resolved', true)).toBe(true);
-    // Peer verified (not awaiting) → session phase decides.
-    expect(shouldReportPresenceBusy('none', false)).toBe(false);
-    expect(shouldReportPresenceBusy('resolved', false)).toBe(false);
-    expect(shouldReportPresenceBusy('off-chain', false)).toBe(true);
-    expect(shouldReportPresenceBusy('on-chain', false)).toBe(true);
+  it('reports busy whenever the wallet is disconnected, even with no session', () => {
+    expect(shouldReportHubBusy('none', false)).toBe(true);
+    expect(shouldReportHubBusy('resolved', false)).toBe(true);
+    expect(shouldReportHubBusy('off-chain', false)).toBe(true);
+    expect(shouldReportHubBusy('on-chain', false)).toBe(true);
+    // Explicit walletConnected=true matches the default behavior.
+    expect(shouldReportHubBusy('none', true)).toBe(false);
+    expect(shouldReportHubBusy('off-chain', true)).toBe(true);
   });
 
-  it('keeps presence busy for non-terminal restore while phase is still none', () => {
-    // Mid-resume: phase alone would clear busy once a full-node peer is verified.
-    expect(shouldReportRestoreObligationBusy(true, false, true, false)).toBe(true);
-    expect(shouldReportRestoreObligationBusy(true, false, false, true)).toBe(true);
-    // Terminal save / not restoring / no cradle → no restore obligation.
-    expect(shouldReportRestoreObligationBusy(true, true, true, false)).toBe(false);
-    expect(shouldReportRestoreObligationBusy(false, false, true, false)).toBe(false);
-    expect(shouldReportRestoreObligationBusy(true, false, false, false)).toBe(false);
-    // Combined with peer-ready (not awaiting): restore must still hold busy.
+  it('keeps presence busy while WalletConnect awaits a full node peer', () => {
+    // Session alone would advertise available — the peer wait must still hold busy.
+    expect(shouldReportHubBusy('none', true, true)).toBe(true);
+    expect(shouldReportHubBusy('resolved', true, true)).toBe(true);
+    // Peer verified (not awaiting) → session phase decides.
+    expect(shouldReportHubBusy('none', true, false)).toBe(false);
+    expect(shouldReportHubBusy('resolved', true, false)).toBe(false);
+    expect(shouldReportHubBusy('off-chain', true, false)).toBe(true);
+    expect(shouldReportHubBusy('on-chain', true, false)).toBe(true);
+  });
+
+  it('keeps hub presence busy for a non-terminal restore cradle even when phase is still none', () => {
+    // Wallet reconnect mid-resume: phase has not advanced yet, but the cradle
+    // means we must not advertise available.
     expect(
-      shouldReportPresenceBusy('none', false) ||
-        shouldReportRestoreObligationBusy(true, false, true, false),
+      shouldReportHubBusyPresence('none', true, {
+        restoring: true,
+        terminalSave: false,
+        hasCradle: true,
+      }),
+    ).toBe(true);
+    // Terminal Failed/Resolved* cradle must not keep us busy once wallet is back.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: true,
+        terminalSave: true,
+        hasCradle: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReportHubBusyPresence('resolved', true, {
+        restoring: true,
+        terminalSave: true,
+        hasCradle: true,
+      }),
+    ).toBe(false);
+    // No cradle / not restoring: phase alone decides (with wallet).
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReportHubBusyPresence('off-chain', true, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+      }),
+    ).toBe(true);
+    // Walletless still forces busy even with no cradle.
+    expect(
+      shouldReportHubBusyPresence('none', false, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+      }),
+    ).toBe(true);
+    // Full-node peer wait holds busy even with wallet + no cradle.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+        awaitingFullNodePeer: true,
+      }),
+    ).toBe(true);
+    // Peer-ready must not clear restore obligation while phase is still none.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: true,
+        terminalSave: false,
+        hasCradle: true,
+        awaitingFullNodePeer: false,
+      }),
     ).toBe(true);
   });
 
@@ -82,25 +145,41 @@ describe('restore lifecycle gates', () => {
     expect(isAwaitingFullNodePeer(undefined, false)).toBe(false);
   });
 
-  it('rejects inbound matchmaking while awaiting a full node peer', () => {
+  it('rejects inbound matchmaking while awaiting a full node peer or walletless', () => {
     // Idle session + no pending prompts, but awaiting a peer → unavailable.
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true)).toBe(
-      false,
-    );
-    // Peer verified → available when otherwise idle.
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false)).toBe(true);
-    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, false)).toBe(
-      true,
-    );
+    expect(
+      isAvailableForNewSessionPrompt('none', false, false, false, false, true, true),
+    ).toBe(false);
+    expect(
+      isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, true),
+    ).toBe(false);
+    // Walletless → unavailable even with peer ready.
+    expect(
+      isAvailableForNewSessionPrompt('none', false, false, false, false, false, false),
+    ).toBe(false);
+    // Peer verified + wallet → available when otherwise idle.
+    expect(
+      isAvailableForNewSessionPrompt('none', false, false, false, false, true, false),
+    ).toBe(true);
+    expect(
+      isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false),
+    ).toBe(true);
     // Session obligation or pending matchmaking still blocks.
-    expect(isAvailableForNewSessionPrompt('off-chain', false, false, false, false, false)).toBe(
-      false,
-    );
-    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, false)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, false)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, false)).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, false)).toBe(false);
+    expect(
+      isAvailableForNewSessionPrompt('off-chain', false, false, false, false, true, false),
+    ).toBe(false);
+    expect(
+      isAvailableForNewSessionPrompt('none', true, false, false, false, true, false),
+    ).toBe(false);
+    expect(
+      isAvailableForNewSessionPrompt('none', false, true, false, false, true, false),
+    ).toBe(false);
+    expect(
+      isAvailableForNewSessionPrompt('none', false, false, true, false, true, false),
+    ).toBe(false);
+    expect(
+      isAvailableForNewSessionPrompt('none', false, false, false, true, true, false),
+    ).toBe(false);
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {
@@ -111,6 +190,32 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent', true)).toBe(false);
+    // Phase 'none' with a known Active/post-active channel is a blocked restore,
+    // not a pre-active matchmaking attempt; delivery failures should degrade.
+    expect(shouldCancelOnPeerUnreachable('none', 'Active')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('none', 'ShuttingDown')).toBe(false);
+    // Finished sessions keep freeze/terminal save even if channelState is null
+    // (null is otherwise treated as pre-active).
+    expect(shouldCancelOnPeerUnreachable('resolved', 'ResolvedClean')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('resolved', null)).toBe(false);
+  });
+
+  it('wallet/hub disconnect cancels only pre-active attempts, not pending invites on a resolved freeze', () => {
+    // Pending advisory alone (no PeerSession / pairingToken yet).
+    expect(shouldCancelAttemptOnDisconnect(false, 'resolved', 'ResolvedClean')).toBe(false);
+    expect(shouldCancelAttemptOnDisconnect(false, 'none', null)).toBe(false);
+    // Pending proposal creates PeerSession before accept — still must not wipe
+    // a finished session when phase is resolved.
+    expect(shouldCancelAttemptOnDisconnect(true, 'resolved', 'ResolvedClean')).toBe(false);
+    expect(shouldCancelAttemptOnDisconnect(true, 'resolved', null)).toBe(false);
+    // Real pre-active matchmaking still cancels.
+    expect(shouldCancelAttemptOnDisconnect(true, 'none', null)).toBe(true);
+    expect(shouldCancelAttemptOnDisconnect(true, 'off-chain', 'Handshaking')).toBe(true);
+    expect(shouldCancelAttemptOnDisconnect(true, 'off-chain', 'Active')).toBe(false);
+    // Mid-resume: phase is still 'none' while WASM restore is blocked, but the
+    // persisted channel is already Active. Wallet/hub disconnect must not cancel.
+    expect(shouldCancelAttemptOnDisconnect(true, 'none', 'Active')).toBe(false);
+    expect(shouldCancelAttemptOnDisconnect(true, 'none', 'ShuttingDown')).toBe(false);
   });
 
   it('awaits a pending clean-shutdown transaction instead of escalating on-chain', () => {

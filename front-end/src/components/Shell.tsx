@@ -36,9 +36,9 @@ import {
   shouldOfferResumeOrStartOver,
   hydrateSessionCacheFromDisk,
   markSavedSession,
+  clearSavedSessionMarker,
   peekAutoResumeOnce,
   clearAutoResumeOnce,
-  clearSavedSessionMarker,
   loadState,
   SessionSave,
   getDefaultFee,
@@ -83,10 +83,11 @@ import {
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
   isAwaitingFullNodePeer,
   isRestoreBlocked,
+  shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
-  shouldReportPresenceBusy,
-  shouldReportRestoreObligationBusy,
+  shouldReportHubBusy,
+  shouldReportHubBusyPresence,
   shouldSwitchToHubOnResolved,
 } from '../lib/restoreLifecycle';
 import {
@@ -313,6 +314,22 @@ function savedChannelStatus(save: SessionSave): SessionModel['channel']['status'
 
 function isTerminalSavedChannel(save: SessionSave): boolean {
   return isTerminalChannelSnapshot(save.channelStatus);
+}
+
+/** Hub busy from phase, wallet, peer wait, and any in-progress non-terminal restore cradle. */
+function hubBusyFromSessionState(
+  phase: SessionPhase,
+  walletConnected: boolean,
+  restoring: boolean,
+  save: SessionSave | null | undefined,
+  awaitingFullNodePeer = false,
+): boolean {
+  return shouldReportHubBusyPresence(phase, walletConnected, {
+    restoring,
+    terminalSave: !!save && isTerminalSavedChannel(save),
+    hasCradle: !!(save?.serializedGameSession || save?.pairingToken),
+    awaitingFullNodePeer,
+  });
 }
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
@@ -683,22 +700,19 @@ const Shell = () => {
   );
 
   const [walletConnected, setWalletConnected] = useState(false);
+  // Mirror walletConnected into a ref so presence callbacks (getPresence,
+  // session cleanup, phase change) can report busy while walletless without
+  // re-subscribing. Disconnect/connect paths also set this synchronously so an
+  // immediate setBusy is accurate before the effect runs.
+  const walletConnectedRef = useRef(walletConnected);
+  useEffect(() => {
+    walletConnectedRef.current = walletConnected;
+  }, [walletConnected]);
   // Whether the WalletConnect wallet has a verified full node peer. Read
   // synchronously by getPresence (called from the HubConnection constructor and
   // on every reconnect) and by isAvailableForNewSessionPrompt, so it lives in a
   // ref rather than state — no UI depends on it, only the hub busy bit does.
   const hasFullNodePeerRef = useRef(false);
-  // Busy bit reported to the hub: session obligation OR the WalletConnect
-  // full-node-peer wait. All setBusy paths that might clear availability must
-  // go through this (not bare false / shouldReportHubBusy alone).
-  const presenceBusy = useCallback(
-    (phase: SessionPhase) =>
-      shouldReportPresenceBusy(
-        phase,
-        isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
-      ),
-    [],
-  );
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
@@ -934,6 +948,18 @@ const Shell = () => {
     () => getBlockchainType(),
   );
   const blockchainTypeRef = useRef<'simulator' | 'walletconnect' | undefined>(blockchainType);
+  // Busy bit reported to the hub: session obligation, walletless, OR the
+  // WalletConnect full-node-peer wait. All setBusy paths that might clear
+  // availability must go through this (not bare false / phase-only busy).
+  const presenceBusy = useCallback(
+    (phase: SessionPhase) =>
+      shouldReportHubBusy(
+        phase,
+        walletConnectedRef.current,
+        isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+      ),
+    [],
+  );
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
   const [activeBlockchainPoller, setActiveBlockchainPoller] = useState<BlockchainPoller | null>(
     null,
@@ -1135,6 +1161,7 @@ const Shell = () => {
       pendingProposalRef.current !== null,
       peerSessionRef.current !== null,
       !!sessionSaveRef.current?.sessionPeerId,
+      walletConnectedRef.current,
       isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
     );
   }, []);
@@ -1478,6 +1505,20 @@ const Shell = () => {
       if (connected) {
         setWalletAlert(false);
         setWalletConnected(true);
+        walletConnectedRef.current = true;
+        // Wallet reconnected: recompute presence (phase + restore cradle) so the
+        // walletless busy override is lifted once we can fund/resolve again —
+        // but stay busy mid-resume while phase is still none.
+        hubConnRef.current?.setBusy(
+          hubBusyFromSessionState(
+            sessionPhaseRef.current,
+            true,
+            !!sessionConfigRef.current?.restoring,
+            sessionSaveRef.current,
+            isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+          ),
+          sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+        );
         const poller = activeBlockchainPoller;
         if (poller && sessionController) {
           sessionController.attachBlockchain(poller);
@@ -1487,6 +1528,13 @@ const Shell = () => {
         }
       } else {
         setWalletConnected(false);
+        walletConnectedRef.current = false;
+        // Wallet dropped mid-session (not a user disconnect): stay on the hub
+        // but advertise busy so the lobby will not offer new matches.
+        hubConnRef.current?.setBusy(
+          shouldReportHubBusy(sessionPhaseRef.current, false),
+          sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+        );
       }
     });
   }, [activeBlockchainPoller, blockchainType, setWalletAlert, startBalancePolling]);
@@ -1671,8 +1719,8 @@ const Shell = () => {
               setRestoreHubReconciled(true);
               // Restore never goes through startFreshSessionWithPeer, which is
               // otherwise the only place that marks the hub busy. Use restoreBusy
-              // (session/presence); terminal saves stay available unless the
-              // full-node-peer wait still requires busy.
+              // (session/wallet/peer-wait); terminal saves stay available unless
+              // walletless or the full-node-peer wait still requires busy.
               conn.setBusy(restoreBusy, save.myAlias ?? peekAlias());
             } else if (save?.serializedGameSession || save?.pairingToken) {
               setRestoreHubReconciled(true);
@@ -1708,21 +1756,21 @@ const Shell = () => {
             lastHubActivityRef.current = Date.now();
           },
           getPresence: () => {
-            const phase = sessionPhaseRef.current;
             const save = sessionSaveRef.current;
-            const terminalSave = !!save && isTerminalSavedChannel(save);
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
-            const busy =
-              presenceBusy(phase) ||
-              shouldReportRestoreObligationBusy(
-                !!sessionConfigRef.current?.restoring,
-                terminalSave,
-                !!save?.serializedGameSession,
-                !!save?.pairingToken,
-              );
+            // WalletConnect also stays busy until a full-node peer is verified.
             return {
-              busy,
+              busy: hubBusyFromSessionState(
+                sessionPhaseRef.current,
+                walletConnectedRef.current,
+                !!sessionConfigRef.current?.restoring,
+                save,
+                isAwaitingFullNodePeer(
+                  blockchainTypeRef.current,
+                  hasFullNodePeerRef.current,
+                ),
+              ),
               // Prefer session aliases, then the hub-synced prefs alias. Never call
               // getAlias() here — inventing Player_* would pollute identify/set_busy.
               alias: sessionConfigRef.current?.myAlias ?? save?.myAlias ?? peekAlias(),
@@ -1825,11 +1873,25 @@ const Shell = () => {
       setActiveBlockchainPoller(poller);
       setBlockchainType(bcType);
       setWalletConnected(true);
+      walletConnectedRef.current = true;
       setConnecting(false);
       setConnectionSetup(null);
       if (options.switchToHub) {
         setActiveTab('hub');
       }
+      // Wallet is back: drop the walletless busy override and recompute presence
+      // from phase + any in-progress non-terminal restore cradle (phase alone is
+      // often still `none` mid-resume).
+      hubConnRef.current?.setBusy(
+        hubBusyFromSessionState(
+          sessionPhaseRef.current,
+          true,
+          !!sessionConfigRef.current?.restoring,
+          sessionSaveRef.current,
+          isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+        ),
+        sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+      );
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
     },
@@ -2160,17 +2222,16 @@ const Shell = () => {
     // still `none` during resume.
     const applyPeerReady = (ready: boolean) => {
       hasFullNodePeerRef.current = ready;
-      const save = sessionSaveRef.current;
-      const terminalSave = !!save && isTerminalSavedChannel(save);
-      const busy =
-        presenceBusy(sessionPhaseRef.current) ||
-        shouldReportRestoreObligationBusy(
+      hubConnRef.current?.setBusy(
+        hubBusyFromSessionState(
+          sessionPhaseRef.current,
+          walletConnectedRef.current,
           !!sessionConfigRef.current?.restoring,
-          terminalSave,
-          !!save?.serializedGameSession,
-          !!save?.pairingToken,
-        );
-      hubConnRef.current?.setBusy(busy, alias());
+          sessionSaveRef.current,
+          isAwaitingFullNodePeer(blockchainTypeRef.current, ready),
+        ),
+        alias(),
+      );
     };
     if (!walletConnected) {
       applyPeerReady(false);
@@ -2198,7 +2259,7 @@ const Shell = () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [blockchainType, hubOrigin, walletConnected, presenceBusy]);
+  }, [blockchainType, hubOrigin, walletConnected]);
 
   const handleTabChange = useCallback(
     (tabId: TabId) => {
@@ -2579,6 +2640,76 @@ const Shell = () => {
     }
   }, []);
 
+  // Reject/cancel any pending consent prompt or pre-active matchmaking attempt.
+  // Shared by wallet and hub disconnect. Active off-chain sessions stay mounted
+  // (only pre-Active attempts cancel); resolved finished sessions keep their
+  // dashboard freeze + terminal save — a pending invite after a game is
+  // consent-only and must not trigger cancelAttemptedSession. While restore is
+  // blocked, phase is still 'none' and the live dashboard model is not yet
+  // populated, so fall back to the persisted channel status when deciding whether
+  // the attempt is pre-Active. When the hub is being torn down (preserveHub=false),
+  // hubUrl is dropped before clearSession so clearSession's async tail does not
+  // re-mark Resume from a stale hub pref.
+  const cancelPendingMatchmaking = useCallback(
+    ({ preserveHub }: { preserveHub: boolean }) => {
+      const channelState =
+        dashboardSessionModelRef.current?.channel.status.state ??
+        (sessionSaveRef.current ? savedChannelStatus(sessionSaveRef.current) : null);
+      const hasPendingPrompt =
+        pendingAdvisoryRef.current !== null || pendingProposalRef.current !== null;
+      const hasAttempt =
+        peerSessionRef.current !== null ||
+        !!sessionConfigRef.current?.pairingToken ||
+        !!sessionSaveRef.current?.pairingToken;
+      const shouldCancel = shouldCancelAttemptOnDisconnect(
+        hasAttempt,
+        sessionPhaseRef.current,
+        channelState,
+        abandonPendingRef.current,
+      );
+      if (hasPendingPrompt || shouldCancel) {
+        const peerId =
+          peerSessionRef.current?.peerId ??
+          pendingProposalRef.current?.from_id ??
+          pendingAdvisoryRef.current?.peer_id ??
+          sessionSaveRef.current?.sessionPeerId;
+        if (peerId) sendSessionReject(peerId);
+      }
+      if (shouldCancel) {
+        if (!preserveHub) saveHubUrl(undefined);
+        cancelAttemptedSession();
+      } else {
+        if (hasPendingPrompt) {
+          setPendingAdvisoryState(null);
+          setPendingProposalState(null);
+          // Proposal path creates PeerSession before accept; drop it without
+          // clearSessionPreservingHistory (keeps terminal snapshot / freeze).
+          resetPeerRelayState();
+        }
+        if (!preserveHub) saveHubUrl(undefined);
+      }
+    },
+    [
+      cancelAttemptedSession,
+      resetPeerRelayState,
+      sendSessionReject,
+      setPendingAdvisoryState,
+      setPendingProposalState,
+    ],
+  );
+
+  const doDisconnectHub = useCallback(() => {
+    cancelPendingMatchmaking({ preserveHub: false });
+    hubConnRef.current?.disconnect();
+    hubConnRef.current = null;
+    clearSessionId();
+    setSessionId('');
+    setHubOrigin(null);
+    setIframeUrl('about:blank');
+    setHubLiveness(null);
+    markPeerInactive();
+  }, [cancelPendingMatchmaking, markPeerInactive]);
+
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
     if (activeBlockchainRef.current) {
@@ -2590,6 +2721,7 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setActiveBlockchainPoller(null);
     setWalletConnected(false);
+    walletConnectedRef.current = false;
     setBlockchainType(undefined);
     setBalance(undefined);
     // Pre-game wallet disconnect: drop the boot marker so reload does not
@@ -2603,14 +2735,27 @@ const Shell = () => {
     if (!hasResumableSession) {
       clearSavedSessionMarker();
     }
+    // Clear blockchainType before cancel so clearSession's async tail does not
+    // re-mark Resume from a wallet preference this disconnect is dropping.
     saveSession({ blockchainType: undefined });
-  }, [stopBalancePolling]);
+    // Wallet is orthogonal to the hub: stay connected and only cancel pending
+    // matchmaking (no hub teardown). Then advertise busy — without a wallet we
+    // cannot fund or resolve a channel, so the lobby must not offer matches.
+    cancelPendingMatchmaking({ preserveHub: true });
+    hubConnRef.current?.setBusy(
+      shouldReportHubBusy(sessionPhaseRef.current, false),
+      sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+    );
+  }, [stopBalancePolling, cancelPendingMatchmaking]);
 
   const handleDisconnectWallet = useCallback(() => {
+    // Wallet disconnect no longer cascades to the hub or peer: the session
+    // stays mounted and we appear busy. Warn only that chain ops stall while a
+    // session is live (and any pending invite is cancelled).
     if (sessionPhase !== 'none') {
       setConfirmDialog({
         title: 'Disconnect wallet?',
-        body: 'You are in a session. Blockchain operations will stall until you reconnect a wallet.',
+        body: 'You are in a session. Blockchain operations will stall until you reconnect a wallet, and you will appear busy to the hub.',
         onConfirm: () => {
           setConfirmDialog(null);
           doDisconnectWallet();
@@ -2620,18 +2765,6 @@ const Shell = () => {
       doDisconnectWallet();
     }
   }, [sessionPhase, doDisconnectWallet]);
-
-  const doDisconnectHub = useCallback(() => {
-    hubConnRef.current?.disconnect();
-    hubConnRef.current = null;
-    clearSessionId();
-    setSessionId('');
-    saveHubUrl(undefined);
-    setHubOrigin(null);
-    setIframeUrl('about:blank');
-    setHubLiveness(null);
-    markPeerInactive();
-  }, [markPeerInactive]);
 
   const handleDisconnectHub = useCallback(() => {
     if (
