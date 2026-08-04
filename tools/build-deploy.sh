@@ -5,6 +5,9 @@
 #   chia-gaming-YYYYMMDD-HASH.tgz/.zip       — player app (static files)
 #   chia-gaming-hub-YYYYMMDD-HASH.tgz/.zip — hub frontend + service
 #
+# The player-app bundle itself is produced by tools/build-player-bundle.sh,
+# shared with tools/build-electron.sh.
+#
 # See DEVELOPMENT.md for the full build/deploy guide.
 set -e
 
@@ -21,9 +24,10 @@ on_exit() {
 trap on_exit EXIT
 
 PLATFORM=""
+BUNDLE_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        --debug) set -x ;;
+        --debug) set -x; BUNDLE_ARGS+=(--debug) ;;
         --platform=*) PLATFORM="${arg#--platform=}" ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
@@ -48,11 +52,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FE_DIR="$ROOT_DIR/front-end"
-WASM_DIR="$ROOT_DIR/wasm"
 HUB_DIR="$ROOT_DIR/hub"
 HUB_FRONTEND_DIR="$HUB_DIR/hub-frontend"
 HUB_SERVICE_DIR="$HUB_DIR/hub-service"
-CLSP_DIR="$ROOT_DIR/clsp"
 
 DATE=$(date +%Y%m%d)
 HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
@@ -75,39 +77,16 @@ function maybe_zip() {
     fi
 }
 
-# macOS wasm32 clang workaround
-if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
-    export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
-    export AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar
-elif [ -x /usr/local/opt/llvm/bin/clang ]; then
-    export CC_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/clang
-    export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
-fi
+# ── 1. Player app bundle ─────────────────────────────────────────────
 
-# ── 1. Chialisp ──────────────────────────────────────────────────────
+"$SCRIPT_DIR/build-player-bundle.sh" "${BUNDLE_ARGS[@]}"
 
-echo "=== Building chialisp (.hex files) ==="
-"$ROOT_DIR/tools/build-chialisp.sh"
-
-# ── 2. WASM (release, browser target) ────────────────────────────────
-
-echo "=== Building WASM (web target, release) ==="
-(cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
-
-# ── 3. Player app ────────────────────────────────────────────────────
-
-echo "=== Installing JavaScript workspace deps ==="
-pnpm --dir "$ROOT_DIR" install --frozen-lockfile
-
-echo "=== Building player app ==="
-CLSP_DIR="$CLSP_DIR" WASM_OUT_DIR="$FE_DIR/dist" pnpm --dir "$ROOT_DIR" --filter chia-gaming-fe run bundle
-
-# ── 4. Hub frontend ────────────────────────────────────────────────
+# ── 2. Hub frontend ────────────────────────────────────────────────
 
 echo "=== Building hub frontend ==="
 pnpm --dir "$ROOT_DIR" --filter chia-gaming-hub-frontend run build:deploy
 
-# ── 5. Hub service ─────────────────────────────────────────────────
+# ── 3. Hub service ─────────────────────────────────────────────────
 
 echo "=== Building hub service ==="
 pnpm --dir "$ROOT_DIR" --filter chia-gaming-hub-service run build

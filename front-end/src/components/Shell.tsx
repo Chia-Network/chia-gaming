@@ -119,6 +119,7 @@ import {
 } from '../lib/session/historyLimits';
 import { log } from '../services/log';
 import { formatMojos } from '../util';
+import { isElectronDistribution } from '../util/distribution';
 import { Button } from './button';
 
 import { HubPicker } from './HubPicker';
@@ -2252,7 +2253,8 @@ const Shell = () => {
   const performResume = useCallback(
     (save: SessionSave) => {
       setActiveTab('game');
-      const bcType = save.blockchainType ?? 'simulator';
+      const bcType =
+        save.blockchainType ?? (isElectronDistribution() ? 'walletconnect' : 'simulator');
       setResuming(true);
       setRestoreStatus('restoring');
       setRestoreError(null);
@@ -3404,11 +3406,13 @@ const Shell = () => {
               <Button variant="solid" onClick={handleCancelConnect}>
                 Cancel
               </Button>
-              <SimulatorSetupModal
-                open={showSimModal}
-                onConnect={handleFinalize}
-                connecting={connecting}
-              />
+              {!isElectronDistribution() && (
+                <SimulatorSetupModal
+                  open={showSimModal}
+                  onConnect={handleFinalize}
+                  connecting={connecting}
+                />
+              )}
             </div>
           ) : connecting ? (
             <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -3433,18 +3437,22 @@ const Shell = () => {
             <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
               <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
               <div className="w-full max-w-sm flex flex-col gap-3">
-                <Button
-                  variant="solid"
-                  fullWidth
-                  onClick={() => handleConnect('simulator', false, true)}
-                >
-                  Continue with Simulator
-                </Button>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 border-t border-canvas-border" />
-                  <span className="text-canvas-text font-medium text-sm">OR</span>
-                  <div className="flex-1 border-t border-canvas-border" />
-                </div>
+                {!isElectronDistribution() && (
+                  <>
+                    <Button
+                      variant="solid"
+                      fullWidth
+                      onClick={() => handleConnect('simulator', false, true)}
+                    >
+                      Continue with Simulator
+                    </Button>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 border-t border-canvas-border" />
+                      <span className="text-canvas-text font-medium text-sm">OR</span>
+                      <div className="flex-1 border-t border-canvas-border" />
+                    </div>
+                  </>
+                )}
                 <Button
                   variant="solid"
                   fullWidth
