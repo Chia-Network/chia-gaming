@@ -36,8 +36,37 @@ export function shouldAdvertiseAvailable(
   );
 }
 
-export function shouldReportHubBusy(sessionPhase: SessionPhase): boolean {
+/**
+ * Without a wallet the player cannot fund or resolve a channel, so we advertise
+ * busy to the hub regardless of session phase — the lobby must not offer matches
+ * we cannot play. With a wallet, busy tracks the broader session obligation.
+ */
+export function shouldReportHubBusy(sessionPhase: SessionPhase, walletConnected = true): boolean {
+  if (!walletConnected) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
+}
+
+/**
+ * Full hub presence busy signal (matches Shell getPresence).
+ *
+ * During restore, `sessionPhase` is often still `none` until WASM reports, so
+ * phase alone is not enough: a non-terminal cradle (serialized session or
+ * pairing token) must keep us busy so the lobby does not offer matches
+ * mid-resume. Terminal Failed/Resolved* cradles do not.
+ */
+export function shouldReportHubBusyPresence(
+  sessionPhase: SessionPhase,
+  walletConnected: boolean,
+  opts: {
+    restoring: boolean;
+    terminalSave: boolean;
+    hasCradle: boolean;
+  },
+): boolean {
+  return (
+    shouldReportHubBusy(sessionPhase, walletConnected) ||
+    (opts.restoring && !opts.terminalSave && opts.hasCradle)
+  );
 }
 
 /**
@@ -59,6 +88,12 @@ export function shouldReportSessionPhase(
  * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
  * Active (or further), delivery_failure only degrades peer liveness — the peer
  * may be mid-reload. See CONNECTIVITY.md peer degradation.
+ *
+ * Resolved finished sessions never cancel: invites are allowed afterward while
+ * the dashboard freeze and terminal save must stay for Resume. A null/undefined
+ * channel state is treated as pre-active; a known Active/post-active channel wins
+ * over the 'none' phase so that a blocked restore is not mistaken for a pre-active
+ * attempt.
  */
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
@@ -66,8 +101,23 @@ export function shouldCancelOnPeerUnreachable(
   abandoning = false,
 ): boolean {
   if (abandoning) return false;
-  const isPreActive = isPreActiveChannelStatus(channelState);
-  return sessionPhase === 'none' || isPreActive;
+  if (sessionPhase === 'resolved') return false;
+  return isPreActiveChannelStatus(channelState);
+}
+
+/**
+ * Wallet or hub disconnect should hard-cancel only a real pre-active
+ * matchmaking attempt. A pending advisory/proposal alone is not enough — after
+ * a resolved game, consent prompts are allowed while the finished freeze +
+ * terminal save must remain for Resume.
+ */
+export function shouldCancelAttemptOnDisconnect(
+  hasAttempt: boolean,
+  sessionPhase: SessionPhase,
+  channelState: string | null | undefined,
+  abandoning = false,
+): boolean {
+  return hasAttempt && shouldCancelOnPeerUnreachable(sessionPhase, channelState, abandoning);
 }
 
 /**
