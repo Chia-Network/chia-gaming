@@ -14,7 +14,13 @@ import {
   isLeaseConflict,
 } from '../../hooks/save';
 import { SESSION_DB_NAME } from '../session/indexedDb';
-import { makeStorage, sampleSession, saveLiveFields, setTestGlobal } from './save.harness';
+import {
+  clearTestGlobal,
+  makeStorage,
+  sampleSession,
+  saveLiveFields,
+  setTestGlobal,
+} from './save.harness';
 
 describe('tab lease', () => {
   it('detects a conflicting active-tab owner', () => {
@@ -25,6 +31,20 @@ describe('tab lease', () => {
     localStorage.setItem('appState_activeTab', 'another-tab');
 
     expect(checkLease()).toBe(false);
+    expect(isLeaseConflict()).toBe(true);
+  });
+
+  it('ignores a lease orphaned by a previous run in the desktop build', () => {
+    localStorage.setItem('appState_activeTab', 'previous-run');
+    setTestGlobal('window', { __chiaDistribution: 'electron' });
+
+    try {
+      expect(isLeaseConflict()).toBe(false);
+      expect(checkLease()).toBe(true);
+    } finally {
+      clearTestGlobal('window');
+    }
+
     expect(isLeaseConflict()).toBe(true);
   });
 });

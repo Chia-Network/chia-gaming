@@ -3,8 +3,8 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "format": "prettier --write 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
-    "format:check": "prettier --check 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
+    "format": "prettier --write 'desktop/src/**/*.ts' 'desktop/scripts/**/*.mjs' 'desktop/packaging/**/*.cjs' 'desktop/renderer/**/*.{html,mjs}' 'desktop/*.{ts,js,mjs,cjs,json}' 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
+    "format:check": "prettier --check 'desktop/src/**/*.ts' 'desktop/scripts/**/*.mjs' 'desktop/packaging/**/*.cjs' 'desktop/renderer/**/*.{html,mjs}' 'desktop/*.{ts,js,mjs,cjs,json}' 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "pnpm run lint --fix"
   },
