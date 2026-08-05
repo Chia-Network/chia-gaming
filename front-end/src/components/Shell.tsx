@@ -1869,6 +1869,7 @@ const Shell = () => {
       activeBlockchainRef.current = iface;
       setActiveBlockchainPoller(poller);
       setBlockchainType(bcType);
+      blockchainTypeRef.current = bcType;
       setWalletConnected(true);
       walletConnectedRef.current = true;
       setConnecting(false);
@@ -1878,14 +1879,15 @@ const Shell = () => {
       }
       // Wallet is back: drop the walletless busy override and recompute presence
       // from phase + any in-progress non-terminal restore cradle (phase alone is
-      // often still `none` mid-resume).
+      // often still `none` mid-resume). Use bcType (not the ref alone) so WC
+      // reconnect stays busy until the peer poll re-verifies after disconnect.
       hubConnRef.current?.setBusy(
         hubBusyFromSessionState(
           sessionPhaseRef.current,
           true,
           !!sessionConfigRef.current?.restoring,
           sessionSaveRef.current,
-          isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+          isAwaitingFullNodePeer(bcType, hasFullNodePeerRef.current),
         ),
         sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
       );
@@ -2209,7 +2211,7 @@ const Shell = () => {
   // no longer vouch for a peer, so drop back to not-ready (busy) until it
   // reconnects and the poll re-verifies. Simulator never awaits a peer.
   useEffect(() => {
-    if (blockchainType !== 'walletconnect' || !hubOrigin) return;
+    if (!hubOrigin) return;
     const alias = () =>
       sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
     // isAvailableForNewSessionPrompt / getPresence read hasFullNodePeerRef
@@ -2230,7 +2232,11 @@ const Shell = () => {
         alias(),
       );
     };
-    if (!walletConnected) {
+    // doDisconnectWallet clears blockchainType together with walletConnected.
+    // Re-arm before any `!== 'walletconnect'` bail — otherwise a prior verified
+    // peer stays cached and the next WC connect can advertise not-busy before a
+    // fresh getFullNodePeerCount() check.
+    if (blockchainType !== 'walletconnect' || !walletConnected) {
       applyPeerReady(false);
       return;
     }
@@ -2720,6 +2726,10 @@ const Shell = () => {
     setWalletConnected(false);
     walletConnectedRef.current = false;
     setBlockchainType(undefined);
+    blockchainTypeRef.current = undefined;
+    // Wallet can no longer vouch for a full-node peer — clear before the peer
+    // poll effect runs so a reconnect cannot read a stale verified peer.
+    hasFullNodePeerRef.current = false;
     setBalance(undefined);
     // Pre-game wallet disconnect: drop the boot marker so reload does not
     // force Resume just for a prior blockchainType. Mid-session / resumable
