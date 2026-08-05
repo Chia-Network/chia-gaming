@@ -135,13 +135,14 @@ Run commands from the repo root unless noted.
 ### 1. Chialisp (.hex files)
 
 ```bash
-find clsp -name '*.hex' -delete
-cp build.rs.disabled build.rs
-cargo build
+./tools/build-chialisp.sh
 ```
 
-This compiles `.clsp` sources to `.hex` via the Rust build script. The hex
-files are loaded by the WASM module at runtime over HTTP.
+This is the sole entry point for compiling `.clsp` sources to `.hex`. It
+content-hashes the sources, compiler inputs, and generated outputs, rebuilding
+only when an input changes or an output is missing or modified. Ordinary Cargo
+commands do not compile Chialisp. The hex files are loaded by the WASM module at
+runtime over HTTP.
 
 ### 2. WASM (browser target)
 

@@ -12,9 +12,6 @@ SELF="$(basename "$0")"
 ARGS="$*"
 ABORTED=1
 on_exit() {
-    # Remove the build.rs we copy in from build.rs.disabled so it never lingers
-    # as an untracked file after the run (mirrors tools/build-chialisp.sh).
-    [ -n "$ROOT_DIR" ] && rm -f "$ROOT_DIR/build.rs"
     if [ "$ABORTED" -eq 1 ]; then
         echo "$SELF aborted."
     else
@@ -90,9 +87,7 @@ fi
 # ── 1. Chialisp ──────────────────────────────────────────────────────
 
 echo "=== Building chialisp (.hex files) ==="
-find "$CLSP_DIR" -name '*.hex' -delete
-cp "$ROOT_DIR/build.rs.disabled" "$ROOT_DIR/build.rs"
-(cd "$ROOT_DIR" && cargo build)
+"$ROOT_DIR/tools/build-chialisp.sh"
 
 # ── 2. WASM (release, browser target) ────────────────────────────────
 

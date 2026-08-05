@@ -67,10 +67,7 @@ jobs:
       # ── Build (mirrors ct.sh + run-local-demo.sh) ──────────────────
 
       - name: Build chialisp (hex files)
-        run: |
-          find clsp -name '*.hex' -delete
-          cp build.rs.disabled build.rs
-          cargo build
+        run: tools/build-chialisp.sh
 
       - name: Build WASM (web + nodejs targets)
         run: |
