@@ -935,8 +935,8 @@ const Shell = () => {
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [balance, setBalance] = useState<bigint | undefined>();
 
-  const [blockchainType, setBlockchainType] = useState<ShellBlockchainType | undefined>(
-    () => getBlockchainType(),
+  const [blockchainType, setBlockchainType] = useState<ShellBlockchainType | undefined>(() =>
+    getBlockchainType(),
   );
   const blockchainTypeRef = useRef<ShellBlockchainType | undefined>(blockchainType);
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);

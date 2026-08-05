@@ -45,7 +45,11 @@ import {
   with0x,
   OAUTH_MESSAGE_TYPE,
 } from '../../hooks/cloudWalletOAuth';
-import { saveOAuthPending, clearOAuthPending, clearCloudWalletAuth } from '../../hooks/cloudWalletAuth';
+import {
+  saveOAuthPending,
+  clearOAuthPending,
+  clearCloudWalletAuth,
+} from '../../hooks/cloudWalletAuth';
 import {
   conditionsForGraphql,
   jsonSafeVariables,
@@ -85,6 +89,7 @@ describe('cloudWalletOAuth helpers', () => {
     expect(parsed.searchParams.get('code_challenge')).toBe('challengeABC');
     expect(parsed.searchParams.get('scope')).toBe('wallet.read offline_access');
     expect(parsed.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:8080/oauth/callback');
+    expect(parsed.searchParams.get('chia_gaming_client')).toBe('true');
   });
 
   it('oauthRedirectUri appends callback path', () => {
@@ -109,9 +114,15 @@ describe('cloudWalletOAuth helpers', () => {
   });
 
   it('handleOAuthCallbackPage posts code to opener on success', () => {
-    saveOAuthPending({ state: 'st1', codeVerifier: 'v', createdAtMs: Date.now() });
+    saveOAuthPending({
+      state: 'st1',
+      codeVerifier: 'v',
+      createdAtMs: Date.now(),
+    });
     const posted: any[] = [];
-    const opener = { postMessage: (msg: unknown, origin: string) => posted.push({ msg, origin }) };
+    const opener = {
+      postMessage: (msg: unknown, origin: string) => posted.push({ msg, origin }),
+    };
     (globalThis as any).window = globalThis;
     (globalThis as any).opener = opener;
     Object.defineProperty(globalThis, 'location', {
@@ -125,14 +136,24 @@ describe('cloudWalletOAuth helpers', () => {
 
     const result = handleOAuthCallbackPage();
     expect(result.status).toBe('ok');
-    expect(posted[0]?.msg).toEqual({ type: OAUTH_MESSAGE_TYPE, code: 'authcode', state: 'st1' });
+    expect(posted[0]?.msg).toEqual({
+      type: OAUTH_MESSAGE_TYPE,
+      code: 'authcode',
+      state: 'st1',
+    });
   });
 
   it('handleOAuthCallbackPage rejects state mismatch', () => {
-    saveOAuthPending({ state: 'expected', codeVerifier: 'v', createdAtMs: Date.now() });
+    saveOAuthPending({
+      state: 'expected',
+      codeVerifier: 'v',
+      createdAtMs: Date.now(),
+    });
     const posted: any[] = [];
     (globalThis as any).window = globalThis;
-    (globalThis as any).opener = { postMessage: (msg: unknown) => posted.push(msg) };
+    (globalThis as any).opener = {
+      postMessage: (msg: unknown) => posted.push(msg),
+    };
     Object.defineProperty(globalThis, 'location', {
       configurable: true,
       value: {
@@ -150,12 +171,12 @@ describe('cloudWalletOAuth helpers', () => {
 
 describe('CloudBlockchainInterface helpers', () => {
   it('conditionsForGraphql maps opcodes and maxHeight', () => {
-    const conditions = conditionsForGraphql(
-      [{ opcode: 51n, args: ['ph', '64'] }],
-      100n,
-    );
+    const conditions = conditionsForGraphql([{ opcode: 51n, args: ['ph', '64'] }], 100n);
     expect(conditions[0]).toEqual({ opcode: '51', args: ['ph', '64'] });
-    expect(conditions[1]).toEqual({ opcode: '87', args: [encodeU64AsClvmHex(100n)] });
+    expect(conditions[1]).toEqual({
+      opcode: '87',
+      args: [encodeU64AsClvmHex(100n)],
+    });
   });
 
   it('jsonSafeVariables converts bigint recursively', () => {
@@ -194,7 +215,13 @@ describe('CloudBlockchainInterface helpers', () => {
   it('selectCoinStringForAmount returns null when none suffice', () => {
     expect(
       selectCoinStringForAmount(
-        [{ parentCoinInfo: '11'.repeat(32), puzzleHash: '22'.repeat(32), amount: 10n }],
+        [
+          {
+            parentCoinInfo: '11'.repeat(32),
+            puzzleHash: '22'.repeat(32),
+            amount: 10n,
+          },
+        ],
         100n,
       ),
     ).toBeNull();

@@ -6,11 +6,7 @@ import {
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
-import {
-  normalizeHexString,
-  toUint8,
-  toHexString,
-} from '../util';
+import { normalizeHexString, toUint8, toHexString } from '../util';
 import {
   CLOUD_WALLET_UI_URL,
   beginOAuthPopupLogin,
@@ -74,9 +70,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   private async gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-    const safe = variables
-      ? (jsonSafeVariables(variables) as Record<string, unknown>)
-      : undefined;
+    const safe = variables ? (jsonSafeVariables(variables) as Record<string, unknown>) : undefined;
     return graphqlRequest<T>(query, safe, this.tokenProvider);
   }
 
@@ -92,7 +86,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  private persistAuth(partial: Partial<CloudWalletAuthState> & Pick<CloudWalletAuthState, 'accessToken' | 'refreshToken' | 'expiresAt'>) {
+  private persistAuth(
+    partial: Partial<CloudWalletAuthState> &
+      Pick<CloudWalletAuthState, 'accessToken' | 'refreshToken' | 'expiresAt'>,
+  ) {
     const walletId = partial.walletId ?? this.auth?.walletId ?? '';
     if (!walletId) {
       throw new Error('Cloud Wallet walletId is required before persisting auth');
@@ -120,31 +117,6 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       }
     }
 
-    // Best-effort listing (may require user.read — often unavailable on gaming tokens).
-    try {
-      const data = await this.gql<{
-        viewer: { wallets: { edges: Array<{ node: { id: string; name?: string } }> } } | null;
-      }>(
-        `query {
-          viewer {
-            wallets(first: 50) {
-              edges { node { id name } }
-            }
-          }
-        }`,
-      );
-      const wallets = data.viewer?.wallets?.edges?.map((e) => e.node).filter(Boolean) ?? [];
-      if (wallets.length === 1) return wallets[0]!.id;
-      if (wallets.length > 1) {
-        if (stored && wallets.some((w) => w.id === stored)) return stored;
-        log(`[cloud-blockchain] multiple wallets available; using first ${wallets[0]!.id}`);
-        return wallets[0]!.id;
-      }
-    } catch (e) {
-      log(`[cloud-blockchain] viewer.wallets unavailable: ${String(e)}`);
-    }
-
-    if (stored) return stored;
     throw new Error(
       'No Cloud Wallet walletId available. Reconnect and ensure OAuth consent selects a wallet resource.',
     );
@@ -185,10 +157,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   async getBalance(): Promise<bigint> {
     const walletId = this.requireWalletId();
-    const data = await this.gql<{ wallet: { balance: string | number | bigint } | null }>(
-      `query($id: ID!) { wallet(id: $id) { balance } }`,
-      { id: walletId },
-    );
+    const data = await this.gql<{
+      wallet: { balance: string | number | bigint } | null;
+    }>(`query($id: ID!) { wallet(id: $id) { balance } }`, { id: walletId });
     if (!data.wallet || data.wallet.balance == null) {
       throw new Error('Cloud Wallet balance unavailable');
     }
@@ -247,9 +218,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<bigint> {
-    const data = await this.gql<{ blockchainHeight: { height: number | string | bigint } }>(
-      `query { blockchainHeight { height } }`,
-    );
+    const data = await this.gql<{
+      blockchainHeight: { height: number | string | bigint };
+    }>(`query { blockchainHeight { height } }`);
     if (data.blockchainHeight?.height == null) {
       throw new Error('blockchainHeight missing height');
     }
@@ -413,10 +384,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         if (!data || data.type !== SIGNATURE_REQUEST_MESSAGE_TYPE) return;
         const msgId = String(data.signatureRequestId ?? '');
         if (
-          msgId
-          && msgId !== signatureRequestId
-          && !signatureRequestId.endsWith(msgId)
-          && !msgId.endsWith(signatureRequestId)
+          msgId &&
+          msgId !== signatureRequestId &&
+          !signatureRequestId.endsWith(msgId) &&
+          !msgId.endsWith(signatureRequestId)
         ) {
           return;
         }
@@ -487,10 +458,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const amount = absAmountFromOffer(offer);
     const conditions = conditionsForGraphql(extraConditions, maxHeight);
 
-    log(`[cloud-blockchain] createGamingFundingSpend amount=${amount} conditions=${conditions.length}`);
+    log(
+      `[cloud-blockchain] createGamingFundingSpend amount=${amount} conditions=${conditions.length}`,
+    );
 
     const created = await this.gql<{
-      createGamingFundingSpend: { signatureRequest: { id: string; status: string } };
+      createGamingFundingSpend: {
+        signatureRequest: { id: string; status: string };
+      };
     }>(
       `mutation($input: CreateGamingFundingSpendInput!) {
         createGamingFundingSpend(input: $input) {
@@ -551,7 +526,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const nameBytes = new TextEncoder().encode(JSON.stringify(bundle));
     const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
     const name = toHexString(new Uint8Array(hashBuf));
-    log(`[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length}`);
+    log(
+      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length}`,
+    );
     return bundle;
   }
 
@@ -596,10 +573,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
           expiresAt: tokens.expiresAt,
-          walletId: '',
+          walletId: tokens.walletId,
         };
-        const walletId = await this.resolveWalletId();
-        this.persistAuth({ ...tokens, walletId });
+        await this.resolveWalletId();
+        this.persistAuth(tokens);
         await this.startMonitoring();
       },
     };

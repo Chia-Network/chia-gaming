@@ -37,7 +37,12 @@ export function conditionsForGraphql(
 }
 
 export function selectCoinStringForAmount(
-  coins: Array<{ name?: string; parentCoinInfo?: string; puzzleHash?: string; amount?: string | number | bigint }>,
+  coins: Array<{
+    name?: string;
+    parentCoinInfo?: string;
+    puzzleHash?: string;
+    amount?: string | number | bigint;
+  }>,
   amount: bigint,
 ): string | null {
   const sorted = [...coins].sort((a, b) => {
@@ -81,9 +86,7 @@ export function coinSpendsToWalletBundle(
   });
   return {
     coin_spends,
-    aggregated_signature: aggregatedSignature
-      ? with0x(aggregatedSignature)
-      : BLS_NIL_SIGNATURE,
+    aggregated_signature: aggregatedSignature ? with0x(aggregatedSignature) : BLS_NIL_SIGNATURE,
   };
 }
 

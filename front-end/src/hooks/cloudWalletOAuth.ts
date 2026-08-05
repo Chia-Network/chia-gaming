@@ -14,6 +14,7 @@ import {
 
 export const OAUTH_MESSAGE_TYPE = 'chia-gaming/oauth';
 export const SIGNATURE_REQUEST_MESSAGE_TYPE = 'chia-cloud-wallet/signature-request';
+export const GAMING_CONSENT_MESSAGE_TYPE = 'chia-cloud-wallet/consent';
 
 /** BLS G2 infinity / NIL aggregate signature (96 bytes). */
 export const BLS_NIL_SIGNATURE =
@@ -61,10 +62,15 @@ export function buildAuthorizeUrl(opts: {
   url.searchParams.set('state', opts.state);
   url.searchParams.set('code_challenge', opts.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
+  // Ask the Cloud Wallet consent screen to post the selected walletId back to this opener.
+  url.searchParams.set('chia_gaming_client', 'true');
   return url.toString();
 }
 
-export function signatureRequestApproveUrl(signatureRequestId: string, uiBase = CLOUD_WALLET_UI_URL): string {
+export function signatureRequestApproveUrl(
+  signatureRequestId: string,
+  uiBase = CLOUD_WALLET_UI_URL,
+): string {
   const base = uiBase.replace(/\/$/, '');
   const id = signatureRequestId.startsWith('SignatureRequest_')
     ? signatureRequestId
@@ -97,7 +103,11 @@ async function postToken(body: Record<string, string>): Promise<TokenResponse> {
     throw new Error(`Cloud Wallet token endpoint returned non-JSON (${res.status})`);
   }
   if (!res.ok || !json.access_token) {
-    const msg = json.error_description || json.error || json.message || `token exchange failed (${res.status})`;
+    const msg =
+      json.error_description ||
+      json.error ||
+      json.message ||
+      `token exchange failed (${res.status})`;
     throw new Error(String(msg));
   }
   return json as TokenResponse;
@@ -131,7 +141,10 @@ export async function exchangeAuthorizationCode(opts: {
   };
 }
 
-export async function refreshAccessToken(refreshToken: string, clientId = CLOUD_WALLET_CLIENT_ID): Promise<{
+export async function refreshAccessToken(
+  refreshToken: string,
+  clientId = CLOUD_WALLET_CLIENT_ID,
+): Promise<{
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
@@ -164,8 +177,52 @@ export function openOAuthPopup(authorizeUrl: string): Window | null {
   );
 }
 
+/** Wait for the Cloud Wallet consent screen to post the selected walletId to this opener. */
+export function waitForGamingConsentWalletId(
+  popup: Window | null,
+  timeoutMs = 5 * 60 * 1000,
+): Promise<string | undefined> {
+  return new Promise((resolve, _reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(closePoll);
+      window.removeEventListener('message', onMessage);
+      fn();
+    };
+
+    const timer = setTimeout(() => {
+      finish(() => resolve(undefined));
+    }, timeoutMs);
+
+    const uiOrigin = new URL(CLOUD_WALLET_UI_URL).origin;
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== uiOrigin) return;
+      const data = event.data;
+      if (!data || data.type !== GAMING_CONSENT_MESSAGE_TYPE) return;
+      if (typeof data.walletId !== 'string') return;
+      finish(() => resolve(data.walletId));
+    };
+
+    window.addEventListener('message', onMessage);
+
+    const closePoll = setInterval(() => {
+      if (popup && popup.closed) {
+        finish(() => resolve(undefined));
+      }
+    }, 400);
+  });
+}
+
 /** Wait for OAuth callback postMessage from /oauth/callback. */
-export function waitForOAuthCode(expectedState: string, popup: Window | null, timeoutMs = 5 * 60 * 1000): Promise<string> {
+export function waitForOAuthCode(
+  expectedState: string,
+  popup: Window | null,
+  timeoutMs = 5 * 60 * 1000,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (fn: () => void) => {
@@ -211,6 +268,7 @@ export async function beginOAuthPopupLogin(): Promise<{
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  walletId: string;
 }> {
   if (!CLOUD_WALLET_CLIENT_ID) {
     throw new Error('CLOUD_WALLET_CLIENT_ID is not configured');
@@ -236,21 +294,41 @@ export async function beginOAuthPopupLogin(): Promise<{
   }
 
   try {
+    const walletIdPromise = waitForGamingConsentWalletId(popup);
     const code = await waitForOAuthCode(state, popup);
-    const tokens = await exchangeAuthorizationCode({ code, codeVerifier, redirectUri });
+    const consentWalletId = await walletIdPromise;
+    if (!consentWalletId) {
+      throw new Error(
+        'Cloud Wallet consent did not return a walletId. Ensure the consent screen supports gaming clients.',
+      );
+    }
+    if (consentWalletId === '*') {
+      throw new Error(
+        'Wildcard wallet consent is not supported for gaming. Please select a specific wallet.',
+      );
+    }
+    const walletId = encodeRelayGlobalId('Wallet', consentWalletId);
+    const tokens = await exchangeAuthorizationCode({
+      code,
+      codeVerifier,
+      redirectUri,
+    });
     try {
       popup.close();
     } catch {
       // ignore
     }
-    return tokens;
+    return { ...tokens, walletId };
   } finally {
     clearOAuthPending();
   }
 }
 
 /** Handle /oauth/callback page: validate state and postMessage to opener. */
-export function handleOAuthCallbackPage(): { status: 'ok' | 'error'; message: string } {
+export function handleOAuthCallbackPage(): {
+  status: 'ok' | 'error';
+  message: string;
+} {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
   const state = params.get('state');
@@ -272,7 +350,10 @@ export function handleOAuthCallbackPage(): { status: 'ok' | 'error'; message: st
   if (!code || !state) {
     const message = 'Missing authorization code or state';
     if (window.opener) {
-      window.opener.postMessage({ type: OAUTH_MESSAGE_TYPE, error: message, state }, window.location.origin);
+      window.opener.postMessage(
+        { type: OAUTH_MESSAGE_TYPE, error: message, state },
+        window.location.origin,
+      );
     }
     return { status: 'error', message };
   }
@@ -280,17 +361,26 @@ export function handleOAuthCallbackPage(): { status: 'ok' | 'error'; message: st
   if (!pending || pending.state !== state) {
     const message = 'OAuth state mismatch — restart Cloud Wallet connect';
     if (window.opener) {
-      window.opener.postMessage({ type: OAUTH_MESSAGE_TYPE, error: message, state }, window.location.origin);
+      window.opener.postMessage(
+        { type: OAUTH_MESSAGE_TYPE, error: message, state },
+        window.location.origin,
+      );
     }
     return { status: 'error', message };
   }
 
   if (window.opener) {
     window.opener.postMessage({ type: OAUTH_MESSAGE_TYPE, code, state }, window.location.origin);
-    return { status: 'ok', message: 'Login complete. You can close this window.' };
+    return {
+      status: 'ok',
+      message: 'Login complete. You can close this window.',
+    };
   }
 
-  return { status: 'error', message: 'No opener window — open Cloud Wallet connect from the game.' };
+  return {
+    status: 'error',
+    message: 'No opener window — open Cloud Wallet connect from the game.',
+  };
 }
 
 export interface GraphQLResponse<T> {
@@ -375,8 +465,11 @@ export async function graphqlRequest<T>(
   }
 
   if (!res.ok || payload.errors?.length) {
-    const msg = payload.errors?.map((e) => e.message).filter(Boolean).join('; ')
-      || `GraphQL request failed (${res.status})`;
+    const msg =
+      payload.errors
+        ?.map((e) => e.message)
+        .filter(Boolean)
+        .join('; ') || `GraphQL request failed (${res.status})`;
     throw new Error(msg);
   }
   if (payload.data === undefined) {
@@ -406,8 +499,15 @@ export function normalizeHex(value: unknown): string {
   if (typeof value === 'string') {
     return value.trim().toLowerCase().replace(/^0x/, '');
   }
-  if (typeof value === 'object' && value && (value as any).type === 'Buffer' && Array.isArray((value as any).data)) {
-    return Array.from((value as any).data as number[], (b) => (b & 0xff).toString(16).padStart(2, '0')).join('');
+  if (
+    typeof value === 'object' &&
+    value &&
+    (value as any).type === 'Buffer' &&
+    Array.isArray((value as any).data)
+  ) {
+    return Array.from((value as any).data as number[], (b) =>
+      (b & 0xff).toString(16).padStart(2, '0'),
+    ).join('');
   }
   return String(value).toLowerCase().replace(/^0x/, '');
 }
