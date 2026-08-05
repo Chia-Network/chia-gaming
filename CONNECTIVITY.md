@@ -301,11 +301,15 @@ disconnecting from the hub while resolving on-chain). Conversely, after a
 session finishes, the player can become not busy and available for new matches
 while a previous result remains visible until a new session replaces it.
 
-The app is available for a new session when the broader session phase is `none`
-or `resolved` and there is no consent prompt, reserved peer id, buffered
-handshake, or live message handler (`isAvailableForNewSessionPrompt()`). A
-consent prompt is a temporary unavailable state for inbound matchmaking even
-though it does not by itself set hub `busy`. While unavailable:
+The app is available for a new session when hub presence is not busy
+(`shouldReportHubBusy` — session obligation, walletless, or on WalletConnect while the
+wallet has no verified full-node peer) and there is no consent prompt, reserved
+peer id, buffered handshake, or live message handler
+(`isAvailableForNewSessionPrompt()`). The app still connects to the hub normally
+while awaiting a full-node peer; it simply advertises busy, and inbound
+`advisory_start` / `session_proposal` must still be declined even if the game
+WebSocket is live. A consent prompt is a temporary unavailable state for inbound
+matchmaking even though it does not by itself set hub `busy`. While unavailable:
 
 - further `advisory_start` messages are **ignored** (hub-originated; do not
   `session_reject` the peer);
