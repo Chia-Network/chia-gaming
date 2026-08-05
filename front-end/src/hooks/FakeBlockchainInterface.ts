@@ -239,6 +239,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   async spend(
     blob: string,
     _spendBundle: unknown,
+    _changePuzzleHash: string,
     _source?: string,
     _fee?: bigint,
   ): Promise<string> {

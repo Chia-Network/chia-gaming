@@ -89,6 +89,7 @@ const sampleSession: Partial<SessionSave> = {
   myContribution: '60',
   theirContribution: '40',
   perGameAmount: '10',
+  rewardPuzzleHash: '11'.repeat(32),
   unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
   humanHistory: ['human1'],
   wasmNotificationHistory: ['notification1'],

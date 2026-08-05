@@ -2,6 +2,10 @@
 *.hex
 *.sym
 .build-chialisp.state
+.build-chialisp.cache
+
+# Local compression benchmarks
+/group-sizes/
 
 # cargo / rust
 vendor/

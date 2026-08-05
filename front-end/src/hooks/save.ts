@@ -93,6 +93,8 @@ export interface SessionSave {
   /** Blocks; persisted so a deploy-stale reload can resume pre-cradle handshake. */
   channelTimeout?: string;
   unrollTimeout?: string;
+  /** Change/reward address the session was created with; immutable for the life of the session. Null when no session is active. */
+  rewardPuzzleHash: string | null;
   unackedMessages?: Array<{ msgno: bigint; msg: Uint8Array }>;
   humanHistory?: string[];
   wasmNotificationHistory?: string[];
@@ -623,6 +625,7 @@ function loadPreferences(): SessionSave {
         return {
           version: CURRENT_VERSION,
           ...preferences,
+          rewardPuzzleHash: null,
           defaultFee:
             preferences.defaultFee === undefined ? undefined : BigInt(preferences.defaultFee),
         };
@@ -631,7 +634,7 @@ function loadPreferences(): SessionSave {
   } catch (e) {
     console.error('[save] failed to load preferences:', e);
   }
-  return { version: CURRENT_VERSION, playerId: randomHex() };
+  return { version: CURRENT_VERSION, playerId: randomHex(), rewardPuzzleHash: null };
 }
 
 function isTerminalFinishedChannel(status: ChannelStatusPayload | null | undefined): boolean {
@@ -1121,6 +1124,7 @@ export function clearSession(): Promise<void> {
     walletAlert: prev.walletAlert,
     hubAlert: prev.hubAlert,
     blockchainType: prev.blockchainType,
+    rewardPuzzleHash: null,
   };
   savePreferences(cached);
   const deletePromise = (writeChain = writeChain

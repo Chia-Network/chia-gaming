@@ -249,6 +249,9 @@ function transactionSubmitQueue(blob: SessionController): Promise<void> {
 }
 
 function submitTransaction(blob: SessionController, tx: SpendBundle): void {
+  if (!blob.rewardPuzzleHash) {
+    blob.rewardPuzzleHash = '11'.repeat(32);
+  }
   (blob as unknown as { submitTransaction: (tx: SpendBundle) => void }).submitTransaction(tx);
 }
 
@@ -875,6 +878,7 @@ describe('restore ordering', () => {
           iStarted: true,
           pairingToken: 'tok',
           activeGameIds: [],
+          rewardPuzzleHash: '11'.repeat(32),
           unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
           wasmNotificationHistory: ['notification'],
           diagnosticLog: ['diagnostic'],
@@ -1780,6 +1784,7 @@ describe('transaction submission', () => {
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
+    blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
       snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
@@ -1894,6 +1899,7 @@ describe('transaction submission', () => {
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
+    blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
       drain_submissions: jest.fn(() => [testSpendBundle('01'), testSpendBundle('02')]),
@@ -1929,6 +1935,7 @@ describe('transaction submission', () => {
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
+    blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
       drain_submissions: jest.fn(() => [testSpendBundle('06')]),
@@ -1988,6 +1995,7 @@ describe('transaction submission', () => {
       makePeerConn(sentMessages, sentAcks),
     );
     activeBlob = blob;
+    blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
     blob.getObservable().subscribe((evt) => {
       if (evt.type === 'error') errors.push(evt.error);

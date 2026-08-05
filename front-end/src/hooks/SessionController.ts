@@ -11,7 +11,6 @@ import {
   WasmResult,
   SpendBundle,
   ProposeGameParams,
-  BlockchainInboundAddressResult,
   WasmEvent,
   NeedCoinSpendRequest,
 } from '../types/ChiaGaming';
@@ -39,6 +38,7 @@ export interface WasmFields {
   myContribution: string;
   theirContribution: string;
   perGameAmount: string;
+  rewardPuzzleHash: string | null;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   wasmNotificationHistory: string[];
   diagnosticLog: string[];
@@ -112,6 +112,7 @@ export class SessionController implements PollingGameSession {
   myContribution: bigint;
   theirContribution: bigint;
   perGameAmount: bigint;
+  rewardPuzzleHash: string | null;
   wc: WasmConnection | undefined;
   sendMessage: (msgno: bigint, msg: Uint8Array) => boolean;
   sendAck: (ackMsgno: bigint) => boolean;
@@ -222,6 +223,7 @@ export class SessionController implements PollingGameSession {
     this.myContribution = myContribution;
     this.theirContribution = theirContribution;
     this.perGameAmount = 0n;
+    this.rewardPuzzleHash = null;
     this.iStarted = false;
     this.channelReady = false;
     this.storedMessages = [];
@@ -588,8 +590,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  setBlockchainAddress(a: BlockchainInboundAddressResult) {
-    this.rxjsEmitter?.next({ type: 'address', data: a });
+  emitRewardAddress() {
+    if (!this.rewardPuzzleHash) {
+      throw new Error('emitRewardAddress: rewardPuzzleHash is not set');
+    }
+    this.rxjsEmitter?.next({ type: 'address', data: { puzzleHash: this.rewardPuzzleHash } });
   }
 
   kickSystem(flags: number) {
@@ -622,7 +627,16 @@ export class SessionController implements PollingGameSession {
       const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
       const fee = this.getFee();
       log(`[wasm] submitTransaction blobLen=${blob.length}`);
-      await blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined);
+      if (!this.rewardPuzzleHash) {
+        throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
+      }
+      await blockchain.rpc.spend(
+        blob,
+        spendBundle,
+        this.rewardPuzzleHash,
+        'submitTransaction',
+        fee || undefined,
+      );
     } catch (e) {
       const message = extractErrorMessage(e);
       if (isBenignTransactionSubmitError(message)) {
@@ -1357,6 +1371,7 @@ export class SessionController implements PollingGameSession {
       myContribution: this.myContribution.toString(),
       theirContribution: this.theirContribution.toString(),
       perGameAmount: this.perGameAmount.toString(),
+      rewardPuzzleHash: this.rewardPuzzleHash,
       unackedMessages: [...this.unackedMessages],
       wasmNotificationHistory: recentEntries(
         this.wasmNotificationHistory,

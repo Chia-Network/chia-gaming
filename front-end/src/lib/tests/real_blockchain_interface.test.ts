@@ -425,7 +425,7 @@ describe('RealBlockchainInterface', () => {
       aggregated_signature: '0x00',
     };
     await expect(
-      blockchain.spend('80', submittedBundle, 'submitTransaction', 10n),
+      blockchain.spend('80', submittedBundle, puzzleHash, 'submitTransaction', 10n),
     ).resolves.toEqual({ success: true });
 
     expect(mockPushTransactions).toHaveBeenCalledWith(
@@ -440,6 +440,32 @@ describe('RealBlockchainInterface', () => {
                 amount,
               },
             ],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('uses the provided change puzzle hash in the transaction record', async () => {
+    const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = { puzzleHash: '11'.repeat(32) };
+    const sessionPuzzleHash = '22'.repeat(32);
+    mockPushTransactions.mockResolvedValue({ success: true });
+
+    await blockchain.spend(
+      '80',
+      { coin_spends: [], aggregated_signature: '0x00' },
+      sessionPuzzleHash,
+      'submitTransaction',
+      0n,
+    );
+
+    expect(mockPushTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transactions: [
+          expect.objectContaining({
+            to_puzzle_hash: sessionPuzzleHash,
+            to_address: encodePuzzleHashToBech32m(sessionPuzzleHash),
           }),
         ],
       }),
