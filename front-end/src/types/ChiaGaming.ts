@@ -603,7 +603,13 @@ export interface ConnectionSetup {
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
   getRegistrationScopeKey?(): string | undefined;
-  spend(blob: string, spendBundle: unknown, source?: string, fee?: bigint): Promise<string>;
+  spend(
+    blob: string,
+    spendBundle: unknown,
+    changePuzzleHash: string,
+    source?: string,
+    fee?: bigint,
+  ): Promise<string>;
   rememberLocalRemovals?(spendBundle: unknown): void | Promise<void>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;

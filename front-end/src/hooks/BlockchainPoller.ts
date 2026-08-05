@@ -117,8 +117,12 @@ export class BlockchainPoller {
     return {
       requestGapMs: adapter.requestGapMs,
       getRegistrationScopeKey: () => adapter.getRegistrationScopeKey?.(),
-      spend: (blob, spendBundle, source, fee) =>
-        this.enqueueRpc('spend', () => adapter.spend(blob, spendBundle, source, fee), true),
+      spend: (blob, spendBundle, changePuzzleHash, source, fee) =>
+        this.enqueueRpc(
+          'spend',
+          () => adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
+          true,
+        ),
       rememberLocalRemovals: adapter.rememberLocalRemovals
         ? (spendBundle) =>
             this.enqueueRpc(

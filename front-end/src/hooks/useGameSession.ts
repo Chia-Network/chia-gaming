@@ -1141,6 +1141,7 @@ export function useGameSession(
       myContribution: wasm.myContribution,
       theirContribution: wasm.theirContribution,
       perGameAmount: wasm.perGameAmount,
+      rewardPuzzleHash: wasm.rewardPuzzleHash,
       unackedMessages: wasm.unackedMessages,
       activeGameIds: presentationModel.game.activeIds,
       iProposedHand,

@@ -17,6 +17,8 @@ export default defineConfig([
     '**/node_modules/**',
     '**/public/index.js',
     '**/serve/**',
+    'deploy_hub/**',
+    'deploy_player_app/**',
     'front-end/src/lib/pkg/**',
   ]),
   {

@@ -291,12 +291,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     spendBundle: WalletSpendBundle,
     fee: bigint,
     removals: CoinsetCoin[],
+    changePuzzleHash: string,
   ): Promise<TransactionRecord> {
-    const puzzleHash = this.blockchainAddressData.puzzleHash;
-    if (!puzzleHash) {
-      throw new Error('buildTransactionRecord: blockchain address puzzle hash is not set');
+    if (!changePuzzleHash) {
+      throw new Error('buildTransactionRecord: change puzzle hash is required');
     }
-    const toAddress = encodePuzzleHashToBech32m(puzzleHash);
+    const toAddress = encodePuzzleHashToBech32m(changePuzzleHash);
 
     const nameBytes = new TextEncoder().encode(jsonStringify(spendBundle));
     const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
@@ -307,7 +307,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return {
       confirmed_at_height: 0n,
       created_at_time: BigInt(Math.floor(Date.now() / 1000)),
-      to_puzzle_hash: puzzleHash,
+      to_puzzle_hash: changePuzzleHash,
       amount: 0n,
       fee_amount: fee,
       confirmed: false,
@@ -329,6 +329,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async spend(
     _blob: string,
     spendBundle: unknown,
+    changePuzzleHash: string,
     _source?: string,
     fee?: bigint,
   ): Promise<string> {
@@ -361,6 +362,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         spendBundle as WalletSpendBundle,
         feeValue,
         removals,
+        changePuzzleHash,
       );
       const result = await rpc.pushTransactions({
         transactions: [txRecord],
@@ -379,7 +381,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (isRetryablePushError(errStr)) {
         return new Promise((resolve, reject) => {
           setTimeout(() => {
-            this.spend(_blob, spendBundle, `retry-of-#${seq}`, fee).then(resolve).catch(reject);
+            this.spend(_blob, spendBundle, changePuzzleHash, `retry-of-#${seq}`, fee)
+              .then(resolve)
+              .catch(reject);
           }, PUSH_RETRY_DELAY);
         });
       }

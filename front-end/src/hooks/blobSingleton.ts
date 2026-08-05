@@ -101,7 +101,8 @@ export async function configSessionController(
   const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
   const rngId = wasmConnection.create_rng(seedHex);
   const address = await blockchain.rpc.getAddress();
-  sc.setBlockchainAddress(address);
+  sc.rewardPuzzleHash = address.puzzleHash;
+  sc.emitRewardAddress();
   const theirContribution = sc.theirContribution;
   const { game: cradle } = wasmStateInit.createGame(
     rngId,
@@ -109,7 +110,7 @@ export async function configSessionController(
     iStarted,
     sc.myContribution,
     theirContribution,
-    address.puzzleHash,
+    sc.rewardPuzzleHash,
     channelTimeout,
     unrollTimeout,
   );
@@ -185,6 +186,10 @@ export async function restoreSession(
   sc.myAlias = save.myAlias;
   sc.opponentAlias = save.opponentAlias;
   sc.lastOutcomeWin = save.lastOutcomeWin;
+  if (!save.rewardPuzzleHash) {
+    throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
+  }
+  sc.rewardPuzzleHash = save.rewardPuzzleHash;
   sc.markRestored();
   sc.setGameSession(cradle);
 
