@@ -47,7 +47,7 @@ export interface PersistedGameState<T = unknown> {
   state: T;
 }
 
-type BlockchainType = 'simulator' | 'walletconnect';
+type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
 /**
  * One complete resumable record stored by IndexedDB structured clone.

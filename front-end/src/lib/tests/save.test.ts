@@ -766,6 +766,11 @@ describe('flat state', () => {
     expect(getBlockchainType()).toBe('walletconnect');
   });
 
+  it('getBlockchainType accepts cloud', () => {
+    saveSession({ blockchainType: 'cloud' });
+    expect(getBlockchainType()).toBe('cloud');
+  });
+
   it('saveSession merges fields into the flat state', () => {
     saveSession(sampleSession);
     const state = loadState();
