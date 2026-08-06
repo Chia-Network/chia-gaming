@@ -33,7 +33,7 @@
     "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "4.1.17",
+    "@tailwindcss/cli": "4.3.3",
     "@types/jest": "30.0.0",
     "@types/node": "24.6.2",
     "@types/qrcode": "1.5.6",
@@ -44,7 +44,7 @@
     "fake-indexeddb": "^6.2.5",
     "jest": "30.4.2",
     "react-test-renderer": "19.2.8",
-    "tailwindcss": "4.1.17",
+    "tailwindcss": "4.3.3",
     "ts-jest": "29.4.12",
     "typescript": "5.9.3"
   },
