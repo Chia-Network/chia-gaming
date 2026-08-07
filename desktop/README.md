@@ -69,22 +69,20 @@ Optional JSON file at `<userData>/config.json`, where `<userData>` is
 | ------------ | ---------------------------------------------------- | ------------------------------------------- |
 | `hubOrigins` | `["http://localhost:3003", "http://127.0.0.1:3003"]` | Hub origins the app may load and connect to |
 
-`CHIA_GAMING_HUB_ORIGINS` (comma separated) overrides the file. Anything invalid
-is reported in an error dialog and the app exits rather than starting with a
-half-applied policy.
+Anything invalid is reported in an error dialog and the app exits rather than
+starting with a half-applied policy.
 
-`hubOrigins` feeds both the CSP `frame-src` and the network egress allowlist,
-and the CSP is attached to the document at load time. **A hub origin that is not
-listed here cannot be connected to, even if it is typed into the in-app hub
-picker.** Adding one is a config change plus a restart. See
-[Known gaps](#known-gaps).
+`hubOrigins` feeds both the CSP `frame-src` and the network egress allowlist. It
+is a starting point rather than a fixed set: a hub typed into the in-app picker
+is added to it at runtime and written back to the file. See
+[Hub trust](#hub-trust).
 
 ## Security posture
 
 ### Process isolation
 
-The renderer has no Node.js reachable from it at all, and there is no IPC
-surface to attack.
+The renderer has no Node.js reachable from it at all, and the IPC surface is a
+single channel described under [Hub trust](#hub-trust).
 
 | Setting                       | Value   |
 | ----------------------------- | ------- |
@@ -100,10 +98,11 @@ surface to attack.
 | `navigateOnDragDrop`          | `false` |
 | `devTools`                    | only in unpackaged builds |
 
-`src/preload/index.ts` does not import `ipcRenderer` and registers no channels.
-It exposes one string, `__chiaDistribution`, and nothing else. It has to be a
-preload global rather than anything asynchronous because the front end reads it
-during the first render.
+`src/preload/index.ts` exposes two things and nothing else: `__chiaDistribution`,
+a string the front end reads during the first render to drop web-only
+affordances, and `__chiaHub.requestTrust`, the app's single IPC channel. The
+string has to be a preload global rather than anything asynchronous because it is
+needed before the first render.
 
 The exposure is guarded on `window === window.top`. Sub-frames here are remote
 content (the hub lobby UI, the WalletConnect Verify frame) and get nothing.
@@ -157,6 +156,25 @@ endpoints `sign-client` actually reaches: the `.com` and `.org` relays, the
 Verify API, and `pulse.walletconnect.org`. Requests on `chiagaming://` are
 answered from disk and never touch the network stack.
 
+### Hub trust
+
+A hub is third-party infrastructure the player is meant to choose, so the
+allowlist is extensible at runtime. `src/main/hubTrust.ts` adds an origin the
+player document asks for, rebuilds the policy, and persists the list so the same
+hub costs nothing on the next launch. Because the CSP is stamped onto the
+document when it loads, the renderer reloads once after a new origin is added.
+
+The allowlist stays in the main process so that a hub cannot widen it: the
+preload exposes no bridge to sub-frames, a hub can never navigate the top frame,
+and the handler checks that the sender is the app's own main frame as well. The
+player document's request is then granted without a prompt. That document is our
+own bundle under a CSP with no inline, remote or `eval`-able script, so a native
+prompt would only guard against a compromised bundle, which could equally well
+fake the prompt's own UI or leave through the hub already on the allowlist. What
+a hub can see, and a warning when it would be reached over plain http, are
+disclosed in `front-end/src/components/HubPicker.tsx` instead, where the player
+is actually choosing.
+
 ### Navigation and permissions
 
 - `setWindowOpenHandler` denies every `window.open`. The player app has no
@@ -191,10 +209,12 @@ and codesign rejects that as "detritus".
 
 ## Known gaps
 
-- **Hub origins are static.** The in-app hub picker accepts any origin, but only
-  allowlisted ones will load, because the CSP is fixed per document. Letting a
-  user trust a new hub at runtime needs a main-process trust prompt plus a
-  renderer reload, which means a small change in `front-end` as well.
+- **Trusting a new hub costs a renderer reload.** The main-process checks
+  (`onBeforeRequest`, `will-frame-navigate`) pick up a new origin immediately, but
+  the CSP is attached to the document at load time, so the hub is not reachable
+  from the document that asked for it. Dropping `connect-src` and `frame-src` from
+  the document CSP and leaning on the main-process checks alone would remove the
+  reload at the cost of a layer.
 - **The hub lobby UI is still a cross-origin iframe** inside the player
   document, as it is in the browser. It receives no bridge API and cannot
   navigate the top frame, but it does share the renderer process boundary with

@@ -144,6 +144,7 @@ import {
 import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { isElectronDistribution } from '../util/distribution';
+import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
 
 import { HubPicker } from './HubPicker';
@@ -2080,7 +2081,19 @@ const Shell = () => {
   );
 
   const requestHubConnect = useCallback(
-    (origin: string) => {
+    async (origin: string) => {
+      const trust = await requestHubTrust(origin);
+      const trustError = hubTrustError(trust, origin);
+      if (trustError !== null) {
+        setHubConnectionError(trustError);
+        return;
+      }
+      if (trust === 'granted') {
+        saveHubUrl(origin);
+        window.location.reload();
+        return;
+      }
+
       if (
         (peerLiveness === 'connected' || peerLiveness === 'degraded') &&
         sessionPhase === 'off-chain'
@@ -2549,13 +2562,16 @@ const Shell = () => {
     [setActiveTab, setHubAlert, setUnreadGame, setWalletAlert],
   );
 
-  useThemeSyncToIframe('hub-iframe', [iframeUrl]);
+  useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
 
   // Hub owns the display name; keep local prefs aligned so presence and
   // session_proposal do not invent a Player_* fallback that later overwrites
   // the hub.
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
+      if (hubOrigin === null || ev.origin !== hubOrigin) return;
+      const frame = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
+      if (frame === null || ev.source !== frame.contentWindow) return;
       const data = ev.data;
       if (!data || data.type !== 'hub-alias' || typeof data.alias !== 'string') return;
       const trimmed = data.alias.trim();
@@ -2565,7 +2581,7 @@ const Shell = () => {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [hubOrigin]);
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
@@ -3941,6 +3957,7 @@ const Shell = () => {
                   id="hub-iframe"
                   className="bg-canvas-bg-subtle"
                   style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                  sandbox="allow-scripts allow-same-origin"
                   src={iframeUrl}
                 />
               </>

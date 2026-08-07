@@ -2,8 +2,11 @@
 // and `dark` class to the document root. Import and call `installThemeSyncListener()`
 // in any page that may be loaded inside an iframe to accept theme updates from
 // the parent.
-export function installThemeSyncListener() {
+export default function installThemeSyncListener() {
   function handler(ev: MessageEvent) {
+    // The embedder is the only legitimate sender. Anything else reaching this
+    // handler could set arbitrary CSS custom properties on the document.
+    if (window.parent === window || ev.source !== window.parent) return;
     if (!ev.data || ev.data.type !== 'theme-sync') return;
     try {
       const { vars, dark } = ev.data as { vars: Record<string, string>; dark: boolean };
@@ -24,10 +27,4 @@ export function installThemeSyncListener() {
   }
 
   window.addEventListener('message', handler, false);
-
-  return function uninstall() {
-    window.removeEventListener('message', handler, false);
-  };
 }
-
-export default installThemeSyncListener;

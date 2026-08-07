@@ -27,6 +27,14 @@ export type NetworkPolicy = {
   contentSecurityPolicy: string;
 };
 
+/**
+ * The policy is held behind a mutable reference because approving a hub at
+ * runtime widens it. Every consumer reads `current` at the moment it makes a
+ * decision — per request, per navigation, per document served — so a newly
+ * trusted origin takes effect without restarting the app.
+ */
+export type PolicyRef = { current: NetworkPolicy };
+
 export function originOfUrl(value: string): string | null {
   try {
     const origin = new URL(value).origin;

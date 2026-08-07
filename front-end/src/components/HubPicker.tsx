@@ -15,6 +15,27 @@ function parseHubUrl(raw: string): string | null {
   }
 }
 
+/**
+ * Plain http to a remote host is the one thing about a hub the user cannot read
+ * off the URL they typed, so it is called out before they connect. Loopback is
+ * exempt: the dev hub is not carried over a network anyone can sit on.
+ */
+function insecureHubWarning(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:') return null;
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]') {
+    return null;
+  }
+  return 'This hub uses plain http. The connection is not encrypted, so anyone on the network path can read it.';
+}
+
 interface HubPickerProps {
   onConnect: (origin: string) => void;
   connectionError?: string | null;
@@ -23,6 +44,7 @@ interface HubPickerProps {
 export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
   const [customUrl, setCustomUrl] = useState('');
   const [error, setError] = useState('');
+  const insecureWarning = insecureHubWarning(customUrl);
 
   const handleCustomConnect = useCallback(() => {
     const origin = parseHubUrl(customUrl);
@@ -37,7 +59,15 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
   return (
     <div className="flex flex-col items-center justify-center h-full px-4">
       <div className="flex flex-col items-center gap-6 w-full max-w-sm">
-        <p className="text-lg font-semibold text-canvas-text-contrast">Connect to Hub</p>
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-lg font-semibold text-canvas-text-contrast">Connect to Hub</p>
+          <p className="text-xs text-canvas-solid text-center">
+            A hub finds you an opponent and relays your game messages. It sees who you play against
+            and how much you wager, and it displays its own interface in this tab. It cannot take
+            your funds or change the outcome of a game, because those are settled on-chain. Connect
+            only to a hub you chose yourself.
+          </p>
+        </div>
 
         <div className="flex flex-col gap-1 w-full">
           <div className="flex gap-2 w-full">
@@ -65,6 +95,9 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
           </div>
           {(error || connectionError) && (
             <p className="text-xs text-alert-text">{error || connectionError}</p>
+          )}
+          {insecureWarning !== null && (
+            <p className="text-xs text-warning-text">{insecureWarning}</p>
           )}
         </div>
 

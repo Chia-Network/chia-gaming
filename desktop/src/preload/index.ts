@@ -1,8 +1,6 @@
-import { contextBridge } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 
-// This preload deliberately does not import ipcRenderer: there is no
-// renderer-to-main IPC surface at all. Everything the player app needs is
-// either a plain web API or this one flag.
+import { HUB_TRUST_CHANNEL, type HubTrustOutcome } from '../shared/ipc';
 
 /**
  * Sub-frames are remote content — the hub lobby UI and the WalletConnect Verify
@@ -17,4 +15,12 @@ if (window === window.top) {
   // affordances. It has to be set before the first render, which is why it is
   // a preload global rather than anything asynchronous.
   contextBridge.exposeInMainWorld('__chiaDistribution', 'electron');
+
+  // The whole renderer-to-main surface: ask the user to allow a hub origin.
+  // Nothing here decides anything — main validates the origin, prompts, and
+  // owns the allowlist.
+  contextBridge.exposeInMainWorld('__chiaHub', {
+    requestTrust: (origin: string): Promise<HubTrustOutcome> =>
+      ipcRenderer.invoke(HUB_TRUST_CHANNEL, origin) as Promise<HubTrustOutcome>,
+  });
 }
