@@ -1302,118 +1302,116 @@ const Shell = () => {
         pairingToken: string;
       },
     ) => {
-      const conn = hubConnRef.current;
-      if (!conn) return;
-      const epoch = sessionStartEpochRef.current;
-
-      let myContribution: bigint;
-      let theirContribution: bigint;
       try {
-        myContribution = parseSessionAmount(request.myAmount);
-        theirContribution = parseSessionAmount(request.theirAmount);
-      } catch (e) {
-        console.error('[Shell] rejecting session start with invalid amounts', e);
-        setSessionError(true);
-        return;
-      }
-      const minContribution =
-        myContribution < theirContribution ? myContribution : theirContribution;
-      const perGame = minContribution / 10n || 1n;
-      const sessionId = request.gameSessionId ?? generateSessionId();
-      const hubSessionId = getSessionId();
+        const conn = hubConnRef.current;
+        if (!conn) throw new Error('hub connection unavailable during session start');
+        const epoch = sessionStartEpochRef.current;
+        const myContribution = parseSessionAmount(request.myAmount);
+        const theirContribution = parseSessionAmount(request.theirAmount);
+        const minContribution =
+          myContribution < theirContribution ? myContribution : theirContribution;
+        const perGame = minContribution / 10n || 1n;
+        const sessionId = request.gameSessionId ?? generateSessionId();
+        const hubSessionId = getSessionId();
 
-      const existing = peerSessionRef.current;
-      if (
-        existing &&
-        !existing.isDestroyed() &&
-        existing.peerId === request.peerId &&
-        existing.sessionId === sessionId
-      ) {
-        // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
-      } else {
-        existing?.destroy();
-        peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
-        bindPeerMessageHandler(peerSessionRef.current);
-      }
-      const channelTimeout = parseOptionalBigInt(request.channel_timeout);
-      const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
-      // Persist the full pre-cradle handshake *and flush* before GameSession mounts
-      // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
-      // the same pairing/amounts/peer ids and a stable hub session_id.
-      await saveSession({
-        pairingToken: request.pairingToken,
-        sessionPeerId: request.peerId,
-        gameSessionId: sessionId,
-        sessionId: hubSessionId,
-        ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
-        iStarted: request.iStarted,
-        myContribution: myContribution.toString(),
-        theirContribution: theirContribution.toString(),
-        perGameAmount: perGame.toString(),
-        opponentAlias: request.opponentAlias,
-        ...(channelTimeout !== undefined ? { channelTimeout: channelTimeout.toString() } : {}),
-        ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
-        ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
-      });
-      await flushSessionSave();
-      if (epoch !== sessionStartEpochRef.current) {
-        log(
-          `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
-        );
-        return;
-      }
-      sessionStartedRef.current = false;
-      sessionFinishedCleanupRef.current = false;
-      sessionPhaseRef.current = 'none';
-      if (cleanShutdownGraceTimerRef.current !== null) {
-        clearTimeout(cleanShutdownGraceTimerRef.current);
-        cleanShutdownGraceTimerRef.current = null;
-      }
-      if (abandonTimerRef.current !== null) {
-        clearTimeout(abandonTimerRef.current);
-        abandonTimerRef.current = null;
-      }
-      waitingEnteredAtRef.current = null;
-      waitingStateRef.current = null;
-      setAbandonEnabled(false);
-      setCleanShutdownGraceActive(false);
+        const existing = peerSessionRef.current;
+        if (
+          existing &&
+          !existing.isDestroyed() &&
+          existing.peerId === request.peerId &&
+          existing.sessionId === sessionId
+        ) {
+          // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
+        } else {
+          existing?.destroy();
+          peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
+          bindPeerMessageHandler(peerSessionRef.current);
+        }
+        const channelTimeout = parseOptionalBigInt(request.channel_timeout);
+        const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
+        // Persist the full pre-cradle handshake *and flush* before GameSession mounts
+        // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
+        // the same pairing/amounts/peer ids and a stable hub session_id.
+        await saveSession({
+          pairingToken: request.pairingToken,
+          sessionPeerId: request.peerId,
+          gameSessionId: sessionId,
+          sessionId: hubSessionId,
+          ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
+          iStarted: request.iStarted,
+          myContribution: myContribution.toString(),
+          theirContribution: theirContribution.toString(),
+          perGameAmount: perGame.toString(),
+          opponentAlias: request.opponentAlias,
+          ...(channelTimeout !== undefined ? { channelTimeout: channelTimeout.toString() } : {}),
+          ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
+          ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
+        });
+        await flushSessionSave();
+        if (epoch !== sessionStartEpochRef.current) {
+          log(
+            `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
+          );
+          return;
+        }
+        sessionStartedRef.current = false;
+        sessionFinishedCleanupRef.current = false;
+        sessionPhaseRef.current = 'none';
+        if (cleanShutdownGraceTimerRef.current !== null) {
+          clearTimeout(cleanShutdownGraceTimerRef.current);
+          cleanShutdownGraceTimerRef.current = null;
+        }
+        if (abandonTimerRef.current !== null) {
+          clearTimeout(abandonTimerRef.current);
+          abandonTimerRef.current = null;
+        }
+        waitingEnteredAtRef.current = null;
+        waitingStateRef.current = null;
+        setAbandonEnabled(false);
+        setCleanShutdownGraceActive(false);
 
-      setSessionPhase('none');
-      setSessionError(false);
-      setRestoreStatus('idle');
-      setRestoreError(null);
-      setRestoreHubReconciled(true);
-      dashboardSessionModelRef.current = null;
-      setDashboardSessionModel(null);
-      destroySessionController();
-      // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
-      // WASM preset load, so a deploy-stale reload resumed into an empty session.
-      // blobSingleton.newSession clears after session setup succeeds.
-      try {
-        getActiveBlockchain().start();
-      } catch {
-        /* not connected */
+        setSessionPhase('none');
+        setSessionError(false);
+        setRestoreStatus('idle');
+        setRestoreError(null);
+        setRestoreHubReconciled(true);
+        dashboardSessionModelRef.current = null;
+        setDashboardSessionModel(null);
+        destroySessionController();
+        // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
+        // WASM preset load, so a deploy-stale reload resumed into an empty session.
+        // blobSingleton.newSession clears after session setup succeeds.
+        try {
+          getActiveBlockchain().start();
+        } catch {
+          /* not connected */
+        }
+        setSessionConfig({
+          iStarted: request.iStarted,
+          myContribution,
+          theirContribution,
+          perGameAmount: perGame,
+          restoring: false,
+          pairingToken: request.pairingToken,
+          myAlias: undefined,
+          opponentAlias: request.opponentAlias,
+          channelTimeout,
+          unrollTimeout,
+        });
+        setPeerConn(stablePeerConn);
+        setPeerLiveness(null);
+        conn.setBusy(true);
+      } catch (error) {
+        console.error('[Shell] session start failed', error);
+        sendSessionReject(request.peerId);
+        cancelAttemptedSession({ error: true });
       }
-      setSessionConfig({
-        iStarted: request.iStarted,
-        myContribution,
-        theirContribution,
-        perGameAmount: perGame,
-        restoring: false,
-        pairingToken: request.pairingToken,
-        myAlias: undefined,
-        opponentAlias: request.opponentAlias,
-        channelTimeout,
-        unrollTimeout,
-      });
-      setPeerConn(stablePeerConn);
-      setPeerLiveness(null);
-      conn.setBusy(true);
-      return true;
     },
     [
       stablePeerConn,
       bindPeerMessageHandler,
+      cancelAttemptedSession,
+      sendSessionReject,
       setDashboardSessionModel,
       setPeerConn,
       setRestoreError,
@@ -1450,7 +1448,7 @@ const Shell = () => {
             unroll_timeout: advisory.unroll_timeout,
             game_session_id: gameSessionId,
           });
-          const started = await startFreshSessionWithPeer({
+          await startFreshSessionWithPeer({
             peerId: advisory.peer_id,
             opponentAlias: advisory.peer_alias,
             myAmount: advisory.my_amount,
@@ -1461,20 +1459,11 @@ const Shell = () => {
             gameSessionId,
             pairingToken,
           });
-          if (!started) {
-            cancelTransition();
-          }
         },
         { scope: 'session-pane', waitForReady: true, readyKey: pairingToken },
       );
     },
-    [
-      runTransition,
-      setPendingAdvisoryState,
-      startFreshSessionWithPeer,
-      bindPeerMessageHandler,
-      cancelTransition,
-    ],
+    [runTransition, setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler],
   );
 
   const declinePendingAdvisory = useCallback(
@@ -1493,7 +1482,7 @@ const Shell = () => {
         'accept-proposal',
         async () => {
           setPendingProposalState(null);
-          const started = await startFreshSessionWithPeer({
+          await startFreshSessionWithPeer({
             peerId: proposal.from_id,
             opponentAlias: proposal.from_alias,
             myAmount: proposal.responder_amount,
@@ -1504,14 +1493,11 @@ const Shell = () => {
             gameSessionId: proposal.game_session_id,
             pairingToken,
           });
-          if (!started) {
-            cancelTransition();
-          }
         },
         { scope: 'session-pane', waitForReady: true, readyKey: pairingToken },
       );
     },
-    [runTransition, setPendingProposalState, startFreshSessionWithPeer, cancelTransition],
+    [runTransition, setPendingProposalState, startFreshSessionWithPeer],
   );
 
   const declinePendingProposal = useCallback(
