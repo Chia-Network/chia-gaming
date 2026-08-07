@@ -9,6 +9,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,9 @@ import { fileURLToPath } from 'node:url';
 const DESKTOP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILD_DIR = join(tmpdir(), 'chia-gaming-desktop-build');
 const RELEASE_DIR = join(DESKTOP, 'release');
+const ELECTRON_BUILDER_CLI = createRequire(import.meta.url).resolve(
+  'electron-builder/cli.js',
+);
 
 const INSTALLER_EXTENSIONS = ['.dmg', '.zip', '.exe', '.AppImage', '.deb'];
 
@@ -23,8 +27,9 @@ rmSync(BUILD_DIR, { recursive: true, force: true });
 mkdirSync(BUILD_DIR, { recursive: true });
 
 const result = spawnSync(
-  'electron-builder',
+  process.execPath,
   [
+    ELECTRON_BUILDER_CLI,
     '--config',
     'electron-builder.config.cjs',
     `-c.directories.output=${BUILD_DIR}`,
