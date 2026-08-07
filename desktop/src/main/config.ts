@@ -79,9 +79,7 @@ export function loadDesktopConfig(): DesktopConfig {
     const issues = result.error.issues
       .map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('\n');
-    throw new Error(
-      `Invalid desktop configuration from ${configFilePath()}:\n${issues}`,
-    );
+    throw new Error(`Invalid desktop configuration from ${configFilePath()}:\n${issues}`);
   }
 
   const config: DesktopConfig = {
