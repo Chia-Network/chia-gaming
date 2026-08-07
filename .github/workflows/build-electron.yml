@@ -53,6 +53,10 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.15.0
 
+      - name: Install LLVM
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
