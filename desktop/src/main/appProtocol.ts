@@ -4,6 +4,7 @@ import path from 'node:path';
 import { protocol } from 'electron';
 
 import { log } from './log';
+import type { PolicyRef } from './networkPolicy';
 
 /**
  * The renderer is served from a custom scheme rather than `file://`.
@@ -13,9 +14,27 @@ import { log } from './log';
  * relative asset URLs behave exactly as they do in the browser deploy — with
  * `webSecurity` left on and no `file://` privileges granted to anything.
  */
-export const APP_SCHEME = 'chiagaming';
-export const APP_HOST = 'app';
+const APP_SCHEME = 'chiagaming';
+const APP_HOST = 'app';
 export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
+
+/**
+ * True for URLs this app serves itself.
+ *
+ * Matched on scheme and host rather than compared against `APP_ORIGIN`, because
+ * `URL.origin` is unusable for a scheme the URL standard does not consider
+ * special: Node's parser reports the origin as `"null"`, and Chromium
+ * serialises it as `chiagaming://app/` with a trailing slash. Neither form ever
+ * equals `APP_ORIGIN`, so comparing origins silently denies the app itself.
+ */
+export function isAppUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === `${APP_SCHEME}:` && url.host === APP_HOST;
+  } catch {
+    return false;
+  }
+}
 
 const MIME_TYPES = new Map<string, string>([
   ['.html', 'text/html; charset=utf-8'],
@@ -83,7 +102,7 @@ function resolveRequestedFile(rendererRoot: string, pathname: string): string | 
   return target;
 }
 
-export function serveAppScheme(rendererRoot: string, contentSecurityPolicy: string): void {
+export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
   log.info(`serving ${APP_ORIGIN} from ${rendererRoot}`);
 
   protocol.handle(APP_SCHEME, async (request) => {
@@ -123,9 +142,11 @@ export function serveAppScheme(rendererRoot: string, contentSecurityPolicy: stri
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
     });
-    // The CSP belongs on the document, which is the only thing that can host script.
+    // The CSP belongs on the document, which is the only thing that can host
+    // script. Read per document, so reloading is all it takes to apply a hub
+    // the user approved since this document was loaded.
     if (filePath.endsWith('.html')) {
-      headers.set('content-security-policy', contentSecurityPolicy);
+      headers.set('content-security-policy', policy.current.contentSecurityPolicy);
     }
 
     return new Response(body, { status: 200, headers });

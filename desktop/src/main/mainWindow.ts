@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, app, dialog } from 'electron';
 
 import { APP_ORIGIN } from './appProtocol';
 
@@ -34,6 +34,21 @@ export function createMainWindow(): BrowserWindow {
       // the window is in the background, where Chromium throttles timers hard.
       backgroundThrottling: false,
     },
+  });
+
+  window.on('close', (event) => {
+    const response = dialog.showMessageBoxSync(window, {
+      type: 'question',
+      buttons: ['Cancel', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Quit Chia Gaming?',
+      message: 'Are you sure you want to quit Chia Gaming?',
+    });
+
+    if (response === 0) {
+      event.preventDefault();
+    }
   });
 
   window.once('ready-to-show', () => window.show());

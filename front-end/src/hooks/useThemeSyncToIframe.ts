@@ -12,8 +12,12 @@ function buildVarsPayload(): Record<string, string> {
   return vars;
 }
 
-function syncThemeToIframe(iframeId: string) {
-  const iframe = document.getElementById(iframeId) as HTMLIFrameElement | null;
+function frameElement(iframeId: string): HTMLIFrameElement | null {
+  return document.getElementById(iframeId) as HTMLIFrameElement | null;
+}
+
+function syncThemeToIframe(iframeId: string, frameOrigin: string | null) {
+  const iframe = frameElement(iframeId);
   if (!iframe) return;
 
   const payload = buildVarsPayload();
@@ -34,34 +38,53 @@ function syncThemeToIframe(iframeId: string) {
     // Access denied -> cross-origin, fall back to postMessage
   }
 
+  // Addressed to the frame's own origin rather than '*': the hub is untrusted
+  // third-party code, and a frame that navigated elsewhere must not keep
+  // receiving messages meant for it.
+  if (frameOrigin === null) return;
   try {
-    iframe.contentWindow?.postMessage({ type: 'theme-sync', vars: payload, dark: isDark }, '*');
+    iframe.contentWindow?.postMessage(
+      { type: 'theme-sync', vars: payload, dark: isDark },
+      frameOrigin,
+    );
   } catch {
     // ignore
   }
 }
 
+type ThemeSyncOptions = {
+  iframeId: string;
+  /** Origin of the document in the frame. Outbound sync is skipped when null. */
+  frameOrigin: string | null;
+  /** Current frame src. A change re-establishes the subscription. */
+  frameUrl: string | null;
+};
+
 /**
  * Pushes CSS custom properties and dark-mode class from the parent document
  * into an iframe. Works same-origin (direct DOM access) and cross-origin
  * (postMessage fallback). Re-syncs on iframe load, dark-mode toggle, and
- * explicit theme-request messages from the iframe.
+ * explicit theme-request messages from the frame.
+ *
+ * Inbound messages are accepted only from the frame this hook syncs, verified
+ * by both window identity and origin, so no other frame or opener can drive
+ * theme work in the player document.
  */
-export function useThemeSyncToIframe(iframeId: string, deps: unknown[]) {
+export function useThemeSyncToIframe({ iframeId, frameOrigin, frameUrl }: ThemeSyncOptions) {
   useEffect(() => {
-    const sync = () => syncThemeToIframe(iframeId);
+    const sync = () => syncThemeToIframe(iframeId, frameOrigin);
 
-    const iframeEl = document.getElementById(iframeId) as HTMLIFrameElement | null;
+    const iframeEl = frameElement(iframeId);
     iframeEl?.addEventListener('load', sync);
 
     function messageHandler(ev: MessageEvent) {
-      try {
-        if (ev.data && ev.data.type === 'theme-request') {
-          sync();
-        }
-      } catch {
-        // ignore
-      }
+      if (ev.data === null || typeof ev.data !== 'object') return;
+      if ((ev.data as { type?: unknown }).type !== 'theme-request') return;
+      // Look the frame up per event: the element is replaced when the src changes.
+      const iframe = frameElement(iframeId);
+      if (iframe === null || ev.source !== iframe.contentWindow) return;
+      if (frameOrigin !== null && ev.origin !== frameOrigin) return;
+      sync();
     }
     window.addEventListener('message', messageHandler);
 
@@ -71,13 +94,13 @@ export function useThemeSyncToIframe(iframeId: string, deps: unknown[]) {
       attributeFilter: ['class'],
     });
 
-    setTimeout(sync, 150);
+    const initialSync = setTimeout(sync, 150);
 
     return () => {
+      clearTimeout(initialSync);
       iframeEl?.removeEventListener('load', sync);
       window.removeEventListener('message', messageHandler);
       observer.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [iframeId, frameOrigin, frameUrl]);
 }

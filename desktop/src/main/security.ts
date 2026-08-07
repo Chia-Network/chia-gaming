@@ -1,9 +1,9 @@
 import { app } from 'electron';
 import type { Session } from 'electron';
 
-import { APP_ORIGIN } from './appProtocol';
+import { isAppUrl } from './appProtocol';
 import { log } from './log';
-import { originOfUrl, type NetworkPolicy } from './networkPolicy';
+import { originOfUrl, type NetworkPolicy, type PolicyRef } from './networkPolicy';
 
 /**
  * `navigator.clipboard.writeText` is gated on this permission in Electron, and
@@ -18,10 +18,9 @@ const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
  */
 const NETWORK_URL_PATTERNS = ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'];
 
-export function installSessionSecurity(target: Session, policy: NetworkPolicy): void {
+export function installSessionSecurity(target: Session, policy: PolicyRef): void {
   target.setPermissionRequestHandler((_contents, permission, callback, details) => {
-    const granted =
-      ALLOWED_PERMISSIONS.has(permission) && originOfUrl(details.requestingUrl) === APP_ORIGIN;
+    const granted = ALLOWED_PERMISSIONS.has(permission) && isAppUrl(details.requestingUrl);
     if (!granted) {
       log.warn(`denied permission "${permission}" requested by ${details.requestingUrl}`);
     }
@@ -30,7 +29,7 @@ export function installSessionSecurity(target: Session, policy: NetworkPolicy): 
 
   target.setPermissionCheckHandler(
     (_contents, permission, requestingOrigin) =>
-      ALLOWED_PERMISSIONS.has(permission) && requestingOrigin === APP_ORIGIN,
+      ALLOWED_PERMISSIONS.has(permission) && isAppUrl(requestingOrigin),
   );
 
   // No WebUSB / WebHID / Web Serial device is ever reachable.
@@ -38,7 +37,7 @@ export function installSessionSecurity(target: Session, policy: NetworkPolicy): 
 
   target.webRequest.onBeforeRequest({ urls: NETWORK_URL_PATTERNS }, (details, callback) => {
     const origin = originOfUrl(details.url);
-    if (origin !== null && policy.allowedRequestOrigins.has(origin)) {
+    if (origin !== null && policy.current.allowedRequestOrigins.has(origin)) {
       callback({});
       return;
     }
@@ -52,14 +51,16 @@ function isNavigationAllowed(url: string, isMainFrame: boolean, policy: NetworkP
   if (url === 'about:blank') {
     return true;
   }
-  const origin = originOfUrl(url);
-  if (origin === null) {
-    return false;
+  // The top frame stays on the app's own pages; reloading it is how a newly
+  // trusted hub takes effect, so this has to admit our own URLs.
+  if (isMainFrame) {
+    return isAppUrl(url);
   }
-  return isMainFrame ? origin === APP_ORIGIN : policy.allowedFrameOrigins.has(origin);
+  const origin = originOfUrl(url);
+  return origin !== null && policy.allowedFrameOrigins.has(origin);
 }
 
-export function installWebContentsSecurity(policy: NetworkPolicy): void {
+export function installWebContentsSecurity(policy: PolicyRef): void {
   app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler((details) => {
       log.warn(`blocked window.open for ${details.url}`);
@@ -68,7 +69,7 @@ export function installWebContentsSecurity(policy: NetworkPolicy): void {
 
     // 'will-frame-navigate' covers every frame; 'will-navigate' only the top one.
     contents.on('will-frame-navigate', (details) => {
-      if (isNavigationAllowed(details.url, details.isMainFrame, policy)) {
+      if (isNavigationAllowed(details.url, details.isMainFrame, policy.current)) {
         return;
       }
       const frame = details.isMainFrame ? 'top-level' : 'sub-frame';

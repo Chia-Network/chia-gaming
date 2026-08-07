@@ -4,9 +4,10 @@ import { BrowserWindow, app, dialog, session } from 'electron';
 
 import { registerAppSchemeAsPrivileged, serveAppScheme } from './appProtocol';
 import { loadDesktopConfig, type DesktopConfig } from './config';
+import { installHubTrustHandler } from './hubTrust';
 import { log } from './log';
 import { createMainWindow } from './mainWindow';
-import { buildNetworkPolicy } from './networkPolicy';
+import { buildNetworkPolicy, type PolicyRef } from './networkPolicy';
 import { installSessionSecurity, installWebContentsSecurity } from './security';
 
 // Both of these have to happen before the 'ready' event.
@@ -28,22 +29,19 @@ if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 } else {
   const config = loadConfigOrExit();
-  const policy = buildNetworkPolicy(config);
+  const policy: PolicyRef = { current: buildNetworkPolicy(config) };
   const rendererRoot = path.join(app.getAppPath(), 'dist', 'renderer');
 
   installWebContentsSecurity(policy);
+  installHubTrustHandler(config, policy);
 
-  // The window is looked up in the live list rather than held in a variable:
-  // macOS keeps the app running with every window closed, so a saved handle
-  // would be a destroyed BrowserWindow, and every method on one of those
-  // throws. `isReady` covers a second launch arriving during our own startup,
-  // before a window may be created at all.
-  const focusOrCreateMainWindow = (): void => {
+  // The window is looked up in the live list rather than held in a variable: a
+  // saved handle would be a destroyed BrowserWindow after a close, and every
+  // method on one of those throws. The list is empty while startup has not
+  // created the window yet and while the app is shutting down after a close.
+  const focusMainWindow = (): void => {
     const [existing] = BrowserWindow.getAllWindows();
     if (existing === undefined) {
-      if (app.isReady()) {
-        createMainWindow();
-      }
       return;
     }
     if (existing.isMinimized()) {
@@ -52,19 +50,20 @@ if (!app.requestSingleInstanceLock()) {
     existing.focus();
   };
 
-  app.on('second-instance', focusOrCreateMainWindow);
+  app.on('second-instance', focusMainWindow);
 
+  // Closing the window quits on macOS too, unlike the platform convention: this
+  // is a single-window app with no document model and no tray presence, so a
+  // process with no window left would offer the player nothing.
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit();
-    }
+    app.quit();
   });
 
   void app.whenReady().then(() => {
     installSessionSecurity(session.defaultSession, policy);
-    serveAppScheme(rendererRoot, policy.contentSecurityPolicy);
+    serveAppScheme(rendererRoot, policy);
     createMainWindow();
 
-    app.on('activate', focusOrCreateMainWindow);
+    app.on('activate', focusMainWindow);
   });
 }

@@ -11,7 +11,7 @@ export const WC_PUBLIC_DAPP_URL = 'https://github.com/Chia-Network/chia-gaming';
 export const WC_PUBLIC_DAPP_ICON =
   'https://raw.githubusercontent.com/Chia-Network/chia-gaming/main/front-end/public/images/chia_logo.png';
 
-export type WalletConnectDappMetadata = {
+type WalletConnectDappMetadata = {
   name: string;
   description: string;
   url: string;
