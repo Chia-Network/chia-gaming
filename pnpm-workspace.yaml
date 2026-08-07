@@ -1,3 +1,4 @@
+minimumReleaseAge: 1440 # 24 hours
 packages:
   - "desktop"
   - "front-end"
