@@ -1,7 +1,13 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
+import { useShellSessionTransition } from '../hooks/useShellSessionTransition';
+import {
+  PendingSessionProposal,
+  ShellSessionTransitionReason,
+} from '../lib/session/shellSessionState';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
+import { SessionTransitionSurface } from './SessionTransitionSurface';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
@@ -188,16 +194,6 @@ function sessionSaveForReactProps(save: SessionSave | null): SessionSave | undef
   }
   return propSafeSave;
 }
-
-type PendingSessionProposal = {
-  from_id: string;
-  from_alias: string;
-  proposer_amount: string;
-  responder_amount: string;
-  channel_timeout?: string;
-  unroll_timeout?: string;
-  game_session_id?: string;
-};
 
 type SessionStartRequest = {
   peerId: string;
@@ -605,6 +601,24 @@ function LogPanel({ lines }: { lines: string[] }) {
   );
 }
 
+function SessionTransitionOverlay({ reason }: { reason: ShellSessionTransitionReason }) {
+  const labels: Record<ShellSessionTransitionReason, string> = {
+    'accept-advisory': 'Starting session…',
+    'accept-proposal': 'Starting session…',
+    resume: 'Resuming…',
+    'start-over': 'Starting over…',
+    disconnect: 'Disconnecting…',
+    finish: 'Finishing session…',
+  };
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-canvas-bg-subtle text-canvas-text">
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-lg font-semibold">{labels[reason]}</p>
+      </div>
+    </div>
+  );
+}
+
 const Shell = () => {
   const uniqueId = getPlayerId();
   // Do not mint hub sessionId here — boot must hydrate IndexedDB first
@@ -621,12 +635,26 @@ const Shell = () => {
     setActiveTabRaw(tab);
     saveActiveTab(tab);
   }, []);
-  const [sessionConfig, setSessionConfig] = useState<GameSessionParams | null>(null);
+  // Shell-level session lifecycle state and transition guard.
+  const {
+    state: shellState,
+    dispatch: shellDispatch,
+    runTransition,
+    completeTransition,
+    cancelTransition,
+  } = useShellSessionTransition();
+  const shellDispatchRef = useRef(shellDispatch);
+  shellDispatchRef.current = shellDispatch;
+  const sessionConfig = shellState.sessionConfig;
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
-  const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
-  const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const peerConn = shellState.peerConn;
+  const peerConnRef = useRef<PeerConnectionResult | null>(null);
+  peerConnRef.current = peerConn;
+  const dashboardSessionModel = shellState.dashboardSessionModel;
+  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
+  dashboardSessionModelRef.current = dashboardSessionModel;
   const [finishedSessionIdentity, setFinishedSessionIdentity] = useState<{
     myName: string;
     opponentName?: string;
@@ -645,17 +673,19 @@ const Shell = () => {
   const waitingStateRef = useRef<SessionModel['channel']['status']['state'] | null>(null);
 
   // Consent prompt state for the new hub protocol
-  const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
+  const pendingAdvisory = shellState.pendingAdvisory;
   const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
+  pendingAdvisoryRef.current = pendingAdvisory;
   const setPendingAdvisoryState = useCallback((next: AdvisoryStartParams | null) => {
     pendingAdvisoryRef.current = next;
-    setPendingAdvisory(next);
+    shellDispatchRef.current({ type: 'setPendingAdvisory', value: next });
   }, []);
-  const [pendingProposal, setPendingProposal] = useState<PendingSessionProposal | null>(null);
+  const pendingProposal = shellState.pendingProposal;
   const pendingProposalRef = useRef<PendingSessionProposal | null>(null);
+  pendingProposalRef.current = pendingProposal;
   const setPendingProposalState = useCallback((next: PendingSessionProposal | null) => {
     pendingProposalRef.current = next;
-    setPendingProposal(next);
+    shellDispatchRef.current({ type: 'setPendingProposal', value: next });
   }, []);
   const peerSessionRef = useRef<PeerSession | null>(null);
   const peerMessageHandlerRef = useRef<import('../services/PeerSession').MessageHandler | null>(
@@ -684,6 +714,57 @@ const Shell = () => {
   }, []);
   const getCoins = useCallback(() => coinsGetterRef.current?.() ?? frozenCoins, [frozenCoins]);
 
+  const setSessionConfig = useCallback((value: GameSessionParams | null) => {
+    sessionConfigRef.current = value;
+    shellDispatchRef.current({ type: 'setSessionConfig', value });
+  }, []);
+
+  const setPeerConn = useCallback((value: PeerConnectionResult | null) => {
+    peerConnRef.current = value;
+    shellDispatchRef.current({ type: 'setPeerConn', value });
+  }, []);
+
+  const setDashboardSessionModel = useCallback(
+    (value: SessionModel | null | ((prev: SessionModel | null) => SessionModel | null)) => {
+      const next = typeof value === 'function' ? value(dashboardSessionModelRef.current) : value;
+      dashboardSessionModelRef.current = next;
+      shellDispatchRef.current({ type: 'setDashboardSessionModel', value: next });
+    },
+    [],
+  );
+
+  const setSessionPhase = useCallback((value: SessionPhase) => {
+    shellDispatchRef.current({ type: 'setSessionPhase', value });
+  }, []);
+
+  const sessionPhase = shellState.sessionPhase;
+  const sessionPhaseRef = useRef<SessionPhase>('none');
+  sessionPhaseRef.current = sessionPhase;
+
+  const setSessionError = useCallback((value: boolean) => {
+    shellDispatchRef.current({ type: 'setSessionError', value });
+  }, []);
+
+  const sessionError = shellState.sessionError;
+
+  const setRestoreStatus = useCallback((value: RestoreStatus) => {
+    shellDispatchRef.current({ type: 'setRestoreStatus', value });
+  }, []);
+
+  const restoreStatus = shellState.restoreStatus;
+
+  const setRestoreError = useCallback((value: string | null) => {
+    shellDispatchRef.current({ type: 'setRestoreError', value });
+  }, []);
+
+  const restoreError = shellState.restoreError;
+
+  const setRestoreHubReconciled = useCallback((value: boolean) => {
+    shellDispatchRef.current({ type: 'setRestoreHubReconciled', value });
+  }, []);
+
+  const restoreHubReconciled = shellState.restoreHubReconciled;
+
   const stablePeerConn: PeerConnectionResult = useMemo(
     () => ({
       sendMessage: (n, m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
@@ -698,11 +779,6 @@ const Shell = () => {
   const [walletConnected, setWalletConnected] = useState(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
-  const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
-  const [sessionError, setSessionError] = useState(false);
-  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
-  const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [restoreHubReconciled, setRestoreHubReconciled] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
     body: string;
@@ -1065,8 +1141,6 @@ const Shell = () => {
   logLinesRef.current = logLines;
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
-  const sessionPhaseRef = useRef<SessionPhase>('none');
-  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
   /** Bumped on cancel so in-flight startFreshSessionWithPeer aborts after awaits. */
   const sessionStartEpochRef = useRef(0);
 
@@ -1198,18 +1272,36 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
+      // If a session-pane transition is waiting for the first authoritative model,
+      // aborting the attempt before it becomes active must release the transition
+      // surface so the game pane does not stay stuck.
+      cancelTransition();
       hubConnRef.current?.setBusy(shouldReportHubBusy('none', walletConnectedRef.current));
     },
     [
+      cancelTransition,
       clearSessionPreservingHistory,
       resetPeerRelayState,
       setPendingAdvisoryState,
       setPendingProposalState,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
     ],
   );
 
   const startFreshSessionWithPeer = useCallback(
-    async (request: SessionStartRequest & { gameSessionId?: string }) => {
+    async (
+      request: SessionStartRequest & {
+        gameSessionId?: string;
+        pairingToken: string;
+      },
+    ) => {
       const conn = hubConnRef.current;
       if (!conn) return;
       const epoch = sessionStartEpochRef.current;
@@ -1228,7 +1320,6 @@ const Shell = () => {
         myContribution < theirContribution ? myContribution : theirContribution;
       const perGame = minContribution / 10n || 1n;
       const sessionId = request.gameSessionId ?? generateSessionId();
-      const token = `peer_${request.peerId}_${Date.now()}`;
       const hubSessionId = getSessionId();
 
       const existing = peerSessionRef.current;
@@ -1250,7 +1341,7 @@ const Shell = () => {
       // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
       // the same pairing/amounts/peer ids and a stable hub session_id.
       await saveSession({
-        pairingToken: token,
+        pairingToken: request.pairingToken,
         sessionPeerId: request.peerId,
         gameSessionId: sessionId,
         sessionId: hubSessionId,
@@ -1309,7 +1400,7 @@ const Shell = () => {
         theirContribution,
         perGameAmount: perGame,
         restoring: false,
-        pairingToken: token,
+        pairingToken: request.pairingToken,
         myAlias: undefined,
         opponentAlias: request.opponentAlias,
         channelTimeout,
@@ -1318,43 +1409,72 @@ const Shell = () => {
       setPeerConn(stablePeerConn);
       setPeerLiveness(null);
       conn.setBusy(true);
+      return true;
     },
-    [stablePeerConn, bindPeerMessageHandler],
+    [
+      stablePeerConn,
+      bindPeerMessageHandler,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const acceptPendingAdvisory = useCallback(
     (advisory: AdvisoryStartParams) => {
       const conn = hubConnRef.current;
-      if (!conn) return;
-      setPendingAdvisoryState(null);
-      const gameSessionId = generateSessionId();
-      // Reserve the peer relay before sending so a delivery_failure for this
-      // proposal can cancel the attempt (PeerSession must already exist).
-      peerSessionRef.current?.destroy();
-      peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
-      bindPeerMessageHandler(peerSessionRef.current);
-      conn.sendPeerAppMessage(advisory.peer_id, {
-        type: 'session_proposal',
-        proposer_amount: advisory.my_amount,
-        responder_amount: advisory.their_amount,
-        // Hub-synced alias only — never getAlias(), which invents Player_*.
-        from_alias: peekAlias(),
-        channel_timeout: advisory.channel_timeout,
-        unroll_timeout: advisory.unroll_timeout,
-        game_session_id: gameSessionId,
-      });
-      startFreshSessionWithPeer({
-        peerId: advisory.peer_id,
-        opponentAlias: advisory.peer_alias,
-        myAmount: advisory.my_amount,
-        theirAmount: advisory.their_amount,
-        channel_timeout: advisory.channel_timeout,
-        unroll_timeout: advisory.unroll_timeout,
-        iStarted: true,
-        gameSessionId,
-      });
+      if (!conn || pendingAdvisoryRef.current !== advisory) return;
+      const pairingToken = `peer_${advisory.peer_id}_${Date.now()}`;
+      void runTransition(
+        'accept-advisory',
+        async () => {
+          setPendingAdvisoryState(null);
+          const gameSessionId = generateSessionId();
+          // Reserve the peer relay before sending so a delivery_failure for this
+          // proposal can cancel the attempt (PeerSession must already exist).
+          peerSessionRef.current?.destroy();
+          peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
+          bindPeerMessageHandler(peerSessionRef.current);
+          conn.sendPeerAppMessage(advisory.peer_id, {
+            type: 'session_proposal',
+            proposer_amount: advisory.my_amount,
+            responder_amount: advisory.their_amount,
+            // Hub-synced alias only — never getAlias(), which invents Player_*.
+            from_alias: peekAlias(),
+            channel_timeout: advisory.channel_timeout,
+            unroll_timeout: advisory.unroll_timeout,
+            game_session_id: gameSessionId,
+          });
+          const started = await startFreshSessionWithPeer({
+            peerId: advisory.peer_id,
+            opponentAlias: advisory.peer_alias,
+            myAmount: advisory.my_amount,
+            theirAmount: advisory.their_amount,
+            channel_timeout: advisory.channel_timeout,
+            unroll_timeout: advisory.unroll_timeout,
+            iStarted: true,
+            gameSessionId,
+            pairingToken,
+          });
+          if (!started) {
+            cancelTransition();
+          }
+        },
+        { scope: 'session-pane', waitForReady: true, readyKey: pairingToken },
+      );
     },
-    [setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler],
+    [
+      runTransition,
+      setPendingAdvisoryState,
+      startFreshSessionWithPeer,
+      bindPeerMessageHandler,
+      cancelTransition,
+    ],
   );
 
   const declinePendingAdvisory = useCallback(
@@ -1367,19 +1487,31 @@ const Shell = () => {
 
   const acceptPendingProposal = useCallback(
     (proposal: PendingSessionProposal) => {
-      setPendingProposalState(null);
-      startFreshSessionWithPeer({
-        peerId: proposal.from_id,
-        opponentAlias: proposal.from_alias,
-        myAmount: proposal.responder_amount,
-        theirAmount: proposal.proposer_amount,
-        channel_timeout: proposal.channel_timeout,
-        unroll_timeout: proposal.unroll_timeout,
-        iStarted: false,
-        gameSessionId: proposal.game_session_id,
-      });
+      if (pendingProposalRef.current !== proposal) return;
+      const pairingToken = `peer_${proposal.from_id}_${Date.now()}`;
+      void runTransition(
+        'accept-proposal',
+        async () => {
+          setPendingProposalState(null);
+          const started = await startFreshSessionWithPeer({
+            peerId: proposal.from_id,
+            opponentAlias: proposal.from_alias,
+            myAmount: proposal.responder_amount,
+            theirAmount: proposal.proposer_amount,
+            channel_timeout: proposal.channel_timeout,
+            unroll_timeout: proposal.unroll_timeout,
+            iStarted: false,
+            gameSessionId: proposal.game_session_id,
+            pairingToken,
+          });
+          if (!started) {
+            cancelTransition();
+          }
+        },
+        { scope: 'session-pane', waitForReady: true, readyKey: pairingToken },
+      );
     },
-    [setPendingProposalState, startFreshSessionWithPeer],
+    [runTransition, setPendingProposalState, startFreshSessionWithPeer, cancelTransition],
   );
 
   const declinePendingProposal = useCallback(
@@ -1775,6 +1907,7 @@ const Shell = () => {
       bindPeerMessageHandler,
       setActiveTab,
       setHubAlert,
+      setRestoreHubReconciled,
     ],
   );
 
@@ -2032,15 +2165,25 @@ const Shell = () => {
       setRestoreHubReconciled(false);
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
+      cancelTransition();
       hubConnRef.current?.setBusy(shouldReportHubBusy('none', walletConnectedRef.current), alias);
     },
     [
+      cancelTransition,
       clearSessionPreservingHistory,
       clearSessionTimers,
       resetPeerRelayState,
       sendSessionReject,
       setPendingAdvisoryState,
       setPendingProposalState,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
     ],
   );
 
@@ -2129,7 +2272,19 @@ const Shell = () => {
       setRestoreError(null);
       setRestoreHubReconciled(false);
     },
-    [clearSessionTimers, frozenCoins, resetPeerRelayState],
+    [
+      clearSessionTimers,
+      frozenCoins,
+      resetPeerRelayState,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const handleSessionPhaseChange = useCallback(
@@ -2152,25 +2307,41 @@ const Shell = () => {
       setSessionError(!!hasError);
       hubConnRef.current?.setBusy(shouldReportHubBusy(phase, walletConnectedRef.current));
     },
-    [finishResolvedSessionDisplay, setActiveTab, startBalancePolling],
+    [
+      finishResolvedSessionDisplay,
+      setActiveTab,
+      startBalancePolling,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
-  const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
-    setRestoreStatus(status);
-    setRestoreError(error);
-    setDashboardSessionModel((prev) =>
-      prev ? { ...prev, restore: { ...prev.restore, status, error } } : prev,
-    );
-    if (status === 'failed') {
-      markSavedSession();
-      setSessionError(true);
-    }
-  }, []);
+  const handleRestoreStatusChange = useCallback(
+    (status: RestoreStatus, error: string | null) => {
+      setRestoreStatus(status);
+      setRestoreError(error);
+      setDashboardSessionModel((prev) =>
+        prev ? { ...prev, restore: { ...prev.restore, status, error } } : prev,
+      );
+      if (status === 'failed') {
+        markSavedSession();
+        setSessionError(true);
+      }
+    },
+    [setDashboardSessionModel, setRestoreError, setRestoreStatus, setSessionError],
+  );
 
-  const handleSessionModelChange = useCallback((model: SessionModel) => {
-    dashboardSessionModelRef.current = model;
-    setDashboardSessionModel(model);
-  }, []);
+  const handleSessionModelChange = useCallback(
+    (model: SessionModel) => {
+      dashboardSessionModelRef.current = model;
+      setDashboardSessionModel(model);
+      const pairingToken = sessionConfigRef.current?.pairingToken;
+      if (pairingToken && selectGameDashboardView(model).actionKind !== 'cancel') {
+        completeTransition(pairingToken);
+      }
+    },
+    [completeTransition, setDashboardSessionModel],
+  );
 
   const restoreBlocked = isRestoreBlocked(
     !!sessionConfig?.restoring,
@@ -2243,7 +2414,17 @@ const Shell = () => {
       );
       setResuming(false);
     },
-    [setActiveTab],
+    [
+      setActiveTab,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   // Hydrate local UI state from a SessionSave and kick off a backend connect.
@@ -2376,7 +2557,20 @@ const Shell = () => {
         }
       })();
     },
-    [uniqueId, completeConnection, stablePeerConn, setActiveTab, setWalletAlert],
+    [
+      uniqueId,
+      completeConnection,
+      stablePeerConn,
+      setActiveTab,
+      setWalletAlert,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   // User clicked "Resume Session" in the resumeDialog, or boot landed on
@@ -2732,7 +2926,7 @@ const Shell = () => {
       prev ? { ...prev, channel: { ...prev.channel, cleanShutdownStarted: true } } : prev,
     );
     sessionController?.cleanShutdown();
-  }, [startCleanShutdownGrace]);
+  }, [startCleanShutdownGrace, setDashboardSessionModel]);
 
   const performDashboardGoOnChain = useCallback(() => {
     if (!sessionController?.goOnChain()) return;
@@ -2741,7 +2935,7 @@ const Shell = () => {
     hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
-  }, [syncPeerLiveness]);
+  }, [syncPeerLiveness, setSessionPhase]);
 
   const requestDashboardGoOnChain = useCallback(() => {
     const channelState = dashboardSessionModel?.channel.status.state;
@@ -2806,6 +3000,18 @@ const Shell = () => {
     if (!blockchainType || connecting) return;
     handleConnect(blockchainType);
   }, [blockchainType, connecting, handleConnect]);
+
+  const sessionCanMount = sessionConfig !== null && peerConn !== null;
+  const { startSession: sessionReadyToStart, keepSession } = shouldMountGameSession(
+    sessionCanMount,
+    walletConnected,
+    !!sessionConfig?.restoring,
+    sessionStartedRef.current,
+  );
+  if (sessionReadyToStart) sessionStartedRef.current = true;
+
+  const sessionPaneTransition =
+    shellState.transition.kind === 'pending' && shellState.transition.scope === 'session-pane';
 
   if (bootState.kind === 'loading') {
     return (
@@ -2975,17 +3181,9 @@ const Shell = () => {
     );
   }
 
-  const sessionCanMount = sessionConfig !== null && peerConn !== null;
-  const { startSession: sessionReadyToStart, keepSession } = shouldMountGameSession(
-    sessionCanMount,
-    walletConnected,
-    !!sessionConfig?.restoring,
-    sessionStartedRef.current,
-  );
-  if (sessionReadyToStart) sessionStartedRef.current = true;
-
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
+    setupPending: sessionPaneTransition,
     cleanShutdownGraceActive,
     abandonEnabled,
   });
@@ -3049,6 +3247,10 @@ const Shell = () => {
       </div>
     </div>
   ) : null;
+
+  if (shellState.transition.kind === 'pending' && shellState.transition.scope === 'shell') {
+    return <SessionTransitionOverlay reason={shellState.transition.reason} />;
+  }
 
   // --- Main tabbed app ---
   // autoResuming with session hydrated: mount the real tree invisibly so
@@ -3526,7 +3728,9 @@ const Shell = () => {
             getCoins={getCoins}
           />
           <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-            {keepSession && restoreStatus === 'failed' ? (
+            {sessionPaneTransition && !keepSession && !sessionCanMount ? (
+              <SessionTransitionSurface />
+            ) : keepSession && restoreStatus === 'failed' ? (
               <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
                 <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
                 <p className="max-w-lg text-sm text-center select-text cursor-text">
@@ -3560,6 +3764,11 @@ const Shell = () => {
                     suppressPhaseReporting={restoreBlocked}
                   />
                 </GameSessionErrorBoundary>
+                {sessionPaneTransition && (
+                  <div className="absolute inset-0 z-30">
+                    <SessionTransitionSurface />
+                  </div>
+                )}
                 {sessionConsentOverlay}
               </div>
             ) : sessionCanMount ? (
