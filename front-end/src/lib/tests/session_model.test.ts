@@ -48,6 +48,45 @@ import {
 } from '../../hooks/useGameSession';
 
 describe('session model selectors', () => {
+  it('uses the existing dashboard action across the setup commitment boundary', () => {
+    expect(selectGameDashboardView(null, { setupPending: true })).toMatchObject({
+      channelStatusLabel: 'Setting Up',
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    });
+
+    for (const state of [
+      'Handshaking',
+      'WaitingForHeightToOffer',
+      'WaitingForHeightToAccept',
+      'OurWalletMakingOffer',
+      'OurWalletMakingOfferAcceptance',
+    ] as const) {
+      expect(
+        selectGameDashboardView(
+          createSessionModel({
+            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+          }),
+        ).actionKind,
+      ).toBe('cancel');
+    }
+
+    for (const state of ['OfferSent', 'TransactionPending'] as const) {
+      expect(
+        selectGameDashboardView(
+          createSessionModel({
+            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+          }),
+        ),
+      ).toMatchObject({
+        actionLabel: 'Waiting',
+        actionEnabled: false,
+        actionKind: 'none',
+      });
+    }
+  });
+
   it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
     const terms = {
       gameType: 'factory-pair',

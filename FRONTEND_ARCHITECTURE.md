@@ -405,7 +405,7 @@ connection state or the full mid-game session state:
 | `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active or should be reconnected. |
 | `serializedGameSession` | `Uint8Array?` | Raw binary WASM game-session state via `serialize()`. |
 | `gameSessionSchemaVersion` | `bigint?` | Rust-owned schema ID for `serializedGameSession`; missing or mismatched IDs are unsupported and cleared before deserialization. |
-| `pairingToken` | `string?` | Hub pairing token, for reconciliation on reconnect. |
+| `pairingToken` | `string?` | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority. |
 | `sessionPeerId` | `string?` | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore. |
 | `gameSessionId` | `string?` | Per-pairing game session id exchanged in `session_proposal`. |
 | `messageNumber` | `bigint?` | Next outbound game-message sequence number. |
@@ -585,6 +585,15 @@ projects channel / lifecycle labels and the primary action button
 (clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
 projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
+
+During the short interval after the user accepts a session but before
+`GameSession` has reported its first model, Shell passes an explicit
+`setupPending` input to the same dashboard selector. This makes the existing
+primary action show **Cancel** immediately without introducing a second setup
+button or a parallel cancellation path. Once a model exists, the action is
+entirely core-derived: handshake and wallet-signing statuses remain
+**Cancel**, while `OfferSent` / `TransactionPending` cross the commitment
+boundary and project **Waiting** (or the later timer-gated **Abandon** action).
 
 The dashboard never derives whether a shutdown has value remaining from its
 displayed balances or game state. Rust provides `channelStatus.zero_payout`
@@ -944,6 +953,8 @@ The Shell is the top-level React component. It owns:
   (`useThemeSyncToIframe`)
 - **Tab navigation** — five tabs: Wallet, Hub, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
+- **Session lifecycle and transition presentation** — reducer-backed lifecycle
+  state plus scoped transition surfaces around asynchronous session operations
 
 The Shell does not know about game protocol details. When the hub challenge
 flow completes, Shell creates `GameSessionParams` with the total channel amount
@@ -957,6 +968,33 @@ and clearing session refs) are driven by Shell's
 after Rust's final `ChannelStatus` snapshot has been projected into React, so
 Shell preserves the final dashboard snapshot before tearing down the live
 controller.
+
+#### Session transition ownership
+
+Shell owns session transitions through `useShellSessionTransition` and the
+reducer in `front-end/src/lib/session/shellSessionState.ts`. A transition has a
+reason and a presentation scope:
+
+- `shell` replaces the whole shell for operations that intentionally make the
+  app unavailable.
+- `session-pane` preserves the tabs and `GameDashboard` while covering only the
+  game-content pane with `SessionTransitionSurface`.
+
+For accepted session setup, the transition is keyed atomically with the same
+`pairingToken` that identifies the new controller instance. Completion for a
+different instance is ignored.
+
+`GameSession` remains mounted underneath a session-pane transition. This lets
+the WASM/controller setup continue and keeps its existing notification overlays
+available above the presentation surface. `GameSession` reports its normal
+`SessionModel` to Shell; it has no transition-specific rendering mode or
+readiness flag.
+
+Shell releases the transition when the canonical dashboard selector moves past
+the setup **Cancel** action. Because that selector reads the projected
+`ChannelStatus`, the core remains authoritative for the commitment boundary.
+Cancellation uses the same `cancelDashboardSession` path as the visible
+dashboard button and explicitly releases any pending transition.
 
 ### Blockchain Connection Flow
 
