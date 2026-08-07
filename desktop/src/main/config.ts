@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { app } from 'electron';
@@ -7,10 +7,10 @@ import { z } from 'zod';
 import { log } from './log';
 
 /**
- * Desktop configuration is untrusted input: it comes from a user-editable file
- * and from the environment. It is validated and rejected with a readable
- * message rather than being allowed to half-apply, because every value here
- * ends up in the network egress allowlist and the renderer CSP.
+ * Desktop configuration is untrusted input: it comes from a user-editable file.
+ * It is validated and rejected with a readable message rather than being
+ * allowed to half-apply, because every value here ends up in the network egress
+ * allowlist and the renderer CSP.
  */
 export type DesktopConfig = {
   /** Bare http(s) origins the app may load the hub lobby UI from. */
@@ -19,7 +19,7 @@ export type DesktopConfig = {
 
 const DEFAULT_HUB_ORIGINS = ['http://localhost:3003', 'http://127.0.0.1:3003'];
 
-const hubOrigin = z.string().refine((value) => {
+export const hubOriginSchema = z.string().refine((value) => {
   try {
     const url = new URL(value);
     return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value;
@@ -29,8 +29,12 @@ const hubOrigin = z.string().refine((value) => {
 }, 'must be a bare http(s) origin with no path, e.g. https://hub.example.com');
 
 const configSchema = z.strictObject({
-  hubOrigins: z.array(hubOrigin).min(1).optional(),
+  hubOrigins: z.array(hubOriginSchema).min(1).optional(),
 });
+
+function configFilePath(): string {
+  return path.join(app.getPath('userData'), 'config.json');
+}
 
 function readConfigFile(filePath: string): Record<string, unknown> {
   if (!existsSync(filePath)) {
@@ -50,21 +54,25 @@ function readConfigFile(filePath: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-/** Env wins over the config file. Absent keys are omitted so spreads don't erase file values. */
-function environmentOverrides(): Record<string, unknown> {
-  const overrides: Record<string, unknown> = {};
-  const { CHIA_GAMING_HUB_ORIGINS } = process.env;
-  if (CHIA_GAMING_HUB_ORIGINS !== undefined) {
-    overrides.hubOrigins = CHIA_GAMING_HUB_ORIGINS.split(',')
-      .map((origin) => origin.trim())
-      .filter((origin) => origin !== '');
-  }
-  return overrides;
+/**
+ * Write the hub allowlist back to the config file, so a hub the user approved
+ * at runtime is still trusted next launch. Written via a temporary file and a
+ * rename: a crash mid-write would otherwise leave config.json truncated, and
+ * the app refuses to start on malformed config.
+ */
+export function persistHubOrigins(hubOrigins: readonly string[]): void {
+  const target = configFilePath();
+  const contents = `${JSON.stringify({ hubOrigins }, null, 2)}\n`;
+  const temporary = `${target}.tmp`;
+
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(temporary, contents, { encoding: 'utf8', mode: 0o600 });
+  renameSync(temporary, target);
+  log.info(`wrote ${hubOrigins.length} hub origin(s) to ${target}`);
 }
 
 export function loadDesktopConfig(): DesktopConfig {
-  const configFilePath = path.join(app.getPath('userData'), 'config.json');
-  const candidate = { ...readConfigFile(configFilePath), ...environmentOverrides() };
+  const candidate = readConfigFile(configFilePath());
 
   const result = configSchema.safeParse(candidate);
   if (!result.success) {
@@ -72,7 +80,7 @@ export function loadDesktopConfig(): DesktopConfig {
       .map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('\n');
     throw new Error(
-      `Invalid desktop configuration from ${configFilePath} or the environment:\n${issues}`,
+      `Invalid desktop configuration from ${configFilePath()}:\n${issues}`,
     );
   }
 
