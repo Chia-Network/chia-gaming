@@ -17,9 +17,7 @@ import { fileURLToPath } from 'node:url';
 const DESKTOP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILD_DIR = join(tmpdir(), 'chia-gaming-desktop-build');
 const RELEASE_DIR = join(DESKTOP, 'release');
-const ELECTRON_BUILDER_CLI = createRequire(import.meta.url).resolve(
-  'electron-builder/cli.js',
-);
+const ELECTRON_BUILDER_CLI = createRequire(import.meta.url).resolve('electron-builder/cli.js');
 
 const INSTALLER_EXTENSIONS = ['.dmg', '.zip', '.exe', '.AppImage', '.deb'];
 
