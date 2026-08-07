@@ -273,6 +273,7 @@ export function selectGameTabDotColor(args: {
 
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
+  setupPending?: boolean;
   cleanShutdownGraceActive?: boolean;
   abandonEnabled?: boolean;
 }
@@ -486,6 +487,19 @@ export function selectGameDashboardView(
   model: SessionModel | null,
   options: GameDashboardSelectorOptions = {},
 ): GameDashboardViewModel {
+  if (!model && options.setupPending) {
+    return {
+      channelStatusLabel: 'Setting Up',
+      channelDetail: null,
+      havePotato: false,
+      handStatusLabel: 'No hand',
+      handDetail: null,
+      lifecycleRows: [],
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    };
+  }
   if (!model || options.hasSession === false) {
     return {
       channelStatusLabel: 'No Session',
