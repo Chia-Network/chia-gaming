@@ -6,13 +6,15 @@ workflow guidance stays in `DEBUGGING_GUIDE.md`.
 
 ## Key Files
 
-| File | Role |
-|------|------|
-| `src/test_support/sim_script.rs` | `SimScriptAction`, `ProposeTrigger`, `ChannelHandlerGame`, and default test constants |
-| `src/simulator/tests/session_phases_sim.rs` | Simulation loop, test runner helpers, and most integration scenarios |
-| `src/test_support/calpoker_sim.rs` | Calpoker test helpers such as `prefix_test_moves` |
-| `src/test_support/spacepoker_sim.rs` | Space Poker test helpers |
-| `src/test_support/debug_game.rs` | Debug game setup helpers for focused channel/on-chain tests |
+| File                                                       | Role                                                                                                        |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `src/test_support/sim_script.rs`                           | Public script vocabulary: `SimScriptAction`, `ActionSchedule`, data-bearing `ActionReadiness`, assertions, triggers, and default constants |
+| `src/simulator/tests/session_phases_sim.rs`                | Shared simulator types/setup, outcome validation, and integration scenarios                                 |
+| `src/simulator/tests/session_phases_sim/harness.rs`        | Private production-order host boundary, chain/event state, quiescence, readiness observations, and fault injection |
+| `src/simulator/tests/session_phases_sim/script_runner.rs`  | Script cursor, transient resync replay FIFO, action execution, and indexed assertion scheduler              |
+| `src/test_support/calpoker_sim.rs`                         | Calpoker test helpers such as `prefix_test_moves`                                                           |
+| `src/test_support/spacepoker_sim.rs`                       | Space Poker test helpers                                                                                    |
+| `src/test_support/debug_game.rs`                           | Debug game setup helpers for focused channel/on-chain tests                                                 |
 
 ## Debug Game
 
@@ -45,57 +47,103 @@ Typical examples:
 
 `ProposeNewGame` and `ProposeNewGameTheirTurn` carry a `ProposeTrigger`:
 
-| Trigger | Fires when |
-|---------|------------|
-| `Channel` | The proposing player has observed channel creation. |
+| Trigger              | Fires when                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| `Channel`            | The proposing player has observed channel creation.                                 |
 | `AfterGame(game_id)` | The given game ID has a terminal notification in either player's finished-game set. |
 
 ## SimScriptAction Reference
 
 The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 
-| Action | Effect |
-|--------|--------|
-| `ProposeNewGame(player, trigger)` | Player proposes a new game with `my_turn = true` when the trigger fires. |
-| `ProposeNewGameTheirTurn(player, trigger)` | Player proposes a new game with `my_turn = false` when the trigger fires. |
-| `AcceptProposal(player, game_id)` | Player accepts a pending proposal. The sim loop handles this as a two-phase action because acceptance may need a potato round trip. |
-| `CancelProposal(player, game_id)` | Player cancels a pending proposal. |
-| `Move(player, game_id, readable, was_received)` | Submit a normal move for the specified game. The final boolean records whether the move was received. |
-| `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path tests. |
-| `Cheat(player, game_id, mover_share)` | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout. |
-| `AcceptSettlement(player, game_id)` | Accept the current game result for the specified game (off-chain or on-chain). |
-| `GoOnChain(player)` | Player initiates unilateral on-chain resolution. |
-| `WaitBlocks(n, players_bitmask)` | Farm `n` blocks. The bitmask controls whose coin reports are backlogged: 0 = nobody blocked, 1 = player 0, 2 = player 1, 3 = both. |
-| `CleanShutdown(player)` | Initiate cooperative channel shutdown. |
-| `ForceDestroyCoin(player, game_id)` | Inject a fake game-coin deletion to test error handling. |
-| `ForceUnroll(player)` | Submit an unroll transaction using cached spend info while bypassing normal state checks. |
-| `SaveUnrollSnapshot(player)` | Snapshot current unroll spend info for later stale-unroll testing. |
-| `ForceStaleUnroll(player)` | Submit an unroll using a previously saved snapshot. |
-| `NerfTransactions(player)` | Silently drop all outbound transactions for a player. |
-| `UnNerfTransactions(replay)` | Stop dropping outbound transactions for everyone; replay or discard the backlog. |
-| `UnNerfTransactionsFor(player)` | Stop dropping outbound transactions for a single player, leaving any other nerfed players and the shared backlog untouched. Lets one side win an on-chain race while the other stays nerfed. |
-| `BlockCoinReports(player)` | Stop delivering watched-coin state changes to a player. |
-| `UnblockCoinReports(replay)` | Resume watched-coin reports; replay or discard the backlog. |
-| `NerfMessages(player)` | Silently drop all outbound peer messages for a player. |
-| `UnNerfMessages` | Stop dropping outbound peer messages. |
-| `CorruptStateNumber(player, new_state_number)` | Corrupt a player's local state number for edge-case testing. |
-| `InjectRawMessage(player, bytes)` | Inject raw inbound bytes to test message validation. |
-| `SelfAcceptProposal(player, game_id)` | Force a self-accept by bypassing local parity checks and sending `AcceptProposal` for the player's own game ID. |
-| `WrongParityProposal(player)` | Tamper an outbound proposal so it uses a game ID with the wrong parity, testing receiver-side rejection. |
+| Action                                                | Effect                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProposeNewGame(player, trigger)`                     | Player proposes a new game with `my_turn = true` when the trigger fires.                                                                                                                                                                                                                           |
+| `ProposeNewGameTheirTurn(player, trigger)`            | Player proposes a new game with `my_turn = false` when the trigger fires.                                                                                                                                                                                                                          |
+| `AcceptProposal(player, game_id)`                     | Player accepts a pending proposal. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                                                |
+| `CancelProposal(player, game_id)`                     | Player cancels a pending proposal.                                                                                                                                                                                                                                                                 |
+| `Move(player, game_id, readable, was_received)`       | Submit a normal move for the specified game. The final boolean records whether the move was received.                                                                                                                                                                                              |
+| `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path tests.                                                                                                                                                                                                                          |
+| `Cheat(player, game_id, mover_share)`                 | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout.                                                                                                                                                                                                               |
+| `AcceptSettlement(player, game_id)`                   | Accept the current game result for the specified game (off-chain or on-chain).                                                                                                                                                                                                                     |
+| `GoOnChain(player)`                                   | Player initiates unilateral on-chain resolution.                                                                                                                                                                                                                                                   |
+| `WaitBlocks(n, players_bitmask)`                      | Farm `n` blocks. The bitmask controls whose coin reports are backlogged: 0 = nobody blocked, 1 = player 0, 2 = player 1, 3 = both.                                                                                                                                                                 |
+| `CleanShutdown(player)`                               | Initiate cooperative channel shutdown.                                                                                                                                                                                                                                                             |
+| `ForceDestroyCoin(player, game_id)`                   | Inject a fake game-coin deletion to test error handling.                                                                                                                                                                                                                                           |
+| `ForceUnroll(player)`                                 | Submit an unroll transaction using cached spend info while bypassing normal state checks.                                                                                                                                                                                                          |
+| `SaveUnrollSnapshot(player)`                          | Snapshot current unroll spend info for later stale-unroll testing.                                                                                                                                                                                                                                 |
+| `ForceStaleUnroll(player)`                            | Submit an unroll using a previously saved snapshot.                                                                                                                                                                                                                                                |
+| `NerfTransactions(player)`                            | Silently drop all outbound transactions for a player.                                                                                                                                                                                                                                              |
+| `UnNerfTransactions(replay)`                          | Stop dropping outbound transactions for everyone; replay or discard the backlog.                                                                                                                                                                                                                   |
+| `UnNerfTransactionsFor(player)`                       | Stop dropping outbound transactions for a single player, leaving any other nerfed players and the shared backlog untouched. Lets one side win an on-chain race while the other stays nerfed.                                                                                                       |
+| `BlockCoinReports(player)`                            | Stop delivering watched-coin state changes to a player.                                                                                                                                                                                                                                            |
+| `UnblockCoinReports(replay)`                          | Resume watched-coin reports; replay or discard the backlog.                                                                                                                                                                                                                                        |
+| `NerfMessages(player)`                                | Silently drop all outbound peer messages for a player.                                                                                                                                                                                                                                             |
+| `UnNerfMessages`                                      | Stop dropping outbound peer messages.                                                                                                                                                                                                                                                              |
+| `CorruptStateNumber(player, new_state_number)`        | Corrupt a player's local state number for edge-case testing.                                                                                                                                                                                                                                       |
+| `InjectRawMessage(player, bytes)`                     | Inject raw inbound bytes to test message validation.                                                                                                                                                                                                                                               |
+| `SelfAcceptProposal(player, game_id)`                 | Force a self-accept by bypassing local parity checks and sending `AcceptProposal` for the player's own game ID.                                                                                                                                                                                    |
+| `WrongParityProposal(player)`                         | Tamper an outbound proposal so it uses a game ID with the wrong parity, testing receiver-side rejection.                                                                                                                                                                                           |
+| `Assert(GameCoinPublished(player, game_id))`          | Two-phase assertion replacing the former publication/next-block pair. First it requires the mempool to spend that player's exact current game coin and checkpoints the coin and tip; after exactly one farm it requires the tracked coin to be that coin's child, created at `checkpoint tip + 1`. |
+| `Assert(GameCoinTimeoutRegistered(player, game_id))`  | Assert that the player's transaction manager registered a timeout spend for the current game coin. Used to verify effect ownership without waiting for a block.                                                                                                                                    |
+
 ## Sim Loop Mechanics
 
-Each iteration of the sim loop:
+Each iteration farms a block and then drains player 0 followed by player 1.
+Within each player's host boundary, ordering matches production:
 
-1. Farms a block and builds a `WatchReport` from the new coin set.
-2. Flushes and dispatches for each player in order, player 0 then player 1.
-3. Delivers outbound messages to the other player's inbound queue.
-4. Dispatches notifications to `LocalTestUIReceiver`.
-5. Processes the next scripted action if its trigger condition is satisfied.
+1. Report the new raw coin states and flush the manager.
+2. Apply watch/unwatch deltas.
+3. Process transport, wallet, and puzzle/solution callbacks to quiescence.
+4. Drain and push intercepted transaction submissions to the simulator.
+5. Deliver deferred notifications to `LocalTestUIReceiver`.
+6. Evaluate readiness and process the next scripted action.
 
-Because flushing happens in fixed order, a message sent by player 1 takes one
-extra iteration to reach player 0 compared to the reverse direction. This is
-expected; event-driven triggers wait for the notifications that make an action
-ready instead of relying on fixed iteration counts.
+The submission-before-notification boundary is observable: host events record
+whether a notification's coin is already spent in the simulator mempool.
+
+Every `SimScriptAction` has one `ActionSchedule` from `schedule()`. Its
+data-bearing `ActionReadiness` is one of `Immediate`,
+`GameCanMove { player, game_id }`, `AcceptProposal { player, game_id }`,
+`ChannelReady { player }`, or `AfterGame { game_id }`; this single classifier
+contains the exact identity the harness must observe. `PostActionDrain` (`None`
+or `OnChain`) controls whether an on-chain action is drained afterward. No
+secondary result/readiness channel and no runner-side `SimScriptAction` pattern
+matching decide readiness. Assertions are handled by one contiguous-block
+scheduler whose deferred state is keyed by the original action index and whose
+readiness is explicitly `Passed` or `AwaitNextBlock`.
+After an `OnChain`-drain action while either cradle is on-chain,
+`SimulationHarness` alternates player 0 and player 1 until a complete round
+makes no progress. Progress includes emitted events, delivered messages,
+serviced callbacks, terminal handoffs, source-attributed resync events, and
+submitted transactions. Normal block pumping and quiescence return this same
+progress contract, and the runner applies all resync cursor changes through one
+path.
+This bounded quiescence phase does not farm a block or report new coin states;
+exhausting the bound fails with a diagnostic. Off-chain actions retain the
+regular per-block cadence so proposal races remain explicit scenario behavior.
+
+The resulting ordering is:
+
+1. Execute the action.
+2. If requested on-chain, drain both players to quiescence and apply progress.
+3. Evaluate the complete contiguous assertion block at the current tip. A
+   deferred assertion remains the current action.
+4. Farm exactly the next block.
+5. Resume that assertion and the rest of its contiguous block at the new tip.
+
+This lets an on-chain move reach the mempool in the action's own step and lets
+peer effects (including player 1 settlement registration) complete without
+reconstructing an "active player." Actions whose schedule selects
+`PostActionDrain::None` preserve their block timing.
+
+The harness and runner are sibling modules, so Rust privacy enforces that the
+runner can use only semantic harness operations. The harness privately owns
+chain/event state and all test fault-injection state:
+coin-report and transaction backlogs, report blocking, forced coin destruction,
+wait state, message/transaction nerfing, signature tampering, and timing
+counters. The runner sequences actions through narrow methods; scenario
+declarations can inspect only immutable outcome/readiness views.
 
 ## Strict Mode: Why Double-Submission Fails Tests
 
@@ -130,11 +178,11 @@ but tests run strict.
 
 - **Identical resubmission is fine.** A bundle with the same fingerprint as one
   already in the mempool is de-duplicated (`code: 1`), so a party rebroadcasting
-  its *own* transaction every block (see the `TransactionManager` resubmission
+  its _own_ transaction every block (see the `TransactionManager` resubmission
   loop in `INTERNALS.md`) never trips strict mode.
 - **The real invariant** strict mode helps protect is that a single party must
-  never put two *different* competing transactions on chain itself -- for
-  example, holding a good clean-shutdown transaction and *also* trying to
+  never put two _different_ competing transactions on chain itself -- for
+  example, holding a good clean-shutdown transaction and _also_ trying to
   unroll. That is a genuine bug; cross-party competition is not.
 
 ### The opt-out: nerf the loser
@@ -144,7 +192,7 @@ toward spending the same coin must decide which side is "supposed to win" and
 nerf the other with `NerfTransactions`. Some common patterns:
 
 - When a test forces a specific spend on chain with `ForceUnroll` /
-  `ForceStaleUnroll`, keep *both* managers' transactions nerfed across the race
+  `ForceStaleUnroll`, keep _both_ managers' transactions nerfed across the race
   so the forced spend is the sole spend of that coin, then `UnNerfTransactions`
   / `UnNerfTransactionsFor` once it has landed (its input coin is now spent, so
   the manager's rebroadcast of any competing spend is gated off).
@@ -153,7 +201,7 @@ nerf the other with `NerfTransactions`. Some common patterns:
   while the loser only observes. `UnNerfTransactions` clears the nerf for
   everyone at once and would re-open the conflict.
 - Remember that nerfing a player's transactions does not stop its coin reports:
-  a nerfed player still *observes* the on-chain spend and reacts to it, which is
+  a nerfed player still _observes_ the on-chain spend and reacts to it, which is
   exactly what exercises opponent-spend detection.
 
 ## Event-Driven Triggers
@@ -161,17 +209,30 @@ nerf the other with `NerfTransactions`. Some common patterns:
 The sim loop advances `move_number` only when the next action's trigger
 condition is satisfied.
 
-| Trigger function | Fires when | Used by |
-|------------------|------------|---------|
-| `move_ready` | `game_accepted_ids` or `opponent_moved_in_game` contains the game ID for the moving player. | `Move`, `FakeMove` |
-| `accept_proposal_ready` | Phase 1: proposal received. Phase 2: accept resolved. | `AcceptProposal` |
-| `propose_ready` | `Channel` or `AfterGame(game_id)` trigger has fired. | `ProposeNewGame`, `ProposeNewGameTheirTurn` |
-| `global_move` | Always ready. | `GoOnChain`, `WaitBlocks`, `AcceptSettlement`, `CleanShutdown`, fault injection |
-| `can_move` | Set only after resync. | Resync path |
+| `ActionSchedule.readiness`           | Fires when                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `GameCanMove { player, game_id }`    | That player's UI accepted the exact game or observed the opponent move in that exact game.             |
+| `AcceptProposal { player, game_id }` | Before submission, that exact proposal was received; after submission, that exact accept has resolved. |
+| `ChannelReady { player }`            | That player observed channel creation.                                                                 |
+| `AfterGame { game_id }`              | Either UI has a terminal event for that exact game.                                                    |
+| `Immediate`                          | No UI-event prerequisite.                                                                              |
 
 `LocalTestUIReceiver` tracks the event state used by these triggers:
 `received_proposal_ids`, `game_accepted_ids`, `opponent_moved_in_game`,
 `game_finished_ids` (populated when `GameSettled` arrives), `accepted_proposal_ids`, and `channel_created`.
+
+Resync is typed and lossless end to end. `GameSession` owns the transient
+`pending_resync` FIFO and drains it into each flush result as
+`Vec<ResyncInfo { game_id, state_number, is_my_turn }>`; `TransactionManager`
+only forwards that result and does not buffer or coalesce resync hints. The
+harness appends every item in source order as
+`ResyncEvent { player, game_id, state_number, is_my_turn }`. The runner turns
+our-turn events into a transient FIFO of exact prior move payloads. A replay
+requires exactly one executed move matching the full
+`(player, game_id, state_number)` tuple and reuses that move's readable payload
+and entropy. Replays do not increment, decrement, or otherwise rewind the
+script cursor, so they cannot repeat intervening control actions or lose
+multiple resync events.
 
 ## Two-Phase AcceptProposal
 
@@ -208,8 +269,9 @@ or other resolution strategies.
 ## Stall Detection
 
 The sim loop panics after 200 iterations with a diagnostic message including
-`move_number`, `can_move`, and the next pending action. If a test stalls, check
-whether the trigger condition for the next action can ever be satisfied.
+`move_number`, handshake/channel readiness, and the next pending action. If a
+test stalls, check whether that action's `ActionSchedule` readiness can ever be
+satisfied.
 
 `NerfTransactions`, `NerfMessages`, and `BlockCoinReports` are useful for
 asymmetric scenarios, but remember that they block different surfaces:

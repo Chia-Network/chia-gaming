@@ -1,3 +1,7 @@
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+import { FinishedSessionErrorBoundary } from '../../components/FinishedSessionGameView';
 import { createSessionModel } from '../session/model';
 import {
   selectFinishedSessionDisplay,
@@ -9,17 +13,27 @@ describe('finished session shell display', () => {
     const model = createSessionModel({
       game: {
         activeGameType: 'calpoker',
+        currentHandIds: ['finished'],
+        lastDisplayedId: 'finished',
+        instances: {
+          finished: {
+            id: 'finished',
+            amount: '200',
+            coin: { coinHex: null, turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'settled',
+              outcome: 'opponent_timed_out',
+              label: 'Opponent timed out',
+              myReward: '200',
+              rewardCoinHex: null,
+            },
+          },
+        },
         handState: {
           gameType: 'calpoker',
           version: 1n,
           state: { cards: [1n, 2n] },
-        },
-        terminal: {
-          type: 'settled',
-          outcome: 'opponent_timed_out',
-          label: 'Opponent timed out',
-          myReward: '200',
-          rewardCoinHex: null,
         },
       },
     });
@@ -55,5 +69,20 @@ describe('finished session shell display', () => {
     const propSafe = sessionModelForReactProps(model);
     expect(Object.keys(propSafe.game)).not.toContain('handState');
     expect(propSafe.game.handState).toBe(model.game.handState);
+  });
+
+  it('falls back to the terminal label when a frozen mount throws', () => {
+    const boundary = new FinishedSessionErrorBoundary({
+      children: React.createElement('div', null, 'unreachable game'),
+      fallbackLabel: 'Opponent timed out',
+      resetKey: 'spacepoker:finished',
+    });
+    boundary.state = FinishedSessionErrorBoundary.getDerivedStateFromError();
+
+    const markup = renderToStaticMarkup(boundary.render());
+
+    expect(markup).toContain('data-testid="finished-session-fallback"');
+    expect(markup).toContain('Opponent timed out');
+    expect(markup).not.toContain('unreachable game');
   });
 });

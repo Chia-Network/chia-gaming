@@ -3,24 +3,17 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import { CalpokerOutcome } from './outcome';
 import { SessionController } from '../../hooks/SessionController';
-import { CalpokerHandState, CalpokerDisplaySnapshot, PersistedGameState } from '../../hooks/save';
+import type { PersistedGameState } from '../../lib/session/gameStateCodec';
+import type { GameTerminalModel } from '../../lib/session/types';
 import { GameplayEvent } from '../../hooks/useGameSession';
-import { type SettlementOutcome } from '../../lib/settlement';
+import { reduceCalpokerFeatureState } from './adapter';
+import {
+  calpokerStateCodec,
+  type CalpokerDisplaySnapshot,
+  type CalpokerHandState,
+} from './stateCodec';
 
-const CALPOKER_PERSISTED_STATE_VERSION = 1n;
-
-function parseCards(
-  readableBytes: Uint8Array | number[],
-  iStarted: boolean,
-): { playerHand: bigint[]; opponentHand: bigint[] } {
-  const program = Program.deserialize(Uint8Array.from(readableBytes));
-  const card_lists = program.toList().map((l) => l.toList().map((v) => v.toBigInt()));
-  if (iStarted) {
-    return { playerHand: card_lists[1], opponentHand: card_lists[0] };
-  } else {
-    return { playerHand: card_lists[0], opponentHand: card_lists[1] };
-  }
-}
+export type { CalpokerDisplaySnapshot, CalpokerHandState } from './stateCodec';
 
 function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigint {
   let bitfield = 0n;
@@ -35,18 +28,7 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
 function calpokerStateFromPersisted(
   persisted: PersistedGameState | null | undefined,
 ): CalpokerHandState | undefined {
-  if (!persisted || persisted.gameType !== 'calpoker') return undefined;
-  if (persisted.version !== CALPOKER_PERSISTED_STATE_VERSION) return undefined;
-  if (!persisted.state || typeof persisted.state !== 'object') return undefined;
-  return persisted.state as CalpokerHandState;
-}
-
-function persistedCalpokerState(state: CalpokerHandState): PersistedGameState<CalpokerHandState> {
-  return {
-    gameType: 'calpoker',
-    version: CALPOKER_PERSISTED_STATE_VERSION,
-    state,
-  };
+  return calpokerStateCodec.decode(persisted) ?? undefined;
 }
 
 export interface UseCalpokerHandResult {
@@ -57,7 +39,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcome | undefined;
-  settlementOutcome: SettlementOutcome | null;
+  terminalOutcome: GameTerminalModel['outcome'];
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
@@ -83,9 +65,9 @@ export function shouldProcessCalpokerOpponentMoved(
 export function shouldRestoreCalpokerSelection(
   moveNumber: string,
   hasOutcome: boolean,
-  hasSettlementOutcome: boolean,
+  hasTerminalOutcome: boolean,
 ): boolean {
-  return moveNumber === '1' && !hasOutcome && !hasSettlementOutcome;
+  return moveNumber === '1' && !hasOutcome && !hasTerminalOutcome;
 }
 
 // At the endgame reveal (currentMove >= 2) exactly one player still owes a
@@ -106,6 +88,7 @@ export function useCalpokerHand(
   gameplayEvent$: Observable<GameplayEvent>,
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
+  terminal: GameTerminalModel,
   initialPersistedState?: PersistedGameState,
 ): UseCalpokerHandResult {
   const initialHandState = useMemo(
@@ -120,9 +103,6 @@ export function useCalpokerHand(
   const [moveNumber, setMoveNumber] = useState<bigint>(initialHandState?.moveNumber ?? 0n);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [settlementOutcome, setSettlementOutcome] = useState<SettlementOutcome | null>(
-    initialHandState?.settlementOutcome ?? null,
-  );
 
   const playerHandRef = useRef<bigint[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<bigint[]>(initialHandState?.opponentHand ?? []);
@@ -135,6 +115,15 @@ export function useCalpokerHand(
   const pendingPlayRef = useRef(false);
   const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);
   const restoredRef = useRef(!!initialHandState);
+  const stateRef = useRef<CalpokerHandState>(
+    initialHandState ?? {
+      playerHand: [],
+      opponentHand: [],
+      cardSelections: [],
+      moveNumber: 0n,
+      isPlayerTurn: !iStarted,
+    },
+  );
 
   playerHandRef.current = playerHand;
   opponentHandRef.current = opponentHand;
@@ -144,6 +133,29 @@ export function useCalpokerHand(
   gameIdRef.current = gameId;
   isPlayerTurnRef.current = isPlayerTurn;
 
+  const projectState = useCallback((next: CalpokerHandState) => {
+    stateRef.current = next;
+    playerHandRef.current = next.playerHand;
+    opponentHandRef.current = next.opponentHand;
+    cardSelectionsRef.current = next.cardSelections ?? [];
+    moveNumberRef.current = next.moveNumber;
+    isPlayerTurnRef.current = next.isPlayerTurn;
+    setPlayerHand(next.playerHand);
+    setOpponentHand(next.opponentHand);
+    setOurCardSelections(next.cardSelections ?? []);
+    setMoveNumber(next.moveNumber);
+    setMyTurn(next.isPlayerTurn);
+  }, []);
+
+  const commitState = useCallback(
+    (update: (current: CalpokerHandState) => CalpokerHandState) => {
+      const next = update(stateRef.current);
+      gameObjectRef.current.transitionFeatureState('calpoker', gameIdRef.current, next);
+      projectState(next);
+    },
+    [projectState],
+  );
+
   useEffect(() => {
     const subscription = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
@@ -152,21 +164,16 @@ export function useCalpokerHand(
           if (!shouldProcessCalpokerOpponentMoved(handFinishedRef.current, !!outcomeRef.current))
             return;
           const currentMove = moveNumberRef.current;
-          setMyTurn(true);
+          const next = reduceCalpokerFeatureState(stateRef.current, {
+            type: 'opponent-moved',
+            readable: Uint8Array.from(evt.OpponentMoved.readable),
+            iStarted,
+          });
+          projectState(next);
           onTurnChanged(true);
 
           if (currentMove === 1n && !iStarted) {
-            try {
-              const cards = parseCards(evt.OpponentMoved.readable, iStarted);
-              setPlayerHand(cards.playerHand);
-              setOpponentHand(cards.opponentHand);
-              playerHandRef.current = cards.playerHand;
-              opponentHandRef.current = cards.opponentHand;
-            } catch (e) {
-              console.error('parseCards from OpponentMoved failed:', e);
-              handFinishedRef.current = true;
-              throw e;
-            }
+            // Cards were committed with the turn transition above.
           } else if (currentMove >= 2n) {
             const myDiscardsBitfield = selectedCardsToBitfield(
               cardSelectionsRef.current,
@@ -175,8 +182,8 @@ export function useCalpokerHand(
             const newOutcome = new CalpokerOutcome(
               iStarted,
               myDiscardsBitfield,
-              iStarted ? opponentHandRef.current : playerHandRef.current,
-              iStarted ? playerHandRef.current : opponentHandRef.current,
+              iStarted ? next.opponentHand : next.playerHand,
+              iStarted ? next.playerHand : next.opponentHand,
               evt.OpponentMoved.readable,
             );
             setOutcome(newOutcome);
@@ -197,11 +204,13 @@ export function useCalpokerHand(
           if (evt.GameMessage.gameId && evt.GameMessage.gameId !== gameIdRef.current) return;
           if (handFinishedRef.current) return;
           try {
-            const cards = parseCards(evt.GameMessage.readable, iStarted);
-            setPlayerHand(cards.playerHand);
-            setOpponentHand(cards.opponentHand);
-            playerHandRef.current = cards.playerHand;
-            opponentHandRef.current = cards.opponentHand;
+            projectState(
+              reduceCalpokerFeatureState(stateRef.current, {
+                type: 'game-message',
+                readable: Uint8Array.from(evt.GameMessage.readable),
+                iStarted,
+              }),
+            );
           } catch (e) {
             console.error('parseCards failed:', e, 'readable:', evt.GameMessage.readable);
             handFinishedRef.current = true;
@@ -210,16 +219,6 @@ export function useCalpokerHand(
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
-          setSettlementOutcome(evt.Settled.outcome);
-          const existing = calpokerStateFromPersisted(gameObjectRef.current?.handState);
-          if (existing) {
-            gameObjectRef.current?.setHandState(
-              persistedCalpokerState({
-                ...existing,
-                settlementOutcome: evt.Settled.outcome,
-              }),
-            );
-          }
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           handFinishedRef.current = true;
@@ -230,7 +229,7 @@ export function useCalpokerHand(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameplayEvent$, iStarted, onOutcome, onTurnChanged]);
+  }, [gameplayEvent$, iStarted, onOutcome, onTurnChanged, projectState]);
 
   const submitMove1 = useCallback(() => {
     const go = gameObjectRef.current;
@@ -239,13 +238,11 @@ export function useCalpokerHand(
     if (!gid) return;
     if (cardSelectionsRef.current.length !== 4) return;
     const cards = cardSelectionsRef.current;
+    commitState((current) => ({ ...current, moveNumber: 2n, isPlayerTurn: false }));
     go.makeMove(gid, Program.fromList(cards.map((c) => Program.fromBigInt(c))));
-    setMoveNumber(2n);
-    moveNumberRef.current = 2n;
-    setMyTurn(false);
     onTurnChanged(false);
     pendingPlayRef.current = false;
-  }, [onTurnChanged]);
+  }, [onTurnChanged, commitState]);
 
   const handleMakeMove = useCallback(() => {
     if (handFinishedRef.current) return;
@@ -257,10 +254,8 @@ export function useCalpokerHand(
     const currentMove = moveNumberRef.current;
 
     if (currentMove === 0n) {
+      commitState((current) => ({ ...current, moveNumber: 1n, isPlayerTurn: false }));
       go.makeMove(gid, null);
-      setMoveNumber(1n);
-      moveNumberRef.current = 1n;
-      setMyTurn(false);
       onTurnChanged(false);
     } else if (currentMove === 1n) {
       if (cardSelectionsRef.current.length !== 4) return;
@@ -270,13 +265,11 @@ export function useCalpokerHand(
         pendingPlayRef.current = true;
       }
     } else if (currentMove === 2n) {
+      commitState((current) => ({ ...current, moveNumber: 3n, isPlayerTurn: false }));
       go.makeMove(gid, null);
-      setMoveNumber(3n);
-      moveNumberRef.current = 3n;
-      setMyTurn(false);
       onTurnChanged(false);
     }
-  }, [onTurnChanged, submitMove1]);
+  }, [onTurnChanged, submitMove1, commitState]);
 
   // Autofire moves 0 and 2; auto-submit queued move 1
   useEffect(() => {
@@ -294,43 +287,17 @@ export function useCalpokerHand(
     }
   }, [isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
 
-  useEffect(() => {
-    if (playerHand.length > 0) {
-      const existing = calpokerStateFromPersisted(gameObject.handState);
-      gameObject.setHandState(
-        persistedCalpokerState({
-          playerHand,
-          opponentHand,
-          moveNumber,
-          isPlayerTurn,
-          settlementOutcome,
-          cardSelections: cardSelectionsRef.current,
-          displaySnapshot: existing?.displaySnapshot,
-        }),
-      );
-    }
-  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, settlementOutcome, gameObject]);
-
-  useEffect(() => {
-    if (playerHand.length > 0) {
-      const existing = calpokerStateFromPersisted(gameObject.handState);
-      if (existing) {
-        gameObject.setHandState(persistedCalpokerState({ ...existing, cardSelections }));
-      }
-    }
-  }, [cardSelections, gameObject, playerHand.length]);
-
   const handleCheat = useCallback(() => {
     const go = gameObjectRef.current;
     const gid = gameIdRef.current;
     if (!go || !gid) return;
-    go.cheat(gid, 0n);
     // A cheat is just an (illegal) move; drive the same turn-change path a
     // normal move uses so the status shows "Playing our move on-chain" while
     // it lands, instead of staying on our turn.
-    setMyTurn(false);
+    commitState((current) => ({ ...current, isPlayerTurn: false }));
+    go.cheat(gid, 0n);
     onTurnChanged(false);
-  }, [onTurnChanged]);
+  }, [onTurnChanged, commitState]);
 
   const handleNerf = useCallback(() => {
     const go = gameObjectRef.current;
@@ -341,36 +308,36 @@ export function useCalpokerHand(
   const setCardSelections = useCallback(
     (selectionsOrFn: bigint[] | ((prev: bigint[]) => bigint[])) => {
       if (typeof selectionsOrFn === 'function') {
-        setOurCardSelections((prev) => {
-          const next = selectionsOrFn(prev);
-          cardSelectionsRef.current = next;
-          return next;
-        });
+        commitState((current) => ({
+          ...current,
+          cardSelections: selectionsOrFn(current.cardSelections ?? []),
+        }));
       } else {
-        setOurCardSelections(selectionsOrFn);
-        cardSelectionsRef.current = selectionsOrFn;
+        commitState((current) => ({ ...current, cardSelections: selectionsOrFn }));
       }
     },
-    [],
+    [commitState],
   );
 
-  const setHandOrder = useCallback((nextPlayerHand: bigint[], nextOpponentHand?: bigint[]) => {
-    setPlayerHand(nextPlayerHand);
-    playerHandRef.current = nextPlayerHand;
-    if (nextOpponentHand) {
-      setOpponentHand(nextOpponentHand);
-      opponentHandRef.current = nextOpponentHand;
-    }
-  }, []);
+  const setHandOrder = useCallback(
+    (nextPlayerHand: bigint[], nextOpponentHand?: bigint[]) => {
+      commitState((current) => ({
+        ...current,
+        playerHand: nextPlayerHand,
+        opponentHand: nextOpponentHand ?? current.opponentHand,
+      }));
+    },
+    [commitState],
+  );
 
-  const saveDisplaySnapshot = useCallback((snapshot: CalpokerDisplaySnapshot) => {
-    const go = gameObjectRef.current;
-    if (!go) return;
-    const existing = calpokerStateFromPersisted(go.handState);
-    if (existing) {
-      go.setHandState(persistedCalpokerState({ ...existing, displaySnapshot: snapshot }));
-    }
-  }, []);
+  const saveDisplaySnapshot = useCallback(
+    (snapshot: CalpokerDisplaySnapshot) => {
+      const go = gameObjectRef.current;
+      if (!go) return;
+      commitState((current) => ({ ...current, displaySnapshot: snapshot }));
+    },
+    [commitState],
+  );
 
   return {
     playerHand,
@@ -380,7 +347,7 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber,
     outcome,
-    settlementOutcome,
+    terminalOutcome: terminal.outcome,
     handleMakeMove,
     handleCheat,
     handleNerf,

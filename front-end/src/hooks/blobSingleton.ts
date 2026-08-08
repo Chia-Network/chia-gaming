@@ -82,6 +82,15 @@ export function destroySessionController(): void {
   }
   initStarted = false;
 }
+
+export function destroyFlushedTerminalSessionController(controller: SessionController): void {
+  if (sessionController !== controller) {
+    throw new Error('Terminal finalization lost ownership of its SessionController');
+  }
+  controller.cleanupAfterTerminalFlush();
+  sessionController = null;
+  initStarted = false;
+}
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
 
@@ -177,6 +186,7 @@ export async function restoreSession(
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
   sc.activeGameIds = [...save.activeGameIds];
+  sc.restoreMoveReplayJournal(save.moveReplayJournal);
   sc.handState = save.handState ?? null;
   sc.restoreChannelStatus(
     save.channelStatus

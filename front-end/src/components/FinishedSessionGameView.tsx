@@ -1,11 +1,12 @@
-import React, { useCallback, useMemo } from 'react';
-import { EMPTY } from 'rxjs';
+import React, { Component, Suspense, useMemo } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 
-import { CalpokerHand, KrunkHand, SpacePokerHand } from './GameSession';
 import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
-import type { CalpokerOutcome } from '../features/calPoker/outcome';
+import type { SessionController } from '../hooks/SessionController';
+import type { FrozenGameMountOptions } from '../lib/gameMount';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
+import { renderFrozenGameMount } from '../lib/gameMountRegistry';
 
 export interface FinishedSessionGameViewProps {
   model: SessionModel;
@@ -13,6 +14,71 @@ export interface FinishedSessionGameViewProps {
   opponentName?: string;
   iStarted?: boolean;
   iProposedHand?: boolean;
+}
+
+function FinishedSessionFallback({ label }: { label: string | null }) {
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+      data-testid="finished-session-fallback"
+    >
+      {label ?? 'No hand details available'}
+    </div>
+  );
+}
+
+interface FinishedSessionErrorBoundaryProps {
+  children: ReactNode;
+  fallbackLabel: string | null;
+  resetKey: string;
+}
+
+interface FinishedSessionErrorBoundaryState {
+  hasError: boolean;
+}
+
+export class FinishedSessionErrorBoundary extends Component<
+  FinishedSessionErrorBoundaryProps,
+  FinishedSessionErrorBoundaryState
+> {
+  state: FinishedSessionErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): FinishedSessionErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(
+      '[FinishedSessionGameView] frozen game render crash:',
+      error,
+      info.componentStack,
+    );
+  }
+
+  componentDidUpdate(previous: FinishedSessionErrorBoundaryProps) {
+    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <FinishedSessionFallback label={this.props.fallbackLabel} />;
+    }
+    return this.props.children;
+  }
+}
+
+function FrozenGameMount({
+  model,
+  bridge,
+  options,
+}: {
+  model: SessionModel;
+  bridge: SessionController;
+  options: FrozenGameMountOptions;
+}) {
+  return renderFrozenGameMount(model, bridge, options);
 }
 
 /**
@@ -28,37 +94,13 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
-  const gameType = handState?.gameType ?? model.game.activeGameType;
-  const gameId =
-    model.game.lastDisplayedId ??
-    model.game.currentHandIds[0] ??
-    model.game.activeIds[0] ??
-    'finished';
   const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
-  const noopTurnChanged = useCallback((_gameId: string, _isMyTurn: boolean) => {}, []);
-  const noopLog = useCallback((_line: string) => {}, []);
-  const noopOutcome = useCallback((_outcome: CalpokerOutcome) => {}, []);
 
   if (!display.canRemountHand || !handState) {
-    return (
-      <div
-        className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
-        data-testid="finished-session-fallback"
-      >
-        {display.terminalLabel ?? 'No hand details available'}
-      </div>
-    );
+    return <FinishedSessionFallback label={display.terminalLabel} />;
   }
 
-  const commonProps = {
-    gameObject: frozenBridge,
-    iStarted,
-    gameplayEvent$: EMPTY,
-    onTurnChanged: noopTurnChanged,
-    appendGameLog: noopLog,
-    myName,
-    opponentName,
-  };
+  const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;
 
   return (
     <div
@@ -67,39 +109,29 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
       aria-disabled
       inert
     >
-      {gameType === 'calpoker' ? (
-        <CalpokerHand
-          {...commonProps}
-          gameId={gameId}
-          playerNumber={iStarted ? 1 : 2}
-          onOutcome={noopOutcome}
-          perGameAmount={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : gameType === 'spacepoker' ? (
-        <SpacePokerHand
-          {...commonProps}
-          gameId={gameId}
-          betSize={String(model.betweenHand.lastTerms.myContribution)}
-          unitSizeMojos={
-            model.betweenHand.lastTerms.gameType === 'spacepoker'
-              ? String(model.betweenHand.lastTerms.spacepokerUnitSize ?? 0n)
-              : undefined
+      <FinishedSessionErrorBoundary fallbackLabel={display.terminalLabel} resetKey={resetKey}>
+        <Suspense
+          fallback={
+            <div
+              className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+              data-testid="finished-session-loading"
+            >
+              Loading hand…
+            </div>
           }
-          perGameAmount={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : gameType === 'krunk' ? (
-        <KrunkHand
-          {...commonProps}
-          currentHandGameIds={model.game.currentHandIds}
-          activeGameIds={model.game.activeIds}
-          iProposedHand={iProposedHand}
-          betSize={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : (
-        <div className="flex items-center justify-center py-20 text-canvas-text">
-          Game details unavailable
-        </div>
-      )}
+        >
+          <FrozenGameMount
+            model={model}
+            bridge={frozenBridge}
+            options={{
+              myName,
+              opponentName,
+              iStarted,
+              iProposedHand,
+            }}
+          />
+        </Suspense>
+      </FinishedSessionErrorBoundary>
     </div>
   );
 };

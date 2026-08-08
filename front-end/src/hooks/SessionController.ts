@@ -13,6 +13,8 @@ import {
   ProposeGameParams,
   WasmEvent,
   NeedCoinSpendRequest,
+  MoveReplayReceipt,
+  ResyncInfo,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import { spend_bundle_to_clvm, coerceToBytes } from '../util';
@@ -20,6 +22,7 @@ import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
+import type { RegisteredGameType } from '../lib/session/types';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -49,6 +52,7 @@ export interface WasmFields {
   myAlias: string | undefined;
   opponentAlias: string | undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
+  moveReplayJournal: MoveReplayReceipt[];
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -62,6 +66,7 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
 const ACTIVE_DRAIN_EVENT_BUDGET = 100;
+const MOVE_REPLAY_JOURNAL_LIMIT = 256;
 
 function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
   return (
@@ -174,6 +179,9 @@ export class SessionController implements PollingGameSession {
   private pendingAcks: bigint[] = [];
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
+  private moveReplayJournal: MoveReplayReceipt[] = [];
+  private pendingResync: ResyncInfo[] = [];
+  private drainingResync = false;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -190,6 +198,9 @@ export class SessionController implements PollingGameSession {
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
+  onFeatureStateTransition:
+    | ((gameType: RegisteredGameType, gameId: string, state: unknown) => void)
+    | null = null;
   getFee: () => bigint = () => 0n;
 
   get handState(): PersistedGameState | null {
@@ -227,6 +238,8 @@ export class SessionController implements PollingGameSession {
     this.iStarted = false;
     this.channelReady = false;
     this.storedMessages = [];
+    this.moveReplayJournal = [];
+    this.pendingResync = [];
     this.cleanShutdownCalled = false;
     this.onChain = false;
     this.reloading = false;
@@ -282,6 +295,19 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    this.cleanupInternal(true);
+  }
+
+  /**
+   * Release a terminal controller after its durability boundary was awaited.
+   * Unlike ordinary abandonment/navigation cleanup, this cannot start another
+   * unawaited durability operation.
+   */
+  cleanupAfterTerminalFlush() {
+    this.cleanupInternal(false);
+  }
+
+  private cleanupInternal(flushDurability: boolean) {
     this.retired = true;
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
@@ -294,6 +320,8 @@ export class SessionController implements PollingGameSession {
     this.pendingAcks = [];
     this.unackedMessages = [];
     this.reorderQueue.clear();
+    this.moveReplayJournal = [];
+    this.pendingResync = [];
     this.needsImmediateDurability = false;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
@@ -313,13 +341,22 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    void this.flushDurabilityAndSend();
+    if (flushDurability) {
+      void this.flushDurabilityAndSend();
+    }
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       this.beforeUnloadHandler = null;
     }
+  }
+
+  reportDurabilityError(error: unknown): void {
+    const detail = extractErrorMessage(error);
+    const warning = `Session storage failed: ${detail}. Terminal session remains live so saving can be retried.`;
+    this.durabilityWarning = warning;
+    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
   }
 
   notePeerActivity() {
@@ -728,16 +765,100 @@ export class SessionController implements PollingGameSession {
     if (disposition.kind === 'await-outbound-terminal') {
       this.queueTerminalHandoff(disposition.command);
     }
+    if (result.moveReplay) {
+      this.moveReplayJournal.push({
+        ...result.moveReplay,
+        readable: Uint8Array.from(result.moveReplay.readable),
+      });
+      if (this.moveReplayJournal.length > MOVE_REPLAY_JOURNAL_LIMIT) {
+        this.moveReplayJournal.splice(0, this.moveReplayJournal.length - MOVE_REPLAY_JOURNAL_LIMIT);
+      }
+    }
+    this.pendingResync.push(...(result.resync ?? []));
 
     // A terminal manager drain can still contain already-queued on-chain
     // submissions (for example a mature timeout claim). Actual abandonment
     // clears that queue in Rust before it reaches this boundary.
     this.drainAndSubmitTransactions();
     if (terminal) {
+      this.moveReplayJournal = [];
+      this.pendingResync = [];
       this.flushDeferredWork();
       return;
     }
+    this.drainResyncInstructions();
     this.scheduleDrain();
+  }
+
+  private drainResyncInstructions(): void {
+    if (this.drainingResync) return;
+    this.drainingResync = true;
+    try {
+      while (this.pendingResync.length > 0) {
+        const instruction = this.pendingResync[0];
+        if (!instruction.is_my_turn) {
+          this.pendingResync.shift();
+          continue;
+        }
+        const gameId = String(instruction.game_id);
+        const stateNumber = BigInt(instruction.state_number);
+        const matches = this.moveReplayJournal.filter(
+          (entry) => entry.gameId === gameId && BigInt(entry.stateNumber) === stateNumber,
+        );
+        if (matches.length !== 1) {
+          throw new Error(
+            `resync requires exactly one journaled local move: game_id=${gameId} state_number=${stateNumber} is_my_turn=true matches=${matches.length}`,
+          );
+        }
+        if (!this.cradle) throw new Error('resync replay requires an active WASM cradle');
+        const replay = matches[0];
+        const replayResult = this.cradle.replay_move(
+          replay.gameId,
+          replay.readable,
+          replay.entropy,
+        );
+        this.processResultWithoutJournaling(replayResult);
+        this.assertActionSucceeded(replayResult, 'resync replay');
+        this.pendingResync.shift();
+      }
+    } catch (error) {
+      const message = extractErrorMessage(error);
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+      throw error;
+    } finally {
+      this.drainingResync = false;
+    }
+  }
+
+  private processResultWithoutJournaling(result: WasmResult | undefined): void {
+    this.processResult(result ? { ...result, moveReplay: undefined } : undefined);
+  }
+
+  private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
+    if (result?.actionSucceeded !== false) return;
+    const failed = result.events?.find(
+      (event) =>
+        'Notification' in event &&
+        event.Notification.ActionFailed &&
+        typeof event.Notification.ActionFailed.reason === 'string',
+    );
+    const reason =
+      failed && 'Notification' in failed ? failed.Notification.ActionFailed?.reason : undefined;
+    throw new Error(reason ? `${action} failed: ${reason}` : `${action} failed`);
+  }
+
+  private processCommandResult(result: WasmResult | undefined, action: string): void {
+    const processed =
+      result?.actionSucceeded === false
+        ? {
+            ...result,
+            events: result.events?.filter(
+              (event) => !('Notification' in event && event.Notification.ActionFailed),
+            ),
+          }
+        : result;
+    this.processResult(processed);
+    this.assertActionSucceeded(result, action);
   }
 
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
@@ -917,11 +1038,19 @@ export class SessionController implements PollingGameSession {
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
           const endedId = gs.id != null ? String(gs.id) : null;
           this.activeGameIds = this.activeGameIds.filter((id) => id !== endedId);
+          if (endedId !== null) {
+            this.moveReplayJournal = this.moveReplayJournal.filter(
+              (entry) => entry.gameId !== endedId,
+            );
+          }
         }
       }
       if (tag === 'GameSettled' && n.GameSettled) {
         const settledId = String(n.GameSettled.id);
         this.activeGameIds = this.activeGameIds.filter((id) => id !== settledId);
+        this.moveReplayJournal = this.moveReplayJournal.filter(
+          (entry) => entry.gameId !== settledId,
+        );
       }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
@@ -1385,6 +1514,10 @@ export class SessionController implements PollingGameSession {
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
       lastOutcomeWin: this.lastOutcomeWin,
+      moveReplayJournal: this.moveReplayJournal.map((entry) => ({
+        ...entry,
+        readable: Uint8Array.from(entry.readable),
+      })),
     };
   }
 
@@ -1413,6 +1546,13 @@ export class SessionController implements PollingGameSession {
     this.scheduleSave();
   }
 
+  transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): void {
+    if (!this.onFeatureStateTransition) {
+      throw new Error('Feature state transition callback is unavailable');
+    }
+    this.onFeatureStateTransition(gameType, gameId, state);
+  }
+
   /**
    * Game IDs and hand state are host-side presentation state. An abandoned
    * session has no per-game terminal events to retire them individually.
@@ -1420,7 +1560,15 @@ export class SessionController implements PollingGameSession {
   clearDerivedGamePresentation(): void {
     this.activeGameIds = [];
     this.handState = null;
+    this.moveReplayJournal = [];
     this.scheduleSave();
+  }
+
+  restoreMoveReplayJournal(journal: MoveReplayReceipt[] | undefined): void {
+    this.moveReplayJournal = (journal ?? []).slice(-MOVE_REPLAY_JOURNAL_LIMIT).map((entry) => ({
+      ...entry,
+      readable: Uint8Array.from(entry.readable),
+    }));
   }
 
   markRestored() {
@@ -1441,7 +1589,7 @@ export class SessionController implements PollingGameSession {
     const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
     const parametersList = paramsList.map(({ parameters }) => clvmToBytes(parameters));
     const result = this.cradle.propose_games(games, parametersList);
-    this.processResult(result);
+    this.processCommandResult(result, 'propose game');
     if (!result?.ids) {
       throw new Error('proposeGames returned no ids');
     }
@@ -1452,11 +1600,12 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.accept_proposal(gameId);
-      this.processResult(result);
+      this.processCommandResult(result, 'accept proposal');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptProposal failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
@@ -1464,11 +1613,12 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cancel_proposal(gameId);
-      this.processResult(result);
+      this.processCommandResult(result, 'cancel proposal');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cancel_proposal failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
@@ -1478,6 +1628,7 @@ export class SessionController implements PollingGameSession {
       const bytes = clvmToBytes(readable);
       const result = this.cradle.make_move(gameId, bytes);
       this.processResult(result);
+      this.assertActionSucceeded(result, 'make move');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
@@ -1487,6 +1638,7 @@ export class SessionController implements PollingGameSession {
         action: 'make-move',
         error: msg,
       });
+      throw e;
     }
   }
 
@@ -1495,6 +1647,7 @@ export class SessionController implements PollingGameSession {
     try {
       const result = this.cradle.acceptSettlement(gameId);
       this.processResult(result);
+      this.assertActionSucceeded(result, 'accept settlement');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
@@ -1504,6 +1657,7 @@ export class SessionController implements PollingGameSession {
         action: 'accept-settlement',
         error: msg,
       });
+      throw e;
     }
   }
 
@@ -1512,19 +1666,21 @@ export class SessionController implements PollingGameSession {
     try {
       const result = this.cradle.cheat(gameId, moverShare);
       this.processResult(result);
+      this.assertActionSucceeded(result, 'cheat');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
   cleanShutdown(): void {
-    if (!this.cradle) return;
-    this.cleanShutdownCalled = true;
+    if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.shut_down();
-      this.processResult(result);
+      this.processCommandResult(result, 'clean shutdown');
+      this.cleanShutdownCalled = true;
     } catch (e) {
       const msg =
         e instanceof Error
@@ -1534,6 +1690,7 @@ export class SessionController implements PollingGameSession {
             : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
@@ -1560,7 +1717,7 @@ export class SessionController implements PollingGameSession {
       const startedOnChain =
         result?.actionSucceeded === true && result.disposition?.kind === 'active';
       this.onChain = startedOnChain;
-      this.processResult(result);
+      this.processCommandResult(result, 'go on chain');
       return startedOnChain;
     } catch (e) {
       this.onChain = false;

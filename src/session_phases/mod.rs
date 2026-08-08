@@ -1727,8 +1727,8 @@ impl SpendWalletReceiver for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         _coin_id: &CoinString,
         _puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        Ok((vec![], None))
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
+        Ok((vec![], vec![]))
     }
 }
 
@@ -1766,7 +1766,7 @@ impl PeerLifecyclePhase for OffChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         <Self as SpendWalletReceiver>::coin_puzzle_and_solution(
             self,
             env,

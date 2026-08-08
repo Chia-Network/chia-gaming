@@ -56,16 +56,26 @@ or when the parent has a concrete plan to monitor and stop them.
 
 ## What to Provide (parent)
 
-Spawn a `generalPurpose` sub-agent with three things:
+Spawn a `generalPurpose` sub-agent with four things:
 
-1. **Context:** What the code is supposed to do. Relevant files,
-   modules, and recent changes. Enough for the sub-agent to
-   understand the area without exploring the whole codebase.
+1. **Context:** The relevant files, modules, execution path, and
+   surrounding contracts. Give enough context for the sub-agent to
+   compare the implementation, tests, documentation, and callers
+   when they disagree; a file list or diff summary alone is not
+   sufficient.
 
-2. **Symptoms:** The exact error output -- not paraphrased. Which
+2. **Intent:** Explain the high-level purpose and desired behavior of
+   recently made changes, including important ownership boundaries,
+   invariants, and requirements that changed or deliberately stayed
+   the same. State which sources are authoritative and why. This lets
+   the sub-agent adjudicate whether a discrepancy is a code bug, an
+   outdated test, stale documentation, or an incomplete change rather
+   than blindly conforming one artifact to another.
+
+3. **Symptoms:** The exact error output -- not paraphrased. Which
    test failed, what the expected vs actual behavior was.
 
-3. **Repro:** The specific command to reproduce the failure (e.g.
+4. **Repro:** The specific command to reproduce the failure (e.g.
    `./ct.sh test_name`). The sub-agent must be able to run it
    immediately.
 
@@ -80,8 +90,11 @@ structured diagnosis and not speculate.
 
 You were spawned to fix a specific bug. You have the debugging
 techniques rule in your context -- follow it. Use structured
-diagnosis, not speculation. The parent gave you context, symptoms,
-and a repro command. Start by reproducing the failure.
+diagnosis, not speculation. The parent gave you context, intent,
+symptoms, and a repro command. Use the stated intent to adjudicate
+discrepancies between code, tests, documentation, and callers; do
+not assume any one artifact is correct merely because it is the
+first one you inspected. Start by reproducing the failure.
 
 Do not leave long-running processes behind silently. If you start a
 watcher, dev server, background test command, or any other process that

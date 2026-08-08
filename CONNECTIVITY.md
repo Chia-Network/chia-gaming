@@ -397,9 +397,9 @@ The hub does not create a session. It can only advise and relay:
   explicit go-on-chain or FOAD signals. Hub liveness with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: `SessionSave` in IndexedDB (raw cradle /
-  unacked bytes via structured clone) plus small preferences and the
-  resumable-session boot marker in localStorage
+- **Session persistence**: one salt-prefixed, masked Bencodex `SessionSave`
+  byte value in IndexedDB (including raw cradle/unacked byte strings), plus
+  small preferences and the resumable-session boot marker in localStorage
   (`front-end/src/hooks/save.ts`).
 - **Resume on reload**: Marker-first boot state machine with Resume /
   Start Over dialog, full `hardReset` obliteration, and lease system for tab

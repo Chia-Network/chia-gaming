@@ -623,13 +623,13 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
         _env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         _puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         Ok((
             vec![Effect::Log(format!(
                 "[initiator-handshake:coin-puzzle] {}",
                 format_coin(coin_id),
             ))],
-            None,
+            vec![],
         ))
     }
 }
@@ -668,7 +668,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         <Self as SpendWalletReceiver>::coin_puzzle_and_solution(
             self,
             env,

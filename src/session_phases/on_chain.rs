@@ -100,6 +100,33 @@ pub struct OnChainPhaseArgs {
     pub game_payout_coins: Vec<(GameID, CoinString)>,
 }
 
+fn on_chain_move_submission_effects(
+    game_id: GameID,
+    current_coin: &CoinString,
+    transaction: Spend,
+) -> Vec<Effect> {
+    vec![
+        Effect::SpendTransaction(
+            SpendBundle {
+                name: Some("on chain move".to_string()),
+                spends: vec![CoinSpend {
+                    coin: current_coin.clone(),
+                    bundle: transaction,
+                }],
+            },
+            None,
+        ),
+        Effect::Notify(GameNotification::GameStatus {
+            id: game_id,
+            status: GameStatusKind::PlayingMove,
+            my_reward: None,
+            coin_id: Some(current_coin.clone()),
+            reason: None,
+            other_params: None,
+        }),
+    ]
+}
+
 impl OnChainPhase {
     pub fn new(args: OnChainPhaseArgs) -> Self {
         let current_game_coins = args
@@ -237,6 +264,11 @@ impl OnChainPhase {
                     "no live game with the given game id".to_string(),
                 ))
             })
+    }
+
+    pub fn game_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
+        let index = self.get_game_by_id(game_id)?;
+        Ok(self.live_games[index].state_number())
     }
 
     pub fn has_live_game(&self, game_id: &GameID) -> bool {
@@ -664,9 +696,9 @@ impl OnChainPhase {
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         let mut effects = Vec::new();
-        let mut resync_info: Option<ResyncInfo> = None;
+        let mut resync_info = Vec::new();
         let mut unblock_queue = false;
 
         if let Some(pending) = self.pending_moves.remove(coin_id) {
@@ -743,7 +775,7 @@ impl OnChainPhase {
                         ),
                     });
                     effects.extend(self.process_queued_action(env)?);
-                    return Ok((effects, None));
+                    return Ok((effects, vec![]));
                 }
 
                 if create_ph == self.their_reward_puzzle_hash {
@@ -764,7 +796,7 @@ impl OnChainPhase {
                         effects.push(eff);
                     }
                     effects.extend(self.process_queued_action(env)?);
-                    return Ok((effects, None));
+                    return Ok((effects, vec![]));
                 }
 
                 self.game_map.insert(
@@ -784,7 +816,7 @@ impl OnChainPhase {
             // Not in the live map: either we already dropped this coin after a
             // terminal outcome, or the host delivered a puzzle/solution for a
             // coin we never tracked. Both are ignore (not a session-level Err).
-            return Ok((effects, None));
+            return Ok((effects, vec![]));
         };
 
         if old_definition.pending_slash_amount.is_some() {
@@ -869,7 +901,7 @@ impl OnChainPhase {
                 effects.push(eff);
             }
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok((effects, vec![]));
         }
 
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
@@ -982,12 +1014,12 @@ impl OnChainPhase {
             }
 
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok((effects, vec![]));
         }
 
         if !self.has_live_game(&old_definition.game_id) {
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok((effects, vec![]));
         }
 
         let parsed_solution = ParsedRefereeSolution::parse(env.allocator, solution)?;
@@ -1021,7 +1053,7 @@ impl OnChainPhase {
                 effects.push(eff);
             }
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok((effects, vec![]));
         };
 
         if old_definition.our_turn {
@@ -1051,7 +1083,7 @@ impl OnChainPhase {
                     effects.push(eff);
                 }
                 effects.extend(self.process_queued_action(env)?);
-                return Ok((effects, None));
+                return Ok((effects, vec![]));
             }
         }
 
@@ -1148,7 +1180,8 @@ impl OnChainPhase {
                     }
                 }
 
-                resync_info = Some(ResyncInfo {
+                resync_info.push(ResyncInfo {
+                    game_id,
                     state_number,
                     is_my_turn,
                 });
@@ -1476,7 +1509,7 @@ impl OnChainPhase {
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<Option<Effect>, Error> {
+    ) -> Result<Vec<Effect>, Error> {
         let my_turn = self.my_move_in_game(&game_id);
         if my_turn.is_none() {
             return Err(Error::StrErr(format!(
@@ -1514,12 +1547,12 @@ impl OnChainPhase {
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            return Ok(Some(Effect::Notify(GameNotification::game_settled(
+            return Ok(vec![Effect::Notify(GameNotification::game_settled(
                 game_id,
                 SettlementOutcome::ForfeitedSkippedReveal,
                 Amount::default(),
                 None,
-            ))));
+            ))]);
         }
 
         let (post_referee, post_last_ph) = self.save_game_state(&game_id)?;
@@ -1546,16 +1579,11 @@ impl OnChainPhase {
             },
         );
 
-        Ok(Some(Effect::SpendTransaction(
-            SpendBundle {
-                name: Some("on chain move".to_string()),
-                spends: vec![CoinSpend {
-                    coin: current_coin.clone(),
-                    bundle: transaction,
-                }],
-            },
-            None,
-        )))
+        Ok(on_chain_move_submission_effects(
+            game_id,
+            current_coin,
+            transaction,
+        ))
     }
 
     pub fn do_on_chain_action(
@@ -1768,7 +1796,7 @@ impl OnChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         let mut effects = Vec::new();
         if let Some((p, s)) = puzzle_and_solution {
             let (game_effects, resync) = self.handle_game_coin_spent(env, coin_id, p, s)?;
@@ -1794,9 +1822,9 @@ impl OnChainPhase {
             };
             effects.push(Effect::Notify(notification));
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok((effects, vec![]));
         }
-        Ok((effects, None))
+        Ok((effects, vec![]))
     }
 }
 
@@ -1847,7 +1875,7 @@ impl PeerLifecyclePhase for OnChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         OnChainPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 
@@ -1946,5 +1974,26 @@ impl PeerLifecyclePhase for OnChainPhase {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn on_chain_move_submission_precedes_playing_move_notification() {
+        let effects =
+            on_chain_move_submission_effects(GameID(7), &CoinString::default(), Spend::default());
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::SpendTransaction(_, _),
+                Effect::Notify(GameNotification::GameStatus {
+                    status: GameStatusKind::PlayingMove,
+                    ..
+                })
+            ]
+        ));
     }
 }

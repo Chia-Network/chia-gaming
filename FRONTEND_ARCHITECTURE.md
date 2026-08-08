@@ -95,27 +95,27 @@ updates never include the secret nonce.
 
 **Hub iframe → Hub:**
 
-| Event | Payload | Purpose |
-|-------|---------|---------|
-| `get_alias` | `{ session_id }` | Look up a previously saved alias for this hub session (sent on connect, before joining) |
-| `set_alias` | `{ session_id, alias }` | Save a new alias for this hub session |
-| `join` | `{ session_id, alias }` | Authenticate the hub socket by secret nonce and register/update the public hub player |
-| `leave` | `{}` | Leave the hub for the current session-bound socket |
-| `challenge` | `{ target_id, challenger_amount, target_amount, channel_timeout?, unroll_timeout? }` | Challenge another player by public hub id with per-player channel buy-ins and optional channel/unroll timeouts. Amounts are decimal bigint strings; timeouts are decimal block counts accepted only in the hub range 3-30. |
-| `challenge_accept` | `{ challenge_id }` | Accept a pending challenge addressed to the current session-bound socket |
-| `challenge_decline` | `{ challenge_id }` | Decline a pending challenge |
-| `challenge_cancel` | `{}` | Cancel outgoing challenges for the current session-bound socket |
-| `change_alias` | `{ newAlias }` | Update hub display alias mid-session |
+| Event               | Payload                                                                              | Purpose                                                                                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_alias`         | `{ session_id }`                                                                     | Look up a previously saved alias for this hub session (sent on connect, before joining)                                                                                                                                    |
+| `set_alias`         | `{ session_id, alias }`                                                              | Save a new alias for this hub session                                                                                                                                                                                      |
+| `join`              | `{ session_id, alias }`                                                              | Authenticate the hub socket by secret nonce and register/update the public hub player                                                                                                                                      |
+| `leave`             | `{}`                                                                                 | Leave the hub for the current session-bound socket                                                                                                                                                                         |
+| `challenge`         | `{ target_id, challenger_amount, target_amount, channel_timeout?, unroll_timeout? }` | Challenge another player by public hub id with per-player channel buy-ins and optional channel/unroll timeouts. Amounts are decimal bigint strings; timeouts are decimal block counts accepted only in the hub range 3-30. |
+| `challenge_accept`  | `{ challenge_id }`                                                                   | Accept a pending challenge addressed to the current session-bound socket                                                                                                                                                   |
+| `challenge_decline` | `{ challenge_id }`                                                                   | Decline a pending challenge                                                                                                                                                                                                |
+| `challenge_cancel`  | `{}`                                                                                 | Cancel outgoing challenges for the current session-bound socket                                                                                                                                                            |
+| `change_alias`      | `{ newAlias }`                                                                       | Update hub display alias mid-session                                                                                                                                                                                       |
 
 **Hub → Hub iframe:**
 
-| Event | Payload | Purpose |
-|-------|---------|---------|
-| `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
-| `joined` | `{ id, alias }` | The public hub id and alias assigned to this session |
-| `hub_update` | `Player[]` | Current list of public players in the hub (broadcast on changes). Each `Player` includes `id`, `alias`, `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when actively playing a paired session, `opponent_alias`; it never includes `session_id`. |
-| `challenge_received` | `{ challenge_id, from_id, from_alias, challenger_amount, target_amount, channel_timeout?, unroll_timeout? }` | Someone challenged you. Amounts are neutral hub labels: `challenger_amount` is the sender's buy-in, `target_amount` is yours. The hub auto-declines challenges with invalid amounts or out-of-range timeouts before showing them. |
-| `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
+| Event                | Payload                                                                                                      | Purpose                                                                                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `alias_result`       | `{ alias }`                                                                                                  | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved)                                                                                                                                                                         |
+| `joined`             | `{ id, alias }`                                                                                              | The public hub id and alias assigned to this session                                                                                                                                                                                                    |
+| `hub_update`         | `Player[]`                                                                                                   | Current list of public players in the hub (broadcast on changes). Each `Player` includes `id`, `alias`, `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when actively playing a paired session, `opponent_alias`; it never includes `session_id`. |
+| `challenge_received` | `{ challenge_id, from_id, from_alias, challenger_amount, target_amount, channel_timeout?, unroll_timeout? }` | Someone challenged you. Amounts are neutral hub labels: `challenger_amount` is the sender's buy-in, `target_amount` is yours. The hub auto-declines challenges with invalid amounts or out-of-range timeouts before showing them.                       |
+| `challenge_resolved` | `{ challenge_id, accepted }`                                                                                 | Your outgoing challenge was accepted or declined                                                                                                                                                                                                        |
 
 When a challenge is accepted, the hub removes that challenge, cancels stale
 pending challenges involving either player, and sends an **advisory_start**
@@ -159,21 +159,21 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
 
 **Player App → Hub:**
 
-| Event | Payload | Purpose |
-|-------|---------|---------|
-| `identify` | `{ session_id, busy }` | Sent immediately after the game channel opens. Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable. |
-| binary frame | `[4-byte target_id_len BE][target_id UTF-8][payload]` | Send a peer payload addressed to a specific peer through the hub relay pipe. |
-| `set_busy` | `{ session_id, busy }` | Update hub availability from the client-authoritative state. `busy: true` maps to hub `busy` or `playing` and cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
+| Event        | Payload                                               | Purpose                                                                                                                                                                                         |
+| ------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identify`   | `{ session_id, busy }`                                | Sent immediately after the game channel opens. Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                        |
+| binary frame | `[4-byte target_id_len BE][target_id UTF-8][payload]` | Send a peer payload addressed to a specific peer through the hub relay pipe.                                                                                                                    |
+| `set_busy`   | `{ session_id, busy }`                                | Update hub availability from the client-authoritative state. `busy: true` maps to hub `busy` or `playing` and cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
 
 **Hub → Player App:**
 
-| Event | Payload | Purpose |
-|-------|---------|---------|
-| `registered` | `{ player_id }` | Confirmation of identity. Sent in response to `identify`. |
-| `advisory_start` | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. |
-| binary frame | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]` | A peer payload from another peer, relayed through the hub pipe with the sender's public id and alias. |
-| `delivery_failure` | `{ to }` | The target peer is not connected; the message could not be delivered. |
-| `hub_attention` | `{}` | Signals that something happened in the hub that the user should look at. |
+| Event              | Payload                                                                               | Purpose                                                                                                                                                                                                                                                   |
+| ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registered`       | `{ player_id }`                                                                       | Confirmation of identity. Sent in response to `identify`.                                                                                                                                                                                                 |
+| `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. |
+| binary frame       | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]`   | A peer payload from another peer, relayed through the hub pipe with the sender's public id and alias.                                                                                                                                                     |
+| `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                     |
+| `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                  |
 
 **Connection lifecycle:**
 
@@ -360,13 +360,13 @@ The actual security boundaries are:
 #### RNG non-serialization
 
 The game cradle's `ChaCha8Rng` (used for move entropy and identity
-generation) is **not** serialized.  The `ChaCha8SerializationWrapper`
+generation) is **not** serialized. The `ChaCha8SerializationWrapper`
 emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
-zeroed placeholder via `Default`.  On restore, `restore_session`
+zeroed placeholder via `Default`. On restore, `restore_session`
 always takes a fresh `new_seed` parameter from JavaScript, hashes it, and
 creates a brand new `ChaCha8Rng` — the deserialized placeholder is
-immediately overwritten.  This avoids persisting seed material and
-guarantees fresh entropy after every save/restore cycle.  The RNG is used
+immediately overwritten. This avoids persisting seed material and
+guarantees fresh entropy after every save/restore cycle. The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).
 
@@ -382,116 +382,123 @@ they are not base64-expanded. localStorage holds only small preferences, the
 resumable-session marker, and tab/reset coordination keys, inside the same-origin
 trust model described above.
 
-The current schema version is `10`; because the project is still alpha,
-incompatible versions are discarded rather than migrated. The `version` field is
-kept as a future migration hook for when there is an installed base to preserve.
+The current and only legal envelope schema is `11`. Because the project is
+still alpha, every other version is deleted wholesale without decoding or
+migration. A decoded v11 record must also satisfy the complete cross-field
+envelope contract (keyed game membership, game-owned payload/type agreement,
+terminal data, and frozen terminal coin list); malformed v11 records are
+deleted rather than partially restored. The boot marker is retained after an
+incompatible or malformed resumable record is discarded so the failure remains
+visible at the Resume / Start Over boundary. The `version` field is kept as a
+future migration hook for when there is an installed base to preserve.
+`decodeSessionSaveEnvelope` is the one envelope decoder used by both the
+pre-write check and the IndexedDB read check. Acceptance always constructs the
+normalized `SessionModel`; validation is not maintained as a second,
+shape-only parser. Game-owned `handState` likewise goes through one registered
+codec decode that returns its canonical envelope, referenced game IDs, and
+finished-remount capability together.
 All game-specific fields are optional — a save may contain only pre-game
 connection state or the full mid-game session state:
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `version` | `bigint` | Save schema version; currently `10`. |
-| `playerId` | `string` | Stable local hub/player identity for this browser state. |
-| `sessionId` | `string?` | Stable token linking the hub iframe and game-channel WebSocket. |
-| `alias` | `string?` | Local hub display alias preference. |
-| `theme` | `'dark' \| 'light'?` | Persisted player app theme. |
-| `defaultFee` | `bigint?` | Default transaction fee preference. |
-| `feeUnit` | `'mojo' \| 'xch'?` | Display/editing unit for the transaction fee preference. |
-| `hubUrl` | `string?` | Last selected hub origin for reconnect on reload. |
-| `activeTab` | `string?` | Last selected top-level tab. |
-| `unreadGame` | `boolean?` | Whether the Game tab has unread activity. |
-| `walletAlert` | `boolean?` | Whether the Wallet tab should show an alert dot. |
-| `hubAlert` | `boolean?` | Whether the Hub tab should show an alert dot. |
-| `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active or should be reconnected. |
-| `serializedGameSession` | `Uint8Array?` | Raw binary WASM game-session state via `serialize()`. |
-| `gameSessionSchemaVersion` | `bigint?` | Rust-owned schema ID for `serializedGameSession`; missing or mismatched IDs are unsupported and cleared before deserialization. |
-| `pairingToken` | `string?` | Hub pairing token, for reconciliation on reconnect. |
-| `sessionPeerId` | `string?` | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore. |
-| `gameSessionId` | `string?` | Per-pairing game session id exchanged in `session_proposal`. |
-| `messageNumber` | `bigint?` | Next outbound game-message sequence number. |
-| `remoteNumber` | `bigint?` | Last delivered inbound game-message sequence number. |
-| `channelReady` | `boolean?` | Whether the channel has been created and peer keepalives can start. |
-| `iStarted` | `boolean?` | Whether this player was the channel/session initiator. |
-| `myContribution` | `string?` | This player's channel buy-in contribution as a decimal bigint string. |
-| `theirContribution` | `string?` | Opponent's channel buy-in contribution as a decimal bigint string. |
-| `perGameAmount` | `string?` | Default per-hand amount as a decimal bigint string. |
-| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound binary game messages, with raw `Uint8Array` payloads, that have not been acknowledged by the peer. |
-| `humanHistory` | `string[]?` | Recent user-facing transcript entries (capped at 1,000). |
-| `wasmNotificationHistory` | `string[]?` | Recent serialized WASM notifications (capped at 1,000). |
-| `diagnosticLog` | `string[]?` | Recent diagnostic entries (capped at 2,000). |
-| `historicalUnrollCount` | `bigint?` | Development persistence metric exposed directly by WASM when a channel handler is available. |
-| `durabilityWarning` | `string?` | Last delivery-boundary storage failure warning. |
-| `activeGameId` | `string \| null?` | Current live game ID, if any. |
-| `activeGameIds` | `string[]?` | IDs of currently live games in an atomic group. |
-| `currentHandGameIds` | `string[]?` | IDs belonging to the current hand group. |
-| `gameInstances` | `Record<string, …>?` | Per-game instance snapshot (amount, coin, turn, hand status, terminal). |
-| `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
-| `handState` | `PersistedGameState \| null?` | Game-specific hand state for mid-hand restore, keyed by `gameType`. |
-| `channelStatus` | `ChannelStatusPayload \| null?` | Last Rust-owned canonical snapshot for UI restore: actual channel lifecycle plus optional local `session_disposition`, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`. It is normalized once into `ChannelStatusModel` before any view or lifecycle policy reads it. |
-| `myAlias` | `string?` | Local player display name for the active pairing/session. |
-| `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
-| `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
-| `gameCoinHex` | `string \| null?` | Current game coin or reward coin ID shown in the Game tab. |
-| `gameTurnState` | `string?` | Current game turn state used for restore and timeout labels. |
-| `gameHandStatus` | `string?` | Current hand-level status used by the dashboard. |
-| `gameTerminalType` | `string?` | Last terminal game status category. |
-| `gameTerminalLabel` | `string \| null?` | Human-readable terminal label shown after game completion. |
-| `gameTerminalReward` | `string \| null?` | Terminal reward amount as a decimal string. |
-| `gameTerminalRewardCoin` | `string \| null?` | Terminal reward coin ID, if any. |
-| `gameTerminalCleanEnd` | `boolean?` | Whether the terminal game outcome was considered a clean end. |
-| `myRunningBalance` | `string?` | Running balance delta from the initial amount. |
-| `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue, without non-serializable payloads. |
-| `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue, without non-serializable payloads. |
-| `dismissedChannelState` | `string?` | Last dismissed channel-state notification value. |
-| `goOnChainPressed` | `boolean?` | Whether the user already initiated go-on-chain from the dashboard. |
-| `cleanShutdownStarted` | `boolean?` | Whether clean shutdown has been requested. |
-| `betweenHandMode` | `string?` | Between-hand overlay state. |
-| `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay. |
-| `betweenHandComposeGameTimeout` | `string?` | Proposed game timeout in compose overlay. |
-| `betweenHandComposeGameType` | `string?` | Proposed game type in compose overlay. |
-| `betweenHandLastTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Last agreed hand terms. |
-| `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
-| `betweenHandCachedPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. `groupIds` is always non-empty. |
-| `betweenHandReviewPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. `groupIds` is always non-empty. |
-| `outgoingProposalGroupIds` | `string[][]?` | Ordered member IDs for each locally originated factory group. Groups remain distinct; IDs from unrelated proposals are never merged on restore. |
-| `acceptedProposalGroupIds` | `string[][]?` | Ordered member IDs for factory groups retained through successful acceptance. Each group remains distinct so restore can preserve group ownership; it is cleared independently on `InsufficientBalance`, or when all hand membership has settled. |
-| `outgoingProposalTerms` | `Record<string, …>?` | Locally originated proposal terms keyed by proposal id. Peer proposal terms are persisted only in the cached/review peer-proposal fields. |
-| `waitingStateEnteredAt` | `bigint?` | Epoch ms when the channel entered an abandon-eligible waiting state. |
-| `cleanShutdownGraceStartedAt` | `bigint?` | Epoch ms when the clean-shutdown grace timer started. |
-
-The old `SessionSave` name is now only a deprecated TypeScript alias for
-`SessionSave`.
+| Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                       | `bigint`                                                                                                   | Save schema version; currently `11`.                                                                                                                                                                                                                                                                            |
+| `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
+| `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
+| `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
+| `theme`                         | `'dark' \| 'light'?`                                                                                       | Persisted player app theme.                                                                                                                                                                                                                                                                                     |
+| `defaultFee`                    | `bigint?`                                                                                                  | Default transaction fee preference.                                                                                                                                                                                                                                                                             |
+| `feeUnit`                       | `'mojo' \| 'xch'?`                                                                                         | Display/editing unit for the transaction fee preference.                                                                                                                                                                                                                                                        |
+| `hubUrl`                        | `string?`                                                                                                  | Last selected hub origin for reconnect on reload.                                                                                                                                                                                                                                                               |
+| `activeTab`                     | `string?`                                                                                                  | Last selected top-level tab.                                                                                                                                                                                                                                                                                    |
+| `unreadGame`                    | `boolean?`                                                                                                 | Whether the Game tab has unread activity.                                                                                                                                                                                                                                                                       |
+| `walletAlert`                   | `boolean?`                                                                                                 | Whether the Wallet tab should show an alert dot.                                                                                                                                                                                                                                                                |
+| `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
+| `blockchainType`                | `'simulator' \| 'walletconnect'?`                                                                          | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
+| `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
+| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `3`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
+| `pairingToken`                  | `string?`                                                                                                  | Hub pairing token, for reconciliation on reconnect.                                                                                                                                                                                                                                                             |
+| `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
+| `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
+| `gameSessionId`                 | `string?`                                                                                                  | Per-pairing game session id exchanged in `session_proposal`.                                                                                                                                                                                                                                                    |
+| `messageNumber`                 | `bigint?`                                                                                                  | Next outbound game-message sequence number.                                                                                                                                                                                                                                                                     |
+| `remoteNumber`                  | `bigint?`                                                                                                  | Last delivered inbound game-message sequence number.                                                                                                                                                                                                                                                            |
+| `iStarted`                      | `boolean?`                                                                                                 | Whether this player was the channel/session initiator.                                                                                                                                                                                                                                                          |
+| `terminalIStarted`              | `boolean?`                                                                                                 | Display-only initiator role retained after terminal protocol fields are cleared.                                                                                                                                                                                                                                |
+| `myContribution`                | `string?`                                                                                                  | This player's channel buy-in contribution as a decimal bigint string.                                                                                                                                                                                                                                           |
+| `theirContribution`             | `string?`                                                                                                  | Opponent's channel buy-in contribution as a decimal bigint string.                                                                                                                                                                                                                                              |
+| `perGameAmount`                 | `string?`                                                                                                  | Default per-hand amount as a decimal bigint string.                                                                                                                                                                                                                                                             |
+| `channelTimeout`                | `string?`                                                                                                  | Channel timeout retained for pre-cradle handshake resume.                                                                                                                                                                                                                                                       |
+| `unrollTimeout`                 | `string?`                                                                                                  | Unroll timeout retained for pre-cradle handshake resume.                                                                                                                                                                                                                                                        |
+| `rewardPuzzleHash`              | `string \| null`                                                                                           | Immutable reward/change address for the active session, or `null` when none is active.                                                                                                                                                                                                                          |
+| `unackedMessages`               | `Array<{ msgno, msg }>?`                                                                                   | Outbound binary game messages, with raw `Uint8Array` payloads, that have not been acknowledged by the peer.                                                                                                                                                                                                     |
+| `humanHistory`                  | `string[]?`                                                                                                | Recent user-facing transcript entries (capped at 1,000).                                                                                                                                                                                                                                                        |
+| `wasmNotificationHistory`       | `string[]?`                                                                                                | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
+| `diagnosticLog`                 | `string[]?`                                                                                                | Recent diagnostic entries (capped at 2,000).                                                                                                                                                                                                                                                                    |
+| `durabilityWarning`             | `string?`                                                                                                  | Last delivery-boundary storage failure warning.                                                                                                                                                                                                                                                                 |
+| `activeGameIds`                 | `string[]?`                                                                                                | IDs of currently live games in an atomic group.                                                                                                                                                                                                                                                                 |
+| `currentHandGameIds`            | `string[]?`                                                                                                | IDs belonging to the current hand group.                                                                                                                                                                                                                                                                        |
+| `lastDisplayedGameId`           | `string?`                                                                                                  | Key of the game instance selected for display when no active game supersedes it.                                                                                                                                                                                                                                |
+| `gameInstances`                 | `Record<string, …>?`                                                                                       | Keyed-only per-game protocol snapshots: amount, coin, canonical `GameProtocolPresentation`, and terminal data.                                                                                                                                                                                                  |
+| `iProposedHand`                 | `boolean?`                                                                                                 | Whether the local player proposed the current hand.                                                                                                                                                                                                                                                             |
+| `activeGameType`                | `string?`                                                                                                  | Current game type (`calpoker`, `spacepoker`, etc.).                                                                                                                                                                                                                                                             |
+| `handState`                     | `PersistedGameState \| null?`                                                                              | Opaque game-owned state envelope (`gameType`, codec version, payload) for live restore or supported finished remounts.                                                                                                                                                                                          |
+| `channelStatus`                 | `ChannelStatusPayload \| null?`                                                                            | Last Rust-owned canonical snapshot for UI restore: actual channel lifecycle plus optional local `session_disposition`, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`. It is normalized once into `ChannelStatusModel` before any view or lifecycle policy reads it. |
+| `myAlias`                       | `string?`                                                                                                  | Local player display name for the active pairing/session.                                                                                                                                                                                                                                                       |
+| `opponentAlias`                 | `string?`                                                                                                  | Opponent display name for the active pairing/session.                                                                                                                                                                                                                                                           |
+| `lastOutcomeWin`                | `'win' \| 'lose' \| 'tie'?`                                                                                | Last hand result classification.                                                                                                                                                                                                                                                                                |
+| `coinsOfInterest`               | `Array<{ label, id }>?`                                                                                    | Actual live coin list frozen for terminal display.                                                                                                                                                                                                                                                              |
+| `myRunningBalance`              | `string?`                                                                                                  | Running balance delta from the initial amount.                                                                                                                                                                                                                                                                  |
+| `channelNotifQueue`             | `QueuedNotification[]?`                                                                                    | Persisted channel-scope notification queue, without non-serializable payloads.                                                                                                                                                                                                                                  |
+| `gameNotifQueue`                | `QueuedNotification[]?`                                                                                    | Persisted game-scope notification queue, without non-serializable payloads.                                                                                                                                                                                                                                     |
+| `dismissedChannelStatus`        | `string?`                                                                                                  | Last dismissed channel-status notification value.                                                                                                                                                                                                                                                               |
+| `cleanShutdownStarted`          | `boolean?`                                                                                                 | Whether clean shutdown has been requested.                                                                                                                                                                                                                                                                      |
+| `betweenHandMode`               | `string?`                                                                                                  | Between-hand overlay state.                                                                                                                                                                                                                                                                                     |
+| `betweenHandCompose`            | `{ selected_game, game_timeout, proposal_sent, calpoker: { amount }, krunk: { amount }, spacepoker: { unit_size, stack_size } }?` | Complete session-owned compose draft. If present, the v11 shape is strict: every registered game draft is present and all amounts are decimal bigint strings. Space Poker persists the exact editable unit and stack independently; the stake is derived as `unit_size * stack_size`. |
+| `betweenHandLastTerms`          | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?`               | Last agreed hand terms.                                                                                                                                                                                                                                                                                         |
+| `betweenHandRejectedOnceTerms`  | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?`               | Terms already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
+| `betweenHandPendingRetryTerms`  | `{ my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?`               | Local proposal terms waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
+| `betweenHandCachedPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group cached while the between-hand UI decides how to present it. `groupIds` is always non-empty.                                                                                                                                                                                                 |
+| `betweenHandReviewPeerProposal` | `{ id, groupIds, my_contribution, their_contribution, game_timeout?, game_type?, spacepoker_unit_size? }?` | Peer proposal group currently shown in the review UI. `groupIds` is always non-empty.                                                                                                                                                                                                                           |
+| `outgoingProposalGroupIds`      | `string[][]?`                                                                                              | Ordered member IDs for each locally originated factory group. Groups remain distinct; IDs from unrelated proposals are never merged on restore.                                                                                                                                                                 |
+| `acceptedProposalGroupIds`      | `string[][]?`                                                                                              | Ordered member IDs for factory groups retained through successful acceptance. Each group remains distinct so restore can preserve group ownership; it is cleared independently on `InsufficientBalance`, or when all hand membership has settled.                                                               |
+| `outgoingProposalTerms`         | `Record<string, …>?`                                                                                       | Locally originated proposal terms keyed by proposal id. Peer proposal terms are persisted only in the cached/review peer-proposal fields.                                                                                                                                                                       |
+| `waitingStateEnteredAt`         | `bigint?`                                                                                                  | Epoch ms when the channel entered an abandon-eligible waiting state.                                                                                                                                                                                                                                            |
+| `cleanShutdownGraceStartedAt`   | `bigint?`                                                                                                  | Epoch ms when the clean-shutdown grace timer started.                                                                                                                                                                                                                                                           |
 
 #### Save architecture
 
-Session persistence is owned by the outer JavaScript layer, not by
-`SessionController`. The save combines two sources of state:
+Session persistence is executed by the session-machine runtime. A save combines
+two authoritative sources:
 
 1. **WASM-native state** — `SessionController.getWasmFields()` returns the
    cradle serialization, message counters, protocol state, history, aliases,
    and other fields that originate inside the WASM bridge.
-2. **JS-side state** — React state in `useGameSession`: game coin, turn state,
-   notification queues, between-hand mode, running balance, dismissed
-   notifications, etc.
+2. **JS session state** — the current `SessionMachineState`: keyed game
+   protocol presentation, game-owned durable payload envelope, notification
+   queues, complete compose draft, between-hand mode, running balance, and
+   dismissed notifications.
 
-`useGameSession` defines a `persistFullSession` callback that merges both
-sources into a single `SessionSave` and calls `saveSession()`. This callback
-fires in two situations:
+The pure root reducer returns the next authority and ordered effects.
+`SessionMachineRuntime` publishes that authority, commits any game-owned
+`handState` to `SessionController`, runs commands (including
+`persist-session`), and only then schedules React. `assembleSessionSave` reads
+the current machine authority and the controller snapshot at effect execution
+time. There is no render-driven save effect and no React/model mirror ref.
+`SessionController.onSaveNeeded` invokes the same runtime persistence path for
+ordinary debounced WASM changes. Transaction submission and resubmission remain
+owned by Rust's `TransactionManager`, not by a frontend transaction field.
 
-- **JS state changes** — a React effect triggers `persistFullSession` whenever
-  any dependency in the JS-side state changes.
-- **WASM state changes** — `SessionController.onSaveNeeded` is wired to
-  `persistFullSession`. Inside SessionController, `scheduleSave()` debounces
-  (500ms) and fires `onSaveNeeded` for ordinary state changes such as
-  notifications, bounded history updates, and ack pruning. Delivery-critical message
-  state uses a stricter path described below. Transaction submission and
-  resubmission bookkeeping is owned by the Rust `TransactionManager`, not by a
-  frontend `pendingTransactions` save field.
-
-This means the outer JS layer always builds the complete, coherent save from
-both JS and WASM state at once.
-
-`GameSettled` retires only its own game ID from the controller’s active set.
+`GameSlice` atomically owns `activeIds`, `currentHandIds`, keyed instances,
+`lastDisplayedId`, hand key, and active game type. Its reducer updates a game
+instance's coin and protocol presentation together, so there are no separately
+mutable aggregate current-game fields that can drift across game IDs. A game
+hook emits `transitionFeatureState`; the root reducer applies that game
+adapter's durable-state event and emits `set-hand-state`. Feature hooks never
+call `setHandState` or persistence directly. Protocol presentation and the
+game-owned payload therefore advance in one machine transition, before save
+commands or React projection.
+`GameSettled` retires only its own game ID from the slice's active set.
 This allows separate members of an atomic factory group to settle independently
 without removing the still-live member from persistence or presentation.
 
@@ -506,10 +513,12 @@ Accepted groups use `acceptedProposalGroupIds`, a separate persisted ordered
 array, so their membership survives every successful `ProposalAccepted` in the
 acceptance wave after outgoing proposal tracking has been cleared. An
 `InsufficientBalance` clears only its affected group; when every member of the
-hand has settled, the accepted-group membership is cleared. This changed the
-save meaning in schema version 10; under the alpha no-migration policy, version
-9 records are deleted rather than migrated because they conflated incoming and
-outgoing proposal terms and cannot safely recover group ownership.
+hand has settled, the accepted-group membership is cleared. These accepted
+groups are applied and removed atomically. Schema version 11 also makes
+`gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
+presentation and stores the canonical `GameProtocolPresentation` discriminant.
+Under the alpha no-migration policy, version 10 and all other incompatible
+records are deleted rather than translated from aggregate current-game fields.
 
 #### Delivery-critical saves
 
@@ -555,22 +564,23 @@ history counts. The record-size walk is skipped in production.
 `reactPropSafeValue` / `sessionSaveForReactProps` leave `ArrayBuffer` views and
 dense byte-objects alone, hide bigints as non-enumerable properties, and Shell
 keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
-every parent render. Persistence itself uses IndexedDB structured clone and
-never routes cradle bytes through this React-prop path.
+every parent render. Persistence never routes cradle bytes through this
+React-prop path: it bencodex-encodes the complete `SessionSave`, masks the
+salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
 
 #### Session model ownership
 
-Restore-sensitive UX state is being moved behind an MVC-style frontend session
-model in `front-end/src/lib/session/`.  The model records session facts from
-WASM, hub, wallet/blockchain, restore snapshots, and user intents.  Selectors
+Restore-sensitive UX state lives behind an MVC-style frontend session model in
+`front-end/src/lib/session/`. The model records generic session facts from
+WASM, hub, wallet/blockchain, restore snapshots, and user intents. Selectors
 then derive the props consumed by `Shell`, `GameSession`, and game-specific
 views.
 
 The migration is intentionally incremental: existing screens should continue to
 look and behave the same while individual state slices move from scattered React
-state into selector-derived view models.  Local React state should remain for
+state into selector-derived view models. Local React state should remain for
 ephemeral display-only details such as input drafts, copied flags, hover state,
-and drag positions.  Restorable protocol/session facts should flow through the
+and drag positions. Restorable protocol/session facts should flow through the
 model so normal play and restore use the same projection path.
 
 The motivation is reliability, not architectural ceremony: normal display and
@@ -578,6 +588,23 @@ restore should be two ways of projecting the same session model. If a value need
 to survive reload or affect protocol/availability decisions, prefer putting it in
 the model and deriving the view from selectors instead of maintaining a separate
 React-only copy that restore has to reconstruct by hand.
+
+`SessionModel` is the generic shell boundary. It owns the canonical keyed
+protocol presentation and carries `handState` only as an opaque
+`PersistedGameState { gameType, version, state }` envelope. The shell does not
+interpret the payload. Calpoker, Space Poker, and Krunk each expose exactly one
+feature-owned pure registration. That registration owns the state codec, proposal
+encoding/decoding, term validation/equality, compose defaults, persisted term
+extras, lifecycle defaults, and durable-state reduction.
+`GAME_REGISTRATIONS` is the single pure keyed source and derives display
+metadata; its mapped type is exhaustive over `RegisteredGameType`. React mounts
+live in the separate exhaustive `GAME_MOUNTS` registry so the pure registration
+graph does not import React. Rendering indexes that registry directly—there are
+no duplicate game arrays or switch dispatchers—and the dependency direction
+does not cycle. All three codecs support live restore. The codec's explicit
+`canRemountFinished` capability is `true` for Calpoker and Space Poker and
+`false` for Krunk, so finished-session rendering never infers remount support
+from payload presence alone.
 
 **Game dashboard (status banner):** The compact strip above the Game tab content
 (`GameDashboard` in `Shell.tsx`) is selector-driven. `selectGameDashboardView`
@@ -805,9 +832,11 @@ or keepalive) counts as proof of life.
 
 - **Send interval:** 15 seconds (`KEEPALIVE_INTERVAL_MS`)
 
-The keepalive timer starts when `ChannelCreated` fires (or on restore when
-`channelReady` is already true). `SessionController.notePeerActivity()` is called
-on every inbound message delivery, ack reception, and keepalive reception.
+The keepalive timer starts when `ChannelCreated` fires. On restore,
+`SessionController` derives its internal readiness flag from the persisted
+canonical `channelStatus`; readiness is not a separate save field.
+`SessionController.notePeerActivity()` is called on every inbound message
+delivery, ack reception, and keepalive reception.
 
 Peer liveness is measured passively from relay traffic. The `PeerSession` object
 derives liveness indicators using a 5-second polling interval. These feed into
@@ -828,24 +857,24 @@ queue beyond that re-queue-on-failure behavior.
 **Hub indicator** (`HubLiveness`) combines WebSocket connectivity with
 keepalive freshness into four states:
 
-| State | Meaning |
-|-------|---------|
-| Connected | WebSocket is open AND hub activity within the last 45 seconds |
-| Reconnecting | WebSocket dropped, auto-reconnect in progress |
-| Inactive | WebSocket appears open but no hub activity for 45+ seconds |
-| Disconnected | Permanently closed (session ended) |
+| State        | Meaning                                                       |
+| ------------ | ------------------------------------------------------------- |
+| Connected    | WebSocket is open AND hub activity within the last 45 seconds |
+| Reconnecting | WebSocket dropped, auto-reconnect in progress                 |
+| Inactive     | WebSocket appears open but no hub activity for 45+ seconds    |
+| Disconnected | Permanently closed (session ended)                            |
 
 Transitions: `onHubDisconnected` → Reconnecting, `onHubReconnected` →
 Connected, keepalive timeout while WS is up → Inactive.
 
 **Peer indicator** (`PeerLiveness`) has four states:
 
-| State | Meaning | Dot color |
-|-------|---------|-----------|
-| `connected` | Peer traffic received within the last 30 seconds | Green |
-| `degraded` | Delivery failure reported by hub, or no peer traffic for 30+ seconds | Yellow |
-| `dead` | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Red |
-| `null` | No active peer session | Grey |
+| State       | Meaning                                                                             | Dot color |
+| ----------- | ----------------------------------------------------------------------------------- | --------- |
+| `connected` | Peer traffic received within the last 30 seconds                                    | Green     |
+| `degraded`  | Delivery failure reported by hub, or no peer traffic for 30+ seconds                | Yellow    |
+| `dead`      | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Red       |
+| `null`      | No active peer session                                                              | Grey      |
 
 `dead` is sticky: incoming messages from that peer are ignored. Only a new session start resets to `null`.
 
@@ -1050,15 +1079,19 @@ without replaying old events. When manager-owned confirmation-depth eviction
 ends an interest, WASM emits an `unwatchCoins` delta and the poller removes only
 that transport registration.
 
-**Polling Termination.** `ManagerDrainDisposition` is the sole host lifecycle
-boundary: `active`, `await-outbound-terminal(command)`, or `terminal`. WASM
-exposes that one discriminated disposition. `SessionController` durably sends
-and replays its Rust-issued command until the peer ACKs it, then asks Rust to
-finalize. Only `terminal` discards queued protocol work and watch-coin updates
-and stops the `BlockchainPoller` and keepalive timer. Its retained
-`ChannelStatus` presentation event updates the `SessionModel`; Shell then sees
-`resolved`, persists the final dashboard snapshot, and tears down the peer
-relay and hub busy state.
+**Polling Termination.** `ManagerDrainDisposition` is the sole generic host
+lifecycle boundary: `active`, `await-outbound-terminal(command)`, or `terminal`.
+WASM exposes that one discriminated disposition; no game-specific settlement
+outcome decides host lifetime. `SessionController` durably sends and replays
+its Rust-issued command until the peer ACKs it, then asks Rust to finalize.
+Only `terminal` discards queued protocol work and watch-coin updates and stops
+the `BlockchainPoller` and keepalive timer. Its retained `ChannelStatus`
+presentation event updates the `SessionModel`. Shell then stages one terminal
+snapshot, awaits the controller's pending durability work and the IndexedDB
+write, updates the resume marker, and only then destroys the controller and
+releases the peer relay/hub busy state. If either durability step fails, the
+staged terminal candidate is discarded while the live cache and controller
+remain owned and retryable; teardown is not attempted.
 
 **Finished-hand display.** After that terminal boundary, Shell may remount a
 validated, persisted game hand as a display-only view. The remount receives a
@@ -1067,9 +1100,11 @@ restarts polling, peer delivery, or WASM. The terminal save retains only
 presentation payloads needed by supported game-specific rehydrators; an absent,
 unsupported, or stale payload renders the terminal summary instead. This keeps
 Rust authoritative for terminal lifecycle while preserving the last hand for
-the user. The finished-hand wrapper is inert. Krunk rehydration remains
-explicitly unsupported by `selectFinishedSessionDisplay`, so a terminal Krunk
-session uses the terminal fallback rather than remounting a frozen board.
+the user. The finished-hand wrapper is inert.
+`selectFinishedSessionDisplay` consults the owning codec's explicit
+finished-remount capability. Krunk state is restored during a live session, but
+its codec currently sets that capability to false, so a terminal Krunk session
+uses the terminal fallback rather than remounting a frozen board.
 
 ### WalletConnect BigInt Serialization
 
@@ -1126,10 +1161,9 @@ utilities in `front-end/src/util/jsonSafe.ts`:
 - `jsonStringify` — hand-rolled serializer that emits BigInts as bare numeric
   literals (via `toString()` directly into the JSON string), avoiding both the
   `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
-- `jsonParseLossless` / `jsonStringifyLossless` — persistence helpers for
-  `SessionSave`. These encode BigInts as tagged objects so reload can restore
-  large values exactly, including values too large to round-trip through JSON
-  numbers.
+- `jsonParseLossless` / `jsonStringifyLossless` — JSON-only helpers used where
+  lossless JSON is explicitly required. They are not the `SessionSave`
+  persistence format.
 
 #### UX BigInt policy
 
@@ -1147,10 +1181,10 @@ conversions happen at the call site with an explicit `Number()` cast — the
 `bigint` remains the source of truth.
 
 **Persistence.** `SessionSave` fields including `version`, `messageNumber`,
-`remoteNumber`, `timestamp`, and all game-specific state use `bigint`. The
-`jsonParseLossless` / `jsonStringifyLossless` helpers encode `bigint` as tagged
-values directly through IndexedDB structured clone, so no JSON conversion or
-precision loss occurs.
+`remoteNumber`, `timestamp`, and all game-specific state use `bigint`.
+Bencodex represents those integers and raw byte strings directly. IndexedDB
+stores one salt-prefixed, masked `Uint8Array` containing the bencodex record;
+there is no tagged-JSON save envelope and no structured-clone object graph.
 
 **View layer boundary.** React components that render or edit a value receive
 view-safe props: decimal strings for money and CLVM integers, or small `number`s
@@ -1189,37 +1223,40 @@ matches. The player app never reads from or writes to the iframe's DOM.
 ### GameSession Component (`GameSession.tsx` + `useGameSession`)
 
 The `GameSession` component manages one game session (a channel with a series of
-individual hands). The `useGameSession` hook owns:
+individual hands). `useGameSession` is a thin React interpreter boundary: it
+obtains the `SessionController`, creates one `SessionMachineRuntime`, subscribes
+to host events, dispatches typed machine events, attaches/detaches the
+blockchain poller, and returns selector-derived view data plus dispatch
+callbacks. It does not contain notification policy, command interpretation,
+durable game reduction, or persistence assembly.
 
-- **WASM cradle** — the `SessionController` lifecycle, obtained via
-  `getOrCreateSessionController`. The singleton persists across hands within a session.
-- **Notification dispatch** — subscribes to `SessionController`'s observable and
-  routes notifications to scoped notification queues (channel-scope and
-  game-scope) or to the gameplay event stream (gameplay events). The controller
-  waits for its normal macrotask boundary, then drains one active FIFO to
-  quiescence so synchronously re-entrant active WASM effects are delivered in
-  the same presentation transaction. A self-replenishing source yields after
-  100 events and resumes its FIFO in a later macrotask. Terminal manager
-  dispositions retain their separate queue-clearing/final-flush path.
-- **Session-level state** — channel coin lifecycle, game coin lifecycle, running
-  balance, hand counter, between-hand overlay.
-- **Game proposal flow** — the initiator proposes on `ChannelCreated`; the
-  responder auto-accepts the first proposal and pending proposals after
-  "play again". Each call supplies one `{ game_type, parameters, timeout }`
-  group request. WASM runs that game's deterministic factory and returns all
-  generated IDs (one for Calpoker/Space Poker, two for Krunk).
-- **Between-game UX** — compose/review overlays retain the completed hand beneath
-  the modal rather than unmounting it. The hand subtree is `inert` while the
-  modal owns interaction and focus, preserving terminal presentation and local
-  game-view state without changing session lifecycle or proposal flow.
-- **History** and **Log** — append-only text areas managed by the Shell,
-  with callbacks passed down.
+The cohesive session modules own those responsibilities:
+
+- `sessionMachine.ts` is the pure root reducer.
+- `sessionMachineNotifications.ts` reduces normalized WASM notifications.
+- `sessionMachineCommands.ts` maps UI events to typed commands.
+- `sessionMachineEffects.ts` enforces authority → controller hand state →
+  commands/save → React ordering.
+- `sessionMachineInterpreter.ts` performs controller calls, timers,
+  persistence, gameplay emission, and async enrichment.
+- `sessionMachinePersist.ts` assembles and writes snapshots at effect time.
+- `gameSessionEvents.ts` normalizes raw notification payloads.
+
+The controller still waits for its normal macrotask boundary, then drains one
+active FIFO to quiescence so synchronously re-entrant WASM effects enter the
+same machine transaction. A self-replenishing source yields after 100 events.
+Terminal manager dispositions retain their separate queue-clearing and awaited
+finalization path. Compose/review overlays retain the completed hand beneath an
+inert subtree; the complete compose draft remains machine-owned and durable
+across unmounts and reloads.
 
 ### Game Components
 
 The active game UI is rendered inside `GameSession` based on the current game
-type. `front-end/src/lib/gameRegistry.ts` currently exposes California Poker
-(`calpoker`) and Space Poker (`spacepoker`) as user-facing game types.
+type. `front-end/src/lib/gameRegistry.ts` holds the pure feature registrations
+for California Poker (`calpoker`), Space Poker (`spacepoker`), and Krunk
+(`krunk`). `front-end/src/lib/gameMountRegistry.tsx` separately and
+exhaustively registers their lazy live/frozen React mounts.
 
 `CalpokerHand` receives gameplay events via an RxJS observable and sends moves
 back through `SessionController`.
@@ -1265,8 +1302,10 @@ What the game UI does **not** know about:
 
 ## Notification Routing
 
-WASM notifications are routed by `useGameSession`'s `handleNotification`
-callback into one of four destinations:
+`useGameSession` normalizes each WASM notification into a typed machine event.
+`sessionMachineNotifications.ts` then reduces it and emits ordered effects into
+the scoped queues, gameplay stream, controller, persistence path, or async
+enrichment boundary:
 
 ### Channel notification queue
 
@@ -1277,23 +1316,23 @@ over the full session area. See
 [Additional Design Rules](UX_NOTIFICATIONS.md#additional-design-rules) for
 details.
 
-| Kind | Source |
-|---|---|
+| Kind            | Source                                                   |
+| --------------- | -------------------------------------------------------- |
 | `channel-state` | `ChannelStatus` in `ATTENTION_STATES` (replaceable slot) |
-| `session-over` | Balance exhausted → cooperative shutdown |
-| `action-failed` | `ActionFailed` (WASM `Err`) — also logged |
-| `infra-error` | `ReceiveError`, tx failures, general `error` events |
+| `session-over`  | Balance exhausted → cooperative shutdown                 |
+| `action-failed` | `ActionFailed` (WASM `Err`) — also logged                |
+| `infra-error`   | `ReceiveError`, tx failures, general `error` events      |
 
 ### Game notification queue
 
 In-game and between-hand events pushed to the game-scoped FIFO queue
 (`pushGame`). Overlays appear at `z-40` within the game area.
 
-| Kind | Source |
-|---|---|
-| `game-terminal` | Adverse `GameSettled` outcomes during on-chain flow (via `isErrorSettlementOutcome`), except bar-only forfeits |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
-| `insufficient-bal` | `InsufficientBalance` notification |
+| Kind                | Source                                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `game-terminal`     | Adverse `GameSettled` outcomes during on-chain flow (via `isErrorSettlementOutcome`), except bar-only forfeits |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice)                                     |
+| `insufficient-bal`  | `InsufficientBalance` notification                                                                             |
 
 Settlement banner labels come from `SETTLEMENT_OUTCOME_LABELS` in
 `front-end/src/lib/settlement.ts` (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
@@ -1303,7 +1342,7 @@ and `CONNECTIVITY.md` "Settlement labels"). Adverse outcomes are flagged via
 ### Game lifecycle (handled internally by session)
 
 These drive game proposal and acceptance flow. They are consumed by
-`handleNotification` and never forwarded to the game UI:
+the notification reducer and never forwarded raw to the game UI:
 
 - `ProposalMade` — one notification per factory group; carries the first ID and
   always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
@@ -1341,11 +1380,12 @@ a multiplexer (game ID → component mapping) and the JS-side guards are relaxed
 
 ### JS-side guards
 
-**Send guard** — `proposeNewGame` in `useGameSession` bails immediately if
-`gameIdsRef.current.length > 0` (a game is active). This prevents the user
-from proposing a new hand while one is in progress.
+**Send guard** — the command interpreter checks the current machine authority
+and does not call `SessionController.proposeGame` while
+`model.game.activeIds` is non-empty. This prevents the user from proposing a
+new hand while one is in progress without a mirror ref.
 
-**Atomic factory proposals** — `proposeNewGame` constructs one request with
+**Atomic factory proposals** — the proposal command constructs one request with
 `game_type`, game-specific CLVM `parameters`, and a shared game timeout.
 `SessionController.proposeGame` sends that single request to WASM and stores all
 returned IDs. The registered deterministic factory decides cardinality:
@@ -1355,16 +1395,14 @@ presents one logical proposal without deduplicating per-member notifications.
 Accepting or cancelling via the first ID expands to the full group in WASM.
 
 **Receive guard** — When a `ProposalMade` notification arrives while a game is
-active (`handKeyRef.current > 0 && gameIdsRef.current.length === 0` is false),
-the handler calls `cancel_proposal` to reject it outright, rather than caching
-it.
+active, the notification reducer emits `controller-cancel-proposal` rather than
+caching it.
 
 **First-game proposal** — The initiator proposes the first game exactly once,
-triggered by `ChannelStatus { state: Active }` with the guard
-`!firstGameAcceptedRef.current && iStarted`. `firstGameAcceptedRef` is set
-to `true` immediately, making it structurally impossible to fire twice. The
-receiver auto-accepts the first `ProposalMade` with a symmetric guard
-(`!firstGameAcceptedRef.current && !iStarted`).
+triggered by `ChannelStatus { state: Active }` while the machine's
+`firstGameAccepted` coordination flag is false. The reducer advances that flag
+in the same transition that emits the command. The receiver auto-accepts the
+first `ProposalMade` through the symmetric reducer branch.
 
 ### WASM-side constraints
 
@@ -1376,7 +1414,7 @@ protocol's asynchronous nature and cannot be deferred to JS:
    actions are removed from the `game_action_queue`. The queued groups were
    built against a now-stale state (the incoming batch carries the potato and
    the definitive state). WASM emits one `ProposalCancelled { reason:
-   SupersededByIncoming }` for each removed group, keyed by its first ID.
+SupersededByIncoming }` for each removed group, keyed by its first ID.
 
 2. **`PeerProposalPending`** — When JS calls `propose_game` while an
    unresolved peer proposal exists in `proposed_games`, WASM rejects
@@ -1389,7 +1427,8 @@ proposal intent and the peer's — hitting at different points in the potato
 cycle. In case 1, our proposal was queued but unsent when the peer's batch
 arrived. In case 2, the peer's proposal was already recorded when JS tried to
 propose. The frontend handles both identically: stash the cancelled terms in
-`pendingRetryTermsRef` and wait for the incoming peer proposal to surface
+the machine-owned durable `betweenHand.pendingRetryTerms` field and wait for the
+incoming peer proposal to surface
 before deciding what to do (see
 [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
 
@@ -1401,28 +1440,33 @@ not to limit concurrency.
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `front-end/src/components/Shell.tsx` | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs |
-| `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
-| `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
-| `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
-| `front-end/src/hooks/SessionController.ts` | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence |
-| `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
-| `front-end/src/hooks/blobSingleton.ts` | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
-| `front-end/src/services/PeerSession.ts` | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods |
-| `front-end/src/hooks/save.ts` | `SessionSave` interface, marker/`saveSession`/`peekSession`/`hardReset`/`peekAlias`, tab lease management |
-| `front-end/src/lib/session/indexedDb.ts` | IndexedDB session record read/write/delete |
-| `front-end/src/lib/session/model.ts` | Session model + `selectGameDashboardView` / `selectStatusBarBalances` |
-| `front-end/src/lib/reactPropSafe.ts` | Prop-safe cloning that preserves typed arrays / dense byte objects |
-| `front-end/src/hooks/BlockchainPoller.ts` | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots |
-| `front-end/src/lib/AsyncScheduler.ts` | Generic serialized async queue and repeating polling loop |
-| `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
-| `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
-| `front-end/src/hooks/WalletConnectRpc.ts` | WalletConnect RPC formatting/normalization helpers |
-| `front-end/src/services/HubConnection.ts` | Game relay WebSocket client (`/ws/game`) |
-| `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
-| `hub/hub-frontend/src/hub.tsx` | Hub UI; syncs chosen alias to parent via `hub-alias` postMessage |
-| `hub/hub-frontend/src/useHubSocket.ts` | Hub channel hook (`useHubSocket`): hub WebSocket join/challenge/alias messaging |
-| `hub/hub-service/src/index.ts` | Hub server: hub, challenges, addressed message relay, liveness sweep |
-| `hub/hub-service/src/hubState.ts` | Hub state: players, challenges |
+| File                                             | Purpose                                                                                                                 |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `front-end/src/components/Shell.tsx`             | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs                                        |
+| `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
+| `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
+| `front-end/src/lib/session/sessionMachine*.ts`   | Pure reducer plus notification, command, effect-ordering, interpreter, runtime, and persistence modules                |
+| `front-end/src/lib/session/persistence.ts`       | Canonical strict-v11 decoder; accepted records always produce a normalized `SessionModel`                              |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v11 snapshot encoder                                                                         |
+| `front-end/src/lib/gameRegistry.ts`              | Exhaustive pure feature registration and game-owned codec/terms/compose dispatch                                        |
+| `front-end/src/lib/gameMountRegistry.tsx`        | Exhaustive React live/frozen mount registration                                                                         |
+| `front-end/src/features/calPoker/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
+| `front-end/src/hooks/SessionController.ts`       | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence   |
+| `front-end/src/hooks/WasmStateInit.ts`           | WASM initialization: load binary, deposit .hex files, create cradle                                                     |
+| `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
+| `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                          |
+| `front-end/src/hooks/save.ts`                    | `SessionSave` interface, marker/`saveSession`/`peekSession`/`hardReset`/`peekAlias`, tab lease management               |
+| `front-end/src/lib/session/indexedDb.ts`         | IndexedDB session record read/write/delete                                                                              |
+| `front-end/src/lib/session/model.ts`             | Session model + `selectGameDashboardView` / `selectStatusBarBalances`                                                   |
+| `front-end/src/lib/reactPropSafe.ts`             | Prop-safe cloning that preserves typed arrays / dense byte objects                                                      |
+| `front-end/src/hooks/BlockchainPoller.ts`        | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots                            |
+| `front-end/src/lib/AsyncScheduler.ts`            | Generic serialized async queue and repeating polling loop                                                               |
+| `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect                                                    |
+| `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions                                                        |
+| `front-end/src/hooks/WalletConnectRpc.ts`        | WalletConnect RPC formatting/normalization helpers                                                                      |
+| `front-end/src/services/HubConnection.ts`        | Game relay WebSocket client (`/ws/game`)                                                                                |
+| `front-end/src/types/ChiaGaming.ts`              | TypeScript types for WASM interface and game data                                                                       |
+| `hub/hub-frontend/src/hub.tsx`                   | Hub UI; syncs chosen alias to parent via `hub-alias` postMessage                                                        |
+| `hub/hub-frontend/src/useHubSocket.ts`           | Hub channel hook (`useHubSocket`): hub WebSocket join/challenge/alias messaging                                         |
+| `hub/hub-service/src/index.ts`                   | Hub server: hub, challenges, addressed message relay, liveness sweep                                                    |
+| `hub/hub-service/src/hubState.ts`                | Hub state: players, challenges                                                                                          |

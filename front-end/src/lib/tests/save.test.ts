@@ -1,7 +1,6 @@
 import 'fake-indexeddb/auto';
 import {
   saveSession,
-  saveTerminalSession,
   peekSession,
   clearSession,
   clearGameSessionPreservingHistory,
@@ -34,7 +33,6 @@ import {
   SessionSave,
   CURRENT_VERSION,
   _resetForTests,
-  _writeRawState,
 } from '../../hooks/save';
 import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
 import {
@@ -80,7 +78,7 @@ function clearTestGlobal(key: string) {
 
 const sampleSession: Partial<SessionSave> = {
   serializedGameSession: new Uint8Array([0, 1, 2, 255]),
-  gameSessionSchemaVersion: 1n,
+  gameSessionSchemaVersion: 3n,
   pairingToken: 'tok-123',
   messageNumber: 5n,
   remoteNumber: 3n,
@@ -90,6 +88,12 @@ const sampleSession: Partial<SessionSave> = {
   theirContribution: '40',
   perGameAmount: '10',
   rewardPuzzleHash: '11'.repeat(32),
+  betweenHandLastTerms: {
+    my_contribution: '10',
+    their_contribution: '10',
+    game_timeout: '15',
+    game_type: 'calpoker',
+  },
   unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
   humanHistory: ['human1'],
   wasmNotificationHistory: ['notification1'],
@@ -250,16 +254,16 @@ describe('session persistence', () => {
     const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
     markSavedSession();
     saveSession({
+      ...sampleSession,
       serializedGameSession: first,
-      gameSessionSchemaVersion: 1n,
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
     await flushSessionSave();
 
     saveSession({
+      ...sampleSession,
       serializedGameSession: second,
-      gameSessionSchemaVersion: 1n,
       pairingToken: 'tok-v2',
     });
     await flushSessionSave();
@@ -279,144 +283,6 @@ describe('session persistence', () => {
     });
     expect(await peekSession()).toMatchObject({ blockchainType: 'simulator' });
     expect(hasSavedSessionMarker()).toBe(true);
-  });
-
-  it('rejects v9 session records instead of guessing proposal-group semantics', async () => {
-    localStorage.setItem('appState_savedSession', '1');
-    await writeSessionRecord({
-      version: 9n,
-      playerId: 'player',
-      serializedGameSession: new Uint8Array([1, 2, 3]),
-      outgoingProposalTerms: {
-        '11': {
-          my_contribution: '10',
-          their_contribution: '10',
-          game_type: 'factory-pair',
-        },
-      },
-    });
-
-    expect(CURRENT_VERSION).toBe(10n);
-    expect(await peekSession()).toBeNull();
-    expect(hasSavedSessionMarker()).toBe(true);
-  });
-
-  it('keeps Resume marker for a finished channel snapshot without a live cradle', async () => {
-    saveSession({
-      blockchainType: 'simulator',
-      hubUrl: 'http://localhost:3000',
-      pairingToken: undefined,
-      serializedGameSession: undefined,
-      channelStatus: {
-        state: 'ResolvedClean',
-        advisory: null,
-        coin: null,
-        our_balance: '60',
-        their_balance: '40',
-        game_allocated: '0',
-        have_potato: true,
-      },
-    });
-    await flushSessionSave();
-
-    expect(hasSavedSessionMarker()).toBe(true);
-    _resetForTests();
-    expect(hasSavedSessionMarker()).toBe(true);
-    const loaded = await peekSession();
-    expect(loaded?.channelStatus?.state).toBe('ResolvedClean');
-    expect(loaded?.blockchainType).toBe('simulator');
-    expect(hasSavedSessionMarker()).toBe(true);
-  });
-
-  it('persists the frozen terminal coin list across reload', async () => {
-    saveTerminalSession({
-      channelStatus: {
-        state: 'ResolvedUnrolled',
-        advisory: null,
-        coin: null,
-        our_balance: '60',
-        their_balance: '40',
-        game_allocated: '0',
-        have_potato: false,
-      },
-      coinsOfInterest: [
-        { label: 'Unroll payout coin', id: 'unroll' },
-        { label: 'Current game coin', id: 'game-a' },
-        { label: 'Current game coin', id: 'game-b' },
-        { label: 'Game payout coin', id: 'payout-a' },
-      ],
-    });
-    await flushSessionSave();
-
-    _resetForTests();
-    expect((await peekSession())?.coinsOfInterest).toEqual([
-      { label: 'Unroll payout coin', id: 'unroll' },
-      { label: 'Current game coin', id: 'game-a' },
-      { label: 'Current game coin', id: 'game-b' },
-      { label: 'Game payout coin', id: 'payout-a' },
-    ]);
-  });
-
-  it('atomically replaces a live session with a nonresumable abandoned snapshot', async () => {
-    saveSession({
-      ...sampleSession,
-      sessionPeerId: 'peer-1',
-      gameSessionId: 'game-1',
-      channelTimeout: '100',
-      unrollTimeout: '50',
-      channelStatus: {
-        state: 'Active',
-        advisory: null,
-        coin: null,
-        our_balance: '60',
-        their_balance: '40',
-        game_allocated: '0',
-        have_potato: true,
-      },
-    });
-    await flushSessionSave();
-
-    saveTerminalSession({
-      channelStatus: {
-        state: 'ShutdownTransactionPending',
-        session_disposition: 'Abandoned',
-        advisory: null,
-        coin: null,
-        our_balance: '60',
-        their_balance: '40',
-        game_allocated: '0',
-        have_potato: false,
-      },
-      humanHistory: ['terminal display retained'],
-      myAlias: 'Alice',
-      opponentAlias: 'Bob',
-    });
-    await flushSessionSave();
-
-    _resetForTests();
-    const loaded = await peekSession();
-    expect(loaded?.channelStatus).toMatchObject({
-      state: 'ShutdownTransactionPending',
-      session_disposition: 'Abandoned',
-    });
-    expect(loaded?.humanHistory).toEqual(['terminal display retained']);
-    expect(loaded?.myAlias).toBe('Alice');
-    expect(loaded?.opponentAlias).toBe('Bob');
-    expect(loaded?.serializedGameSession).toBeUndefined();
-    expect(loaded?.gameSessionSchemaVersion).toBeUndefined();
-    expect(loaded?.pairingToken).toBeUndefined();
-    expect(loaded?.unackedMessages).toBeUndefined();
-    expect(loaded?.sessionPeerId).toBeUndefined();
-    expect(loaded?.gameSessionId).toBeUndefined();
-    expect(loaded?.messageNumber).toBeUndefined();
-    expect(loaded?.remoteNumber).toBeUndefined();
-    expect(loaded?.iStarted).toBeUndefined();
-    expect(loaded?.myContribution).toBeUndefined();
-    expect(loaded?.theirContribution).toBeUndefined();
-    expect(loaded?.perGameAmount).toBeUndefined();
-    expect(loaded?.channelTimeout).toBeUndefined();
-    expect(loaded?.unrollTimeout).toBeUndefined();
-    expect(shouldOfferResumeOrStartOver()).toBe(true);
   });
 
   it('clears the marker for a present but empty IndexedDB record', async () => {
@@ -533,6 +399,7 @@ describe('flat state', () => {
     // Durable resumable fields without sessionId (simulates older/partial IDB writes).
     saveSession({
       pairingToken: 'tok-keep-sid',
+      iStarted: true,
       myContribution: '100',
       theirContribution: '100',
       perGameAmount: '10',
@@ -569,6 +436,7 @@ describe('flat state', () => {
     markSavedSession();
     saveSession({
       pairingToken: 'tok-idb-sid',
+      iStarted: true,
       sessionId: sid,
       myContribution: '100',
       theirContribution: '100',
@@ -599,6 +467,7 @@ describe('flat state', () => {
     markSavedSession();
     saveSession({
       pairingToken: 'tok-pid',
+      iStarted: true,
       sessionId: sid,
       myHubPlayerId: 'p_stable_abc',
       myContribution: '100',
@@ -778,24 +647,6 @@ describe('flat state', () => {
     expect(state.version).toBe(CURRENT_VERSION);
   });
 
-  it('deletes stale appState wholesale without decoding it', async () => {
-    _writeRawState({ version: 2, playerId: 'old-player' });
-    await peekSession();
-    expect(localStorage.getItem('appState')).toBeNull();
-    expect(loadState().playerId).not.toBe('old-player');
-  });
-
-  it('rejects and deletes a stale IndexedDB record but keeps the boot marker', async () => {
-    localStorage.setItem('appState_savedSession', '1');
-    await writeSessionRecord({
-      version: 5n,
-      playerId: 'old-player',
-      serializedGameSession: new Uint8Array([1]),
-    });
-    expect(await peekSession()).toBeNull();
-    expect(localStorage.getItem('appState_savedSession')).toBe('1');
-  });
-
   it('clears a saved-session marker when no matching record exists', async () => {
     localStorage.setItem('appState_savedSession', '1');
 
@@ -824,14 +675,52 @@ describe('flat state', () => {
       ...sampleSession,
       blockchainType: 'simulator',
       defaultFee: huge,
+      activeGameIds: ['game-1'],
+      currentHandGameIds: ['game-1'],
+      gameInstances: {
+        'game-1': {
+          id: 'game-1',
+          amount: '20',
+          coinHex: null,
+          presentation: 'off-chain-my-turn',
+          terminal: {
+            type: 'none',
+            outcome: null,
+            label: null,
+            myReward: null,
+            rewardCoinHex: null,
+          },
+        },
+      },
       handState: {
         gameType: 'spacepoker',
         version: 1n,
         state: {
-          gameState: { handler: 2n, myTurn: true, N: huge },
-          playerHoleCards: [huge, huge + 1n],
+          gameState: { handler: 2n, myTurn: true, N: 4n },
+          playerHoleCards: [1n, 2n],
+          playerBoost: false,
+          opponentHoleCards: null,
+          opponentBoost: null,
+          communityCards: [null, null, null, null, null],
           halfPot: huge + 2n,
+          lastRaise: 0n,
+          iRaisedLast: false,
+          handHistory: [],
+          outcome: null,
+          terminalState: 'none',
+          terminalRecovery: null,
+          coinTossIOpen: null,
+          unitSizeMojos: 10n,
+          displayMode: 'mojos',
         },
+      },
+      activeGameType: 'spacepoker',
+      betweenHandLastTerms: {
+        my_contribution: '10',
+        their_contribution: '10',
+        game_timeout: '15',
+        game_type: 'spacepoker',
+        spacepoker_unit_size: '10',
       },
     });
     await flushSessionSave();
@@ -841,8 +730,8 @@ describe('flat state', () => {
     const handState = state.handState?.state as any;
 
     expect(state.defaultFee).toBe(huge);
-    expect(handState.gameState.N).toBe(huge);
-    expect(handState.playerHoleCards[1]).toBe(huge + 1n);
+    expect(handState.gameState.N).toBe(4n);
+    expect(handState.playerHoleCards[1]).toBe(2n);
     expect(handState.halfPot).toBe(huge + 2n);
   });
 
@@ -850,6 +739,23 @@ describe('flat state', () => {
     saveSession({
       ...sampleSession,
       blockchainType: 'simulator',
+      activeGameIds: ['game-1'],
+      currentHandGameIds: ['game-1'],
+      gameInstances: {
+        'game-1': {
+          id: 'game-1',
+          amount: '20',
+          coinHex: null,
+          presentation: 'off-chain-my-turn',
+          terminal: {
+            type: 'none',
+            outcome: null,
+            label: null,
+            myReward: null,
+            rewardCoinHex: null,
+          },
+        },
+      },
       handState: {
         gameType: 'calpoker',
         version: 1n,
@@ -871,6 +777,7 @@ describe('flat state', () => {
           },
         },
       },
+      activeGameType: 'calpoker',
     });
     await flushSessionSave();
     _resetForTests();

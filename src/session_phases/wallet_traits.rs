@@ -45,7 +45,7 @@ pub trait SpendWalletReceiver {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error>;
 }
 
 /// Unroll time wallet interface.

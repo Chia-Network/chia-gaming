@@ -70,12 +70,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
-  settlementOutcome,
+  terminalOutcome,
 }) => {
-  const settlementByUsFlag = settlementOutcome == null ? null : settlementByUs(settlementOutcome);
-  const settlementVerb = settlementOutcome
-    ? calpokerSettlementVerb(settlementOutcome)
-    : 'timed out';
+  const settlementByUsFlag = terminalOutcome == null ? null : settlementByUs(terminalOutcome);
+  const settlementVerb = terminalOutcome ? calpokerSettlementVerb(terminalOutcome) : 'timed out';
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -579,7 +577,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     initialSnapshot,
     moveNumber,
     outcome,
-    settlementOutcome,
+    terminalOutcome,
     dealCards,
   });
 
@@ -590,7 +588,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       const restoredGameState = shouldRestoreCalpokerSelection(
         initial.moveNumber,
         !!initial.outcome,
-        initial.settlementOutcome != null,
+        initial.terminalOutcome != null,
       )
         ? GAME_STATES.SELECTING
         : snap.gameState;
@@ -672,8 +670,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 haloCardIds={opponentHalos}
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 timeoutBadge={
-                  settlementOutcome
-                    ? calpokerTimeoutBadge(settlementOutcome, 'theirs', handCompleted)
+                  terminalOutcome
+                    ? calpokerTimeoutBadge(terminalOutcome, 'theirs', handCompleted)
                     : null
                 }
               />
@@ -707,8 +705,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 swapHiddenCardIds={playerSwapHiddenIds}
                 onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                 timeoutBadge={
-                  settlementOutcome
-                    ? calpokerTimeoutBadge(settlementOutcome, 'ours', handCompleted)
+                  terminalOutcome
+                    ? calpokerTimeoutBadge(terminalOutcome, 'ours', handCompleted)
                     : null
                 }
               />
@@ -719,7 +717,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         {/* Action bar — only during active gameplay */}
         {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP) &&
           !outcome &&
-          settlementOutcome == null && (
+          terminalOutcome == null && (
             <div className="flex-shrink-0 w-full h-12 relative flex items-center justify-center">
               {gameState === GAME_STATES.SELECTING && moveNumber === '1' && (
                 <GameBottomBar

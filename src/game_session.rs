@@ -67,7 +67,7 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error>;
     fn make_move(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -230,7 +230,7 @@ impl SpendWalletReceiver for Box<dyn PeerLifecyclePhase> {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         (**self).coin_puzzle_and_solution(env, coin_id, puzzle_and_solution)
     }
 }
@@ -301,7 +301,7 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 #[derive(Default)]
 pub struct DrainResult {
     pub events: GameSessionEventQueue,
-    pub resync: Option<(usize, bool)>,
+    pub resync: Vec<ResyncInfo>,
 }
 
 /// A signed clean-shutdown message that must be durably handed to the peer
@@ -321,7 +321,8 @@ struct GameSessionState {
     funding_coin: Option<CoinString>,
     unfunded_offer: Option<SpendBundle>,
     inbound_messages: VecDeque<Vec<u8>>,
-    resync: Option<(usize, bool)>,
+    #[serde(skip)]
+    pending_resync: VecDeque<ResyncInfo>,
     clean_shutdown_received: bool,
     clean_shutdown: Option<CoinString>,
     identity: ChiaIdentity,
@@ -493,7 +494,7 @@ impl GameSession {
                 funding_coin: None,
                 unfunded_offer: None,
                 clean_shutdown: None,
-                resync: None,
+                pending_resync: VecDeque::new(),
                 clean_shutdown_received: false,
                 peer_disconnected: false,
                 is_failed: false,
@@ -798,7 +799,7 @@ impl GameSession {
         // terminal snapshot. Older notifications must not race the final
         // Abandoned status through an asynchronous host.
         self.state.events.clear();
-        self.state.resync = None;
+        self.state.pending_resync.clear();
         self.emit_channel_status_if_changed();
     }
 
@@ -828,7 +829,7 @@ impl GameSession {
         if self.state.session_disposition.is_some() {
             return Ok(DrainResult {
                 events: std::mem::take(&mut self.state.events),
-                resync: self.state.resync.take(),
+                resync: self.state.pending_resync.drain(..).collect(),
             });
         }
         while let Some(msg) = self.state.inbound_messages.pop_front() {
@@ -872,7 +873,7 @@ impl GameSession {
 
         Ok(DrainResult {
             events: std::mem::take(&mut self.state.events),
-            resync: self.state.resync.take(),
+            resync: self.state.pending_resync.drain(..).collect(),
         })
     }
 
@@ -1745,11 +1746,24 @@ impl GameSession {
             self.peer
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
-        if let Some(info) = resync {
-            self.state.resync = Some((info.state_number, info.is_my_turn));
-        }
+        self.state.pending_resync.extend(resync);
         self.process_effects(reported_effects, allocator)?;
         Ok(())
+    }
+}
+
+impl GameSession {
+    /// Return the exact state number a local move would consume.
+    ///
+    /// Hosts that may need to replay an on-chain move must journal this value
+    /// before applying the move; it cannot be reconstructed from later opaque
+    /// serialized state.
+    pub fn move_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
+        use crate::session_phases::on_chain::OnChainPhase;
+        if let Some(on_chain) = self.peer.as_any().downcast_ref::<OnChainPhase>() {
+            return on_chain.game_state_number(game_id);
+        }
+        Ok(self.peer.channel_state()?.state_number())
     }
 }
 
@@ -1843,8 +1857,8 @@ mod sequencing_tests {
             _env: &mut ChannelEnv<'_>,
             _coin: &CoinString,
             _puzzle_and_solution: Option<(&Program, &Program)>,
-        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-            Ok((vec![], None))
+        ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
+            Ok((vec![], vec![]))
         }
     }
 
@@ -1889,8 +1903,8 @@ mod sequencing_tests {
             _env: &mut ChannelEnv<'_>,
             _coin: &CoinString,
             _puzzle_and_solution: Option<(&Program, &Program)>,
-        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-            Ok((vec![], None))
+        ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
+            Ok((vec![], vec![]))
         }
     }
 
@@ -1945,5 +1959,89 @@ mod sequencing_tests {
             replacement_rec.borrow().created.is_empty(),
             "coin_created went to the handshake handler, not the replacement"
         );
+    }
+
+    #[test]
+    fn serialization_excludes_pending_resync_hints() {
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha8Rng;
+
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random()).expect("test identity creation");
+        let reward_puzzle_hash = identity.puzzle_hash.clone();
+        let mut session = GameSession::new(
+            &mut rng,
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                have_potato: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash,
+            },
+        );
+        session.state.pending_resync.extend([
+            ResyncInfo {
+                game_id: GameID(1),
+                state_number: 3,
+                is_my_turn: true,
+            },
+            ResyncInfo {
+                game_id: GameID(3),
+                state_number: 4,
+                is_my_turn: false,
+            },
+        ]);
+
+        let encoded = bencodex::to_vec(&session).expect("serialize session");
+        assert!(
+            !encoded
+                .windows("pending_resync".len())
+                .any(|window| window == b"pending_resync"),
+            "transient resync queue leaked into durable session bytes"
+        );
+        let decoded: GameSession = bencodex::from_slice(&encoded).expect("deserialize session");
+        assert!(decoded.state.pending_resync.is_empty());
+    }
+
+    #[test]
+    fn abandonment_discards_pending_resync_hints() {
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha8Rng;
+
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::seed_from_u64(8);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random()).expect("test identity creation");
+        let reward_puzzle_hash = identity.puzzle_hash.clone();
+        let mut session = GameSession::new(
+            &mut rng,
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                have_potato: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash,
+            },
+        );
+        session.state.pending_resync.push_back(ResyncInfo {
+            game_id: GameID(1),
+            state_number: 3,
+            is_my_turn: true,
+        });
+
+        session.abandon().expect("abandon session");
+        let drain = session
+            .flush_and_collect(&mut allocator)
+            .expect("drain abandoned session");
+
+        assert!(drain.resync.is_empty());
     }
 }
