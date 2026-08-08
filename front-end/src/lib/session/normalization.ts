@@ -1,5 +1,6 @@
 import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
+import { EMPTY_COMPOSE_DRAFT_STATE } from './composeDraft';
 import { gameInstanceFromView } from './presentation';
 import type {
   ChannelStatusModel,
@@ -126,10 +127,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       reviewPeerProposal: null,
       rejectedOnceTerms: null,
       lastTerms: DEFAULT_HAND_TERMS_MODEL,
-      composePerHandAmount: 0n,
-      composeGameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
-      composeGameType: 'calpoker',
-      composeProposalSent: false,
+      compose: EMPTY_COMPOSE_DRAFT_STATE,
       newHandRequested: false,
       outgoingProposalIds: [],
       outgoingProposalGroupIds: [],

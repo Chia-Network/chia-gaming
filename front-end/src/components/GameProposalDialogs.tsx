@@ -1,13 +1,7 @@
-import { useEffect, useState } from 'react';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import { isValidKrunkStake } from '../features/krunk/adapter';
-import {
-  GAME_REGISTRY,
-  gameComposeDefaultAmount,
-  gameDisplayName,
-  isRegisteredGameType,
-} from '../lib/gameRegistry';
-import { DEFAULT_GAME_TIMEOUT_BLOCKS } from '../lib/session/model';
+import { gameDisplayName, REGISTERED_GAMES } from '../lib/gameRegistry';
+import { composeDraftCanSubmit, composeDraftTerms } from '../lib/session/model';
 import { formatMojos } from '../util';
 import { AmountInput } from './AmountInput';
 import { Button } from './button';
@@ -19,88 +13,27 @@ export function ComposeProposalDialog({
   session: UseGameSessionResult;
   maxPerHandMojos: bigint | null;
 }) {
-  const defaultSpacePokerStackSize = 10;
-  const isSpacepoker = session.composeGameType === 'spacepoker';
-  const isKrunk = session.composeGameType === 'krunk';
-  const [spUnitSize, setSpUnitSize] = useState(() => {
-    const remembered =
-      session.lastHandTerms.gameType === 'spacepoker'
-        ? session.lastHandTerms.unitSizeMojos
-        : undefined;
-    if (remembered && remembered > 0n) return remembered;
-    const stake = session.composePerHandAmount;
-    if (stake <= 0n) return 1n;
-    return (stake + BigInt(defaultSpacePokerStackSize - 1)) / BigInt(defaultSpacePokerStackSize);
-  });
-  const [spStackSizeStr, setSpStackSizeStr] = useState(() => {
-    const remembered =
-      session.lastHandTerms.gameType === 'spacepoker'
-        ? session.lastHandTerms.unitSizeMojos
-        : undefined;
-    return remembered && session.composePerHandAmount > 0n
-      ? String(session.composePerHandAmount / remembered)
-      : String(defaultSpacePokerStackSize);
-  });
-  const spStackSize = parseInt(spStackSizeStr) || 0;
-  const [timeoutStr, setTimeoutStr] = useState(() =>
-    String(
-      session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS,
-    ),
-  );
-  useEffect(() => {
-    setTimeoutStr(
-      String(
-        session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS,
-      ),
-    );
-  }, [session.composeGameTimeout]);
-  const gameTimeout = BigInt(timeoutStr || '0');
-  const timeoutValid = gameTimeout > 0n;
-  const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
-  const spValid =
-    isSpacepoker &&
-    spUnitSize > 0n &&
-    spStackSize > 0 &&
-    (maxPerHandMojos == null || spBetSize <= maxPerHandMojos);
+  const compose = session.composeDraftState;
+  const isSpacepoker = compose.selectedGame === 'spacepoker';
+  const isKrunk = compose.selectedGame === 'krunk';
+  const spUnitSize = compose.spacepoker.unitSize;
+  const spStackSize = compose.spacepoker.stackSize;
+  const spBetSize = spUnitSize * spStackSize;
   const spMaxUnitSize =
-    maxPerHandMojos != null && spStackSize > 0 ? maxPerHandMojos / BigInt(spStackSize) : null;
-  const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
+    maxPerHandMojos != null && spStackSize > 0n ? maxPerHandMojos / spStackSize : null;
+  const perHandAmount =
+    compose.selectedGame === 'spacepoker' ? spBetSize : compose[compose.selectedGame].amount;
   const krunkStakeValid = !isKrunk || isValidKrunkStake(perHandAmount);
   const standardMaxMojos =
     isKrunk && maxPerHandMojos != null
       ? maxPerHandMojos - (maxPerHandMojos % 100n)
       : maxPerHandMojos;
+  const canSubmit = composeDraftCanSubmit(compose, maxPerHandMojos);
 
   const submit = () => {
-    if (perHandAmount <= 0n || !timeoutValid || !krunkStakeValid || session.composeProposalSent)
-      return;
-    const base = {
-      myContribution: perHandAmount,
-      theirContribution: perHandAmount,
-      gameTimeout,
-    };
-    switch (session.composeGameType) {
-      case 'spacepoker':
-        session.submitComposedProposal({
-          gameType: 'spacepoker',
-          ...base,
-          unitSizeMojos: spUnitSize,
-        });
-        break;
-      case 'calpoker':
-        session.submitComposedProposal({ gameType: 'calpoker', ...base });
-        break;
-      case 'krunk':
-        session.submitComposedProposal({ gameType: 'krunk', ...base });
-        break;
-    }
-  };
-  const selectGameType = (gameType: string) => {
-    if (!isRegisteredGameType(gameType)) return;
-    session.setComposePerHandAmount(
-      gameComposeDefaultAmount(gameType, session.composeGameType, session.composePerHandAmount),
-    );
-    session.setComposeGameType(gameType);
+    if (!canSubmit) return;
+    const terms = composeDraftTerms(compose);
+    if (terms) session.submitComposedProposal(terms);
   };
 
   return (
@@ -108,14 +41,14 @@ export function ComposeProposalDialog({
       <div className="flex flex-col items-center gap-3">
         <p className="text-sm text-canvas-text-contrast">Propose terms for the next hand.</p>
         <div className="flex flex-wrap justify-center gap-2">
-          {GAME_REGISTRY.map(({ gameType, displayName }) => (
+          {REGISTERED_GAMES.map(({ gameType, displayName }) => (
             <Button
               key={gameType}
-              variant={session.composeGameType === gameType ? 'solid' : 'outline'}
-              color={session.composeGameType === gameType ? 'primary' : 'neutral'}
+              variant={compose.selectedGame === gameType ? 'solid' : 'outline'}
+              color={compose.selectedGame === gameType ? 'primary' : 'neutral'}
               size="sm"
               disabled={session.composeProposalSent}
-              onClick={() => selectGameType(gameType)}
+              onClick={() => session.setComposeGameType(gameType)}
             >
               {displayName}
             </Button>
@@ -125,18 +58,18 @@ export function ComposeProposalDialog({
           <>
             <AmountInput
               valueMojos={spUnitSize}
-              onChange={setSpUnitSize}
+              onChange={(unitSize) => session.setSpacepokerComposeDraft({ unitSize })}
               maxMojos={spMaxUnitSize}
               onUseMax={
                 spMaxUnitSize != null && spMaxUnitSize > 0n
-                  ? () => setSpUnitSize(spMaxUnitSize)
+                  ? () => session.setSpacepokerComposeDraft({ unitSize: spMaxUnitSize })
                   : undefined
               }
               disabled={session.composeProposalSent}
               label="Unit size"
               exceedsLabel="Exceeds available reserve."
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && spValid && timeoutValid) submit();
+                if (event.key === 'Enter' && canSubmit) submit();
               }}
             />
             <div className="flex w-full flex-col items-center gap-1">
@@ -147,11 +80,14 @@ export function ComposeProposalDialog({
                 type="number"
                 min={1}
                 className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
-                value={spStackSizeStr}
+                value={spStackSize.toString()}
                 disabled={session.composeProposalSent}
-                onChange={(event) => setSpStackSizeStr(event.target.value.replace(/[^0-9]/g, ''))}
+                onChange={(event) => {
+                  const next = event.target.value.replace(/[^0-9]/g, '');
+                  session.setSpacepokerComposeDraft({ stackSize: BigInt(next || '0') });
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' && spValid && timeoutValid) submit();
+                  if (event.key === 'Enter' && canSubmit) submit();
                 }}
               />
             </div>
@@ -162,25 +98,22 @@ export function ComposeProposalDialog({
           </>
         ) : (
           <AmountInput
-            valueMojos={session.composePerHandAmount}
-            onChange={session.setComposePerHandAmount}
+            valueMojos={perHandAmount}
+            onChange={isKrunk ? session.setKrunkComposeAmount : session.setCalpokerComposeAmount}
             maxMojos={standardMaxMojos}
             onUseMax={
               standardMaxMojos != null && standardMaxMojos > 0n
-                ? () => session.setComposePerHandAmount(standardMaxMojos)
+                ? () =>
+                    isKrunk
+                      ? session.setKrunkComposeAmount(standardMaxMojos)
+                      : session.setCalpokerComposeAmount(standardMaxMojos)
                 : undefined
             }
             disabled={session.composeProposalSent}
             label="Per-player stake"
             exceedsLabel="Exceeds available reserve."
             onKeyDown={(event) => {
-              if (
-                event.key === 'Enter' &&
-                session.composePerHandAmount > 0n &&
-                timeoutValid &&
-                krunkStakeValid
-              )
-                submit();
+              if (event.key === 'Enter' && canSubmit) submit();
             }}
           />
         )}
@@ -193,12 +126,11 @@ export function ComposeProposalDialog({
             type="number"
             min={1}
             className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
-            value={timeoutStr}
+            value={compose.gameTimeout.toString()}
             disabled={session.composeProposalSent}
             onChange={(event) => {
               const next = event.target.value.replace(/[^0-9]/g, '');
-              setTimeoutStr(next);
-              if (next) session.setComposeGameTimeout(BigInt(next));
+              session.setComposeGameTimeout(BigInt(next || '0'));
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') submit();
@@ -210,13 +142,7 @@ export function ComposeProposalDialog({
           color="primary"
           size="sm"
           className="self-center"
-          disabled={
-            session.composeProposalSent ||
-            perHandAmount <= 0n ||
-            !timeoutValid ||
-            !krunkStakeValid ||
-            (isSpacepoker && !spValid)
-          }
+          disabled={!canSubmit}
           onClick={submit}
         >
           {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}

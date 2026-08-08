@@ -19,7 +19,7 @@ import { getPlayerId } from '../hooks/save';
 import { SessionPhase } from '../types/ChiaGaming';
 import { RestoreStatus } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import { liveGameMountRequest, renderGameMount } from '../lib/gameMountRegistry';
+import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
   channelStateNeedsGameTabAttention,
@@ -742,12 +742,10 @@ const GameSession: React.FC<GameSessionProps> = ({
                   </div>
                 }
               >
-                {renderGameMount(
-                  liveGameMountRequest(session, {
-                    myName: params.myAlias,
-                    opponentName: params.opponentAlias,
-                  }),
-                )}
+                {renderLiveGameMount(session, {
+                  myName: params.myAlias,
+                  opponentName: params.opponentAlias,
+                })}
               </Suspense>
             </GameAreaErrorBoundary>
           )}

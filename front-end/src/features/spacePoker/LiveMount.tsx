@@ -1,7 +1,8 @@
 import { lazy, useCallback } from 'react';
-import type { Observable } from 'rxjs';
+import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
+import type { GameMountRegistration } from '../../lib/gameMount';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { HandTermsModel } from '../../lib/session/types';
 import type { GameTerminalModel } from '../../lib/session/types';
@@ -74,4 +75,63 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
       terminal={terminal}
     />
   );
+}
+
+export const spacepokerMountRegistration: GameMountRegistration = {
+  renderLive(session, names) {
+    const terms = session.lastHandTerms;
+    if (terms.gameType !== 'spacepoker') {
+      throw new Error('Space Poker session is missing Space Poker terms');
+    }
+    return (
+      <SpacepokerLiveMount
+        gameObject={session.sessionController}
+        gameId={session.activeGameId ?? session.gameSpecificView.displayGameId ?? ''}
+        iStarted={session.iStarted}
+        gameplayEvent$={session.gameplayEvent$}
+        terms={terms}
+        initialPersistedState={session.gameSpecificView.handState ?? undefined}
+        onTurnChanged={session.onTurnChanged}
+        appendGameLog={session.appendGameLog}
+        terminal={session.gameSpecificView.terminal}
+        {...names}
+      />
+    );
+  },
+  renderFrozen(model, gameObject, options) {
+    const terms = model.betweenHand.lastTerms;
+    if (terms.gameType !== 'spacepoker') {
+      throw new Error('Finished Space Poker session is missing Space Poker terms');
+    }
+    const gameId =
+      model.game.lastDisplayedId ??
+      model.game.currentHandIds[0] ??
+      model.game.activeIds[0] ??
+      'finished';
+    return (
+      <SpacepokerLiveMount
+        gameObject={gameObject}
+        gameId={gameId}
+        iStarted={options.iStarted}
+        gameplayEvent$={EMPTY}
+        terms={terms}
+        initialPersistedState={model.game.handState ?? undefined}
+        onTurnChanged={() => {}}
+        appendGameLog={() => {}}
+        terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
+        myName={options.myName}
+        opponentName={options.opponentName}
+      />
+    );
+  },
+};
+
+function emptyFinishedTerminal(): GameTerminalModel {
+  return {
+    type: 'none',
+    outcome: null,
+    label: null,
+    myReward: null,
+    rewardCoinHex: null,
+  };
 }

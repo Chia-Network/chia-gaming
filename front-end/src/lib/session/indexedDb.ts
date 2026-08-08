@@ -12,6 +12,13 @@ const SALT_LEN = 16;
 const ARRAY_BUFFER_TAG = '\0arrayBuffer';
 const NUMBER_TAG = '\0number';
 
+export class InvalidSessionRecordError extends Error {
+  constructor(cause: unknown) {
+    super('Stored session record is malformed', { cause });
+    this.name = 'InvalidSessionRecordError';
+  }
+}
+
 function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
   const state = new Uint8Array(256);
   for (let i = 0; i < state.length; i++) state[i] = i;
@@ -190,7 +197,11 @@ export async function readSessionRecord(): Promise<SessionSave | null> {
     });
     await transactionComplete(transaction);
     if (record instanceof Uint8Array) {
-      return deobfuscateSessionRecord(record);
+      try {
+        return deobfuscateSessionRecord(record);
+      } catch (error) {
+        throw new InvalidSessionRecordError(error);
+      }
     }
     // Records written before save obfuscation remain readable. The next
     // persistence write replaces them with the masked binary format.

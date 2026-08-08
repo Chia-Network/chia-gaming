@@ -812,6 +812,8 @@ impl SimulationHarness {
                     }
                     GameSessionEvent::CoinSolutionRequest(coin) => {
                         coin_requests.push(coin.clone());
+                        self.host_events[player_index]
+                            .push(HostBoundaryEvent::CoinSolutionRequested(coin.clone()));
                     }
                     GameSessionEvent::Log(line) => {
                         self.logs[player_index].push(line.clone());
@@ -858,11 +860,8 @@ impl SimulationHarness {
                     coin,
                     puzzle_solution.as_ref().map(|ps| (&ps.0, &ps.1)),
                 )?;
-                opponent.report_puzzle_and_solution(
-                    allocator,
-                    coin,
-                    puzzle_solution.as_ref().map(|ps| (&ps.0, &ps.1)),
-                )?;
+                self.host_events[player_index]
+                    .push(HostBoundaryEvent::CoinSolutionCallback(coin.clone()));
                 progress.callbacks += 1;
             }
 

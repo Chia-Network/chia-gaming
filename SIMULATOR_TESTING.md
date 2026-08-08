@@ -221,9 +221,11 @@ condition is satisfied.
 `received_proposal_ids`, `game_accepted_ids`, `opponent_moved_in_game`,
 `game_finished_ids` (populated when `GameSettled` arrives), `accepted_proposal_ids`, and `channel_created`.
 
-Resync is typed and lossless end to end. Each flush returns
-`Vec<ResyncInfo { game_id, state_number, is_my_turn }>`; the harness appends
-every item in source order as
+Resync is typed and lossless end to end. `GameSession` owns the transient
+`pending_resync` FIFO and drains it into each flush result as
+`Vec<ResyncInfo { game_id, state_number, is_my_turn }>`; `TransactionManager`
+only forwards that result and does not buffer or coalesce resync hints. The
+harness appends every item in source order as
 `ResyncEvent { player, game_id, state_number, is_my_turn }`. The runner turns
 our-turn events into a transient FIFO of exact prior move payloads. A replay
 requires exactly one executed move matching the full

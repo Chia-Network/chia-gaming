@@ -1,9 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { Suspense, useMemo } from 'react';
 
 import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
-import { frozenGameMountRequest, renderGameMount } from '../lib/gameMountRegistry';
+import { renderFrozenGameMount } from '../lib/gameMountRegistry';
 
 export interface FinishedSessionGameViewProps {
   model: SessionModel;
@@ -39,13 +39,6 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
     );
   }
 
-  const mount = frozenGameMountRequest(model, frozenBridge, {
-    myName,
-    opponentName,
-    iStarted,
-    iProposedHand,
-  });
-
   return (
     <div
       className="relative h-full w-full min-h-0 pointer-events-none"
@@ -53,7 +46,23 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
       aria-disabled
       inert
     >
-      {renderGameMount(mount)}
+      <Suspense
+        fallback={
+          <div
+            className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+            data-testid="finished-session-loading"
+          >
+            Loading hand…
+          </div>
+        }
+      >
+        {renderFrozenGameMount(model, frozenBridge, {
+          myName,
+          opponentName,
+          iStarted,
+          iProposedHand,
+        })}
+      </Suspense>
     </div>
   );
 };

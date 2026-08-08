@@ -37,6 +37,14 @@ describe('game slice reducer', () => {
           handState: null,
           queue: [],
         },
+        betweenHand: {
+          lastTerms: {
+            gameType: 'krunk',
+            myContribution: 100n,
+            theirContribution: 100n,
+            gameTimeout: 15n,
+          },
+        },
       }),
     );
     const restored = sessionModelFromSave({

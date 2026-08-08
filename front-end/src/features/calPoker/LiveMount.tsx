@@ -1,7 +1,8 @@
 import { lazy, useCallback } from 'react';
-import type { Observable } from 'rxjs';
+import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
+import type { GameMountRegistration } from '../../lib/gameMount';
 import { formatAmount } from '../../util';
 import type {
   CalpokerDisplaySnapshotView,
@@ -133,4 +134,58 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       terminalOutcome={hand.terminalOutcome}
     />
   );
+}
+
+export const calpokerMountRegistration: GameMountRegistration = {
+  renderLive(session, names) {
+    const gameId = session.activeGameId ?? session.gameSpecificView.displayGameId ?? '';
+    return (
+      <CalpokerLiveMount
+        gameObject={session.sessionController}
+        gameId={gameId}
+        iStarted={session.iStarted}
+        playerNumber={session.playerNumber}
+        gameplayEvent$={session.gameplayEvent$}
+        onOutcome={session.onHandOutcome}
+        onTurnChanged={session.onTurnChanged}
+        appendGameLog={session.appendGameLog}
+        perGameAmount={session.currentHandAmount}
+        terminal={session.gameSpecificView.terminal}
+        {...names}
+      />
+    );
+  },
+  renderFrozen(model, gameObject, options) {
+    const gameId =
+      model.game.lastDisplayedId ??
+      model.game.currentHandIds[0] ??
+      model.game.activeIds[0] ??
+      'finished';
+    return (
+      <CalpokerLiveMount
+        gameObject={gameObject}
+        gameId={gameId}
+        iStarted={options.iStarted}
+        playerNumber={options.iStarted ? 1 : 2}
+        gameplayEvent$={EMPTY}
+        onOutcome={() => {}}
+        onTurnChanged={() => {}}
+        appendGameLog={() => {}}
+        perGameAmount={model.betweenHand.lastTerms.myContribution}
+        terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
+        myName={options.myName}
+        opponentName={options.opponentName}
+      />
+    );
+  },
+};
+
+function emptyFinishedTerminal(): GameTerminalModel {
+  return {
+    type: 'none',
+    outcome: null,
+    label: null,
+    myReward: null,
+    rewardCoinHex: null,
+  };
 }

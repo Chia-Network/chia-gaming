@@ -88,6 +88,12 @@ const sampleSession: Partial<SessionSave> = {
   theirContribution: '40',
   perGameAmount: '10',
   rewardPuzzleHash: '11'.repeat(32),
+  betweenHandLastTerms: {
+    my_contribution: '10',
+    their_contribution: '10',
+    game_timeout: '15',
+    game_type: 'calpoker',
+  },
   unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
   humanHistory: ['human1'],
   wasmNotificationHistory: ['notification1'],
@@ -248,16 +254,16 @@ describe('session persistence', () => {
     const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
     markSavedSession();
     saveSession({
+      ...sampleSession,
       serializedGameSession: first,
-      gameSessionSchemaVersion: 3n,
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
     await flushSessionSave();
 
     saveSession({
+      ...sampleSession,
       serializedGameSession: second,
-      gameSessionSchemaVersion: 3n,
       pairingToken: 'tok-v2',
     });
     await flushSessionSave();
@@ -393,6 +399,7 @@ describe('flat state', () => {
     // Durable resumable fields without sessionId (simulates older/partial IDB writes).
     saveSession({
       pairingToken: 'tok-keep-sid',
+      iStarted: true,
       myContribution: '100',
       theirContribution: '100',
       perGameAmount: '10',
@@ -429,6 +436,7 @@ describe('flat state', () => {
     markSavedSession();
     saveSession({
       pairingToken: 'tok-idb-sid',
+      iStarted: true,
       sessionId: sid,
       myContribution: '100',
       theirContribution: '100',
@@ -459,6 +467,7 @@ describe('flat state', () => {
     markSavedSession();
     saveSession({
       pairingToken: 'tok-pid',
+      iStarted: true,
       sessionId: sid,
       myHubPlayerId: 'p_stable_abc',
       myContribution: '100',
@@ -666,6 +675,23 @@ describe('flat state', () => {
       ...sampleSession,
       blockchainType: 'simulator',
       defaultFee: huge,
+      activeGameIds: ['game-1'],
+      currentHandGameIds: ['game-1'],
+      gameInstances: {
+        'game-1': {
+          id: 'game-1',
+          amount: '20',
+          coinHex: null,
+          presentation: 'off-chain-my-turn',
+          terminal: {
+            type: 'none',
+            outcome: null,
+            label: null,
+            myReward: null,
+            rewardCoinHex: null,
+          },
+        },
+      },
       handState: {
         gameType: 'spacepoker',
         version: 1n,
@@ -689,6 +715,13 @@ describe('flat state', () => {
         },
       },
       activeGameType: 'spacepoker',
+      betweenHandLastTerms: {
+        my_contribution: '10',
+        their_contribution: '10',
+        game_timeout: '15',
+        game_type: 'spacepoker',
+        spacepoker_unit_size: '10',
+      },
     });
     await flushSessionSave();
     _resetForTests();
@@ -706,6 +739,23 @@ describe('flat state', () => {
     saveSession({
       ...sampleSession,
       blockchainType: 'simulator',
+      activeGameIds: ['game-1'],
+      currentHandGameIds: ['game-1'],
+      gameInstances: {
+        'game-1': {
+          id: 'game-1',
+          amount: '20',
+          coinHex: null,
+          presentation: 'off-chain-my-turn',
+          terminal: {
+            type: 'none',
+            outcome: null,
+            label: null,
+            myReward: null,
+            rewardCoinHex: null,
+          },
+        },
+      },
       handState: {
         gameType: 'calpoker',
         version: 1n,

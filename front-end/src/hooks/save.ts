@@ -2,6 +2,7 @@ import { ChannelStatusPayload } from '../types/ChiaGaming';
 import { isTerminalChannelSnapshot } from '../lib/session/model';
 import {
   deleteSessionRecord,
+  InvalidSessionRecordError,
   readSessionRecord,
   SESSION_DB_NAME,
   writeSessionRecord,
@@ -16,8 +17,8 @@ import {
 import type { PersistedGameState } from '../lib/session/gameStateCodec';
 import type { GameProtocolPresentation } from '../lib/session/gameSlice';
 import {
+  decodeSessionSaveEnvelope,
   SESSION_SAVE_ENVELOPE_VERSION,
-  validateSessionSaveEnvelope,
 } from '../lib/session/persistence';
 
 export type { PersistedGameState } from '../lib/session/gameStateCodec';
@@ -115,9 +116,14 @@ export interface SessionSave {
   dismissedChannelStatus?: string;
   cleanShutdownStarted?: boolean;
   betweenHandMode?: string;
-  betweenHandComposePerHand?: string;
-  betweenHandComposeGameTimeout?: string;
-  betweenHandComposeGameType?: string;
+  betweenHandCompose?: {
+    selected_game: string;
+    game_timeout: string;
+    proposal_sent: boolean;
+    calpoker: { amount: string };
+    krunk: { amount: string };
+    spacepoker: { unit_size: string; stack_size: string };
+  };
   betweenHandLastTerms?: {
     my_contribution: string;
     their_contribution: string;
@@ -615,12 +621,34 @@ function isTerminalFinishedChannel(status: ChannelStatusPayload | null | undefin
 
 function isCompatibleSessionRecord(state: SessionSave): boolean {
   try {
-    validateSessionSaveEnvelope(state);
+    decodeSessionSaveEnvelope(state);
     return true;
   } catch (error) {
     console.error('[save] rejecting incompatible session record:', error);
     return false;
   }
+}
+
+async function readCompatibleSessionRecord(): Promise<{
+  record: SessionSave | null;
+  discarded: boolean;
+}> {
+  let record: SessionSave | null;
+  try {
+    record = await readSessionRecord();
+  } catch (error) {
+    if (!(error instanceof InvalidSessionRecordError)) throw error;
+    console.error('[save] rejecting unreadable session record:', error);
+    await deleteSessionRecord();
+    markSavedSession();
+    return { record: null, discarded: true };
+  }
+  if (record && !isCompatibleSessionRecord(record)) {
+    await deleteSessionRecord();
+    markSavedSession();
+    return { record: null, discarded: true };
+  }
+  return { record, discarded: false };
 }
 
 /**
@@ -655,7 +683,7 @@ function queueWrite(state: SessionSave): Promise<void> {
   const snapshot = structuredClone(state);
   capPersistedHistories(snapshot);
   assertNoNumbers(snapshot, 'SessionSave');
-  validateSessionSaveEnvelope(snapshot);
+  decodeSessionSaveEnvelope(snapshot);
   writeChain = writeChain
     .catch(() => {})
     .then(async () => {
@@ -874,14 +902,12 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
   }
 
   await writeChain;
-  const record = await readSessionRecord();
+  const { record, discarded } = await readCompatibleSessionRecord();
   identityDiskChecked = true;
-  if (!record) return false;
-  if (!isCompatibleSessionRecord(record)) {
+  if (!record) {
+    if (!discarded) return false;
     // Same wipe+marker policy as peekSession: remove the unreadable record but
     // keep the boot marker so reload still forces Resume/Start Over.
-    await deleteSessionRecord();
-    markSavedSession();
     cached = loadPreferences();
     return true;
   }
@@ -1098,13 +1124,11 @@ export async function peekSession(): Promise<SessionSave | null> {
   const wipedIncompatible = await hydrateSessionCacheFromDisk();
   if (persistPromise) await flushSessionSave();
   await writeChain;
-  const record = await readSessionRecord();
-  if (record && !isCompatibleSessionRecord(record)) {
+  const { record, discarded } = await readCompatibleSessionRecord();
+  if (discarded) {
     // Wipe the unreadable record but keep the boot marker so reload still
     // forces Resume/Start Over instead of silently booting into leftover
     // preference state (e.g. blockchainType).
-    await deleteSessionRecord();
-    markSavedSession();
     cached = loadPreferences();
     return null;
   }

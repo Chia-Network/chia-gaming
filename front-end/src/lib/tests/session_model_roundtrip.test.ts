@@ -57,6 +57,7 @@ describe('session model round trips', () => {
       lastDisplayedGameId: snapshot.lastDisplayedGameId,
       gameInstances: snapshot.gameInstances,
       activeGameType: snapshot.activeGameType,
+      betweenHandLastTerms: snapshot.betweenHandLastTerms,
     });
     expect(restored.game.instances['7'].presentation).toBe('playing-move');
     expect(selectDisplayedGameInstance(restored)?.coin.turnState).toBe('playing-on-chain');
@@ -88,6 +89,7 @@ describe('session model round trips', () => {
       lastDisplayedGameId: snapshot.lastDisplayedGameId,
       gameInstances: snapshot.gameInstances,
       activeGameType: snapshot.activeGameType,
+      betweenHandLastTerms: snapshot.betweenHandLastTerms,
     });
 
     expect(restored.game.instances['7'].presentation).toBe('on-chain-their-turn');
@@ -130,6 +132,7 @@ describe('session model round trips', () => {
       currentHandGameIds: snapshot.currentHandGameIds,
       gameInstances: snapshot.gameInstances,
       activeGameType: snapshot.activeGameType,
+      betweenHandLastTerms: snapshot.betweenHandLastTerms,
     });
 
     expect(restored.game.currentHandIds).toEqual(['7', '9']);
@@ -219,6 +222,7 @@ describe('session model round trips', () => {
       lastDisplayedGameId: snapshot.lastDisplayedGameId,
       gameInstances: snapshot.gameInstances,
       activeGameType: snapshot.activeGameType,
+      betweenHandLastTerms: snapshot.betweenHandLastTerms,
     });
     expect(restored.game.lastDisplayedId).toBe('terminal');
     expect(restored.game.instances).toEqual(model.game.instances);

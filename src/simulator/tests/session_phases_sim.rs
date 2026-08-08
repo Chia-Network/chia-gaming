@@ -267,6 +267,8 @@ pub enum TestEvent {
 #[derive(Debug, Clone)]
 enum HostBoundaryEvent {
     WatchCoin(CoinString),
+    CoinSolutionRequested(CoinString),
+    CoinSolutionCallback(CoinString),
     TransactionSubmitted(Vec<CoinID>),
     Notification {
         notification: GameNotification,
@@ -4465,6 +4467,65 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ],
             "before_any_moves p1",
+        );
+    }));
+
+    res.push(("test_coin_solution_callback_is_requester_only", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::GoOnChain(1),
+            SimScriptAction::WaitBlocks(20, 1),
+        ];
+
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for player in 0..=1 {
+            let events = &outcome.host_events[player];
+            let requests: Vec<&CoinString> = events
+                .iter()
+                .filter_map(|event| match event {
+                    HostBoundaryEvent::CoinSolutionRequested(coin) => Some(coin),
+                    _ => None,
+                })
+                .collect();
+            let callbacks: Vec<&CoinString> = events
+                .iter()
+                .filter_map(|event| match event {
+                    HostBoundaryEvent::CoinSolutionCallback(coin) => Some(coin),
+                    _ => None,
+                })
+                .collect();
+
+            assert!(
+                !requests.is_empty(),
+                "player {player} must emit its own puzzle/solution request: {events:?}"
+            );
+            assert_eq!(
+                callbacks, requests,
+                "player {player} must receive exactly one callback for each request, in FIFO order: {events:?}"
+            );
+        }
+
+        let player_zero_requests: HashSet<&CoinString> = outcome.host_events[0]
+            .iter()
+            .filter_map(|event| match event {
+                HostBoundaryEvent::CoinSolutionRequested(coin) => Some(coin),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            outcome.host_events[1].iter().any(|event| {
+                matches!(
+                    event,
+                    HostBoundaryEvent::CoinSolutionRequested(coin)
+                        if player_zero_requests.contains(coin)
+                )
+            }),
+            "the opponent must emit its own request for a shared observed spend: {:?}",
+            outcome.host_events
         );
     }));
 

@@ -3,9 +3,7 @@ import type { SessionSave } from '../../hooks/save';
 import {
   decodePersistedGameState,
   decodePersistedGameTerms,
-  encodeGameTermsExtras,
   isRegisteredGameType,
-  persistedGameStateIds,
 } from '../gameRegistry';
 import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
 import {
@@ -21,6 +19,7 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   normalizeSessionPresentation,
 } from './normalization';
+import { createComposeDraftState, type ComposeDraftState } from './composeDraft';
 import type {
   BetweenHandModeModel,
   BetweenHandProposalModel,
@@ -34,29 +33,117 @@ import type {
 } from './types';
 import { isTerminalChannelSnapshot } from './selectors';
 
+export { snapshotFromSessionModel } from './sessionSnapshot';
+
 export const SESSION_SAVE_ENVELOPE_VERSION = 11n;
 
-function parseBigintString(value: string | undefined, fallback: bigint): bigint {
-  if (!value) return fallback;
-  try {
-    return BigInt(value);
-  } catch {
-    return fallback;
+type UnknownRecord = Record<string, unknown>;
+
+const CHANNEL_STATUSES: ReadonlySet<string> = new Set<ChannelStatus>([
+  'Handshaking',
+  'WaitingForHeightToOffer',
+  'WaitingForHeightToAccept',
+  'OurWalletMakingOffer',
+  'OurWalletMakingOfferAcceptance',
+  'OfferSent',
+  'TransactionPending',
+  'Active',
+  'ShuttingDown',
+  'ShutdownTransactionPending',
+  'GoingOnChain',
+  'Unrolling',
+  'ResolvedClean',
+  'ResolvedUnrolled',
+  'ResolvedStale',
+  'Failed',
+]);
+const BETWEEN_HAND_MODES: ReadonlySet<string> = new Set<BetweenHandModeModel>([
+  'decision',
+  'compose-proposal',
+  'review-incoming-proposal',
+]);
+const NOTIFICATION_KINDS = new Set([
+  'channel-state',
+  'action-failed',
+  'infra-error',
+  'durability-error',
+  'game-terminal',
+  'proposal-rejected',
+  'insufficient-bal',
+]);
+const SESSION_DISPOSITIONS = new Set(['AwaitOutboundTerminal', 'Abandoned']);
+const CHANNEL_SEMANTIC_PHASES = new Set([
+  'submitting_channel_spend',
+  'resolving_opponent_channel_spend',
+  'preempting',
+  'waiting_timeout',
+  'submitting_timeout_finish',
+  'resolving',
+]);
+const OUTCOME_FLAGS = new Set(['win', 'lose', 'tie']);
+
+function requireRecord(value: unknown, label: string): UnknownRecord {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    value instanceof Uint8Array
+  ) {
+    throw new Error(`Garbled save: invalid ${label}`);
   }
+  return value as UnknownRecord;
 }
 
-function parsePositiveBigintString(value: string | undefined, fallback: bigint): bigint {
-  const parsed = parseBigintString(value, fallback);
-  return parsed > 0n ? parsed : fallback;
+function requireString(value: unknown, label: string, allowEmpty = false): string {
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) {
+    throw new Error(`Garbled save: invalid ${label}`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, label: string, allowEmpty = false): string | undefined {
+  return value === undefined ? undefined : requireString(value, label, allowEmpty);
+}
+
+function requireBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`Garbled save: invalid ${label}`);
+  return value;
+}
+
+function optionalBoolean(value: unknown, label: string): boolean | undefined {
+  return value === undefined ? undefined : requireBoolean(value, label);
+}
+
+function requireBigint(value: unknown, label: string, minimum = 0n): bigint {
+  if (typeof value !== 'bigint' || value < minimum) {
+    throw new Error(`Garbled save: invalid ${label}`);
+  }
+  return value;
+}
+
+function parseDecimalString(value: unknown, label: string, minimum?: bigint): bigint {
+  if (typeof value !== 'string' || !/^-?\d+$/.test(value)) {
+    throw new Error(`Garbled save: invalid ${label}: ${String(value)}`);
+  }
+  const parsed = BigInt(value);
+  if (minimum !== undefined && parsed < minimum) {
+    throw new Error(`Garbled save: invalid ${label}: ${value}`);
+  }
+  return parsed;
+}
+
+function parseOptionalDecimalString(
+  value: unknown,
+  label: string,
+  fallback: bigint,
+  minimum?: bigint,
+): bigint {
+  return value === undefined ? fallback : parseDecimalString(value, label, minimum);
 }
 
 function requireBigintString(value: string | undefined, label: string): bigint {
-  if (!value) throw new Error(`Garbled save: missing ${label}`);
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`Garbled save: invalid ${label}: ${value}`);
-  }
+  if (value === undefined) throw new Error(`Garbled save: missing ${label}`);
+  return parseDecimalString(value, label);
 }
 
 export function sessionAmountsFromSave(
@@ -82,57 +169,109 @@ type SavedHandTerms = {
 
 type SavedProposal = SavedHandTerms & { id: string; groupIds: string[] };
 
+function parseComposeDraftState(value: unknown, fallback: ComposeDraftState): ComposeDraftState {
+  if (value === undefined) return fallback;
+  const saved = requireRecord(value, 'betweenHandCompose');
+  const selectedGame = saved.selected_game;
+  if (!isRegisteredGameType(selectedGame)) {
+    throw new Error('Garbled save: invalid betweenHandCompose.selected_game');
+  }
+  const calpoker = requireRecord(saved.calpoker, 'betweenHandCompose.calpoker');
+  const krunk = requireRecord(saved.krunk, 'betweenHandCompose.krunk');
+  const spacepoker = requireRecord(saved.spacepoker, 'betweenHandCompose.spacepoker');
+  return {
+    selectedGame,
+    gameTimeout: parseDecimalString(saved.game_timeout, 'betweenHandCompose.game_timeout', 0n),
+    proposalSent: requireBoolean(saved.proposal_sent, 'betweenHandCompose.proposal_sent'),
+    calpoker: {
+      amount: parseDecimalString(calpoker.amount, 'betweenHandCompose.calpoker.amount', 0n),
+    },
+    krunk: {
+      amount: parseDecimalString(krunk.amount, 'betweenHandCompose.krunk.amount', 0n),
+    },
+    spacepoker: {
+      unitSize: parseDecimalString(
+        spacepoker.unit_size,
+        'betweenHandCompose.spacepoker.unit_size',
+        0n,
+      ),
+      stackSize: parseDecimalString(
+        spacepoker.stack_size,
+        'betweenHandCompose.spacepoker.stack_size',
+        0n,
+      ),
+    },
+  };
+}
+
 function parseTermsSnapshot(
-  saved: SavedHandTerms | null | undefined,
+  value: unknown,
   fallback: HandTermsModel,
+  label: string,
 ): HandTermsModel {
-  if (!saved) return fallback;
+  if (value == null) return fallback;
+  const saved = requireRecord(value, label) as SavedHandTerms;
   const gameType = saved.game_type ?? fallback.gameType;
   if (!isRegisteredGameType(gameType)) {
-    throw new Error(`Garbled save: unknown game type ${gameType}`);
+    throw new Error(`Garbled save: unknown ${label}.game_type ${String(gameType)}`);
   }
-  const myContribution = parseBigintString(saved.my_contribution, fallback.myContribution);
+  const myContribution = parseDecimalString(saved.my_contribution, `${label}.my_contribution`, 0n);
   const terms = decodePersistedGameTerms(
     gameType,
     {
       myContribution,
-      theirContribution: parseBigintString(saved.their_contribution, fallback.theirContribution),
-      gameTimeout: parsePositiveBigintString(saved.game_timeout, fallback.gameTimeout),
+      theirContribution: parseDecimalString(
+        saved.their_contribution,
+        `${label}.their_contribution`,
+        0n,
+      ),
+      gameTimeout: parseOptionalDecimalString(
+        saved.game_timeout,
+        `${label}.game_timeout`,
+        fallback.gameTimeout,
+        1n,
+      ),
     },
     { spacepoker_unit_size: saved.spacepoker_unit_size },
   );
-  if (!terms) throw new Error(`Garbled save: invalid ${gameType} terms`);
+  if (!terms) throw new Error(`Garbled save: invalid ${label} ${gameType} terms`);
   return terms;
 }
 
 function parseOptionalTermsSnapshot(
-  saved: SavedHandTerms | null | undefined,
+  saved: unknown,
   fallback: HandTermsModel,
+  label: string,
 ): HandTermsModel | null {
-  return saved ? parseTermsSnapshot(saved, fallback) : null;
+  return saved == null ? null : parseTermsSnapshot(saved, fallback, label);
 }
 
 function parseProposalSnapshot(
-  saved: SavedProposal | null | undefined,
+  value: unknown,
   fallbackTerms: HandTermsModel,
+  label: string,
 ): BetweenHandProposalModel | null {
-  if (!saved) return null;
-  if (!Array.isArray(saved.groupIds) || saved.groupIds.length === 0) {
-    throw new Error(`Garbled save: proposal ${saved.id} missing non-empty groupIds`);
+  if (value == null) return null;
+  const saved = requireRecord(value, label) as SavedProposal;
+  const id = requireString(saved.id, `${label}.id`);
+  const groupIds = requireUniqueIds(saved.groupIds, `${label}.groupIds`, true);
+  if (!groupIds.includes(id)) {
+    throw new Error(`Garbled save: ${label}.id is not in its groupIds`);
   }
   return {
-    id: saved.id,
-    groupIds: saved.groupIds,
-    terms: parseTermsSnapshot(saved, fallbackTerms),
+    id,
+    groupIds,
+    terms: parseTermsSnapshot(saved, fallbackTerms, label),
   };
 }
 
 function parseNotificationId(id: unknown): bigint {
-  if (typeof id === 'bigint') return id;
-  if (typeof id === 'number' && Number.isInteger(id)) return BigInt(id);
+  if (typeof id === 'bigint' && id >= 0n) return id;
+  if (typeof id === 'number' && Number.isInteger(id) && id >= 0) return BigInt(id);
   if (typeof id === 'string') {
     try {
-      return BigInt(id);
+      const parsed = parseDecimalString(id, 'notification id', 0n);
+      return parsed;
     } catch {
       throw new Error(`Garbled save: invalid notification id: ${id}`);
     }
@@ -141,14 +280,26 @@ function parseNotificationId(id: unknown): bigint {
 }
 
 function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
-  if (!Array.isArray(queue)) return [];
-  return queue.map((notification) => {
-    const n = notification as QueuedNotificationModel & { id?: unknown };
+  if (queue === undefined) return [];
+  if (!Array.isArray(queue)) throw new Error('Garbled save: invalid notification queue');
+  const parsed = queue.map((notification, index) => {
+    const n = requireRecord(notification, `notification[${index}]`);
+    const kind = parseDiscriminant<QueuedNotificationModel['kind']>(
+      n.kind,
+      NOTIFICATION_KINDS,
+      `notification[${index}].kind`,
+    );
     return {
-      ...n,
+      kind,
       id: parseNotificationId(n.id),
+      title: requireString(n.title, `notification[${index}].title`, true),
+      message: requireString(n.message, `notification[${index}].message`, true),
     };
   });
+  if (new Set(parsed.map(({ id }) => id)).size !== parsed.length) {
+    throw new Error('Garbled save: duplicate notification id');
+  }
+  return parsed;
 }
 
 const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
@@ -234,11 +385,7 @@ function parseSavedGameInstance(
   if (typeof instance.amount !== 'string') {
     throw new Error(`Garbled save: invalid gameInstances.${key}.amount`);
   }
-  try {
-    if (BigInt(instance.amount) < 0n) throw new Error();
-  } catch {
-    throw new Error(`Garbled save: invalid gameInstances.${key}.amount: ${instance.amount}`);
-  }
+  parseDecimalString(instance.amount, `gameInstances.${key}.amount`, 0n);
   if (instance.coinHex !== null && typeof instance.coinHex !== 'string') {
     throw new Error(`Garbled save: invalid gameInstances.${key}.coinHex`);
   }
@@ -256,8 +403,12 @@ function parseSavedGameInstance(
   };
 }
 
-function requireUniqueIds(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || !value.every((id) => typeof id === 'string' && id.length > 0)) {
+function requireUniqueIds(value: unknown, label: string, requireNonEmpty = false): string[] {
+  if (
+    !Array.isArray(value) ||
+    (requireNonEmpty && value.length === 0) ||
+    !value.every((id) => typeof id === 'string' && id.length > 0)
+  ) {
     throw new Error(`Garbled save: ${label} must contain non-empty strings`);
   }
   if (new Set(value).size !== value.length) {
@@ -271,7 +422,7 @@ function validateTerminalFields(terminal: GameTerminalModel, label: string): voi
   const isAmount = (value: string | null): boolean => {
     if (value === null) return false;
     try {
-      return BigInt(value) >= 0n;
+      return parseDecimalString(value, label, 0n) >= 0n;
     } catch {
       return false;
     }
@@ -304,7 +455,231 @@ function validateTerminalFields(terminal: GameTerminalModel, label: string): voi
   }
 }
 
-export function validateSessionSaveEnvelope(save: SessionSave): void {
+function parseStringArray(value: unknown, label: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+    throw new Error(`Garbled save: invalid ${label}`);
+  }
+  return [...value];
+}
+
+function parseProposalGroups(value: unknown, label: string): string[][] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`Garbled save: invalid ${label}`);
+  const seen = new Set<string>();
+  return value.map((group, index) => {
+    const ids = requireUniqueIds(group, `${label}[${index}]`, true);
+    for (const id of ids) {
+      if (seen.has(id)) throw new Error(`Garbled save: duplicate ${label} id ${id}`);
+      seen.add(id);
+    }
+    return ids;
+  });
+}
+
+function validateOptionalScalarFields(save: SessionSave): void {
+  optionalString(save.sessionId, 'sessionId');
+  optionalString(save.alias, 'alias', true);
+  optionalString(save.hubUrl, 'hubUrl');
+  optionalString(save.activeTab, 'activeTab');
+  optionalString(save.pairingToken, 'pairingToken');
+  optionalString(save.sessionPeerId, 'sessionPeerId');
+  optionalString(save.myHubPlayerId, 'myHubPlayerId');
+  optionalString(save.gameSessionId, 'gameSessionId');
+  optionalString(save.myAlias, 'myAlias', true);
+  optionalString(save.opponentAlias, 'opponentAlias', true);
+  optionalString(save.durabilityWarning, 'durabilityWarning', true);
+  if (save.theme !== undefined && save.theme !== 'dark' && save.theme !== 'light') {
+    throw new Error('Garbled save: invalid theme');
+  }
+  if (save.feeUnit !== undefined && save.feeUnit !== 'mojo' && save.feeUnit !== 'xch') {
+    throw new Error('Garbled save: invalid feeUnit');
+  }
+  if (
+    save.blockchainType !== undefined &&
+    save.blockchainType !== 'simulator' &&
+    save.blockchainType !== 'walletconnect'
+  ) {
+    throw new Error('Garbled save: invalid blockchainType');
+  }
+  if (save.defaultFee !== undefined) requireBigint(save.defaultFee, 'defaultFee');
+  if (save.gameSessionSchemaVersion !== undefined) {
+    requireBigint(save.gameSessionSchemaVersion, 'gameSessionSchemaVersion');
+  }
+  if (save.messageNumber !== undefined) requireBigint(save.messageNumber, 'messageNumber');
+  if (save.remoteNumber !== undefined) requireBigint(save.remoteNumber, 'remoteNumber');
+  if (save.waitingStateEnteredAt !== undefined) {
+    requireBigint(save.waitingStateEnteredAt, 'waitingStateEnteredAt');
+  }
+  if (save.cleanShutdownGraceStartedAt !== undefined) {
+    requireBigint(save.cleanShutdownGraceStartedAt, 'cleanShutdownGraceStartedAt');
+  }
+  optionalBoolean(save.unreadGame, 'unreadGame');
+  optionalBoolean(save.walletAlert, 'walletAlert');
+  optionalBoolean(save.hubAlert, 'hubAlert');
+  optionalBoolean(save.iStarted, 'iStarted');
+  optionalBoolean(save.terminalIStarted, 'terminalIStarted');
+  optionalBoolean(save.iProposedHand, 'iProposedHand');
+  optionalBoolean(save.cleanShutdownStarted, 'cleanShutdownStarted');
+
+  if (
+    save.rewardPuzzleHash !== null &&
+    save.rewardPuzzleHash !== undefined &&
+    (typeof save.rewardPuzzleHash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(save.rewardPuzzleHash))
+  ) {
+    throw new Error('Garbled save: invalid rewardPuzzleHash');
+  }
+  if (
+    save.serializedGameSession !== undefined &&
+    !(save.serializedGameSession instanceof Uint8Array)
+  ) {
+    throw new Error('Garbled save: invalid serializedGameSession');
+  }
+  for (const [field, minimum] of [
+    ['myContribution', 0n],
+    ['theirContribution', 0n],
+    ['perGameAmount', 0n],
+    ['channelTimeout', 1n],
+    ['unrollTimeout', 1n],
+  ] as const) {
+    const value = save[field];
+    if (value !== undefined) parseDecimalString(value, field, minimum);
+  }
+  if (save.lastOutcomeWin !== undefined && !OUTCOME_FLAGS.has(save.lastOutcomeWin)) {
+    throw new Error('Garbled save: invalid lastOutcomeWin');
+  }
+  for (const [field, value] of [
+    ['humanHistory', save.humanHistory],
+    ['wasmNotificationHistory', save.wasmNotificationHistory],
+    ['diagnosticLog', save.diagnosticLog],
+  ] as const) {
+    if (value !== undefined) parseStringArray(value, field);
+  }
+
+  if (save.unackedMessages !== undefined) {
+    if (!Array.isArray(save.unackedMessages)) {
+      throw new Error('Garbled save: invalid unackedMessages');
+    }
+    const messageIds = new Set<bigint>();
+    save.unackedMessages.forEach((message, index) => {
+      const record = requireRecord(message, `unackedMessages[${index}]`);
+      const msgno = requireBigint(record.msgno, `unackedMessages[${index}].msgno`);
+      if (messageIds.has(msgno)) {
+        throw new Error(`Garbled save: duplicate unackedMessages msgno ${msgno}`);
+      }
+      messageIds.add(msgno);
+      if (!(record.msg instanceof Uint8Array)) {
+        throw new Error(`Garbled save: invalid unackedMessages[${index}].msg`);
+      }
+    });
+  }
+}
+
+function validateChannelStatus(value: unknown): void {
+  if (value == null) return;
+  const status = requireRecord(value, 'channelStatus');
+  parseDiscriminant<ChannelStatus>(status.state, CHANNEL_STATUSES, 'channelStatus.state');
+  if (
+    status.session_disposition !== undefined &&
+    status.session_disposition !== null &&
+    (typeof status.session_disposition !== 'string' ||
+      !SESSION_DISPOSITIONS.has(status.session_disposition))
+  ) {
+    throw new Error('Garbled save: invalid channelStatus.session_disposition');
+  }
+  if (status.advisory !== undefined && status.advisory !== null) {
+    requireString(status.advisory, 'channelStatus.advisory', true);
+  }
+  if (status.coin !== undefined && status.coin !== null) {
+    if (!(status.coin instanceof Uint8Array) || status.coin.length < 64) {
+      throw new Error('Garbled save: invalid channelStatus.coin');
+    }
+  }
+  for (const field of ['our_balance', 'their_balance', 'game_allocated'] as const) {
+    const amount = status[field];
+    if (amount === undefined || amount === null) continue;
+    const raw =
+      typeof amount === 'object' && !Array.isArray(amount) && amount !== null
+        ? requireRecord(amount, `channelStatus.${field}`).Amount
+        : amount;
+    if (typeof raw === 'bigint') requireBigint(raw, `channelStatus.${field}`);
+    else parseDecimalString(raw, `channelStatus.${field}`, 0n);
+  }
+  for (const field of ['have_potato', 'zero_payout'] as const) {
+    const flag = status[field];
+    if (flag !== undefined && flag !== null) requireBoolean(flag, `channelStatus.${field}`);
+  }
+  if (
+    status.unroll_initiator !== undefined &&
+    status.unroll_initiator !== null &&
+    status.unroll_initiator !== 'us' &&
+    status.unroll_initiator !== 'opponent'
+  ) {
+    throw new Error('Garbled save: invalid channelStatus.unroll_initiator');
+  }
+  if (
+    status.semantic_phase !== undefined &&
+    status.semantic_phase !== null &&
+    (typeof status.semantic_phase !== 'string' ||
+      !CHANNEL_SEMANTIC_PHASES.has(status.semantic_phase))
+  ) {
+    throw new Error('Garbled save: invalid channelStatus.semantic_phase');
+  }
+}
+
+export interface ParsedSessionSaveV11 {
+  model: SessionModel;
+  kind: 'preferences' | 'pre-handshake' | 'live-resumable' | 'terminal-frozen';
+}
+
+function requireSessionAmounts(save: SessionSave): void {
+  for (const field of ['myContribution', 'theirContribution', 'perGameAmount'] as const) {
+    if (save[field] === undefined) {
+      throw new Error(`Garbled save: missing ${field}`);
+    }
+    parseDecimalString(save[field], field, 0n);
+  }
+}
+
+function classifySessionSave(save: SessionSave): ParsedSessionSaveV11['kind'] {
+  const terminal = isTerminalChannelSnapshot(save.channelStatus);
+  if (terminal) {
+    if (save.serializedGameSession !== undefined || save.pairingToken !== undefined) {
+      throw new Error('Garbled save: terminal frozen record contains resumable protocol state');
+    }
+    return 'terminal-frozen';
+  }
+  if (save.serializedGameSession !== undefined) {
+    requireBigint(save.gameSessionSchemaVersion, 'gameSessionSchemaVersion');
+    requireBigint(save.messageNumber, 'messageNumber');
+    requireBigint(save.remoteNumber, 'remoteNumber');
+    requireBoolean(save.iStarted, 'iStarted');
+    requireString(save.pairingToken, 'pairingToken');
+    requireSessionAmounts(save);
+    if (!Array.isArray(save.unackedMessages)) {
+      throw new Error('Garbled save: missing unackedMessages');
+    }
+    if (!Array.isArray(save.activeGameIds)) {
+      throw new Error('Garbled save: missing activeGameIds');
+    }
+    if (typeof save.rewardPuzzleHash !== 'string') {
+      throw new Error('Garbled save: missing rewardPuzzleHash');
+    }
+    return 'live-resumable';
+  }
+  if (save.pairingToken !== undefined) {
+    requireString(save.pairingToken, 'pairingToken');
+    requireBoolean(save.iStarted, 'iStarted');
+    requireSessionAmounts(save);
+    return 'pre-handshake';
+  }
+  return 'preferences';
+}
+
+export function decodeSessionSaveEnvelope(
+  save: SessionSave,
+  perGameAmount = 0n,
+): ParsedSessionSaveV11 {
   if (save.version !== SESSION_SAVE_ENVELOPE_VERSION) {
     throw new Error(`Garbled save: unsupported version ${String(save.version)}`);
   }
@@ -312,9 +687,19 @@ export function validateSessionSaveEnvelope(save: SessionSave): void {
     throw new Error('Garbled save: invalid playerId');
   }
 
+  validateOptionalScalarFields(save);
+  validateChannelStatus(save.channelStatus);
+  const kind = classifySessionSave(save);
+
   const activeIds = requireUniqueIds(save.activeGameIds ?? [], 'activeGameIds');
-  const currentHandIds = requireUniqueIds(save.currentHandGameIds ?? [], 'currentHandGameIds');
+  const currentHandIds = requireUniqueIds(
+    save.currentHandGameIds ?? activeIds,
+    'currentHandGameIds',
+  );
   const currentSet = new Set(currentHandIds);
+  if (save.activeGameType !== undefined && !isRegisteredGameType(save.activeGameType)) {
+    throw new Error(`Garbled save: invalid activeGameType ${String(save.activeGameType)}`);
+  }
   for (const id of activeIds) {
     if (!currentSet.has(id)) {
       throw new Error(`Garbled save: active game ${id} is not in currentHandGameIds`);
@@ -363,27 +748,52 @@ export function validateSessionSaveEnvelope(save: SessionSave): void {
     }
   }
 
+  let handState = null;
+  let decodedHandState: ReturnType<typeof decodePersistedGameState> = null;
   if (save.handState != null) {
-    const decodedHandState = decodePersistedGameState(save.handState);
+    decodedHandState = decodePersistedGameState(save.handState);
     if (!decodedHandState) throw new Error('Garbled save: invalid handState');
+    handState = decodedHandState.persisted;
     if (
       typeof save.activeGameType !== 'string' ||
-      save.activeGameType !== decodedHandState.gameType
+      save.activeGameType !== decodedHandState.persisted.gameType
     ) {
       throw new Error('Garbled save: activeGameType does not match handState.gameType');
-    }
-    const payloadIds = persistedGameStateIds(decodedHandState);
-    if (payloadIds === null) throw new Error('Garbled save: invalid handState game IDs');
-    for (const id of payloadIds) {
-      if (!currentSet.has(id)) {
-        throw new Error(`Garbled save: handState references unrelated game ${id}`);
-      }
     }
   } else if (
     (activeIds.length > 0 || currentHandIds.length > 0) &&
     (typeof save.activeGameType !== 'string' || save.activeGameType.length === 0)
   ) {
     throw new Error('Garbled save: missing activeGameType');
+  }
+
+  const hasCurrentHand = activeIds.length > 0 || currentHandIds.length > 0;
+  if (kind === 'live-resumable' && hasCurrentHand && decodedHandState === null) {
+    throw new Error('Garbled save: live current hand is missing handState');
+  }
+  if (decodedHandState !== null && (kind === 'live-resumable' || kind === 'terminal-frozen')) {
+    if (currentHandIds.length === 0) {
+      throw new Error('Garbled save: handState requires currentHandGameIds');
+    }
+    if (decodedHandState.persisted.gameType === 'krunk') {
+      const payloadIds = decodedHandState.gameIds;
+      if (
+        payloadIds.length !== currentHandIds.length ||
+        payloadIds.some((id) => !currentSet.has(id))
+      ) {
+        throw new Error('Garbled save: Krunk handState IDs must exactly match currentHandGameIds');
+      }
+    } else if (currentHandIds.length !== 1) {
+      throw new Error(
+        `Garbled save: ${decodedHandState.persisted.gameType} requires one currentHandGameId`,
+      );
+    }
+  } else if (decodedHandState !== null) {
+    for (const id of decodedHandState.gameIds) {
+      if (!currentSet.has(id)) {
+        throw new Error(`Garbled save: handState references unrelated game ${id}`);
+      }
+    }
   }
 
   if (isTerminalChannelSnapshot(save.channelStatus)) {
@@ -407,65 +817,96 @@ export function validateSessionSaveEnvelope(save: SessionSave): void {
       }
       coinIds.add(coin.id);
     }
+  } else if (save.coinsOfInterest !== undefined) {
+    throw new Error('Garbled save: coinsOfInterest requires a terminal channel');
   }
-}
 
-export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): SessionModel {
-  validateSessionSaveEnvelope(save);
+  if (
+    save.dismissedChannelStatus !== undefined &&
+    (typeof save.dismissedChannelStatus !== 'string' ||
+      !CHANNEL_STATUSES.has(save.dismissedChannelStatus))
+  ) {
+    throw new Error('Garbled save: invalid dismissedChannelStatus');
+  }
+
   const fallbackTerms: HandTermsModel = {
     gameType: 'calpoker',
     myContribution: perGameAmount,
     theirContribution: perGameAmount,
     gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
   };
-  const lastTerms = parseTermsSnapshot(save.betweenHandLastTerms, fallbackTerms);
-  const activeIds = save.activeGameIds ?? [];
-  if (!Array.isArray(activeIds)) {
-    throw new Error('Garbled save: invalid activeGameIds');
+  const lastTerms = parseTermsSnapshot(
+    save.betweenHandLastTerms,
+    fallbackTerms,
+    'betweenHandLastTerms',
+  );
+  const hasPersistedHand = activeIds.length > 0 || currentHandIds.length > 0 || handState !== null;
+  if (hasPersistedHand && save.betweenHandLastTerms === undefined) {
+    throw new Error('Garbled save: persisted hand is missing betweenHandLastTerms');
   }
-  if (!activeIds.every((id) => typeof id === 'string')) {
-    throw new Error('Garbled save: activeGameIds must contain strings');
+  if (
+    hasPersistedHand &&
+    isRegisteredGameType(save.activeGameType) &&
+    lastTerms.gameType !== save.activeGameType
+  ) {
+    throw new Error('Garbled save: activeGameType does not match betweenHandLastTerms.game_type');
   }
   const restoredActiveIds = [...activeIds];
-  const savedCurrentHandIds = save.currentHandGameIds ?? restoredActiveIds;
-  if (!Array.isArray(savedCurrentHandIds)) {
-    throw new Error('Garbled save: invalid currentHandGameIds');
-  }
-  const currentHandIds = [...savedCurrentHandIds];
-  if (!currentHandIds.every((id) => typeof id === 'string')) {
-    throw new Error('Garbled save: currentHandGameIds must contain strings');
-  }
-  const instances: Record<string, GameInstanceModel> = Object.fromEntries(
-    Object.entries(save.gameInstances ?? {}).map(([id, instance]) => [
-      id,
-      parseSavedGameInstance(id, instance),
-    ]),
-  );
-  for (const id of new Set([
-    ...restoredActiveIds,
-    ...currentHandIds,
-    ...(save.lastDisplayedGameId === undefined ? [] : [save.lastDisplayedGameId]),
-  ])) {
-    if (!instances[id]) {
-      throw new Error(`Garbled save: game ${id} is missing its keyed instance`);
-    }
-  }
   const lastDisplayedId =
     save.lastDisplayedGameId ??
     restoredActiveIds[0] ??
     currentHandIds[0] ??
     Object.keys(instances)[0] ??
     null;
-  const handState =
-    save.handState == null
-      ? null
-      : (() => {
-          const decoded = decodePersistedGameState(save.handState);
-          if (!decoded) throw new Error('Garbled save: invalid handState');
-          return decoded;
-        })();
-
-  return normalizeSessionPresentation(
+  const mode =
+    save.betweenHandMode === undefined
+      ? 'decision'
+      : parseDiscriminant<BetweenHandModeModel>(
+          save.betweenHandMode,
+          BETWEEN_HAND_MODES,
+          'betweenHandMode',
+        );
+  const outgoingProposalGroups = parseProposalGroups(
+    save.outgoingProposalGroupIds,
+    'outgoingProposalGroupIds',
+  );
+  const acceptedProposalGroups = parseProposalGroups(
+    save.acceptedProposalGroupIds,
+    'acceptedProposalGroupIds',
+  );
+  const outgoingTermsRecord =
+    save.outgoingProposalTerms === undefined
+      ? {}
+      : requireRecord(save.outgoingProposalTerms, 'outgoingProposalTerms');
+  const outgoingProposalTerms = Object.fromEntries(
+    Object.entries(outgoingTermsRecord).map(([id, saved]) => {
+      requireString(id, 'outgoingProposalTerms key');
+      return [id, parseTermsSnapshot(saved, lastTerms, `outgoingProposalTerms.${id}`)] as const;
+    }),
+  );
+  if (
+    Object.keys(outgoingProposalTerms).length > 0 &&
+    save.outgoingProposalGroupIds === undefined
+  ) {
+    throw new Error('Garbled save: outgoing proposal terms missing group IDs');
+  }
+  const groupedOutgoingIds = outgoingProposalGroups.flat();
+  for (const id of groupedOutgoingIds) {
+    if (!outgoingProposalTerms[id]) {
+      throw new Error(`Garbled save: outgoing proposal ${id} is missing terms`);
+    }
+  }
+  for (const id of Object.keys(outgoingProposalTerms)) {
+    if (!groupedOutgoingIds.includes(id)) {
+      throw new Error(`Garbled save: outgoing proposal terms contain unrelated id ${id}`);
+    }
+  }
+  const hasOutgoing = groupedOutgoingIds.length > 0;
+  const compose = parseComposeDraftState(
+    save.betweenHandCompose,
+    createComposeDraftState(perGameAmount, lastTerms),
+  );
+  const model = normalizeSessionPresentation(
     createSessionModel({
       restore: {
         restoring: !!save.serializedGameSession,
@@ -499,73 +940,36 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         handState,
         queue: parseQueuedNotifications(save.gameNotifQueue),
       },
-      betweenHand: (() => {
-        const mode = (save.betweenHandMode as BetweenHandModeModel | undefined) ?? 'decision';
-        const outgoingProposalTerms = save.outgoingProposalTerms
-          ? Object.fromEntries(
-              Object.entries(save.outgoingProposalTerms).map(([id, saved]) => [
-                id,
-                parseTermsSnapshot(saved, lastTerms),
-              ]),
-            )
-          : {};
-        if (
-          Object.keys(outgoingProposalTerms).length > 0 &&
-          save.outgoingProposalGroupIds === undefined
-        ) {
-          throw new Error('Garbled save: outgoing proposal terms missing group IDs');
-        }
-        const outgoingProposalGroupIds = (save.outgoingProposalGroupIds ?? []).map(
-          (groupIds, index) => {
-            if (!Array.isArray(groupIds) || groupIds.length === 0) {
-              throw new Error(`Garbled save: outgoing proposal group ${index} missing IDs`);
-            }
-            return [...groupIds];
-          },
-        );
-        const groupedOutgoingIds = outgoingProposalGroupIds.flat();
-        const outgoingProposalIds = [
-          ...groupedOutgoingIds,
-          ...Object.keys(outgoingProposalTerms).filter((id) => !groupedOutgoingIds.includes(id)),
-        ];
-        const hasOutgoing = outgoingProposalIds.length > 0;
-        const acceptedProposalGroupIds = (save.acceptedProposalGroupIds ?? []).map(
-          (groupIds, index) => {
-            if (!Array.isArray(groupIds) || groupIds.length === 0) {
-              throw new Error(`Garbled save: accepted proposal group ${index} missing IDs`);
-            }
-            return [...groupIds];
-          },
-        );
-        return {
-          mode,
-          cachedPeerProposal: parseProposalSnapshot(save.betweenHandCachedPeerProposal, lastTerms),
-          reviewPeerProposal: parseProposalSnapshot(save.betweenHandReviewPeerProposal, lastTerms),
-          rejectedOnceTerms: parseOptionalTermsSnapshot(
-            save.betweenHandRejectedOnceTerms,
-            lastTerms,
-          ),
-          pendingRetryTerms: parseOptionalTermsSnapshot(
-            save.betweenHandPendingRetryTerms,
-            lastTerms,
-          ),
+      betweenHand: {
+        mode,
+        cachedPeerProposal: parseProposalSnapshot(
+          save.betweenHandCachedPeerProposal,
           lastTerms,
-          composePerHandAmount: parseBigintString(save.betweenHandComposePerHand, perGameAmount),
-          composeGameTimeout: parsePositiveBigintString(
-            save.betweenHandComposeGameTimeout,
-            lastTerms.gameTimeout,
-          ),
-          composeGameType: isRegisteredGameType(save.betweenHandComposeGameType)
-            ? save.betweenHandComposeGameType
-            : lastTerms.gameType,
-          composeProposalSent: hasOutgoing && mode === 'compose-proposal',
-          newHandRequested: hasOutgoing && mode === 'decision',
-          outgoingProposalIds,
-          outgoingProposalGroupIds,
-          acceptedProposalGroupIds,
-          outgoingProposalTerms,
-        };
-      })(),
+          'betweenHandCachedPeerProposal',
+        ),
+        reviewPeerProposal: parseProposalSnapshot(
+          save.betweenHandReviewPeerProposal,
+          lastTerms,
+          'betweenHandReviewPeerProposal',
+        ),
+        rejectedOnceTerms: parseOptionalTermsSnapshot(
+          save.betweenHandRejectedOnceTerms,
+          lastTerms,
+          'betweenHandRejectedOnceTerms',
+        ),
+        pendingRetryTerms: parseOptionalTermsSnapshot(
+          save.betweenHandPendingRetryTerms,
+          lastTerms,
+          'betweenHandPendingRetryTerms',
+        ),
+        lastTerms,
+        compose,
+        newHandRequested: hasOutgoing && mode === 'decision',
+        outgoingProposalIds: groupedOutgoingIds,
+        outgoingProposalGroupIds: outgoingProposalGroups,
+        acceptedProposalGroupIds: acceptedProposalGroups,
+        outgoingProposalTerms,
+      },
       history: {
         humanHistory: recentEntries(save.humanHistory ?? [], HUMAN_HISTORY_LIMIT),
         wasmNotificationHistory: recentEntries(
@@ -574,123 +978,17 @@ export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): Ses
         ),
         diagnosticLog: recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT),
       },
-      myRunningBalance: parseBigintString(save.myRunningBalance, 0n),
+      myRunningBalance: parseOptionalDecimalString(save.myRunningBalance, 'myRunningBalance', 0n),
       lastOutcomeWin: save.lastOutcomeWin,
     }),
   );
+  return { model, kind };
 }
 
-export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSave> {
-  const termsSnapshot = (terms: HandTermsModel) => ({
-    my_contribution: terms.myContribution.toString(),
-    their_contribution: terms.theirContribution.toString(),
-    game_timeout: terms.gameTimeout.toString(),
-    game_type: terms.gameType,
-    ...encodeGameTermsExtras(terms),
-  });
+export function validateSessionSaveEnvelope(save: SessionSave): void {
+  decodeSessionSaveEnvelope(save);
+}
 
-  const persistedGameIds = Array.from(
-    new Set([
-      ...model.game.activeIds,
-      ...model.game.currentHandIds,
-      ...(model.game.lastDisplayedId === null ? [] : [model.game.lastDisplayedId]),
-    ]),
-  );
-  for (const id of persistedGameIds) {
-    if (!model.game.instances[id]) {
-      throw new Error(`Session invariant broken: game ${id} is missing its keyed instance`);
-    }
-  }
-
-  return {
-    humanHistory:
-      model.history.humanHistory.length > 0
-        ? recentEntries(model.history.humanHistory, HUMAN_HISTORY_LIMIT)
-        : undefined,
-    wasmNotificationHistory:
-      model.history.wasmNotificationHistory.length > 0
-        ? recentEntries(model.history.wasmNotificationHistory, WASM_NOTIFICATION_HISTORY_LIMIT)
-        : undefined,
-    diagnosticLog:
-      model.history.diagnosticLog.length > 0
-        ? recentEntries(model.history.diagnosticLog, DIAGNOSTIC_LOG_LIMIT)
-        : undefined,
-    activeGameIds: model.game.activeIds,
-    activeGameType: model.game.activeGameType,
-    handState: model.game.handState,
-    currentHandGameIds:
-      model.game.currentHandIds.length > 0 ? model.game.currentHandIds : undefined,
-    lastDisplayedGameId: model.game.lastDisplayedId ?? undefined,
-    gameInstances:
-      persistedGameIds.length > 0
-        ? Object.fromEntries(
-            persistedGameIds.map((id) => {
-              const instance = model.game.instances[id];
-              return [
-                id,
-                {
-                  id: instance.id,
-                  amount: instance.amount,
-                  coinHex: instance.coinHex,
-                  presentation: instance.presentation,
-                  terminal: instance.terminal,
-                },
-              ];
-            }),
-          )
-        : undefined,
-    myRunningBalance: model.myRunningBalance !== 0n ? model.myRunningBalance.toString() : undefined,
-    channelNotifQueue:
-      model.channel.queue.length > 0
-        ? model.channel.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
-        : undefined,
-    gameNotifQueue:
-      model.game.queue.length > 0
-        ? model.game.queue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
-        : undefined,
-    dismissedChannelStatus: model.channel.dismissedChannelStatus ?? undefined,
-    cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
-    betweenHandMode: model.betweenHand.mode,
-    betweenHandComposePerHand: model.betweenHand.composePerHandAmount.toString(),
-    betweenHandComposeGameTimeout: model.betweenHand.composeGameTimeout.toString(),
-    betweenHandComposeGameType: model.betweenHand.composeGameType,
-    betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms),
-    betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
-      ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
-      : undefined,
-    betweenHandPendingRetryTerms: model.betweenHand.pendingRetryTerms
-      ? termsSnapshot(model.betweenHand.pendingRetryTerms)
-      : undefined,
-    betweenHandCachedPeerProposal: model.betweenHand.cachedPeerProposal
-      ? {
-          id: model.betweenHand.cachedPeerProposal.id,
-          groupIds: model.betweenHand.cachedPeerProposal.groupIds,
-          ...termsSnapshot(model.betweenHand.cachedPeerProposal.terms),
-        }
-      : undefined,
-    betweenHandReviewPeerProposal: model.betweenHand.reviewPeerProposal
-      ? {
-          id: model.betweenHand.reviewPeerProposal.id,
-          groupIds: model.betweenHand.reviewPeerProposal.groupIds,
-          ...termsSnapshot(model.betweenHand.reviewPeerProposal.terms),
-        }
-      : undefined,
-    outgoingProposalGroupIds:
-      model.betweenHand.outgoingProposalGroupIds.length > 0
-        ? model.betweenHand.outgoingProposalGroupIds.map((groupIds) => [...groupIds])
-        : undefined,
-    acceptedProposalGroupIds:
-      model.betweenHand.acceptedProposalGroupIds.length > 0
-        ? model.betweenHand.acceptedProposalGroupIds.map((groupIds) => [...groupIds])
-        : undefined,
-    outgoingProposalTerms:
-      Object.keys(model.betweenHand.outgoingProposalTerms).length > 0
-        ? Object.fromEntries(
-            Object.entries(model.betweenHand.outgoingProposalTerms).map(([id, terms]) => [
-              id,
-              termsSnapshot(terms),
-            ]),
-          )
-        : undefined,
-  };
+export function sessionModelFromSave(save: SessionSave, perGameAmount = 0n): SessionModel {
+  return decodeSessionSaveEnvelope(save, perGameAmount).model;
 }

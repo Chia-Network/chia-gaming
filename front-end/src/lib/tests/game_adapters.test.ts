@@ -1,7 +1,7 @@
 import { Program } from 'clvm-lib';
-import { calpokerAdapter } from '../../features/calPoker/adapter';
-import { krunkAdapter, isValidKrunkStake } from '../../features/krunk/adapter';
-import { spacepokerAdapter } from '../../features/spacePoker/adapter';
+import { calpokerRegistration } from '../../features/calPoker/adapter';
+import { krunkRegistration, isValidKrunkStake } from '../../features/krunk/adapter';
+import { spacepokerRegistration } from '../../features/spacePoker/adapter';
 import { resolveSpacepokerUnitSize } from '../../features/spacePoker/unitSize';
 import {
   decodeGameTerms,
@@ -10,6 +10,8 @@ import {
   encodeGameTermsExtras,
   gameInitialTurn,
   gameTermsEqual,
+  GAME_REGISTRATIONS,
+  REGISTERED_GAMES,
   validateGameTerms,
 } from '../gameRegistry';
 
@@ -19,7 +21,16 @@ const base = {
   gameTimeout: 15n,
 };
 
-describe('pure game adapters', () => {
+describe('pure game registrations', () => {
+  it('derives display metadata from the keyed registration source', () => {
+    expect(REGISTERED_GAMES).toEqual([
+      { gameType: 'calpoker', displayName: 'California Poker' },
+      { gameType: 'spacepoker', displayName: 'Space Poker' },
+      { gameType: 'krunk', displayName: 'Krunk' },
+    ]);
+    expect(GAME_REGISTRATIONS.calpoker).toBe(calpokerRegistration);
+  });
+
   it('encodes each factory parameter shape and lifecycle policy', () => {
     expect(
       encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).toList(),
@@ -56,10 +67,10 @@ describe('pure game adapters', () => {
     expect(isValidKrunkStake(100n)).toBe(true);
     expect(isValidKrunkStake(101n)).toBe(false);
     expect(
-      krunkAdapter.validateTerms({ gameType: 'krunk', ...base, theirContribution: 200n }),
+      krunkRegistration.validateTerms({ gameType: 'krunk', ...base, theirContribution: 200n }),
     ).toBe(false);
-    expect(calpokerAdapter.stateCodec.gameType).toBe('calpoker');
-    expect(spacepokerAdapter.stateCodec.gameType).toBe('spacepoker');
+    expect(calpokerRegistration.stateCodec.gameType).toBe('calpoker');
+    expect(spacepokerRegistration.stateCodec.gameType).toBe('spacepoker');
   });
 
   it('round-trips persistence extras without manufacturing a unit', () => {

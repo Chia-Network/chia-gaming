@@ -5,10 +5,10 @@ import { SessionController } from '../../hooks/SessionController';
 import { GameplayEvent } from '../../hooks/useGameSession';
 import { krunkSettlementStatus } from '../../lib/settlement';
 import type { GameTerminalModel } from '../../lib/session/types';
+import { reduceKrunkFeatureState } from './adapter';
 import {
   krunkGameStateFromPersisted,
   KrunkHandler,
-  persistedKrunkGameState,
   type KrunkGameState,
   type KrunkGuess,
   type KrunkRole,
@@ -149,89 +149,6 @@ export function krunkWinMessage(moverShare: string): string {
 
 const MAX_GUESSES = 5;
 
-function readableToProgram(raw: number[] | Uint8Array): Program | null {
-  try {
-    return Program.deserialize(Uint8Array.from(raw));
-  } catch {
-    return null;
-  }
-}
-
-function programIsNil(prog: Program | null): boolean {
-  if (!prog) return true;
-  try {
-    const atom = prog.atom;
-    return atom.length === 0;
-  } catch {
-    return false;
-  }
-}
-
-function atomToWord(prog: Program): string | null {
-  const atom = prog.atom;
-  if (!atom || atom.length === 0) return null;
-  return new TextDecoder().decode(atom);
-}
-
-function programToClue(prog: Program): KrunkGuess['clue'] | null {
-  let items: Program[];
-  try {
-    items = prog.toList();
-  } catch {
-    return null;
-  }
-  if (items.length !== 5) return null;
-  const vals = items.map((p) => {
-    try {
-      return p.toBigInt();
-    } catch {
-      return -1n;
-    }
-  });
-  if (vals.some((v) => v < 0n || v > 2n)) return null;
-  return vals as KrunkGuess['clue'];
-}
-
-// Readables from Krunk handlers:
-//   nil                      — no info (commit)
-//   [c0..c4]                 — expanded clue list (non-terminal clue)
-//   (word, clue)             — word + expanded clue list
-type KrunkReadable =
-  | { kind: 'nil' }
-  | { kind: 'clue'; clue: KrunkGuess['clue'] }
-  | { kind: 'guess'; word: string; clue: KrunkGuess['clue'] }
-  | { kind: 'unknown' };
-
-function parseKrunkReadable(prog: Program | null): KrunkReadable {
-  try {
-    if (programIsNil(prog)) return { kind: 'nil' };
-    if (!prog) return { kind: 'unknown' };
-
-    // First try as a pure 5-int clue list.
-    const asClue = programToClue(prog);
-    if (asClue) return { kind: 'clue', clue: asClue };
-
-    // Otherwise expect (word, clue_list).
-    let items: Program[];
-    try {
-      items = prog.toList();
-    } catch {
-      return { kind: 'unknown' };
-    }
-    if (items.length === 2) {
-      const word = atomToWord(items[0]);
-      const clue = programToClue(items[1]);
-      if (word && clue) {
-        return { kind: 'guess', word: word.toUpperCase(), clue };
-      }
-    }
-    return { kind: 'unknown' };
-  } catch (e) {
-    console.error('parseKrunkReadable failed:', e);
-    return { kind: 'unknown' };
-  }
-}
-
 function wordToProgram(word: string): Program {
   // Krunk handlers receive `local_move` as a single CLVM atom: the
   // word bytes. Program.fromBytes wraps a buffer as a single atom.
@@ -279,18 +196,23 @@ export function useKrunkHand(
     }
   }, [_gameId, active]);
 
-  const transition = useCallback(
+  const projectState = useCallback(
     (next: KrunkGameState) => {
       gsRef.current = next;
-      if (gameIdRef.current) {
-        gameObjectRef.current.setHandState(
-          persistedKrunkGameState(gameObjectRef.current.handState, gameIdRef.current, next),
-        );
-      }
       setGs(next);
       onTurnChanged(next.myTurn);
     },
     [onTurnChanged],
+  );
+
+  const transition = useCallback(
+    (next: KrunkGameState) => {
+      if (gameIdRef.current) {
+        gameObjectRef.current.transitionFeatureState('krunk', gameIdRef.current, next);
+      }
+      projectState(next);
+    },
+    [projectState],
   );
 
   const finishGame = useCallback(
@@ -329,80 +251,13 @@ export function useKrunkHand(
         if ('OpponentMoved' in evt) {
           const evtGameId = evt.OpponentMoved.gameId;
           if (evtGameId && evtGameId !== gameIdRef.current) return;
-          const prog = readableToProgram(evt.OpponentMoved.readable);
-          const parsed = parseKrunkReadable(prog);
-          const cur = gsRef.current;
-
-          if (cur.role === 'alice') {
-            // Alice was waiting for bob's guess. The framework runs
-            // alice's their-turn handler which produces readable
-            // `(word, clue)` for the just-played guess.
-            if (parsed.kind === 'guess') {
-              const newGuess: KrunkGuess = { word: parsed.word, clue: parsed.clue };
-              transition({
-                ...cur,
-                handler: KrunkHandler.AliceClue,
-                myTurn: true,
-                guesses: [...cur.guesses, newGuess],
-                error: null,
-              });
-            }
-            return;
-          }
-
-          // Bob's side.
-          if (parsed.kind === 'nil') {
-            // Alice committed; first guess incoming.
-            transition({
-              ...cur,
-              handler: KrunkHandler.BobGuess,
-              myTurn: true,
-              error: null,
-            });
-            return;
-          }
-          if (parsed.kind === 'clue') {
-            // Alice sent a clue for bob's most recent guess. Attach
-            // it to the last unresolved guess.
-            const next = [...cur.guesses];
-            const idx = next.length - 1;
-            if (idx >= 0 && next[idx].clue.every((v) => v === -1n)) {
-              next[idx] = { ...next[idx], clue: parsed.clue };
-            }
-            const correct = parsed.clue.every((v) => v === 2n);
-            if (correct || next.length >= MAX_GUESSES) {
-              // Game should be ending soon when alice plays her clue
-              // handler -- but bob doesn't auto-terminate on clue
-              // alone; we wait for the reveal readable to confirm.
-              transition({
-                ...cur,
-                handler: KrunkHandler.BobWaiting,
-                myTurn: false,
-                guesses: next,
-                error: null,
-              });
-              return;
-            }
-            transition({
-              ...cur,
-              handler: KrunkHandler.BobGuess,
-              myTurn: true,
-              guesses: next,
-              error: null,
-            });
-            return;
-          }
-          if (parsed.kind === 'guess') {
-            // Reveal case: (word, clue_for_last_guess).
-            const next = [...cur.guesses];
-            const idx = next.length - 1;
-            if (idx >= 0 && next[idx].clue.every((v) => v === -1n)) {
-              next[idx] = { ...next[idx], clue: parsed.clue };
-            }
-            gsRef.current = { ...cur, guesses: next };
-            finishGame(parsed.word, parsed.clue, evt.OpponentMoved.moverShare);
-            return;
-          }
+          const next = reduceKrunkFeatureState(gsRef.current, {
+            type: 'opponent-moved',
+            readable: Uint8Array.from(evt.OpponentMoved.readable),
+            moverShare: evt.OpponentMoved.moverShare,
+          });
+          if (next.handler === KrunkHandler.Terminal) handFinishedRef.current = true;
+          projectState(next);
         } else if ('MoveRejected' in evt) {
           if (evt.MoveRejected.gameId !== gameIdRef.current) return;
           const next = applyKrunkMoveRejected(gsRef.current, evt.MoveRejected);
@@ -413,12 +268,12 @@ export function useKrunkHand(
           if (evt.Settled.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
             handFinishedRef.current = true;
-            transition({
-              ...gsRef.current,
-              handler: KrunkHandler.Terminal,
-              myTurn: false,
-              moverShare: evt.Settled.ourShare,
-            });
+            projectState(
+              reduceKrunkFeatureState(gsRef.current, {
+                type: 'settled',
+                moverShare: evt.Settled.ourShare,
+              }),
+            );
           }
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
@@ -429,7 +284,7 @@ export function useKrunkHand(
       },
     });
     return () => sub.unsubscribe();
-  }, [gameplayEvent$, transition, finishGame]);
+  }, [gameplayEvent$, transition, finishGame, projectState]);
 
   // ── Auto-play ──
   // Alice's `krunk_alice_handler_clue` decides internally whether to

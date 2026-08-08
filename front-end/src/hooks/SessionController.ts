@@ -20,6 +20,7 @@ import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
+import type { RegisteredGameType } from '../lib/session/types';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -190,6 +191,9 @@ export class SessionController implements PollingGameSession {
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
+  onFeatureStateTransition:
+    | ((gameType: RegisteredGameType, gameId: string, state: unknown) => void)
+    | null = null;
   getFee: () => bigint = () => 0n;
 
   get handState(): PersistedGameState | null {
@@ -1433,6 +1437,13 @@ export class SessionController implements PollingGameSession {
   setHandState(state: PersistedGameState | null) {
     this.handState = state;
     this.scheduleSave();
+  }
+
+  transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): void {
+    if (!this.onFeatureStateTransition) {
+      throw new Error('Feature state transition callback is unavailable');
+    }
+    this.onFeatureStateTransition(gameType, gameId, state);
   }
 
   /**

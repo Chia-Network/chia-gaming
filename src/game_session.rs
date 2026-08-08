@@ -2000,4 +2000,41 @@ mod sequencing_tests {
         let decoded: GameSession = bencodex::from_slice(&encoded).expect("deserialize session");
         assert!(decoded.state.pending_resync.is_empty());
     }
+
+    #[test]
+    fn abandonment_discards_pending_resync_hints() {
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha8Rng;
+
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::seed_from_u64(8);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random()).expect("test identity creation");
+        let reward_puzzle_hash = identity.puzzle_hash.clone();
+        let mut session = GameSession::new(
+            &mut rng,
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                have_potato: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash,
+            },
+        );
+        session.state.pending_resync.push_back(ResyncInfo {
+            game_id: GameID(1),
+            state_number: 3,
+            is_my_turn: true,
+        });
+
+        session.abandon().expect("abandon session");
+        let drain = session
+            .flush_and_collect(&mut allocator)
+            .expect("drain abandoned session");
+
+        assert!(drain.resync.is_empty());
+    }
 }

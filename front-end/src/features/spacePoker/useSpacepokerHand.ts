@@ -5,8 +5,9 @@ import { SessionController } from '../../hooks/SessionController';
 import { GameplayEvent } from '../../hooks/useGameSession';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
-import { commitGameStateTransition, type StateUpdate } from '../../lib/session/gameStateTransition';
+import type { StateUpdate } from '../../lib/gameAdapter';
 import { type SettlementOutcome } from '../../lib/settlement';
+import { reduceSpacepokerFeatureState, reduceSpacepokerSettlementState } from './adapter';
 import {
   spacepokerStateCodec,
   type SpacepokerDisplayMode,
@@ -170,21 +171,6 @@ export function acceptedSettlementFromOpponent(handler: SpHandler): {
     terminalState: 'folded-by-opponent',
     nextHandler: SpHandler.Folded,
   };
-}
-
-function clvmListToBigints(prog: Program): bigint[] {
-  try {
-    return prog.toList().map((p) => p.toBigInt());
-  } catch {
-    return [];
-  }
-}
-
-function clvmTag(items: Program[]): string | null {
-  if (items.length === 0) return null;
-  const atom = items[0].atom;
-  if (!atom) return null;
-  return new TextDecoder().decode(atom);
 }
 
 function defaultDisplayModeForUnit(unitSizeMojos: bigint): SpacepokerDisplayMode {
@@ -355,33 +341,32 @@ export function useSpacepokerHand(
   handHistoryRef.current = handHistory;
   terminalStateRef.current = terminalState;
 
+  const projectState = useCallback((next: SpacepokerHandState) => {
+    stateRef.current = next;
+    setGsRaw(next.gameState);
+    setPlayerHoleCardsRaw(next.playerHoleCards);
+    setPlayerBoostRaw(next.playerBoost);
+    setOpponentHoleCardsRaw(next.opponentHoleCards);
+    setOpponentBoostRaw(next.opponentBoost);
+    setCommunityCardsRaw(next.communityCards);
+    setHalfPotRaw(next.halfPot);
+    setLastRaiseRaw(next.lastRaise);
+    setIRaisedLastRaw(next.iRaisedLast);
+    setHandHistoryRaw(next.handHistory);
+    setOutcomeRaw(next.outcome);
+    setTerminalStateRaw(next.terminalState ?? 'none');
+    setTerminalRecoveryRaw(next.terminalRecovery ?? null);
+    setCoinTossIOpenRaw(next.coinTossIOpen);
+    setDisplayModeRaw(next.displayMode);
+  }, []);
+
   const commitState = useCallback(
     (update: (current: SpacepokerHandState) => SpacepokerHandState) => {
-      stateRef.current = commitGameStateTransition(
-        gameObjectRef.current,
-        spacepokerStateCodec,
-        stateRef.current,
-        update,
-        (next) => {
-          setGsRaw(next.gameState);
-          setPlayerHoleCardsRaw(next.playerHoleCards);
-          setPlayerBoostRaw(next.playerBoost);
-          setOpponentHoleCardsRaw(next.opponentHoleCards);
-          setOpponentBoostRaw(next.opponentBoost);
-          setCommunityCardsRaw(next.communityCards);
-          setHalfPotRaw(next.halfPot);
-          setLastRaiseRaw(next.lastRaise);
-          setIRaisedLastRaw(next.iRaisedLast);
-          setHandHistoryRaw(next.handHistory);
-          setOutcomeRaw(next.outcome);
-          setTerminalStateRaw(next.terminalState ?? 'none');
-          setTerminalRecoveryRaw(next.terminalRecovery ?? null);
-          setCoinTossIOpenRaw(next.coinTossIOpen);
-          setDisplayModeRaw(next.displayMode);
-        },
-      );
+      const next = update(stateRef.current);
+      gameObjectRef.current.transitionFeatureState('spacepoker', gameIdRef.current, next);
+      projectState(next);
     },
-    [],
+    [projectState],
   );
   const setters = useMemo(() => {
     const propertySetter =
@@ -396,11 +381,6 @@ export function useSpacepokerHand(
         }));
     return {
       setGs: propertySetter('gameState'),
-      setPlayerHoleCards: propertySetter('playerHoleCards'),
-      setPlayerBoost: propertySetter('playerBoost'),
-      setOpponentHoleCards: propertySetter('opponentHoleCards'),
-      setOpponentBoost: propertySetter('opponentBoost'),
-      setCommunityCards: propertySetter('communityCards'),
       setHalfPot: propertySetter('halfPot'),
       setLastRaise: propertySetter('lastRaise'),
       setIRaisedLast: propertySetter('iRaisedLast'),
@@ -408,17 +388,11 @@ export function useSpacepokerHand(
       setOutcome: propertySetter('outcome'),
       setTerminalState: propertySetter('terminalState'),
       setTerminalRecovery: propertySetter('terminalRecovery'),
-      setCoinTossIOpen: propertySetter('coinTossIOpen'),
       setDisplayMode: propertySetter('displayMode'),
     };
   }, [commitState]);
   const {
     setGs,
-    setPlayerHoleCards,
-    setPlayerBoost,
-    setOpponentHoleCards,
-    setOpponentBoost,
-    setCommunityCards,
     setHalfPot,
     setLastRaise,
     setIRaisedLast,
@@ -426,25 +400,8 @@ export function useSpacepokerHand(
     setOutcome,
     setTerminalState,
     setTerminalRecovery,
-    setCoinTossIOpen,
     setDisplayMode,
   } = setters;
-
-  // Place community cards into the fixed 5-slot array at the right indices.
-  // pos=3 → flop (slots 0-2, 3 cards), pos=2 → turn (slot 3), pos=1 → river (slot 4).
-  const placeCards = useCallback(
-    (pos: bigint, cards: bigint[]) => {
-      const startIdx = pos === 3n ? 0 : pos === 2n ? 3 : 4;
-      setCommunityCards((prev) => {
-        const next = [...prev];
-        for (let i = 0; i < cards.length; i++) {
-          next[startIdx + i] = cards[i];
-        }
-        return next;
-      });
-    },
-    [setCommunityCards],
-  );
 
   const transition = useCallback(
     (next: SpGameState) => {
@@ -461,30 +418,6 @@ export function useSpacepokerHand(
       setOutcome(next);
     },
     [setOutcome],
-  );
-
-  const unitsFromMojos = useCallback(
-    (mojos: bigint): bigint => {
-      if (betUnit === 0n) return 0n;
-      return mojos / betUnit;
-    },
-    [betUnit],
-  );
-
-  const terminalStateFor = useCallback(
-    (player: 'you' | 'opponent', action: 'fold' | 'concede'): SpTerminalState => {
-      if (action === 'fold') return player === 'you' ? 'folded-by-you' : 'folded-by-opponent';
-      return player === 'you' ? 'conceded-by-you' : 'conceded-by-opponent';
-    },
-    [],
-  );
-
-  const terminalGameStateFor = useCallback(
-    (action: 'fold' | 'concede', current: SpGameState): SpGameState =>
-      action === 'fold'
-        ? { handler: SpHandler.Folded, myTurn: false, N: current.N }
-        : { handler: SpHandler.Showdown, myTurn: false, N: 0n },
-    [],
   );
 
   const rollbackPendingTerminalAction = useCallback(
@@ -529,67 +462,29 @@ export function useSpacepokerHand(
 
   const applySettlement = useCallback(
     (outcome: SettlementOutcome) => {
-      const cur = gsRef.current;
       const pending = pendingTerminalActionRef.current;
-      if (pending) {
-        pendingTerminalActionRef.current = null;
-        if (retainsRevealedTerminalPresentation(pending, terminalStateRef.current, outcome)) {
-          handFinishedRef.current = true;
-          setTerminalRecovery(null);
-          return;
-        }
-        if (outcome === 'accept_settlement' || outcome === 'we_accepted') {
-          handFinishedRef.current = true;
-          setTerminalRecovery(null);
-          return;
-        }
-        terminalActionByUsRef.current = null;
-        replaceWithGenericTerminalClosure(outcome, cur);
-        return;
-      }
-
-      if (
-        retainsRevealedTerminalPresentation(null, terminalStateRef.current, outcome) ||
-        retainsVoluntaryTerminalPresentation(terminalStateRef.current, outcome)
-      ) {
-        handFinishedRef.current = true;
-        setTerminalRecovery(null);
-        return;
-      }
-
-      const voluntaryAction = voluntarySpacepokerSettlementAction(outcome, cur);
+      pendingTerminalActionRef.current = null;
       handFinishedRef.current = true;
-      if (voluntaryAction) {
-        if (voluntaryAction.player === 'opponent') {
-          if (terminalActionByOpponentRef.current == null) {
-            terminalActionByOpponentRef.current = voluntaryAction.action;
-            setHandHistory((prev) => [
-              ...prev,
-              { player: 'opponent', action: voluntaryAction.action },
-            ]);
-          }
-        } else {
-          terminalActionByUsRef.current = voluntaryAction.action;
-          setHandHistory((prev) => [...prev, { player: 'you', action: voluntaryAction.action }]);
-        }
-        setTerminalState(terminalStateFor(voluntaryAction.player, voluntaryAction.action));
-        transition(terminalGameStateFor(voluntaryAction.action, cur));
-        return;
-      }
-
-      // Timeout, clean, slash, and unknown terminal outcomes retain the canonical
-      // GameSettled presentation rather than being shown as a poker action.
-      replaceWithGenericTerminalClosure(outcome, cur);
+      terminalClosureRef.current = true;
+      terminalActionByUsRef.current = null;
+      terminalActionByOpponentRef.current = null;
+      const voluntary = outcome === 'accept_settlement' || outcome === 'we_accepted';
+      const current =
+        pending && !voluntary
+          ? {
+              ...stateRef.current,
+              handHistory: rollbackOptimisticTerminalHistory(
+                stateRef.current.handHistory,
+                pending.action,
+              ),
+            }
+          : stateRef.current;
+      const next = reduceSpacepokerSettlementState(current, outcome);
+      outcomeRef.current = next.outcome;
+      projectState(next);
+      onTurnChanged(false);
     },
-    [
-      replaceWithGenericTerminalClosure,
-      setHandHistory,
-      setTerminalRecovery,
-      setTerminalState,
-      terminalGameStateFor,
-      terminalStateFor,
-      transition,
-    ],
+    [onTurnChanged, projectState],
   );
 
   // ── OpponentMoved: the opponent made a move, it's now my turn ──
@@ -627,225 +522,26 @@ export function useSpacepokerHand(
 
         if ('OpponentMoved' in evt) {
           if (evt.OpponentMoved.gameId && evt.OpponentMoved.gameId !== gameIdRef.current) return;
-          const readable = evt.OpponentMoved.readable;
-          let items: Program[] = [];
-          try {
-            const prog = Program.deserialize(Uint8Array.from(readable));
-            items = prog.toList();
-          } catch {
-            /* nil readable from commit steps */
-          }
-
-          const tag = clvmTag(items);
-          const cur = gsRef.current;
-
-          // nil readable: opponent committed (commitA or commitB).
-          if (!tag) {
-            if (cur.handler === SpHandler.CommitA) {
-              transition({ handler: SpHandler.CommitB, myTurn: true, N: 4n });
-            } else {
-              transition({ handler: SpHandler.CommitB, myTurn: true, N: 4n });
-            }
-            return;
-          }
-
-          // "deal": their-turn handler for commitB computed our hole
-          // cards and the coin toss result. Next my-turn handler is
-          // begin_round. The coin toss tells us if we auto-pong or
-          // wait for user input.
-          if (tag === 'deal') {
-            const c1 = items[1].toBigInt();
-            const c2 = items[2].toBigInt();
-            const boost = items[3].toBigInt() !== 0n;
-            const iOpen = items.length >= 5 ? items[4].toBigInt() !== 0n : true;
-            setPlayerHoleCards([c1, c2]);
-            setPlayerBoost(boost);
-            setCoinTossIOpen(iOpen);
-            transition({ handler: SpHandler.BeginRound, myTurn: true, N: 4n });
-            return;
-          }
-
-          // "pong": opponent ponged the coin toss. We're now the
-          // opener. The pong readable has our hole cards.
-          if (tag === 'pong') {
-            if (items.length >= 4) {
-              setPlayerHoleCards([items[1].toBigInt(), items[2].toBigInt()]);
-              setPlayerBoost(items[3].toBigInt() !== 0n);
-            }
-            setCoinTossIOpen(true);
-            transition({ handler: SpHandler.BeginRound, myTurn: true, N: 4n });
-            return;
-          }
-
-          // "open": opponent opened a betting round. We respond in
-          // mid_round. Format: ("open" raise half_pot [hole1 hole2 boost | cards...])
-          if (tag === 'open') {
-            const raiseUnits = unitsFromMojos(items[1].toBigInt());
-            const halfPotUnits = unitsFromMojos(items[2].toBigInt());
-
-            if (items.length > 3 && cur.N === 4n) {
-              setPlayerHoleCards([items[3].toBigInt(), items[4].toBigInt()]);
-              setPlayerBoost(items[5].toBigInt() !== 0n);
-            } else if (items.length > 3 && cur.N < 4n) {
-              placeCards(
-                cur.N,
-                items.slice(3).map((p) => p.toBigInt()),
-              );
-            }
-
-            setHalfPot(halfPotUnits);
-            setLastRaise(raiseUnits);
-            setIRaisedLast(false);
-            if (raiseUnits > 0n) {
-              setHandHistory((prev) => [
-                ...prev,
-                { player: 'opponent', action: 'raise', units: raiseUnits },
-              ]);
-            } else {
-              setHandHistory((prev) => [...prev, { player: 'opponent', action: 'check' }]);
-            }
-            transition({ handler: SpHandler.MidRound, myTurn: true, N: cur.N });
-            return;
-          }
-
-          // "raise": opponent raised in mid_round.
-          // Format: ("raise" new_raise half_pot)
-          if (tag === 'raise') {
-            const raiseUnits = unitsFromMojos(items[1].toBigInt());
-            const halfPotUnits = unitsFromMojos(items[2].toBigInt());
-            setHalfPot(halfPotUnits);
-            setLastRaise(raiseUnits);
-            setIRaisedLast(false);
-            setHandHistory((prev) => [
-              ...prev,
-              { player: 'opponent', action: 'raise', units: raiseUnits },
-            ]);
-            transition({ handler: SpHandler.MidRound, myTurn: true, N: cur.N });
-            return;
-          }
-
-          // "call": opponent called. The readable carries the half_pot
-          // and current N. If N=1 and full hand data is present, we
-          // have showdown info.
-          if (tag === 'call') {
-            const halfPotMojos = items[1].toBigInt();
-            const N = items[2].toBigInt();
-            const action = lastRaiseRef.current > 0n ? 'call' : 'check';
-            setHandHistory((prev) => [
-              ...prev,
-              {
-                player: 'opponent',
-                action,
-                endsStreet: action === 'check',
-              },
-            ]);
-
-            const halfPotUnits = unitsFromMojos(halfPotMojos);
-            setHalfPot(halfPotUnits);
-            setLastRaise(0n);
-
-            if (N === 1n && items.length >= 12) {
-              const yourCards = clvmListToBigints(items[3]);
-              const oppCards = clvmListToBigints(items[5]);
-              const oppBoost = items[6].toBigInt() !== 0n;
-              const yourSelected = clvmListToBigints(items[7]);
-              const yourEval = clvmListToBigints(items[8]);
-              const oppSelected = clvmListToBigints(items[9]);
-              const oppEval = clvmListToBigints(items[10]);
-              const result = items[11].toBigInt();
-
-              setOpponentHoleCards([oppCards[0], oppCards[1]]);
-              setOpponentBoost(oppBoost);
-              setCommunityCards(yourCards.slice(2, 7));
-              recordOutcome({
-                result,
-                playerHandCards: yourSelected,
-                playerHandEval: yourEval,
-                opponentHandCards: oppSelected,
-                opponentHandEval: oppEval,
-              });
-              transition({ handler: SpHandler.End, myTurn: true, N: 1n });
-              return;
-            }
-
-            if (N === 1n) {
-              recordOutcome(null);
-              transition({ handler: SpHandler.End, myTurn: true, N: 1n });
-              return;
-            }
-
-            if (items.length > 3) {
-              placeCards(
-                N - 1n,
-                items.slice(3).map((p) => p.toBigInt()),
-              );
-            }
-            transition({ handler: SpHandler.BeginRound, myTurn: true, N: N - 1n });
-            return;
-          }
-
-          // "end": opponent made the final reveal.
-          // Format: ("end" yourSelected yourEval oppSelected oppEval result oppHole1 oppHole2 oppBoost)
-          if (tag === 'end') {
+          const next = reduceSpacepokerFeatureState(stateRef.current, {
+            type: 'opponent-moved',
+            readable: Uint8Array.from(evt.OpponentMoved.readable),
+          });
+          if (next.gameState.handler === SpHandler.Showdown) {
             pendingTerminalActionRef.current = null;
             handFinishedRef.current = true;
-            setTerminalRecovery((recovery) =>
-              terminalRecoveryAfterOpponentMove(recovery ?? null, true),
-            );
-            const yourSelected = clvmListToBigints(items[1]);
-            const yourEval = clvmListToBigints(items[2]);
-            const oppSelected = clvmListToBigints(items[3]);
-            const oppEval = clvmListToBigints(items[4]);
-            const result = items[5].toBigInt();
-            if (items.length > 7) {
-              setOpponentHoleCards([items[6].toBigInt(), items[7].toBigInt()]);
-              setOpponentBoost(items[8].toBigInt() !== 0n);
-            }
-            recordOutcome({
-              result,
-              playerHandCards: yourSelected,
-              playerHandEval: yourEval,
-              opponentHandCards: oppSelected,
-              opponentHandEval: oppEval,
-            });
             terminalActionByOpponentRef.current = 'reveal';
-            setHandHistory((prev) => [...prev, { player: 'opponent', action: 'reveal' }]);
-            setTerminalState('revealed');
-            transition({ handler: SpHandler.Showdown, myTurn: false, N: 0n });
-            return;
           }
+          outcomeRef.current = next.outcome;
+          projectState(next);
+          onTurnChanged(next.gameState.myTurn);
         } else if ('GameMessage' in evt) {
-          // Messages are advisory — display data only, no state change.
-          let items: Program[];
-          try {
-            const prog = Program.deserialize(Uint8Array.from(evt.GameMessage.readable));
-            items = prog.toList();
-          } catch {
-            return;
-          }
-
-          const tag = clvmTag(items);
-
-          if (tag === 'deal' && items.length >= 4) {
-            setPlayerHoleCards([items[1].toBigInt(), items[2].toBigInt()]);
-            setPlayerBoost(items[3].toBigInt() !== 0n);
-            if (items.length >= 5) {
-              setCoinTossIOpen(items[4].toBigInt() !== 0n);
-            }
-          } else if (tag === 'cards' && items.length > 1) {
-            const newCards = items.slice(1).map((p) => p.toBigInt());
-            const pos =
-              newCards.length === 3 ? 3n : communityCardsRef.current[3] === null ? 2n : 1n;
-            placeCards(pos, newCards);
-          } else if (tag === 'call' && items.length > 3) {
-            const N = items[2].toBigInt();
-            if (N > 1n) {
-              placeCards(
-                N - 1n,
-                items.slice(3).map((p) => p.toBigInt()),
-              );
-            }
-          }
+          if (evt.GameMessage.gameId && evt.GameMessage.gameId !== gameIdRef.current) return;
+          projectState(
+            reduceSpacepokerFeatureState(stateRef.current, {
+              type: 'game-message',
+              readable: Uint8Array.from(evt.GameMessage.readable),
+            }),
+          );
         }
       },
     });
@@ -853,28 +549,11 @@ export function useSpacepokerHand(
     return () => sub.unsubscribe();
   }, [
     gameplayEvent$,
-    betUnit,
     onTurnChanged,
-    stackSize,
     applySettlement,
-    placeCards,
-    recordOutcome,
+    projectState,
     replaceWithGenericTerminalClosure,
     rollbackPendingTerminalAction,
-    setCoinTossIOpen,
-    setCommunityCards,
-    setHalfPot,
-    setHandHistory,
-    setIRaisedLast,
-    setLastRaise,
-    setOpponentBoost,
-    setOpponentHoleCards,
-    setPlayerBoost,
-    setPlayerHoleCards,
-    setTerminalRecovery,
-    setTerminalState,
-    transition,
-    unitsFromMojos,
   ]);
 
   // ── Auto-play: moves that don't need user input ──

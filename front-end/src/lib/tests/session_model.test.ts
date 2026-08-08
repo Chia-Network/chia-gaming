@@ -30,7 +30,7 @@ import {
   isActivelyPlayingOnChain,
   projectGameStatus,
 } from '../session/model';
-import { gameComposeDefaultAmount, gameInitialTurn } from '../gameRegistry';
+import { gameInitialTurn } from '../gameRegistry';
 import type { SessionSave } from '../../hooks/save';
 import {
   dispatchWasmNotification,
@@ -41,9 +41,9 @@ import {
   outgoingProposalTerms,
   proposalGroupMap,
   removeProposalGroupFromHand,
-  setPresentationRef,
   settledEventForInfo,
 } from '../../hooks/useGameSession';
+import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 
 describe('session model selectors', () => {
   it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
@@ -120,6 +120,7 @@ describe('session model selectors', () => {
       gameInstances: snapshot.gameInstances,
       activeGameType: snapshot.activeGameType,
       acceptedProposalGroupIds: snapshot.acceptedProposalGroupIds,
+      betweenHandLastTerms: snapshot.betweenHandLastTerms,
     });
     const restoredGroups = proposalGroupMap(restored.betweenHand.acceptedProposalGroupIds);
 
@@ -268,6 +269,7 @@ describe('session model selectors', () => {
       activeGameType: snapshot.activeGameType,
       channelStatus: channelStatusPayloadFromModel(model.channel.status),
       coinsOfInterest: [],
+      betweenHandLastTerms: snapshot.betweenHandLastTerms,
     });
 
     expect(restored.game.currentHandIds).toEqual(['11', '13']);
@@ -410,6 +412,7 @@ describe('session model selectors', () => {
       activeGameType: staleSnapshot.activeGameType,
       channelStatus: channelStatusPayloadFromModel(abandonedStatus),
       coinsOfInterest: [],
+      betweenHandLastTerms: staleSnapshot.betweenHandLastTerms,
     });
 
     expect(restored.game).toEqual(live.game);
@@ -733,15 +736,20 @@ describe('session model selectors', () => {
     expect(processed).toEqual(['settled', 'channel', 'settled-coin']);
   });
 
-  it('makes same-batch handlers observe updated presentation refs', async () => {
-    const mode = { current: 'decision' };
+  it('makes same-batch handlers observe the synchronously updated machine state', async () => {
+    const machine = {
+      current: createSessionMachineState(createSessionModel()),
+    };
     const observedModes: string[] = [];
 
     const handle = (notification: Parameters<typeof dispatchWasmNotification>[0]) => {
       if ('ProposalMade' in notification) {
-        setPresentationRef(mode, 'review-incoming-proposal', () => {});
+        machine.current = reduceSessionMachine(machine.current, {
+          type: 'set-between-hand-mode',
+          mode: 'review-incoming-proposal',
+        }).state;
       } else {
-        observedModes.push(mode.current);
+        observedModes.push(machine.current.model.betweenHand.mode);
       }
     };
 
@@ -1832,6 +1840,15 @@ describe('session model selectors', () => {
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion: 3n,
+      pairingToken: 'pair',
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      iStarted: true,
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      rewardPuzzleHash: '11'.repeat(32),
+      unackedMessages: [],
       activeGameIds: [],
       channelStatus: {
         state: 'Active',
@@ -1900,10 +1917,14 @@ describe('session model selectors', () => {
           gameTimeout: 23n,
           unitSizeMojos: 1n,
         },
-        composePerHandAmount: 10n,
-        composeGameTimeout: 23n,
-        composeGameType: 'spacepoker',
-        composeProposalSent: false,
+        compose: {
+          selectedGame: 'spacepoker',
+          gameTimeout: 23n,
+          proposalSent: false,
+          calpoker: { amount: 7n },
+          krunk: { amount: 300n },
+          spacepoker: { unitSize: 1n, stackSize: 10n },
+        },
         newHandRequested: false,
         outgoingProposalIds: [],
         pendingRetryTerms: null,
@@ -2099,12 +2120,6 @@ describe('session model selectors', () => {
   it('maps frontend Calpoker starter role to the opposite initial mover', () => {
     expect(gameInitialTurn('calpoker', true)).toBe('their-turn');
     expect(gameInitialTurn('calpoker', false)).toBe('my-turn');
-  });
-
-  it('defaults Krunk to 100 only when it is selected', () => {
-    expect(gameComposeDefaultAmount('krunk', 'calpoker', 25n)).toBe(100n);
-    expect(gameComposeDefaultAmount('krunk', 'krunk', 300n)).toBe(300n);
-    expect(gameComposeDefaultAmount('calpoker', 'krunk', 300n)).toBe(300n);
   });
 
   it('does not regress terminal hand status when a local turn callback arrives late', () => {

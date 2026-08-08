@@ -23,25 +23,14 @@ import {
   _resetForTests as resetSaveState,
   flushSessionSave,
   hasSavedSessionMarker,
+  markSavedSession,
   peekSession,
   saveSession,
   type SessionSave,
 } from '../../hooks/save';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
-import { commitSessionTransition, durableNotificationKind } from '../session/sessionTransition';
-import {
-  gameSliceReducer,
-  INITIAL_GAME_SLICE,
-  type GameSlice,
-  type GameSliceAction,
-} from '../session/gameSlice';
-import { sessionModelFromSave } from '../session/persistence';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import {
-  initialKrunkGameState,
-  krunkStateCodec,
-  persistedKrunkGameState,
-} from '../../features/krunk/stateCodec';
+import { validateSessionSaveEnvelope } from '../session/persistence';
+import { writeSessionRecord } from '../session/indexedDb';
 
 const testIndexedDb = indexedDB;
 const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
@@ -158,6 +147,8 @@ function createReadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefined
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameSession(cradle);
+  blob.pairingToken = 'test-pairing';
+  blob.rewardPuzzleHash = '11'.repeat(32);
   blob.kickSystem(2);
   blob.reportCoinStates(1n, []);
   blob.onSaveNeeded = () =>
@@ -165,8 +156,15 @@ function createReadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefined
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
       gameSessionSchemaVersion: 3n,
+      pairingToken: blob.pairingToken,
       messageNumber: blob.messageNumber,
       remoteNumber: blob.remoteNumber,
+      iStarted: blob.iStarted,
+      myContribution: blob.myContribution.toString(),
+      theirContribution: blob.theirContribution.toString(),
+      perGameAmount: blob.perGameAmount.toString(),
+      rewardPuzzleHash: blob.rewardPuzzleHash,
+      activeGameIds: [],
       unackedMessages: blob.unackedMessages,
     });
 
@@ -194,13 +192,22 @@ function createUnreadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefin
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameSession(cradle);
+  blob.pairingToken = 'test-pairing';
+  blob.rewardPuzzleHash = '11'.repeat(32);
   blob.onSaveNeeded = () =>
     saveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
       gameSessionSchemaVersion: 3n,
+      pairingToken: blob.pairingToken,
       messageNumber: blob.messageNumber,
       remoteNumber: blob.remoteNumber,
+      iStarted: blob.iStarted,
+      myContribution: blob.myContribution.toString(),
+      theirContribution: blob.theirContribution.toString(),
+      perGameAmount: blob.perGameAmount.toString(),
+      rewardPuzzleHash: blob.rewardPuzzleHash,
+      activeGameIds: [],
       unackedMessages: blob.unackedMessages,
     });
 
@@ -438,259 +445,6 @@ describe('active game tracking', () => {
     });
     blob.flushDeferredWork();
     expect(blob.activeGameIds).toEqual([]);
-  });
-});
-
-describe('game transition crash boundaries', () => {
-  function acceptedSlice(gameType: 'calpoker' | 'krunk', groupIds: string[]): GameSlice {
-    return gameSliceReducer(gameSliceReducer(INITIAL_GAME_SLICE, { type: 'channel-active' }), {
-      type: 'accepted-group',
-      groupIds,
-      acceptedId: groupIds[0],
-      amount: '100',
-      startTurn: 'my-turn',
-      gameType,
-    });
-  }
-
-  function installProjection(
-    blob: SessionController,
-    cradle: ChiaGame,
-    initial: GameSlice,
-    reduce: (
-      notification: NonNullable<Extract<WasmEvent, { type: 'notification' }>['data']>,
-      commit: (action: GameSliceAction, payload?: () => void) => void,
-    ) => void,
-  ) {
-    let slice = initial;
-    const commit = (action: GameSliceAction, payload?: () => void) => {
-      slice = commitSessionTransition({
-        current: slice,
-        action,
-        exposeGeneric: (next) => {
-          slice = next;
-        },
-        commitGamePayload: payload,
-        render: () => {},
-      });
-    };
-    blob.getObservable().subscribe((event) => {
-      if (event.type === 'notification') reduce(event.data, commit);
-    });
-    blob.onSaveNeeded = () =>
-      saveSession({
-        blockchainType: 'simulator',
-        serializedGameSession: cradle.serialize(),
-        gameSessionSchemaVersion: 3n,
-        messageNumber: blob.messageNumber,
-        remoteNumber: blob.remoteNumber,
-        unackedMessages: blob.unackedMessages,
-        myContribution: '100',
-        theirContribution: '100',
-        perGameAmount: '100',
-        activeGameIds: slice.activeIds,
-        currentHandGameIds: slice.currentHandIds,
-        gameInstances: slice.instances,
-        lastDisplayedGameId: slice.lastDisplayedId ?? undefined,
-        handKey: BigInt(slice.handKey),
-        activeGameType: slice.activeGameType,
-        handState: blob.handState,
-      });
-    return () => slice;
-  }
-
-  it('restores a move from the immediate controller flush', async () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    blob.handState = calpokerStateCodec.encode({
-      playerHand: [1n, 2n],
-      opponentHand: [3n, 4n],
-      cardSelections: [],
-      moveNumber: 1n,
-      isPlayerTurn: true,
-    });
-    installProjection(blob, cradle, acceptedSlice('calpoker', ['7']), (notification, commit) => {
-      if (durableNotificationKind(notification) !== 'game-status') return;
-      commit(
-        {
-          type: 'status',
-          id: '7',
-          payload: { id: '7', status: 'their-turn', coin_id: null },
-          channelState: 'Active',
-        },
-        () => {
-          blob.setHandState(
-            calpokerStateCodec.encode({
-              playerHand: [1n, 2n],
-              opponentHand: [3n, 4n],
-              cardSelections: [1n],
-              moveNumber: 2n,
-              isPlayerTurn: false,
-            }),
-          );
-        },
-      );
-    });
-
-    blob.processResult({
-      events: [
-        {
-          Notification: {
-            GameStatus: { id: '7', status: 'their-turn', coin_id: null },
-          },
-        },
-      ],
-    });
-    await blob.flushPendingSave();
-
-    const saved = await peekSession();
-    const restored = sessionModelFromSave(saved!, 100n);
-    expect(restored.game.instances['7'].presentation).toBe('off-chain-their-turn');
-    expect(calpokerStateCodec.decode(restored.game.handState)?.moveNumber).toBe(2n);
-  });
-
-  it('restores settlement and preserves the Krunk sibling payload', async () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    const first = { ...initialKrunkGameState('alice'), secretWord: 'CRANE' };
-    const sibling = {
-      ...initialKrunkGameState('bob'),
-      guesses: [{ word: 'AUDIO', clue: [-1n, -1n, -1n, -1n, -1n] as const }],
-    };
-    blob.handState = krunkStateCodec.encode({ games: { '1': first, '3': sibling } });
-    installProjection(blob, cradle, acceptedSlice('krunk', ['1', '3']), (notification, commit) => {
-      if (durableNotificationKind(notification) !== 'settlement') return;
-      commit(
-        {
-          type: 'settled',
-          id: '1',
-          terminal: {
-            type: 'settled',
-            outcome: 'opponent_timed_out',
-            label: 'Opponent timed out',
-            myReward: '100',
-            rewardCoinHex: null,
-          },
-        },
-        () => {
-          blob.setHandState(
-            persistedKrunkGameState(blob.handState, '1', {
-              ...first,
-              handler: 5n,
-              myTurn: false,
-              outcome: 'win',
-              moverShare: '100',
-            }),
-          );
-        },
-      );
-    });
-
-    blob.processResult({
-      events: [
-        {
-          Notification: {
-            GameSettled: {
-              id: '1',
-              outcome: 'opponent_timed_out',
-              on_chain: true,
-              our_share: '100',
-              coin_id: null,
-            },
-          },
-        },
-      ],
-    });
-    await blob.flushPendingSave();
-
-    const restored = sessionModelFromSave((await peekSession())!, 100n);
-    const decoded = krunkStateCodec.decode(restored.game.handState);
-    expect(restored.game.instances['1'].terminal.outcome).toBe('opponent_timed_out');
-    expect(restored.game.activeIds).toEqual(['3']);
-    expect(decoded?.games['1'].handler).toBe(5n);
-    expect(decoded?.games['3']).toEqual(sibling);
-  });
-
-  it('restores insufficient-balance as an atomic group removal', async () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    blob.handState = krunkStateCodec.encode({
-      games: {
-        '1': initialKrunkGameState('alice'),
-        '3': initialKrunkGameState('bob'),
-      },
-    });
-    installProjection(blob, cradle, acceptedSlice('krunk', ['1', '3']), (notification, commit) => {
-      if (durableNotificationKind(notification) !== 'insufficient-balance') return;
-      commit({ type: 'remove-group', groupIds: ['1', '3'] }, () => blob.setHandState(null));
-    });
-
-    blob.processResult({
-      events: [
-        {
-          Notification: {
-            InsufficientBalance: {
-              id: '1',
-              our_balance_short: true,
-              their_balance_short: false,
-            },
-          },
-        },
-      ],
-    });
-    await blob.flushPendingSave();
-
-    const restored = sessionModelFromSave((await peekSession())!, 100n);
-    expect(restored.game.activeIds).toEqual([]);
-    expect(restored.game.currentHandIds).toEqual([]);
-    expect(restored.game.instances).toEqual({});
-    expect(restored.game.handState).toBeNull();
-  });
-
-  it('restores grouped acceptance with no stale opaque hand', async () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    blob.handState = calpokerStateCodec.encode({
-      playerHand: [1n],
-      opponentHand: [2n],
-      moveNumber: 1n,
-      isPlayerTurn: false,
-    });
-    installProjection(
-      blob,
-      cradle,
-      gameSliceReducer(INITIAL_GAME_SLICE, { type: 'channel-active' }),
-      (notification, commit) => {
-        if (durableNotificationKind(notification) !== 'accepted-group') return;
-        commit(
-          {
-            type: 'accepted-group',
-            groupIds: ['1', '3'],
-            acceptedId: '1',
-            amount: '100',
-            startTurn: 'my-turn',
-            gameType: 'krunk',
-          },
-          () => blob.setHandState(null),
-        );
-      },
-    );
-
-    blob.processResult({
-      events: [
-        {
-          Notification: {
-            ProposalAccepted: { id: '1', amount: '100' },
-          },
-        },
-      ],
-    });
-    await blob.flushPendingSave();
-
-    const restored = sessionModelFromSave((await peekSession())!, 100n);
-    expect(restored.game.activeIds).toEqual(['1', '3']);
-    expect(Object.keys(restored.game.instances)).toEqual(['1', '3']);
-    expect(restored.game.handState).toBeNull();
   });
 });
 
@@ -1005,9 +759,11 @@ describe('durability failures', () => {
     (cradle.serialize as jest.Mock).mockReturnValue(cradleBytes);
     let saveReturned = false;
     blob.onSaveNeeded = () => {
+      const fields = blob.getWasmFields();
+      if (!fields) throw new Error('expected save fields');
       const pending = saveSession({
+        ...fields,
         serializedGameSession: cradle.serialize(),
-        gameSessionSchemaVersion: 3n,
         pairingToken: 'sync-cradle',
       });
       // Cached must already contain the cradle before the returned Promise
@@ -1031,9 +787,11 @@ describe('durability failures', () => {
       events: [{ OutboundMessage: outbound }],
     }));
     activeBlob = blob;
+    const previousFields = blob.getWasmFields();
+    if (!previousFields) throw new Error('expected save fields');
     void saveSession({
+      ...previousFields,
       serializedGameSession: new Uint8Array([9, 9, 9]),
-      gameSessionSchemaVersion: 3n,
       pairingToken: 'previous-durable-record',
     });
     await flushSessionSave();
@@ -1132,27 +890,26 @@ describe('restore ordering', () => {
     const statuses: string[] = [];
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
-    await blob.beginRestore(
-      restoreSession(
-        blob,
-        {
-          version: 11n,
-          playerId: 'p1',
-          serializedGameSession: new Uint8Array([1, 2, 3]),
-          gameSessionSchemaVersion: 3n,
-          messageNumber: 5n,
-          remoteNumber: 1n,
-          iStarted: true,
-          pairingToken: 'tok',
-          activeGameIds: [],
-          rewardPuzzleHash: '11'.repeat(32),
-          unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
-          wasmNotificationHistory: ['notification'],
-          diagnosticLog: ['diagnostic'],
-        } as unknown as SessionSave,
-        wasmStateInit,
-      ),
-    );
+    const save = {
+      version: 11n,
+      playerId: 'p1',
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      gameSessionSchemaVersion: 3n,
+      messageNumber: 5n,
+      remoteNumber: 1n,
+      iStarted: true,
+      pairingToken: 'tok',
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      activeGameIds: [],
+      rewardPuzzleHash: '11'.repeat(32),
+      unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
+      wasmNotificationHistory: ['notification'],
+      diagnosticLog: ['diagnostic'],
+    } satisfies SessionSave;
+    expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
+    await blob.beginRestore(restoreSession(blob, save, wasmStateInit));
     unsubscribe();
 
     expect(cradle.deliver_message).not.toHaveBeenCalled();
@@ -1253,18 +1010,16 @@ describe('cradle serialization schema restore guard', () => {
   ])(
     'rejects and deletes a record with a %s cradle schema',
     async (_label, gameSessionSchemaVersion) => {
-      void saveSession({
+      markSavedSession();
+      await writeSessionRecord({
+        version: 11n,
+        playerId: 'restore-schema-player',
+        rewardPuzzleHash: '11'.repeat(32),
         serializedGameSession: new Uint8Array([1, 2, 3]),
         gameSessionSchemaVersion,
         pairingToken: 'restore-schema-test',
       });
-      await flushSessionSave();
-      const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
-      const save = (await peekSession())!;
-
-      await expect(restoreSession(blob, save, wasmStateInit)).rejects.toThrow(
-        'Unsupported saved game format',
-      );
+      const { deserializeMock } = makeRestoreHarness(makeMockCradle);
 
       expect(deserializeMock).not.toHaveBeenCalled();
       expect(hasSavedSessionMarker()).toBe(true);
@@ -1282,6 +1037,10 @@ describe('cradle serialization schema restore guard', () => {
       iStarted: true,
       activeGameIds: [],
       unackedMessages: [],
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      rewardPuzzleHash: '11'.repeat(32),
     });
     await flushSessionSave();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {

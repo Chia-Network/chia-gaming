@@ -94,7 +94,11 @@ describe('game-owned state codecs', () => {
     expect(alice.handler).toBe(KrunkHandler.WaitingCommit);
     const alicePersisted = persistedKrunkGameState(null, 'alice-game', alice);
     const encoded = persistedKrunkGameState(alicePersisted, 'bob-game', bob);
-    expect(decodePersistedGameState(encoded)).toEqual(encoded);
+    expect(decodePersistedGameState(encoded)).toEqual({
+      persisted: encoded,
+      gameIds: ['alice-game', 'bob-game'],
+      canRemountFinished: false,
+    });
     expect(krunkGameStateFromPersisted(encoded, 'alice-game', 'alice')).toEqual(alice);
     expect(krunkGameStateFromPersisted(encoded, 'bob-game', 'bob')).toEqual(bob);
     expect(canRemountFinishedGameState(encoded)).toBe(false);

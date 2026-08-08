@@ -8,6 +8,7 @@ import type {
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { SettlementOutcome } from '../settlement';
+import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState } from './gameStateCodec';
 
 export type GameTurnState =
@@ -175,10 +176,7 @@ export interface BetweenHandModel {
   reviewPeerProposal: BetweenHandProposalModel | null;
   rejectedOnceTerms: HandTermsModel | null;
   lastTerms: HandTermsModel;
-  composePerHandAmount: bigint;
-  composeGameTimeout: bigint;
-  composeGameType: RegisteredGameType;
-  composeProposalSent: boolean;
+  compose: ComposeDraftState;
   newHandRequested: boolean;
   outgoingProposalIds: string[];
   outgoingProposalGroupIds: string[][];
