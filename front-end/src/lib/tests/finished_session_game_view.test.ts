@@ -9,17 +9,27 @@ describe('finished session shell display', () => {
     const model = createSessionModel({
       game: {
         activeGameType: 'calpoker',
+        currentHandIds: ['finished'],
+        lastDisplayedId: 'finished',
+        instances: {
+          finished: {
+            id: 'finished',
+            amount: '200',
+            coin: { coinHex: null, turnState: 'ended' },
+            handStatus: 'ended',
+            terminal: {
+              type: 'settled',
+              outcome: 'opponent_timed_out',
+              label: 'Opponent timed out',
+              myReward: '200',
+              rewardCoinHex: null,
+            },
+          },
+        },
         handState: {
           gameType: 'calpoker',
           version: 1n,
           state: { cards: [1n, 2n] },
-        },
-        terminal: {
-          type: 'settled',
-          outcome: 'opponent_timed_out',
-          label: 'Opponent timed out',
-          myReward: '200',
-          rewardCoinHex: null,
         },
       },
     });

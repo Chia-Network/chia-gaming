@@ -3,45 +3,20 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import { SessionController } from '../../hooks/SessionController';
 import { GameplayEvent } from '../../hooks/useGameSession';
-import { krunkSettlementStatus, type SettlementOutcome } from '../../lib/settlement';
+import { krunkSettlementStatus } from '../../lib/settlement';
+import type { GameTerminalModel } from '../../lib/session/types';
+import {
+  krunkGameStateFromPersisted,
+  KrunkHandler,
+  persistedKrunkGameState,
+  type KrunkGameState,
+  type KrunkGuess,
+  type KrunkRole,
+} from './stateCodec';
+import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 
-// Phase of the krunk state machine. Both roles share the enum -- which
-// transitions fire depends on whether the local player is alice (picks
-// the secret word) or bob (guesses).
-export enum KrunkHandler {
-  WaitingCommit, // alice: hasn't picked word yet (initial my-turn)
-  AliceWaiting, // alice: handed off, waiting for bob's guess
-  AliceClue, // alice: my-turn, auto-plays nil so the handler can
-  // pick clue or reveal internally
-  BobWaiting, // bob: their-turn, waiting for alice's commit/clue/reveal
-  BobGuess, // bob: my-turn, user types a guess
-  Terminal, // game over
-}
-
-export type KrunkRole = 'alice' | 'bob';
-
-export interface KrunkGuess {
-  word: string; // 5 uppercase letters
-  // Clue values per letter: 0 = absent, 1 = wrong position, 2 = correct.
-  clue: [number, number, number, number, number];
-}
-
-export interface KrunkGameState {
-  handler: KrunkHandler;
-  myTurn: boolean;
-  role: KrunkRole;
-  // Bob: guesses he has typed; alice: guesses bob has made.
-  guesses: KrunkGuess[];
-  // Alice only: her chosen secret word.
-  secretWord: string | null;
-  // Set at game end: the alice-side word that was being guessed.
-  revealedWord: string | null;
-  outcome: 'win' | 'lose' | null;
-  // From OpponentMoved.moverShare when the hand ends on a received reveal.
-  moverShare: string | null;
-  settlementOutcome: SettlementOutcome | null;
-  error: string | null;
-}
+export { KrunkHandler };
+export type { KrunkGameState, KrunkGuess, KrunkRole };
 
 export interface UseKrunkHandResult {
   gameState: KrunkGameState;
@@ -83,7 +58,7 @@ export function krunkGuessSubmissionMode(
   return null;
 }
 
-const PENDING_CLUE: KrunkGuess['clue'] = [-1, -1, -1, -1, -1];
+const PENDING_CLUE: KrunkGuess['clue'] = [-1n, -1n, -1n, -1n, -1n];
 
 export function krunkGuessesWithQueued(
   guesses: KrunkGuess[],
@@ -125,7 +100,7 @@ export function applyKrunkMoveRejected(
     state.role === 'bob' &&
     state.handler === KrunkHandler.BobWaiting &&
     lastGuess?.word === word &&
-    lastGuess.clue.every((value) => value === -1)
+    lastGuess.clue.every((value) => value === -1n)
   ) {
     return {
       ...state,
@@ -139,10 +114,14 @@ export function applyKrunkMoveRejected(
   return state;
 }
 
-export function krunkTerminalStatus(state: KrunkGameState, opponentLabel: string): string | null {
+export function krunkTerminalStatus(
+  state: KrunkGameState,
+  opponentLabel: string,
+  terminal: GameTerminalModel,
+): string | null {
   if (state.handler !== KrunkHandler.Terminal) return null;
-  if (state.settlementOutcome != null) {
-    return krunkSettlementStatus(state.settlementOutcome, opponentLabel);
+  if (terminal.outcome != null) {
+    return krunkSettlementStatus(terminal.outcome, opponentLabel);
   }
   if (state.role === 'bob') {
     // Bob win amount is shown from moverShare in the UI (large font).
@@ -204,12 +183,12 @@ function programToClue(prog: Program): KrunkGuess['clue'] | null {
   if (items.length !== 5) return null;
   const vals = items.map((p) => {
     try {
-      return p.toInt();
+      return p.toBigInt();
     } catch {
-      return -1;
+      return -1n;
     }
   });
-  if (vals.some((v) => v < 0 || v > 2)) return null;
+  if (vals.some((v) => v < 0n || v > 2n)) return null;
   return vals as KrunkGuess['clue'];
 }
 
@@ -266,24 +245,15 @@ export function useKrunkHand(
   gameplayEvent$: Observable<GameplayEvent>,
   onTurnChanged: (isMyTurn: boolean) => void,
   active = true,
+  initialPersistedState?: PersistedGameState,
 ): UseKrunkHandResult {
   // Channel-level convention: iStarted=true → I'm second mover in
   // every game. Krunk's first mover is alice (the committer), so the
   // channel initiator plays bob and the receiver plays alice.
   const role: KrunkRole = iStarted ? 'bob' : 'alice';
 
-  const [gs, setGs] = useState<KrunkGameState>({
-    handler: role === 'alice' ? KrunkHandler.WaitingCommit : KrunkHandler.BobWaiting,
-    myTurn: role === 'alice',
-    role,
-    guesses: [],
-    secretWord: null,
-    revealedWord: null,
-    outcome: null,
-    moverShare: null,
-    settlementOutcome: null,
-    error: null,
-  });
+  const initialState = krunkGameStateFromPersisted(initialPersistedState, _gameId, role);
+  const [gs, setGs] = useState<KrunkGameState>(initialState);
 
   const gsRef = useRef(gs);
   const gameObjectRef = useRef(_gameObject);
@@ -312,6 +282,11 @@ export function useKrunkHand(
   const transition = useCallback(
     (next: KrunkGameState) => {
       gsRef.current = next;
+      if (gameIdRef.current) {
+        gameObjectRef.current.setHandState(
+          persistedKrunkGameState(gameObjectRef.current.handState, gameIdRef.current, next),
+        );
+      }
       setGs(next);
       onTurnChanged(next.myTurn);
     },
@@ -328,7 +303,7 @@ export function useKrunkHand(
       handFinishedRef.current = true;
       // Outcome from local POV: alice wins if bob never guessed correctly
       // (all clues != all-2s), bob wins if he guessed correctly.
-      const correct = (c: KrunkGuess['clue']) => c.every((v) => v === 2);
+      const correct = (c: KrunkGuess['clue']) => c.every((v) => v === 2n);
       const bobGuessedCorrectly =
         cur.guesses.some((g) => correct(g.clue)) || (lastClue !== null && correct(lastClue));
       const aliceWon = !bobGuessedCorrectly;
@@ -391,10 +366,10 @@ export function useKrunkHand(
             // it to the last unresolved guess.
             const next = [...cur.guesses];
             const idx = next.length - 1;
-            if (idx >= 0 && next[idx].clue.every((v) => v === -1)) {
+            if (idx >= 0 && next[idx].clue.every((v) => v === -1n)) {
               next[idx] = { ...next[idx], clue: parsed.clue };
             }
-            const correct = parsed.clue.every((v) => v === 2);
+            const correct = parsed.clue.every((v) => v === 2n);
             if (correct || next.length >= MAX_GUESSES) {
               // Game should be ending soon when alice plays her clue
               // handler -- but bob doesn't auto-terminate on clue
@@ -421,7 +396,7 @@ export function useKrunkHand(
             // Reveal case: (word, clue_for_last_guess).
             const next = [...cur.guesses];
             const idx = next.length - 1;
-            if (idx >= 0 && next[idx].clue.every((v) => v === -1)) {
+            if (idx >= 0 && next[idx].clue.every((v) => v === -1n)) {
               next[idx] = { ...next[idx], clue: parsed.clue };
             }
             gsRef.current = { ...cur, guesses: next };
@@ -442,7 +417,6 @@ export function useKrunkHand(
               ...gsRef.current,
               handler: KrunkHandler.Terminal,
               myTurn: false,
-              settlementOutcome: evt.Settled.outcome,
               moverShare: evt.Settled.ourShare,
             });
           }
@@ -473,15 +447,15 @@ export function useKrunkHand(
     const gid = gameIdRef.current;
     if (!activeRef.current || !go || !gid) return;
     try {
-      go.makeMove(gid, null);
       const latest = gs.guesses[gs.guesses.length - 1];
       const isReveal =
-        !!latest && (latest.clue.every((v) => v === 2) || gs.guesses.length >= MAX_GUESSES);
+        !!latest && (latest.clue.every((v) => v === 2n) || gs.guesses.length >= MAX_GUESSES);
       if (isReveal) {
         finishGame(gs.secretWord, latest.clue);
-        return;
+      } else {
+        transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false });
       }
-      transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false });
+      go.makeMove(gid, null);
     } catch (e) {
       console.error('[krunk] alice auto-clue failed', e);
       transition({

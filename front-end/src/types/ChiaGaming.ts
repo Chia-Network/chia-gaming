@@ -131,6 +131,7 @@ export type GameStatusState =
   | 'on-chain-my-turn'
   | 'on-chain-their-turn'
   | 'replaying'
+  | 'playing-move'
   | 'illegal-move-detected'
   | 'ended-cancelled'
   | 'ended-error';

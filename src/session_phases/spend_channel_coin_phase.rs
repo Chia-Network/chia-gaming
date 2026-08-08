@@ -401,7 +401,7 @@ impl SpendChannelCoinPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         let mut effects = Vec::new();
 
         match &self.state {
@@ -418,7 +418,7 @@ impl SpendChannelCoinPhase {
                         self.transition_to_failed_terminal()?;
                     }
                 }
-                return Ok((effects, None));
+                return Ok((effects, vec![]));
             }
             SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
@@ -440,7 +440,7 @@ impl SpendChannelCoinPhase {
                         self.transition_to_failed_terminal()?;
                     }
                 }
-                return Ok((effects, None));
+                return Ok((effects, vec![]));
             }
             SpendChannelCoinState::UnrollConditions {
                 unroll_coin,
@@ -457,12 +457,12 @@ impl SpendChannelCoinPhase {
                         self.transition_to_failed_terminal()?;
                     }
                 }
-                return Ok((effects, None));
+                return Ok((effects, vec![]));
             }
             _ => {}
         }
 
-        Ok((effects, None))
+        Ok((effects, vec![]))
     }
 
     // --- Internal methods ---
@@ -1098,7 +1098,7 @@ impl SpendWalletReceiver for SpendChannelCoinPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 }
@@ -1137,7 +1137,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
         SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
     fn make_move(

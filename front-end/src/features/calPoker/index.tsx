@@ -21,7 +21,7 @@ export interface CalpokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
+  terminalOutcome?: import('../../lib/settlement').SettlementOutcome | null;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -41,7 +41,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
-  settlementOutcome,
+  terminalOutcome,
 }) => {
   useCheatNerfKeys(handleCheat, handleNerf);
 
@@ -64,7 +64,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           initialSnapshot={initialSnapshot}
           myName={myName}
           opponentName={opponentName}
-          settlementOutcome={settlementOutcome}
+          terminalOutcome={terminalOutcome}
         />
       </div>
     </div>

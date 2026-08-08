@@ -282,6 +282,19 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    this.cleanupInternal(true);
+  }
+
+  /**
+   * Release a terminal controller after its durability boundary was awaited.
+   * Unlike ordinary abandonment/navigation cleanup, this cannot start another
+   * unawaited durability operation.
+   */
+  cleanupAfterTerminalFlush() {
+    this.cleanupInternal(false);
+  }
+
+  private cleanupInternal(flushDurability: boolean) {
     this.retired = true;
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
@@ -313,13 +326,22 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    void this.flushDurabilityAndSend();
+    if (flushDurability) {
+      void this.flushDurabilityAndSend();
+    }
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       this.beforeUnloadHandler = null;
     }
+  }
+
+  reportDurabilityError(error: unknown): void {
+    const detail = extractErrorMessage(error);
+    const warning = `Session storage failed: ${detail}. Terminal session remains live so saving can be retried.`;
+    this.durabilityWarning = warning;
+    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
   }
 
   notePeerActivity() {

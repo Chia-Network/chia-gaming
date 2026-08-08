@@ -31,7 +31,7 @@ use crate::common::types::{
 };
 use crate::game_session::{CoinObservation, DrainResult, GameSession};
 use crate::session_phases::effects::{
-    GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic,
+    GameSessionEvent, GameSessionEventQueue, ResyncInfo, TimeoutClaimSemantic,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -152,7 +152,7 @@ pub struct ManagerDrain {
     pub events: GameSessionEventQueue,
     pub watch_coins: Vec<CoinString>,
     pub unwatch_coins: Vec<CoinString>,
-    pub resync: Option<(usize, bool)>,
+    pub resync: Vec<ResyncInfo>,
 }
 
 /// The minimal interface the [`TransactionManager`] needs from the cradle it
@@ -261,7 +261,7 @@ pub struct TransactionManager<C> {
     pending_unwatch_coins: Vec<CoinString>,
     /// Resync signal observed during draining, surfaced to the hosting layer.
     #[serde(skip)]
-    pending_resync: Option<(usize, bool)>,
+    pending_resync: std::collections::VecDeque<ResyncInfo>,
     /// How many blocks a coin must remain confirmed-spent before eviction.
     confirmation_depth: u64,
     /// Most recent height reported via `report_coin_states`.
@@ -344,7 +344,7 @@ impl<C> TransactionManager<C> {
             pending_events: GameSessionEventQueue::default(),
             pending_watch_coins: Vec::new(),
             pending_unwatch_coins: Vec::new(),
-            pending_resync: None,
+            pending_resync: std::collections::VecDeque::new(),
             confirmation_depth: DEFAULT_CONFIRMATION_DEPTH,
             last_height: 0,
             last_snapshot_height: 0,
@@ -617,7 +617,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         self.pending_events.clear();
         self.pending_watch_coins.clear();
         self.pending_unwatch_coins.clear();
-        self.pending_resync = None;
+        self.pending_resync.clear();
         self.watched_coins.clear();
         self.submitted.clear();
         self.vanished_coins.clear();
@@ -926,9 +926,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         allocator: &mut AllocEncoder,
     ) -> Result<ManagerDrain, Error> {
         let result = self.cradle.session_flush_and_collect(allocator)?;
-        if result.resync.is_some() {
-            self.pending_resync = result.resync;
-        }
+        self.pending_resync.extend(result.resync);
         if self.cradle.is_abandoned() {
             self.discard_local_artifacts();
         }
@@ -937,7 +935,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             events: std::mem::take(&mut self.pending_events),
             watch_coins: std::mem::take(&mut self.pending_watch_coins),
             unwatch_coins: std::mem::take(&mut self.pending_unwatch_coins),
-            resync: self.pending_resync.take(),
+            resync: self.pending_resync.drain(..).collect(),
         })
     }
 }
@@ -1009,18 +1007,18 @@ mod tests {
         fn queue_drain(&mut self, events: Vec<GameSessionEvent>) {
             self.scripted_drains.push_back(DrainResult {
                 events: events.into_iter().collect(),
-                resync: None,
+                resync: vec![],
             });
         }
 
         fn queue_drain_with_resync(
             &mut self,
             events: Vec<GameSessionEvent>,
-            resync: (usize, bool),
+            resync: Vec<ResyncInfo>,
         ) {
             self.scripted_drains.push_back(DrainResult {
                 events: events.into_iter().collect(),
-                resync: Some(resync),
+                resync,
             });
         }
     }
@@ -1206,7 +1204,11 @@ mod tests {
             .push_back(GameSessionEvent::Log("transient".to_string()));
         mgr.pending_watch_coins.push(coin);
         mgr.pending_unwatch_coins.push(test_coin(3));
-        mgr.pending_resync = Some((7, true));
+        mgr.pending_resync.push_back(ResyncInfo {
+            game_id: crate::common::types::GameID(9),
+            state_number: 7,
+            is_my_turn: true,
+        });
 
         let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
         let decoded: TransactionManager<PersistableMockGameSession> =
@@ -1215,7 +1217,7 @@ mod tests {
         assert!(decoded.pending_events.is_empty());
         assert!(decoded.pending_watch_coins.is_empty());
         assert!(decoded.pending_unwatch_coins.is_empty());
-        assert_eq!(decoded.pending_resync, None);
+        assert!(decoded.pending_resync.is_empty());
     }
 
     #[test]
@@ -2239,17 +2241,27 @@ mod tests {
     }
 
     #[test]
-    fn surfaces_resync_signal() {
+    fn surfaces_resync_signals_in_order_without_coalescing() {
         let mut allocator = AllocEncoder::new();
         let mut mock = MockGameSession::default();
-        mock.queue_drain_with_resync(vec![], (7, true));
+        let first = ResyncInfo {
+            game_id: crate::common::types::GameID(9),
+            state_number: 7,
+            is_my_turn: true,
+        };
+        let second = ResyncInfo {
+            game_id: crate::common::types::GameID(11),
+            state_number: 8,
+            is_my_turn: false,
+        };
+        mock.queue_drain_with_resync(vec![], vec![first, first, second]);
         let mut mgr = TransactionManager::new(mock);
 
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(drain.resync, Some((7, true)));
+        assert_eq!(drain.resync, vec![first, first, second]);
         // Subsequent drains do not repeat the resync.
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(drain.resync, None);
+        assert!(drain.resync.is_empty());
     }
 
     #[test]

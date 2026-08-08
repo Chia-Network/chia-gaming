@@ -82,6 +82,15 @@ export function destroySessionController(): void {
   }
   initStarted = false;
 }
+
+export function destroyFlushedTerminalSessionController(controller: SessionController): void {
+  if (sessionController !== controller) {
+    throw new Error('Terminal finalization lost ownership of its SessionController');
+  }
+  controller.cleanupAfterTerminalFlush();
+  sessionController = null;
+  initStarted = false;
+}
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
 

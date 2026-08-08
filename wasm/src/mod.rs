@@ -103,6 +103,7 @@ mod gaming_wasm {
         "events": Array<GameSessionEvent>,
         "watchCoins": Array<{ coin_name: string, coin_string: string }>,
         "unwatchCoins": Array<{ coin_name: string, coin_string: string }>,
+        "resync": Array<{ game_id: bigint | number, state_number: bigint | number, is_my_turn: boolean }>,
     };
 
     export type GameSessionConfig = {
@@ -138,7 +139,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 2;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 3;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -1304,10 +1305,13 @@ mod gaming_wasm {
             .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let unwatch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.unwatch_coins))
             .map_err(|e| types::Error::StrErr(e.to_string()))?;
+        let resync = serde_wasm_bindgen::to_value(&drain.resync)
+            .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
         let _ = js_sys::Reflect::set(&obj, &"unwatchCoins".into(), &unwatch_coins);
+        let _ = js_sys::Reflect::set(&obj, &"resync".into(), &resync);
         let _ = js_sys::Reflect::set(
             &obj,
             &"actionSucceeded".into(),

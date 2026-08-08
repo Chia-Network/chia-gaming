@@ -15,6 +15,7 @@ import { GameplayEvent } from '../../hooks/useGameSession';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import { formatAmount } from '../../util';
 import { settlementLabel } from '../../lib/settlement';
+import type { GameTerminalModel } from '../../lib/session/types';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2',
@@ -601,11 +602,12 @@ export interface SpacePokerProps {
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
   betSize: string;
-  unitSizeMojos?: string;
+  unitSizeMojos: string;
   onTurnChanged: (isMyTurn: boolean) => void;
   onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
+  terminal: GameTerminalModel;
 }
 
 export default function SpacePoker({
@@ -619,9 +621,10 @@ export default function SpacePoker({
   onGameLog,
   myName,
   opponentName,
+  terminal,
 }: SpacePokerProps) {
   const betSizeValue = BigInt(betSize);
-  const unitSizeMojosValue = unitSizeMojos ? BigInt(unitSizeMojos) : undefined;
+  const unitSizeMojosValue = BigInt(unitSizeMojos);
   const sp = useSpacepokerHand(
     gameObject,
     gameId,
@@ -630,6 +633,7 @@ export default function SpacePoker({
     betSizeValue,
     unitSizeMojosValue,
     onTurnChanged,
+    terminal,
     gameObject.handState ?? undefined,
   );
   const { handler, myTurn, N } = sp.gameState;
@@ -737,8 +741,8 @@ export default function SpacePoker({
   }
 
   const settlementNote =
-    sp.terminalState === 'settled' && sp.settlementOutcome
-      ? settlementLabel(sp.settlementOutcome)
+    sp.terminalState === 'settled' && sp.terminalOutcome
+      ? settlementLabel(sp.terminalOutcome)
       : hasShowdownOutcome
         ? ''
         : sp.terminalState === 'conceded-by-opponent'

@@ -1,11 +1,9 @@
-import React, { useCallback, useMemo } from 'react';
-import { EMPTY } from 'rxjs';
+import React, { useMemo } from 'react';
 
-import { CalpokerHand, KrunkHand, SpacePokerHand } from './GameSession';
 import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
-import type { CalpokerOutcome } from '../features/calPoker/outcome';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
+import { frozenGameMountRequest, renderGameMount } from '../lib/gameMountRegistry';
 
 export interface FinishedSessionGameViewProps {
   model: SessionModel;
@@ -28,16 +26,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
-  const gameType = handState?.gameType ?? model.game.activeGameType;
-  const gameId =
-    model.game.lastDisplayedId ??
-    model.game.currentHandIds[0] ??
-    model.game.activeIds[0] ??
-    'finished';
   const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
-  const noopTurnChanged = useCallback((_gameId: string, _isMyTurn: boolean) => {}, []);
-  const noopLog = useCallback((_line: string) => {}, []);
-  const noopOutcome = useCallback((_outcome: CalpokerOutcome) => {}, []);
 
   if (!display.canRemountHand || !handState) {
     return (
@@ -50,15 +39,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
     );
   }
 
-  const commonProps = {
-    gameObject: frozenBridge,
-    iStarted,
-    gameplayEvent$: EMPTY,
-    onTurnChanged: noopTurnChanged,
-    appendGameLog: noopLog,
+  const mount = frozenGameMountRequest(model, frozenBridge, {
     myName,
     opponentName,
-  };
+    iStarted,
+    iProposedHand,
+  });
 
   return (
     <div
@@ -67,39 +53,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
       aria-disabled
       inert
     >
-      {gameType === 'calpoker' ? (
-        <CalpokerHand
-          {...commonProps}
-          gameId={gameId}
-          playerNumber={iStarted ? 1 : 2}
-          onOutcome={noopOutcome}
-          perGameAmount={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : gameType === 'spacepoker' ? (
-        <SpacePokerHand
-          {...commonProps}
-          gameId={gameId}
-          betSize={String(model.betweenHand.lastTerms.myContribution)}
-          unitSizeMojos={
-            model.betweenHand.lastTerms.gameType === 'spacepoker'
-              ? String(model.betweenHand.lastTerms.spacepokerUnitSize ?? 0n)
-              : undefined
-          }
-          perGameAmount={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : gameType === 'krunk' ? (
-        <KrunkHand
-          {...commonProps}
-          currentHandGameIds={model.game.currentHandIds}
-          activeGameIds={model.game.activeIds}
-          iProposedHand={iProposedHand}
-          betSize={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : (
-        <div className="flex items-center justify-center py-20 text-canvas-text">
-          Game details unavailable
-        </div>
-      )}
+      {renderGameMount(mount)}
     </div>
   );
 };

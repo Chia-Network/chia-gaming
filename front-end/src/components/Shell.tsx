@@ -29,7 +29,6 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
-  saveTerminalSession,
   flushSessionSave,
   clearSession,
   hardReset,
@@ -92,16 +91,13 @@ import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
   isCleanShutdownInProgress,
-  channelStatusPayloadFromModel,
   isTerminalChannelSnapshot,
   PRE_ACTIVE_CHANNEL_STATES,
   selectGameDashboardView,
   selectGameTabDotColor,
   selectStatusBarBalances,
-  legacyCoinsOfInterestFromModel,
   sessionAmountsFromSave,
   sessionModelFromSave,
-  snapshotFromSessionModel,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type GameDashboardActionKind,
@@ -111,6 +107,7 @@ import {
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
+import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
 import {
   appendRecent,
   DIAGNOSTIC_LOG_LIMIT,
@@ -1150,11 +1147,13 @@ const Shell = () => {
     hubConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
   }, []);
 
-  const resetPeerRelayState = useCallback(() => {
+  const resetPeerRelayState = useCallback((options?: { persistSession?: boolean }) => {
     peerSessionRef.current?.destroy();
     peerSessionRef.current = null;
     peerMessageHandlerRef.current = null;
-    saveSession({ sessionPeerId: undefined, gameSessionId: undefined });
+    if (options?.persistSession !== false) {
+      saveSession({ sessionPeerId: undefined, gameSessionId: undefined });
+    }
     setPeerLiveness(null);
   }, []);
 
@@ -2061,23 +2060,16 @@ const Shell = () => {
    * Resume/Start Over instead of silently booting into hub prefs alone.
    */
   const finishResolvedSessionDisplay = useCallback(
-    (hasError: boolean) => {
+    async (hasError: boolean): Promise<boolean> => {
+      const controller = sessionController;
+      const model = dashboardSessionModelRef.current;
+      if (!controller || !model) {
+        setSessionError(true);
+        return false;
+      }
       const alias =
         sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
-      const model = dashboardSessionModelRef.current;
-      const handState = sessionController
-        ? (sessionController.handState ?? null)
-        : (model?.game.handState ?? null);
-      const finishedModel =
-        model && handState !== model.game.handState
-          ? { ...model, game: { ...model.game, handState } }
-          : model;
       const terminalCoins = coinsGetterRef.current?.() ?? frozenCoins;
-      setFrozenCoins(terminalCoins);
-      if (finishedModel && finishedModel !== model) {
-        dashboardSessionModelRef.current = finishedModel;
-        setDashboardSessionModel(finishedModel);
-      }
       const identity = {
         myName: alias ?? '',
         opponentName:
@@ -2085,7 +2077,24 @@ const Shell = () => {
         iStarted: sessionConfigRef.current?.iStarted ?? sessionSaveRef.current?.iStarted ?? false,
         iProposedHand: sessionSaveRef.current?.iProposedHand ?? false,
       };
-      setFinishedSessionIdentity(identity);
+      let terminal;
+      try {
+        terminal = await finalizeTerminalSession({
+          controller,
+          model,
+          identity,
+          coins: terminalCoins,
+        });
+      } catch (error) {
+        controller.reportDurabilityError(error);
+        setSessionError(true);
+        return false;
+      }
+
+      setFrozenCoins(terminal.coins);
+      dashboardSessionModelRef.current = terminal.model;
+      setDashboardSessionModel(terminal.model);
+      setFinishedSessionIdentity(terminal.identity);
       abandonPendingRef.current = false;
       sessionFinishedCleanupRef.current = true;
       sessionPhaseRef.current = 'resolved';
@@ -2098,26 +2107,7 @@ const Shell = () => {
 
       // Stop the live peer route and cradle; do not send session_reject and do
       // not wipe the dashboard model (that would flash "No Session").
-      resetPeerRelayState();
-      destroySessionController();
-
-      // Clear only live protocol fields. clearSession() would drop the boot
-      // marker and finished channel snapshot — then reload skips Resume while
-      // still auto-connecting the saved hub.
-      if (finishedModel) {
-        const status = finishedModel.channel.status;
-        void saveTerminalSession({
-          ...snapshotFromSessionModel(finishedModel),
-          handState,
-          terminalIStarted: identity.iStarted,
-          channelStatus: channelStatusPayloadFromModel(status),
-          cleanShutdownStarted: finishedModel.channel.cleanShutdownStarted || undefined,
-          coinsOfInterest: terminalCoins,
-        });
-      } else {
-        void saveTerminalSession({ coinsOfInterest: terminalCoins });
-      }
-      markSavedSession();
+      resetPeerRelayState({ persistSession: false });
 
       sessionSaveRef.current = null;
       sessionSavePropRef.current = undefined;
@@ -2128,6 +2118,7 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
+      return true;
     },
     [clearSessionTimers, frozenCoins, resetPeerRelayState],
   );
@@ -2140,10 +2131,9 @@ const Shell = () => {
         const switchHub = shouldSwitchToHubOnResolved(previousPhase, !!hasError);
         const bcType = blockchainTypeRef.current;
         if (bcType) startBalancePolling(bcType);
-        finishResolvedSessionDisplay(!!hasError);
-        if (switchHub) {
-          setActiveTab('hub');
-        }
+        void finishResolvedSessionDisplay(!!hasError).then((finished) => {
+          if (finished && switchHub) setActiveTab('hub');
+        });
         return;
       }
 
@@ -2212,6 +2202,9 @@ const Shell = () => {
   /** Restore a finished/terminal session freeze without remounting live WASM. */
   const restoreFinishedSessionFromSave = useCallback(
     (save: SessionSave) => {
+      if (!Array.isArray(save.coinsOfInterest)) {
+        throw new Error('Garbled terminal save: missing frozen coin list');
+      }
       setActiveTab('game');
       const channelState = savedChannelStatus(save);
       const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
@@ -2222,7 +2215,7 @@ const Shell = () => {
       const model = sessionModelFromSave(save);
       dashboardSessionModelRef.current = model;
       setDashboardSessionModel(model);
-      setFrozenCoins(save.coinsOfInterest ?? legacyCoinsOfInterestFromModel(model));
+      setFrozenCoins(save.coinsOfInterest);
       setFinishedSessionIdentity({
         myName: save.myAlias ?? peekAlias() ?? '',
         opponentName: save.opponentAlias,

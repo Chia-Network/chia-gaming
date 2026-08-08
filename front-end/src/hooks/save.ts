@@ -13,6 +13,14 @@ import {
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
+import type { PersistedGameState } from '../lib/session/gameStateCodec';
+import type { GameProtocolPresentation } from '../lib/session/gameSlice';
+import {
+  SESSION_SAVE_ENVELOPE_VERSION,
+  validateSessionSaveEnvelope,
+} from '../lib/session/persistence';
+
+export type { PersistedGameState } from '../lib/session/gameStateCodec';
 
 function randomHex(): string {
   const bytes = new Uint8Array(16);
@@ -20,38 +28,11 @@ function randomHex(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export interface CalpokerDisplaySnapshot {
-  gameState: string;
-  winner: string | null;
-  playerBestHandCardIds: bigint[];
-  opponentBestHandCardIds: bigint[];
-  playerHaloCardIds: bigint[];
-  opponentHaloCardIds: bigint[];
-  playerDisplayText: string;
-  opponentDisplayText: string;
-}
-
-export interface CalpokerHandState {
-  playerHand: bigint[];
-  opponentHand: bigint[];
-  moveNumber: bigint;
-  isPlayerTurn: boolean;
-  cardSelections?: bigint[];
-  displaySnapshot?: CalpokerDisplaySnapshot;
-  settlementOutcome?: import('../lib/settlement').SettlementOutcome | null;
-}
-
-export interface PersistedGameState<T = unknown> {
-  gameType: string;
-  version: bigint;
-  state: T;
-}
-
 type BlockchainType = 'simulator' | 'walletconnect';
 
 /**
- * One complete resumable record stored by IndexedDB structured clone.
- * Stale versions are deleted rather than migrated.
+ * One complete resumable record encoded as salt-prefixed masked Bencodex bytes.
+ * IndexedDB stores that single Uint8Array; stale versions are deleted, not migrated.
  */
 export interface SessionSave {
   version: bigint;
@@ -102,15 +83,14 @@ export interface SessionSave {
   durabilityWarning?: string;
   activeGameIds?: string[];
   currentHandGameIds?: string[];
+  lastDisplayedGameId?: string;
   gameInstances?: Record<
     string,
     {
       id: string;
       amount: string;
       coinHex: string | null;
-      turnState: string;
-      onChain?: boolean;
-      handStatus: string;
+      presentation: GameProtocolPresentation;
       terminal: {
         type: string;
         outcome?: string | null;
@@ -127,15 +107,6 @@ export interface SessionSave {
   myAlias?: string;
   opponentAlias?: string;
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
-  gameCoinHex?: string | null;
-  gameTurnState?: string;
-  gameOnChain?: boolean;
-  gameHandStatus?: string;
-  gameTerminalType?: string;
-  gameTerminalOutcome?: string;
-  gameTerminalLabel?: string | null;
-  gameTerminalReward?: string | null;
-  gameTerminalRewardCoin?: string | null;
   /** Actual live coin list frozen when a terminal session tears down. */
   coinsOfInterest?: Array<{ label: string; id: string }>;
   myRunningBalance?: string;
@@ -218,7 +189,7 @@ const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
  */
 let autoResumeLatch = false;
 const RESET_KEY = 'appState_hardReset';
-export const CURRENT_VERSION = 10n;
+export const CURRENT_VERSION = SESSION_SAVE_ENVELOPE_VERSION;
 
 // IndexedDB databases to delete when the browser can't enumerate them via
 // `indexedDB.databases()` (notably Safari).  These are the databases the app
@@ -370,6 +341,7 @@ async function clearAllIndexedDbForHardReset(): Promise<void> {
 // --- In-memory cache + debounced persistence ---
 
 let cached: SessionSave | null = null;
+let stagedTerminal: SessionSave | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistPromise: Promise<void> | null = null;
 let resolvePersist: (() => void) | null = null;
@@ -641,6 +613,16 @@ function isTerminalFinishedChannel(status: ChannelStatusPayload | null | undefin
   return isTerminalChannelSnapshot(status);
 }
 
+function isCompatibleSessionRecord(state: SessionSave): boolean {
+  try {
+    validateSessionSaveEnvelope(state);
+    return true;
+  } catch (error) {
+    console.error('[save] rejecting incompatible session record:', error);
+    return false;
+  }
+}
+
 /**
  * True when disk state should keep the boot Resume/Start Over marker.
  * Includes finished/terminal channel snapshots (no live cradle) so a clean
@@ -673,6 +655,7 @@ function queueWrite(state: SessionSave): Promise<void> {
   const snapshot = structuredClone(state);
   capPersistedHistories(snapshot);
   assertNoNumbers(snapshot, 'SessionSave');
+  validateSessionSaveEnvelope(snapshot);
   writeChain = writeChain
     .catch(() => {})
     .then(async () => {
@@ -713,6 +696,29 @@ export function flushSessionSave(): Promise<void> {
     persistPromise = null;
     resolvePersist = null;
     rejectPersist = null;
+    if (stagedTerminal) {
+      const terminal = stagedTerminal;
+      let write: Promise<void>;
+      try {
+        write = queueWrite(terminal).then(() => {
+          if (stagedTerminal !== terminal) return;
+          cached = terminal;
+          stagedTerminal = null;
+          savePreferences(terminal);
+        });
+      } catch (error) {
+        reject?.(error);
+        return Promise.reject(error);
+      }
+      void write.then(
+        () => resolve?.(),
+        (error) => {
+          console.error('[save] failed to persist terminal session state:', error);
+          reject?.(error);
+        },
+      );
+      return pending ? Promise.all([pending, write]).then(() => {}) : write;
+    }
     if (!isResumable(cached) && hasSavedSessionMarker() && !hasConnectionPreferences(cached)) {
       const error = new Error(
         'Refusing to persist non-resumable in-memory state over a marked saved session',
@@ -721,7 +727,13 @@ export function flushSessionSave(): Promise<void> {
       reject?.(error);
       return Promise.reject(error);
     }
-    const write = queueWrite(cached);
+    let write: Promise<void>;
+    try {
+      write = queueWrite(cached);
+    } catch (error) {
+      reject?.(error);
+      return Promise.reject(error);
+    }
     void write.then(
       () => resolve?.(),
       (error) => {
@@ -793,6 +805,7 @@ export function _resetForTests(): void {
   }
   settleScheduledPersist();
   cached = null;
+  stagedTerminal = null;
   writeChain = Promise.resolve();
   fenced = false;
   fencedListeners.clear();
@@ -864,7 +877,7 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
   const record = await readSessionRecord();
   identityDiskChecked = true;
   if (!record) return false;
-  if (record.version !== CURRENT_VERSION) {
+  if (!isCompatibleSessionRecord(record)) {
     // Same wipe+marker policy as peekSession: remove the unreadable record but
     // keep the boot marker so reload still forces Resume/Start Over.
     await deleteSessionRecord();
@@ -1011,26 +1024,55 @@ export function saveSession(fields: Partial<SessionSave>): Promise<void> {
  * Persist a terminal channel snapshot without any state that could restart its
  * protocol. Display/history fields supplied by the caller are retained.
  */
-export function saveTerminalSession(fields: Partial<SessionSave>): Promise<void> {
+export function saveTerminalSession(
+  fields: Partial<SessionSave> & { coinsOfInterest: NonNullable<SessionSave['coinsOfInterest']> },
+): Promise<void> {
   return mutate((s) => {
-    Object.assign(s, fields, {
-      serializedGameSession: undefined,
-      gameSessionSchemaVersion: undefined,
-      pairingToken: undefined,
-      sessionPeerId: undefined,
-      gameSessionId: undefined,
-      messageNumber: undefined,
-      remoteNumber: undefined,
-      iStarted: undefined,
-      myContribution: undefined,
-      theirContribution: undefined,
-      perGameAmount: undefined,
-      channelTimeout: undefined,
-      unrollTimeout: undefined,
-      unackedMessages: undefined,
-    });
-    capPersistedHistories(s);
+    applyTerminalFields(s, fields);
   });
+}
+
+function applyTerminalFields(
+  state: SessionSave,
+  fields: Partial<SessionSave> & { coinsOfInterest: NonNullable<SessionSave['coinsOfInterest']> },
+): void {
+  const terminalIStarted =
+    fields.terminalIStarted ?? fields.iStarted ?? state.terminalIStarted ?? state.iStarted;
+  Object.assign(state, fields, {
+    terminalIStarted,
+    serializedGameSession: undefined,
+    gameSessionSchemaVersion: undefined,
+    pairingToken: undefined,
+    sessionPeerId: undefined,
+    gameSessionId: undefined,
+    messageNumber: undefined,
+    remoteNumber: undefined,
+    iStarted: undefined,
+    myContribution: undefined,
+    theirContribution: undefined,
+    perGameAmount: undefined,
+    channelTimeout: undefined,
+    unrollTimeout: undefined,
+    unackedMessages: undefined,
+  });
+  capPersistedHistories(state);
+}
+
+/**
+ * Prepare terminal display state without replacing the retryable live cache.
+ * flushSessionSave promotes it only after the IndexedDB write succeeds.
+ */
+export async function stageTerminalSession(
+  fields: Partial<SessionSave> & { coinsOfInterest: NonNullable<SessionSave['coinsOfInterest']> },
+): Promise<void> {
+  await hydrateSessionCacheFromDisk();
+  const terminal = structuredClone(loadState());
+  applyTerminalFields(terminal, fields);
+  stagedTerminal = terminal;
+}
+
+export function discardStagedTerminalSession(): void {
+  stagedTerminal = null;
 }
 
 function hasWalletConnectStorage(): boolean {
@@ -1057,7 +1099,7 @@ export async function peekSession(): Promise<SessionSave | null> {
   if (persistPromise) await flushSessionSave();
   await writeChain;
   const record = await readSessionRecord();
-  if (record && record.version !== CURRENT_VERSION) {
+  if (record && !isCompatibleSessionRecord(record)) {
     // Wipe the unreadable record but keep the boot marker so reload still
     // forces Resume/Start Over instead of silently booting into leftover
     // preference state (e.g. blockchainType).

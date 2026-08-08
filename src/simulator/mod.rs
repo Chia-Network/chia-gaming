@@ -500,6 +500,24 @@ impl Simulator {
         }
     }
 
+    /// Whether a pending transaction spends `coin_id`. Test-only.
+    pub fn mempool_spends_coin(&self, coin_id: &CoinID) -> bool {
+        self.state
+            .borrow()
+            .mempool
+            .iter()
+            .any(|pending| pending.removals.contains(coin_id))
+    }
+
+    /// Creation and optional spend heights for a known coin. Test-only.
+    pub fn coin_heights(&self, coin_id: &CoinID) -> Option<(u32, Option<u32>)> {
+        self.state
+            .borrow()
+            .coins
+            .get(coin_id)
+            .map(|record| (record.created_height, record.spent_height))
+    }
+
     /// Coin state for a watched coin id (including spent coins still in the map).
     /// Used by the gaming FE to mirror WalletConnect `getCoinRecordsByNames`.
     pub fn get_watched_coin_snapshot(

@@ -15,15 +15,26 @@ import {
   clearProposalTracking,
   gameplayEventForMoveRejected,
   gameplayEventsForGameStatus,
-  isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
+import { isValidKrunkStake } from './adapter';
 import {
   formatKrunkHandLog,
   krunkGameSlots,
   krunkLetterStatuses,
   newlyResolvedKrunkIndex,
 } from './Krunk';
+import type { GameTerminalModel } from '../../lib/session/types';
+
+function terminal(outcome: GameTerminalModel['outcome'] = null): GameTerminalModel {
+  return {
+    type: outcome === null ? 'none' : 'settled',
+    outcome,
+    label: null,
+    myReward: null,
+    rewardCoinHex: null,
+  };
+}
 
 describe('Krunk terms', () => {
   it('clears proposal terms, group links, and outgoing refs together', () => {
@@ -32,7 +43,7 @@ describe('Krunk terms', () => {
       myContribution: 100n,
       theirContribution: 100n,
       gameTimeout: 15n,
-    };
+    } as const;
     const termsById = { '1': terms, '3': terms, stale: terms };
     const groupsById = { '1': ['1', '3'], '3': ['1', '3'], stale: ['stale'] };
     const outgoing = new Set(['1', '3', 'stale']);
@@ -120,14 +131,14 @@ describe('Krunk first guess drafting', () => {
 
   it('appends queued guesses as pending rows after committed guesses', () => {
     expect(krunkGuessesWithQueued([], ['CRANE'])).toEqual([
-      { word: 'CRANE', clue: [-1, -1, -1, -1, -1] },
+      { word: 'CRANE', clue: [-1n, -1n, -1n, -1n, -1n] },
     ]);
     expect(
-      krunkGuessesWithQueued([{ word: 'CRANE', clue: [0, 0, 0, 0, 1] }], ['SLATE', 'AUDIO']),
+      krunkGuessesWithQueued([{ word: 'CRANE', clue: [0n, 0n, 0n, 0n, 1n] }], ['SLATE', 'AUDIO']),
     ).toEqual([
-      { word: 'CRANE', clue: [0, 0, 0, 0, 1] },
-      { word: 'SLATE', clue: [-1, -1, -1, -1, -1] },
-      { word: 'AUDIO', clue: [-1, -1, -1, -1, -1] },
+      { word: 'CRANE', clue: [0n, 0n, 0n, 0n, 1n] },
+      { word: 'SLATE', clue: [-1n, -1n, -1n, -1n, -1n] },
+      { word: 'AUDIO', clue: [-1n, -1n, -1n, -1n, -1n] },
     ]);
     expect(krunkGuessesWithQueued([], [])).toEqual([]);
   });
@@ -148,7 +159,6 @@ describe('Krunk first guess drafting', () => {
       revealedWord: null,
       outcome: null,
       moverShare: null,
-      settlementOutcome: null,
       error: null,
     };
     expect(
@@ -168,7 +178,7 @@ describe('Krunk first guess drafting', () => {
       handler: KrunkHandler.BobWaiting,
       role: 'bob',
       secretWord: null,
-      guesses: [{ word: 'XXXXX', clue: [-1, -1, -1, -1, -1] }],
+      guesses: [{ word: 'XXXXX', clue: [-1n, -1n, -1n, -1n, -1n] }],
     };
     expect(
       applyKrunkMoveRejected(bob, {
@@ -193,37 +203,38 @@ describe('Krunk first guess drafting', () => {
       revealedWord: null,
       outcome: 'lose',
       moverShare: null,
-      settlementOutcome: 'timed_out_waiting_for_our_move',
       error: null,
     };
 
-    expect(krunkTerminalStatus(timedOut, 'Peer')).toBe('We timed out.');
+    expect(krunkTerminalStatus(timedOut, 'Peer', terminal('timed_out_waiting_for_our_move'))).toBe(
+      'We timed out.',
+    );
     expect(
       krunkTerminalStatus(
         {
           ...timedOut,
           role: 'alice',
-          settlementOutcome: 'opponent_timed_out',
         },
         'Peer',
+        terminal('opponent_timed_out'),
       ),
     ).toBe('Peer timed out.');
     expect(
       krunkTerminalStatus(
         {
           ...timedOut,
-          settlementOutcome: 'forfeited_skipped_reveal',
         },
         'Peer',
+        terminal('forfeited_skipped_reveal'),
       ),
     ).toBe('We forfeited.');
     expect(
       krunkTerminalStatus(
         {
           ...timedOut,
-          settlementOutcome: 'settled_cleanly',
         },
         'Peer',
+        terminal('settled_cleanly'),
       ),
     ).toBe('Settled.');
   });
@@ -233,15 +244,14 @@ describe('Krunk first guess drafting', () => {
       handler: KrunkHandler.Terminal,
       myTurn: false,
       role: 'bob',
-      guesses: [{ word: 'CRANE', clue: [2, 2, 2, 2, 2] }],
+      guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
       secretWord: null,
       revealedWord: 'CRANE',
       outcome: 'win',
       moverShare: '100',
-      settlementOutcome: null,
       error: null,
     };
-    expect(krunkTerminalStatus(bobWin, 'Peer')).toBeNull();
+    expect(krunkTerminalStatus(bobWin, 'Peer', terminal())).toBeNull();
     expect(
       krunkTerminalStatus(
         {
@@ -251,6 +261,7 @@ describe('Krunk first guess drafting', () => {
           revealedWord: 'CRANE',
         },
         'Peer',
+        terminal(),
       ),
     ).toBe('Out of guesses.');
   });
@@ -265,8 +276,8 @@ describe('Krunk first guess drafting', () => {
   it('aggregates keyboard letter statuses with NYT green-over-amber priority', () => {
     expect(
       krunkLetterStatuses([
-        { word: 'CRANE', clue: [0, 0, 0, 0, 1] }, // E present
-        { word: 'EAGER', clue: [2, 0, 0, 0, 0] }, // E correct
+        { word: 'CRANE', clue: [0n, 0n, 0n, 0n, 1n] }, // E present
+        { word: 'EAGER', clue: [2n, 0n, 0n, 0n, 0n] }, // E correct
       ]),
     ).toEqual({
       C: 'absent',
@@ -284,10 +295,10 @@ describe('Krunk first guess drafting', () => {
         'bob',
         10_000_000_000n, // 0.01 XCH
         [
-          { word: 'RATES', clue: [0, 0, 0, 0, 1] },
-          { word: 'SPOIL', clue: [1, 0, 1, 0, 0] },
-          { word: 'MOUSY', clue: [0, 2, 0, 2, 2] },
-          { word: 'BOSSY', clue: [2, 2, 2, 2, 2] },
+          { word: 'RATES', clue: [0n, 0n, 0n, 0n, 1n] },
+          { word: 'SPOIL', clue: [1n, 0n, 1n, 0n, 0n] },
+          { word: 'MOUSY', clue: [0n, 2n, 0n, 2n, 2n] },
+          { word: 'BOSSY', clue: [2n, 2n, 2n, 2n, 2n] },
         ],
         'BOSSY',
       ),
@@ -306,11 +317,11 @@ describe('Krunk first guess drafting', () => {
         'alice',
         10_000_000_000n,
         [
-          { word: 'RATES', clue: [1, 0, 0, 0, 0] },
-          { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
-          { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'CROWN', clue: [0, 2, 2, 2, 2] },
+          { word: 'RATES', clue: [1n, 0n, 0n, 0n, 0n] },
+          { word: 'GROIN', clue: [0n, 2n, 2n, 0n, 2n] },
+          { word: 'BROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'DROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'CROWN', clue: [0n, 2n, 2n, 2n, 2n] },
         ],
         'FROWN',
       ),
@@ -331,11 +342,11 @@ describe('Krunk first guess drafting', () => {
         'bob',
         10_000_000_000n,
         [
-          { word: 'RATES', clue: [1, 0, 0, 0, 0] },
-          { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
-          { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'FROWN', clue: [2, 2, 2, 2, 2] },
+          { word: 'RATES', clue: [1n, 0n, 0n, 0n, 0n] },
+          { word: 'GROIN', clue: [0n, 2n, 2n, 0n, 2n] },
+          { word: 'BROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'DROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'FROWN', clue: [2n, 2n, 2n, 2n, 2n] },
         ],
         'FROWN',
       ),
