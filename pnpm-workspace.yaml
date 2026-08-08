@@ -1,4 +1,6 @@
+minimumReleaseAge: 1440 # 24 hours
 packages:
+  - "desktop"
   - "front-end"
   - "hub/hub-frontend"
   - "hub/hub-service"
@@ -9,6 +11,8 @@ confirmModulesPurge: false
 allowBuilds:
   "@parcel/watcher": true
   esbuild: true
+  # Postinstall downloads the Electron binary for the desktop app.
+  electron: true
 
 patchedDependencies:
   "@walletconnect/sign-client@2.23.10": front-end/patches/@walletconnect__sign-client@2.23.10.patch

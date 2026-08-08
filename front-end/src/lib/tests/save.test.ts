@@ -894,6 +894,23 @@ describe('tab lease', () => {
     expect(checkLease()).toBe(false);
     expect(isLeaseConflict()).toBe(true);
   });
+
+  it('ignores a lease orphaned by a previous run in the desktop build', () => {
+    // A quit clears sessionStorage but not the lease, so the desktop build
+    // boots with a foreign owner that no longer exists. Electron enforces a
+    // single instance, so there is no peer to prompt about.
+    localStorage.setItem('appState_activeTab', 'previous-run');
+    setTestGlobal('window', { __chiaDistribution: 'electron' });
+
+    try {
+      expect(isLeaseConflict()).toBe(false);
+      expect(checkLease()).toBe(true);
+    } finally {
+      clearTestGlobal('window');
+    }
+
+    expect(isLeaseConflict()).toBe(true);
+  });
 });
 
 describe('hard reset', () => {

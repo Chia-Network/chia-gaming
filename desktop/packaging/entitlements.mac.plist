@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Outbound network only: the WalletConnect relay and the configured hub.
+         The app never listens for connections. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- V8 and the WebAssembly engine need to map JIT pages under the hardened
+         runtime. Electron 12+ uses MAP_JIT, so allow-unsigned-executable-memory
+         is deliberately not granted. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- A custom entitlements file replaces electron-builder's defaults rather
+         than extending them. Without this key the hardened runtime refuses to
+         load the Electron Framework and helper dylibs unless every image shares
+         the main executable's Team ID, and the app dies at launch in dyld with
+         "mapping process and mapped file (non-platform) have different Team
+         IDs". -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

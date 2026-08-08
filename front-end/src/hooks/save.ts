@@ -7,6 +7,7 @@ import {
   writeSessionRecord,
 } from '../lib/session/indexedDb';
 import { isDenseNumericByteObject } from '../lib/reactPropSafe';
+import { isElectronDistribution } from '../util/distribution';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -417,10 +418,20 @@ export function offFenced(cb: () => void): void {
   fencedListeners.delete(cb);
 }
 
+// The lease lives in localStorage but `tabId` lives in sessionStorage, so a
+// quit orphans the lease: the next launch mints a new id and would read the
+// dead run's id as a live peer. The desktop build runs one instance with one
+// window (requestSingleInstanceLock in the main process), so a foreign id
+// there is always stale and there is never a peer to yield to.
+function leaseHasLivePeer(): boolean {
+  const current = localStorage.getItem(LEASE_KEY);
+  if (current === null || current === tabId) return false;
+  return !isElectronDistribution();
+}
+
 export function isLeaseConflict(): boolean {
   try {
-    const current = localStorage.getItem(LEASE_KEY);
-    return current !== null && current !== tabId;
+    return leaseHasLivePeer();
   } catch {
     return false;
   }
@@ -428,8 +439,7 @@ export function isLeaseConflict(): boolean {
 
 export function checkLease(): boolean {
   try {
-    const current = localStorage.getItem(LEASE_KEY);
-    return current === null || current === tabId;
+    return !leaseHasLivePeer();
   } catch {
     return true;
   }
