@@ -1,6 +1,9 @@
-import React, { Suspense, useMemo } from 'react';
+import React, { Component, Suspense, useMemo } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 
 import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
+import type { SessionController } from '../hooks/SessionController';
+import type { FrozenGameMountOptions } from '../lib/gameMount';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../lib/gameMountRegistry';
@@ -11,6 +14,71 @@ export interface FinishedSessionGameViewProps {
   opponentName?: string;
   iStarted?: boolean;
   iProposedHand?: boolean;
+}
+
+function FinishedSessionFallback({ label }: { label: string | null }) {
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+      data-testid="finished-session-fallback"
+    >
+      {label ?? 'No hand details available'}
+    </div>
+  );
+}
+
+interface FinishedSessionErrorBoundaryProps {
+  children: ReactNode;
+  fallbackLabel: string | null;
+  resetKey: string;
+}
+
+interface FinishedSessionErrorBoundaryState {
+  hasError: boolean;
+}
+
+export class FinishedSessionErrorBoundary extends Component<
+  FinishedSessionErrorBoundaryProps,
+  FinishedSessionErrorBoundaryState
+> {
+  state: FinishedSessionErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): FinishedSessionErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(
+      '[FinishedSessionGameView] frozen game render crash:',
+      error,
+      info.componentStack,
+    );
+  }
+
+  componentDidUpdate(previous: FinishedSessionErrorBoundaryProps) {
+    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <FinishedSessionFallback label={this.props.fallbackLabel} />;
+    }
+    return this.props.children;
+  }
+}
+
+function FrozenGameMount({
+  model,
+  bridge,
+  options,
+}: {
+  model: SessionModel;
+  bridge: SessionController;
+  options: FrozenGameMountOptions;
+}) {
+  return renderFrozenGameMount(model, bridge, options);
 }
 
 /**
@@ -29,15 +97,10 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
 
   if (!display.canRemountHand || !handState) {
-    return (
-      <div
-        className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
-        data-testid="finished-session-fallback"
-      >
-        {display.terminalLabel ?? 'No hand details available'}
-      </div>
-    );
+    return <FinishedSessionFallback label={display.terminalLabel} />;
   }
+
+  const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;
 
   return (
     <div
@@ -46,23 +109,29 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
       aria-disabled
       inert
     >
-      <Suspense
-        fallback={
-          <div
-            className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
-            data-testid="finished-session-loading"
-          >
-            Loading hand…
-          </div>
-        }
-      >
-        {renderFrozenGameMount(model, frozenBridge, {
-          myName,
-          opponentName,
-          iStarted,
-          iProposedHand,
-        })}
-      </Suspense>
+      <FinishedSessionErrorBoundary fallbackLabel={display.terminalLabel} resetKey={resetKey}>
+        <Suspense
+          fallback={
+            <div
+              className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+              data-testid="finished-session-loading"
+            >
+              Loading hand…
+            </div>
+          }
+        >
+          <FrozenGameMount
+            model={model}
+            bridge={frozenBridge}
+            options={{
+              myName,
+              opponentName,
+              iStarted,
+              iProposedHand,
+            }}
+          />
+        </Suspense>
+      </FinishedSessionErrorBoundary>
     </div>
   );
 };
