@@ -62,6 +62,36 @@ describe('pure game registrations', () => {
   it('validates and compares terms through their owning adapter', () => {
     const spaceTerms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 10n };
     expect(validateGameTerms(spaceTerms)).toBe(true);
+    expect(
+      calpokerRegistration.validateTerms({
+        gameType: 'calpoker',
+        ...base,
+        theirContribution: 200n,
+      }),
+    ).toBe(false);
+    expect(
+      decodeGameTerms(
+        'calpoker',
+        { ...base, theirContribution: 200n },
+        Program.fromList([]).serialize(),
+      ),
+    ).toBeNull();
+    expect(
+      decodePersistedGameTerms('calpoker', { ...base, theirContribution: 200n }, {}),
+    ).toBeNull();
+    expect(
+      spacepokerRegistration.validateTerms({
+        ...spaceTerms,
+        theirContribution: 200n,
+      }),
+    ).toBe(false);
+    expect(
+      spacepokerRegistration.validateTerms({
+        ...spaceTerms,
+        myContribution: 101n,
+        theirContribution: 101n,
+      }),
+    ).toBe(false);
     expect(gameTermsEqual(spaceTerms, { ...spaceTerms })).toBe(true);
     expect(gameTermsEqual(spaceTerms, { ...spaceTerms, unitSizeMojos: 20n })).toBe(false);
     expect(isValidKrunkStake(100n)).toBe(true);
@@ -79,6 +109,47 @@ describe('pure game registrations', () => {
     expect(extras).toEqual({ spacepoker_unit_size: '25' });
     expect(decodePersistedGameTerms('spacepoker', base, extras)).toEqual(terms);
     expect(decodePersistedGameTerms('spacepoker', base, {})).toBeNull();
+  });
+
+  it.each([
+    ['zero contribution', { ...base, myContribution: 0n, theirContribution: 0n }],
+    ['unequal contribution', { ...base, theirContribution: 99n }],
+  ])('rejects invalid Calpoker %s in proposal and persistence decoders', (_label, invalid) => {
+    expect(decodeGameTerms('calpoker', invalid, undefined)).toBeNull();
+    expect(decodePersistedGameTerms('calpoker', invalid, {})).toBeNull();
+  });
+
+  it.each([
+    ['zero contribution', { ...base, myContribution: 0n, theirContribution: 0n }, '10'],
+    ['unequal contribution', { ...base, theirContribution: 90n }, '10'],
+    ['nondivisible contribution', { ...base, myContribution: 101n, theirContribution: 101n }, '10'],
+    ['zero timeout', { ...base, gameTimeout: 0n }, '10'],
+    ['negative timeout', { ...base, gameTimeout: -1n }, '10'],
+    ['zero unit', base, '0'],
+    ['negative unit', base, '-10'],
+    ['invalid unit', base, 'not-a-unit'],
+  ])(
+    'rejects invalid Space Poker %s in proposal and persistence decoders',
+    (_label, invalid, unit) => {
+      const parameterState = /^-?\d+$/.test(unit)
+        ? Program.fromBigInt(BigInt(unit)).serialize()
+        : new Uint8Array([0xff]);
+      expect(decodeGameTerms('spacepoker', invalid, parameterState)).toBeNull();
+      expect(
+        decodePersistedGameTerms('spacepoker', invalid, { spacepoker_unit_size: unit }),
+      ).toBeNull();
+    },
+  );
+
+  it('keeps valid Calpoker and Space Poker terms round-trippable', () => {
+    const calTerms = { gameType: 'calpoker' as const, ...base };
+    const spaceTerms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 20n };
+    expect(decodePersistedGameTerms('calpoker', base, encodeGameTermsExtras(calTerms))).toEqual(
+      calTerms,
+    );
+    expect(decodePersistedGameTerms('spacepoker', base, encodeGameTermsExtras(spaceTerms))).toEqual(
+      spaceTerms,
+    );
   });
 
   it('uses one resolver for terms, parameter bytes, and persisted state', () => {

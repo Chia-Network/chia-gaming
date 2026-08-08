@@ -66,6 +66,7 @@ export function assembleSessionSave(
       rewardPuzzleHash: wasm.rewardPuzzleHash,
       unackedMessages: wasm.unackedMessages,
       activeGameIds: model.game.activeIds,
+      moveReplayJournal: wasm.moveReplayJournal,
       iProposedHand: state.coordination.iProposedHand,
       activeGameType: model.game.activeGameType,
       handState: model.game.handState,

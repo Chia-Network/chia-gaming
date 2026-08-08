@@ -32,6 +32,7 @@ import {
 } from '../session/model';
 import { gameInitialTurn } from '../gameRegistry';
 import type { SessionSave } from '../../hooks/save';
+import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
 import {
   dispatchWasmNotification,
   gameplayEventsForGameStatus,
@@ -44,6 +45,26 @@ import {
   settledEventForInfo,
 } from '../../hooks/useGameSession';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
+
+function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+  return {
+    version: 11n,
+    playerId: 'p1',
+    serializedGameSession: new Uint8Array([1]),
+    gameSessionSchemaVersion: 3n,
+    pairingToken: 'pair',
+    messageNumber: 1n,
+    remoteNumber: 0n,
+    iStarted: true,
+    myContribution: '100',
+    theirContribution: '100',
+    perGameAmount: '10',
+    rewardPuzzleHash: '11'.repeat(32),
+    unackedMessages: [],
+    activeGameIds: [],
+    ...fields,
+  };
+}
 
 describe('session model selectors', () => {
   it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
@@ -88,6 +109,7 @@ describe('session model selectors', () => {
   it('round-trips accepted in-flight groups for a later insufficient-balance cleanup', () => {
     const model = createSessionModel({
       game: {
+        activeGameType: 'krunk',
         activeIds: ['11', '13'],
         currentHandIds: ['11', '13'],
         instances: {
@@ -109,19 +131,31 @@ describe('session model selectors', () => {
       },
       betweenHand: {
         acceptedProposalGroupIds: [['11', '13']],
+        lastTerms: {
+          gameType: 'krunk',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+        },
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave({
-      version: 11n,
-      playerId: 'p1',
-      activeGameIds: snapshot.activeGameIds,
-      currentHandGameIds: snapshot.currentHandGameIds,
-      gameInstances: snapshot.gameInstances,
-      activeGameType: snapshot.activeGameType,
-      acceptedProposalGroupIds: snapshot.acceptedProposalGroupIds,
-      betweenHandLastTerms: snapshot.betweenHandLastTerms,
-    });
+    const restored = sessionModelFromSave(
+      liveEnvelope({
+        activeGameIds: snapshot.activeGameIds,
+        currentHandGameIds: snapshot.currentHandGameIds,
+        gameInstances: snapshot.gameInstances,
+        activeGameType: snapshot.activeGameType,
+        acceptedProposalGroupIds: snapshot.acceptedProposalGroupIds,
+        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        handState: krunkStateCodec.encode({
+          games: {
+            '11': initialKrunkGameState('alice'),
+            '13': initialKrunkGameState('bob'),
+          },
+        }),
+      }),
+    );
     const restoredGroups = proposalGroupMap(restored.betweenHand.acceptedProposalGroupIds);
 
     expect(restored.betweenHand.acceptedProposalGroupIds).toEqual([['11', '13']]);
@@ -184,44 +218,44 @@ describe('session model selectors', () => {
       '19': secondTerms,
     });
 
-    const restored = sessionModelFromSave({
-      version: 11n,
-      playerId: 'p1',
-      activeGameIds: [],
-      outgoingProposalGroupIds: [
-        ['11', '13'],
-        ['17', '19'],
-      ],
-      outgoingProposalTerms: {
-        '11': {
-          my_contribution: '10',
-          their_contribution: '10',
+    const restored = sessionModelFromSave(
+      liveEnvelope({
+        activeGameIds: [],
+        outgoingProposalGroupIds: [
+          ['11', '13'],
+          ['17', '19'],
+        ],
+        outgoingProposalTerms: {
+          '11': {
+            my_contribution: '10',
+            their_contribution: '10',
+            game_type: 'calpoker',
+          },
+          '13': {
+            my_contribution: '10',
+            their_contribution: '10',
+            game_type: 'calpoker',
+          },
+          '17': {
+            my_contribution: '100',
+            their_contribution: '100',
+            game_type: 'krunk',
+          },
+          '19': {
+            my_contribution: '100',
+            their_contribution: '100',
+            game_type: 'krunk',
+          },
+        },
+        betweenHandReviewPeerProposal: {
+          id: '23',
+          groupIds: ['23', '29'],
+          my_contribution: '30',
+          their_contribution: '30',
           game_type: 'calpoker',
         },
-        '13': {
-          my_contribution: '10',
-          their_contribution: '10',
-          game_type: 'calpoker',
-        },
-        '17': {
-          my_contribution: '100',
-          their_contribution: '100',
-          game_type: 'krunk',
-        },
-        '19': {
-          my_contribution: '100',
-          their_contribution: '100',
-          game_type: 'krunk',
-        },
-      },
-      betweenHandReviewPeerProposal: {
-        id: '23',
-        groupIds: ['23', '29'],
-        my_contribution: '30',
-        their_contribution: '30',
-        game_type: 'calpoker',
-      },
-    });
+      }),
+    );
     expect(restored.betweenHand.outgoingProposalGroupIds).toEqual([
       ['11', '13'],
       ['17', '19'],
@@ -240,6 +274,7 @@ describe('session model selectors', () => {
     const model = createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
       game: {
+        activeGameType: 'krunk',
         currentHandIds: ['11', '13'],
         instances: {
           '11': {
@@ -256,6 +291,14 @@ describe('session model selectors', () => {
             handStatus: 'their-turn',
             terminal: INITIAL_GAME_TERMINAL_MODEL,
           },
+        },
+      },
+      betweenHand: {
+        lastTerms: {
+          gameType: 'krunk',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
         },
       },
     });
@@ -394,12 +437,28 @@ describe('session model selectors', () => {
       createSessionModel({
         channel: { status: abandonedStatus },
         game: staleGame,
+        betweenHand: {
+          lastTerms: {
+            gameType: 'calpoker',
+            myContribution: 40n,
+            theirContribution: 40n,
+            gameTimeout: 15n,
+          },
+        },
       }),
     );
     const staleSnapshot = snapshotFromSessionModel(
       createSessionModel({
         channel: { status: abandonedStatus },
         game: staleGame,
+        betweenHand: {
+          lastTerms: {
+            gameType: 'calpoker',
+            myContribution: 40n,
+            theirContribution: 40n,
+            gameTimeout: 15n,
+          },
+        },
       }),
     );
     const restored = sessionModelFromSave({
@@ -1104,19 +1163,19 @@ describe('session model selectors', () => {
   });
 
   it('restores pre-progress saves with unknown progress fields', () => {
-    const restored = sessionModelFromSave({
-      version: 11n,
-      playerId: 'p1',
-      activeGameIds: [],
-      channelStatus: {
-        state: 'Unrolling',
-        advisory: null,
-        coin: null,
-        our_balance: null,
-        their_balance: null,
-        game_allocated: null,
-      },
-    });
+    const restored = sessionModelFromSave(
+      liveEnvelope({
+        activeGameIds: [],
+        channelStatus: {
+          state: 'Unrolling',
+          advisory: null,
+          coin: null,
+          our_balance: null,
+          their_balance: null,
+          game_allocated: null,
+        },
+      }),
+    );
 
     expect(restored.channel.status).toMatchObject({
       unrollInitiator: null,

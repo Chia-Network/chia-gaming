@@ -372,7 +372,7 @@ impl SimulationHarness {
         player: usize,
         game_id: &GameID,
     ) -> Result<usize, Error> {
-        self.cradles[player].test_move_state_number(game_id)
+        self.cradles[player].move_state_number(game_id)
     }
 
     pub(super) fn propose_games(

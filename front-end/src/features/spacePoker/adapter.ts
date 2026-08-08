@@ -4,6 +4,7 @@ import {
   reduceGameStateSnapshot,
   type DurableGameStateEvent,
   type GameFeatureRegistration,
+  type TermsFor,
 } from '../../lib/gameAdapter';
 import type { SettlementOutcome } from '../../lib/settlement';
 import { spacepokerStateCodec, type SpacepokerHandState, type SpHandEntry } from './stateCodec';
@@ -288,9 +289,9 @@ export function reduceSpacepokerDurableState(
     return current ?? initialState(event.iStarted, event.terms.unitSizeMojos);
   }
   if (event.type === 'feature-state') {
-    return spacepokerStateCodec.decode(
-      spacepokerStateCodec.encode(event.state as SpacepokerHandState),
-    );
+    const state = spacepokerStateCodec.isState(event.state) ? event.state : null;
+    if (state === null) throw new Error('Invalid Space Poker feature-state payload');
+    return state;
   }
   if (!current) return null;
   if (event.type === 'local-turn') {
@@ -317,10 +318,23 @@ export function reduceSpacepokerDurableState(
   });
 }
 
+export function validateSpacepokerTerms(terms: TermsFor<'spacepoker'>): boolean {
+  return (
+    terms.myContribution === terms.theirContribution &&
+    terms.myContribution > 0n &&
+    terms.gameTimeout > 0n &&
+    resolveSpacepokerUnitSize({ terms }) !== null &&
+    terms.myContribution % terms.unitSizeMojos === 0n
+  );
+}
+
 export const spacepokerRegistration: GameFeatureRegistration<'spacepoker', SpacepokerHandState> = {
   gameType: 'spacepoker',
   displayName: 'Space Poker',
   stateCodec: spacepokerStateCodec,
+  handMembershipDescription: 'exactly one currentHandGameId',
+  validateHandMembership: (gameIds) => gameIds.length === 1,
+  decodeFeatureState: (value) => (spacepokerStateCodec.isState(value) ? value : null),
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
     initialTurn: (iStarted) => (iStarted ? 'their-turn' : 'my-turn'),
@@ -342,12 +356,14 @@ export const spacepokerRegistration: GameFeatureRegistration<'spacepoker', Space
         gameTimeout,
         unitSizeMojos: draft.unitSize,
       };
-      return spacepokerRegistration.validateTerms(terms) ? terms : null;
+      return validateSpacepokerTerms(terms) ? terms : null;
     },
   },
   decodeProposalTerms(base, parameterState) {
     const unitSizeMojos = resolveSpacepokerUnitSize({ encodedParameterState: parameterState });
-    return unitSizeMojos ? { gameType: 'spacepoker', ...base, unitSizeMojos } : null;
+    if (unitSizeMojos === null) return null;
+    const terms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos };
+    return validateSpacepokerTerms(terms) ? terms : null;
   },
   encodeProposalParameters(terms, iStarted) {
     const unitSizeMojos = resolveSpacepokerUnitSize({ terms });
@@ -360,11 +376,7 @@ export const spacepokerRegistration: GameFeatureRegistration<'spacepoker', Space
       Program.fromBigInt(this.lifecycle.proposalSenderGoesFirst(iStarted) ? 1n : 0n),
     ]);
   },
-  validateTerms: (terms) =>
-    terms.myContribution > 0n &&
-    terms.theirContribution > 0n &&
-    terms.gameTimeout > 0n &&
-    resolveSpacepokerUnitSize({ terms }) !== null,
+  validateTerms: validateSpacepokerTerms,
   termsEqual: (a, b) => equalBaseTerms(a, b) && a.unitSizeMojos === b.unitSizeMojos,
   persistence: {
     encodeExtras: (terms) => ({ spacepoker_unit_size: terms.unitSizeMojos.toString() }),
@@ -374,7 +386,7 @@ export const spacepokerRegistration: GameFeatureRegistration<'spacepoker', Space
       try {
         const unitSizeMojos = BigInt(raw);
         const terms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos };
-        return spacepokerRegistration.validateTerms(terms) ? terms : null;
+        return validateSpacepokerTerms(terms) ? terms : null;
       } catch {
         return null;
       }

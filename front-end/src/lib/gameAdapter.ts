@@ -34,7 +34,12 @@ export type DurableGameStateEvent =
   | { type: 'settled'; id: string; terminal: GameTerminalModel }
   | { type: 'remove-group'; groupIds: readonly string[] }
   | { type: 'abandoned' }
-  | { type: 'feature-state'; id: string; state: unknown };
+  | {
+      type: 'feature-state';
+      gameType: RegisteredGameType;
+      id: string;
+      state: unknown;
+    };
 
 export type ComposeDraftFor<T extends RegisteredGameType> = T extends 'spacepoker'
   ? { unitSize: bigint; stackSize: bigint }
@@ -44,10 +49,17 @@ export type GameComposeDrafts = {
   [T in RegisteredGameType]: ComposeDraftFor<T>;
 };
 
-export interface GameFeatureRegistration<T extends RegisteredGameType, TState> {
+export interface GameFeatureRegistration<
+  T extends RegisteredGameType,
+  TState,
+  TFeatureState = TState,
+> {
   readonly gameType: T;
   readonly displayName: string;
   readonly stateCodec: GameStateCodec<TState>;
+  readonly handMembershipDescription: string;
+  validateHandMembership(gameIds: readonly string[], state: TState | null): boolean;
+  decodeFeatureState(value: unknown): TFeatureState | null;
   readonly lifecycle: {
     proposalSenderGoesFirst(iStarted: boolean): boolean;
     initialTurn(iStarted: boolean): GameTurnState;

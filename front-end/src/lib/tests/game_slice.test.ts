@@ -3,6 +3,7 @@ import {
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
+import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
 import {
   gameInstanceModelFromSlice,
   gameSliceReducer,
@@ -50,8 +51,24 @@ describe('game slice reducer', () => {
     const restored = sessionModelFromSave({
       version: 11n,
       playerId: 'player',
+      serializedGameSession: new Uint8Array([1]),
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'pair',
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      iStarted: true,
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '100',
+      unackedMessages: [],
       ...snapshot,
-      rewardPuzzleHash: null,
+      rewardPuzzleHash: '11'.repeat(32),
+      handState: krunkStateCodec.encode({
+        games: {
+          '11': initialKrunkGameState('alice'),
+          '12': initialKrunkGameState('bob'),
+        },
+      }),
     });
     expect(restored.game.activeIds).toEqual(['11', '12']);
     expect(Object.keys(restored.game.instances)).toEqual(['11', '12']);

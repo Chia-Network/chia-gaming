@@ -101,6 +101,14 @@ const model = createSessionModel({
       },
     },
   },
+  betweenHand: {
+    lastTerms: {
+      gameType: 'calpoker',
+      myContribution: 10n,
+      theirContribution: 10n,
+      gameTimeout: 15n,
+    },
+  },
 });
 
 function makeController(events: string[]): SessionController {

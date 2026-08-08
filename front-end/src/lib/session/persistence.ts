@@ -3,7 +3,9 @@ import type { SessionSave } from '../../hooks/save';
 import {
   decodePersistedGameState,
   decodePersistedGameTerms,
+  gameHandMembershipDescription,
   isRegisteredGameType,
+  validateGameHandMembership,
 } from '../gameRegistry';
 import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
 import {
@@ -573,6 +575,36 @@ function validateOptionalScalarFields(save: SessionSave): void {
       }
     });
   }
+  if (save.moveReplayJournal !== undefined) {
+    if (!Array.isArray(save.moveReplayJournal) || save.moveReplayJournal.length > 256) {
+      throw new Error('Garbled save: invalid moveReplayJournal');
+    }
+    const keys = new Set<string>();
+    save.moveReplayJournal.forEach((entry, index) => {
+      const record = requireRecord(entry, `moveReplayJournal[${index}]`);
+      const gameId = requireString(record.gameId, `moveReplayJournal[${index}].gameId`);
+      const stateNumber =
+        typeof record.stateNumber === 'bigint'
+          ? record.stateNumber
+          : typeof record.stateNumber === 'number' && Number.isSafeInteger(record.stateNumber)
+            ? BigInt(record.stateNumber)
+            : null;
+      if (stateNumber === null || stateNumber < 0n) {
+        throw new Error(`Garbled save: invalid moveReplayJournal[${index}].stateNumber`);
+      }
+      const key = `${gameId}:${stateNumber}`;
+      if (keys.has(key)) {
+        throw new Error(`Garbled save: duplicate moveReplayJournal key ${key}`);
+      }
+      keys.add(key);
+      if (!(record.readable instanceof Uint8Array)) {
+        throw new Error(`Garbled save: invalid moveReplayJournal[${index}].readable`);
+      }
+      if (typeof record.entropy !== 'string' || !/^[0-9a-fA-F]{64}$/.test(record.entropy)) {
+        throw new Error(`Garbled save: invalid moveReplayJournal[${index}].entropy`);
+      }
+    });
+  }
 }
 
 function validateChannelStatus(value: unknown): void {
@@ -632,6 +664,104 @@ export interface ParsedSessionSaveV11 {
   kind: 'preferences' | 'pre-handshake' | 'live-resumable' | 'terminal-frozen';
 }
 
+type SessionSaveField = keyof SessionSave;
+
+const LIVE_TRANSPORT_FIELDS: readonly SessionSaveField[] = [
+  'serializedGameSession',
+  'gameSessionSchemaVersion',
+  'messageNumber',
+  'remoteNumber',
+  'unackedMessages',
+];
+const SESSION_PROTOCOL_FIELDS: readonly SessionSaveField[] = [
+  'pairingToken',
+  'sessionPeerId',
+  'gameSessionId',
+  'iStarted',
+  'myContribution',
+  'theirContribution',
+  'perGameAmount',
+  'channelTimeout',
+  'unrollTimeout',
+];
+const CHANNEL_PAYLOAD_FIELDS: readonly SessionSaveField[] = [
+  'channelStatus',
+  'dismissedChannelStatus',
+  'cleanShutdownStarted',
+  'waitingStateEnteredAt',
+  'cleanShutdownGraceStartedAt',
+];
+const GAME_PAYLOAD_FIELDS: readonly SessionSaveField[] = [
+  'activeGameIds',
+  'moveReplayJournal',
+  'currentHandGameIds',
+  'lastDisplayedGameId',
+  'gameInstances',
+  'iProposedHand',
+  'activeGameType',
+  'handState',
+  'lastOutcomeWin',
+  'myRunningBalance',
+  'channelNotifQueue',
+  'gameNotifQueue',
+  'betweenHandMode',
+  'betweenHandCompose',
+  'betweenHandLastTerms',
+  'betweenHandRejectedOnceTerms',
+  'betweenHandPendingRetryTerms',
+  'betweenHandCachedPeerProposal',
+  'betweenHandReviewPeerProposal',
+  'outgoingProposalGroupIds',
+  'acceptedProposalGroupIds',
+  'outgoingProposalTerms',
+];
+const TERMINAL_ONLY_FIELDS: readonly SessionSaveField[] = ['terminalIStarted', 'coinsOfInterest'];
+
+function rejectPresentFields(
+  save: SessionSave,
+  kind: ParsedSessionSaveV11['kind'],
+  fields: readonly SessionSaveField[],
+): void {
+  for (const field of fields) {
+    if (save[field] !== undefined) {
+      throw new Error(`Garbled save: ${field} is not allowed for ${kind}`);
+    }
+  }
+}
+
+function validatePhasePayloadMatrix(save: SessionSave, kind: ParsedSessionSaveV11['kind']): void {
+  if (kind === 'preferences') {
+    rejectPresentFields(save, kind, [
+      ...LIVE_TRANSPORT_FIELDS,
+      ...SESSION_PROTOCOL_FIELDS,
+      ...CHANNEL_PAYLOAD_FIELDS,
+      ...GAME_PAYLOAD_FIELDS,
+      ...TERMINAL_ONLY_FIELDS,
+    ]);
+    if (save.rewardPuzzleHash !== null && save.rewardPuzzleHash !== undefined) {
+      throw new Error('Garbled save: rewardPuzzleHash is not allowed for preferences');
+    }
+    return;
+  }
+  if (kind === 'pre-handshake') {
+    rejectPresentFields(save, kind, [
+      ...LIVE_TRANSPORT_FIELDS,
+      ...CHANNEL_PAYLOAD_FIELDS,
+      ...GAME_PAYLOAD_FIELDS,
+      ...TERMINAL_ONLY_FIELDS,
+    ]);
+    if (save.rewardPuzzleHash !== null && save.rewardPuzzleHash !== undefined) {
+      throw new Error('Garbled save: rewardPuzzleHash is not allowed for pre-handshake');
+    }
+    return;
+  }
+  if (kind === 'live-resumable') {
+    rejectPresentFields(save, kind, TERMINAL_ONLY_FIELDS);
+    return;
+  }
+  rejectPresentFields(save, kind, [...LIVE_TRANSPORT_FIELDS, ...SESSION_PROTOCOL_FIELDS]);
+}
+
 function requireSessionAmounts(save: SessionSave): void {
   for (const field of ['myContribution', 'theirContribution', 'perGameAmount'] as const) {
     if (save[field] === undefined) {
@@ -644,9 +774,6 @@ function requireSessionAmounts(save: SessionSave): void {
 function classifySessionSave(save: SessionSave): ParsedSessionSaveV11['kind'] {
   const terminal = isTerminalChannelSnapshot(save.channelStatus);
   if (terminal) {
-    if (save.serializedGameSession !== undefined || save.pairingToken !== undefined) {
-      throw new Error('Garbled save: terminal frozen record contains resumable protocol state');
-    }
     return 'terminal-frozen';
   }
   if (save.serializedGameSession !== undefined) {
@@ -690,6 +817,7 @@ export function decodeSessionSaveEnvelope(
   validateOptionalScalarFields(save);
   validateChannelStatus(save.channelStatus);
   const kind = classifySessionSave(save);
+  validatePhasePayloadMatrix(save, kind);
 
   const activeIds = requireUniqueIds(save.activeGameIds ?? [], 'activeGameIds');
   const currentHandIds = requireUniqueIds(
@@ -736,6 +864,11 @@ export function decodeSessionSaveEnvelope(
       throw new Error(`Garbled save: game ${id} is missing its keyed instance`);
     }
   }
+  for (const id of Object.keys(instances)) {
+    if (!referencedIds.has(id)) {
+      throw new Error(`Garbled save: game ${id} is an unrelated keyed instance`);
+    }
+  }
   for (const [id, instance] of Object.entries(instances)) {
     validateTerminalFields(instance.terminal, `gameInstances.${id}.terminal`);
     const ended = instance.presentation === 'ended';
@@ -771,29 +904,17 @@ export function decodeSessionSaveEnvelope(
   if (kind === 'live-resumable' && hasCurrentHand && decodedHandState === null) {
     throw new Error('Garbled save: live current hand is missing handState');
   }
-  if (decodedHandState !== null && (kind === 'live-resumable' || kind === 'terminal-frozen')) {
-    if (currentHandIds.length === 0) {
-      throw new Error('Garbled save: handState requires currentHandGameIds');
-    }
-    if (decodedHandState.persisted.gameType === 'krunk') {
-      const payloadIds = decodedHandState.gameIds;
-      if (
-        payloadIds.length !== currentHandIds.length ||
-        payloadIds.some((id) => !currentSet.has(id))
-      ) {
-        throw new Error('Garbled save: Krunk handState IDs must exactly match currentHandGameIds');
-      }
-    } else if (currentHandIds.length !== 1) {
-      throw new Error(
-        `Garbled save: ${decodedHandState.persisted.gameType} requires one currentHandGameId`,
-      );
-    }
-  } else if (decodedHandState !== null) {
-    for (const id of decodedHandState.gameIds) {
-      if (!currentSet.has(id)) {
-        throw new Error(`Garbled save: handState references unrelated game ${id}`);
-      }
-    }
+  if (decodedHandState !== null && currentHandIds.length === 0) {
+    throw new Error('Garbled save: handState requires currentHandGameIds');
+  }
+  if (
+    currentHandIds.length > 0 &&
+    isRegisteredGameType(save.activeGameType) &&
+    !validateGameHandMembership(save.activeGameType, currentHandIds, handState)
+  ) {
+    throw new Error(
+      `Garbled save: ${save.activeGameType} requires ${gameHandMembershipDescription(save.activeGameType)}`,
+    );
   }
 
   if (isTerminalChannelSnapshot(save.channelStatus)) {

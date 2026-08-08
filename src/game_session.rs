@@ -1752,16 +1752,23 @@ impl GameSession {
     }
 }
 
-#[cfg(test)]
 impl GameSession {
-    pub fn test_move_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
+    /// Return the exact state number a local move would consume.
+    ///
+    /// Hosts that may need to replay an on-chain move must journal this value
+    /// before applying the move; it cannot be reconstructed from later opaque
+    /// serialized state.
+    pub fn move_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
         use crate::session_phases::on_chain::OnChainPhase;
         if let Some(on_chain) = self.peer.as_any().downcast_ref::<OnChainPhase>() {
-            return on_chain.test_game_state_number(game_id);
+            return on_chain.game_state_number(game_id);
         }
         Ok(self.peer.channel_state()?.state_number())
     }
+}
 
+#[cfg(test)]
+impl GameSession {
     /// Get the on-chain game coin for a game (test harness only). Downcasts to
     /// OnChainPhase when the cradle is in on-chain phase.
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {

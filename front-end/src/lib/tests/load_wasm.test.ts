@@ -1,4 +1,5 @@
 import { Subscription } from 'rxjs';
+import { Program } from 'clvm-lib';
 import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
@@ -14,7 +15,28 @@ import {
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
+import { restoreSession } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
+import {
+  canRemountFinishedGameState,
+  encodeGameProposalParameters,
+  reduceRegisteredGameState,
+} from '../gameRegistry';
+import {
+  channelStatusModelFromPayload,
+  createSessionModel,
+  INITIAL_GAME_TERMINAL_MODEL,
+  sessionModelFromSave,
+  snapshotFromSessionModel,
+} from '../session/model';
+import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+import {
+  initialKrunkGameState,
+  KrunkHandler,
+  krunkStateCodec,
+} from '../../features/krunk/stateCodec';
+import type { HandTermsModel, PersistedGameState } from '../session/types';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
@@ -329,6 +351,127 @@ async function action_with_messages(
   }
 }
 
+async function exchangeUntilIdle(cradles: SessionControllerAdapter[]): Promise<void> {
+  let idleRounds = 0;
+  for (let round = 0; round < 100 && idleRounds < 2; round += 1) {
+    let delivered = false;
+    for (let index = 0; index < cradles.length; index += 1) {
+      for (const outbound of cradles[index].outbound_messages()) {
+        delivered = true;
+        cradles[index ^ 1].deliver_message(outbound.msgno, outbound.msg);
+      }
+    }
+    await flushWrapperDrain(cradles);
+    idleRounds = delivered ? 0 : idleRounds + 1;
+  }
+  if (idleRounds < 2) throw new Error('peer message exchange did not quiesce');
+}
+
+async function createActivePair(
+  poller: BlockchainPoller,
+  index: number,
+): Promise<[SessionControllerAdapter, SessionControllerAdapter]> {
+  const cradles = [
+    addActiveCradle(new SessionControllerAdapter()),
+    addActiveCradle(new SessionControllerAdapter()),
+  ] as [SessionControllerAdapter, SessionControllerAdapter];
+  const peerConnections = cradles.map(
+    (cradle): PeerConnectionResult => ({
+      sendMessage: (msgno: number, message: Uint8Array) => {
+        cradle.add_outbound_message(msgno, message);
+        return true;
+      },
+      sendAck: () => true,
+      sendKeepalive: () => true,
+      hostLog: () => {},
+      close: () => {},
+    }),
+  );
+  const first = await initSessionController(
+    poller,
+    `cafe000${index}`,
+    true,
+    peerConnections[0],
+    new WasmStateInit(fetchPreset),
+  );
+  const second = await initSessionController(
+    poller,
+    `dead000${index}`,
+    false,
+    peerConnections[1],
+    new WasmStateInit(fetchPreset),
+  );
+  first.pairingToken = `restore-games-${index}-first`;
+  second.pairingToken = `restore-games-${index}-second`;
+  first.perGameAmount = 100n;
+  second.perGameAmount = 100n;
+  first.onSaveNeeded = () => Promise.resolve();
+  second.onSaveNeeded = () => Promise.resolve();
+  cradles[0].set_blob(first);
+  cradles[1].set_blob(second);
+  await action_with_messages(poller, cradles[0], cradles[1]);
+  return cradles;
+}
+
+function postMoveHandState(
+  terms: HandTermsModel,
+  ids: string[],
+): { handState: PersistedGameState; moverId: string; move: Program | null } {
+  const accepted = reduceRegisteredGameState(terms.gameType, null, {
+    type: 'accepted-group',
+    id: ids[0],
+    groupIds: ids,
+    iStarted: false,
+    iProposedHand: false,
+    terms,
+  });
+  assert.ok(accepted, `${terms.gameType}: accepted group must create hand state`);
+  if (terms.gameType === 'calpoker') {
+    const state = calpokerStateCodec.decode(accepted);
+    assert.ok(state);
+    return {
+      handState: calpokerStateCodec.encode({
+        ...state,
+        moveNumber: 1n,
+        isPlayerTurn: false,
+      }),
+      moverId: ids[0],
+      move: null,
+    };
+  }
+  if (terms.gameType === 'spacepoker') {
+    const state = spacepokerStateCodec.decode(accepted);
+    assert.ok(state);
+    return {
+      handState: spacepokerStateCodec.encode({
+        ...state,
+        gameState: { ...state.gameState, myTurn: false },
+      }),
+      moverId: ids[0],
+      move: null,
+    };
+  }
+  const state = krunkStateCodec.decode(accepted);
+  assert.ok(state);
+  const mover = Object.entries(state.games).find(([, game]) => game.role === 'alice');
+  assert.ok(mover, 'krunk: receiver must own exactly one alice member');
+  return {
+    handState: krunkStateCodec.encode({
+      games: {
+        ...state.games,
+        [mover[0]]: {
+          ...initialKrunkGameState('alice'),
+          handler: KrunkHandler.AliceWaiting,
+          myTurn: false,
+          secretWord: 'CRANE',
+        },
+      },
+    }),
+    moverId: mover[0],
+    move: Program.fromBytes(new TextEncoder().encode('CRANE')),
+  };
+}
+
 async function initSessionController(
   blockchain: BlockchainPoller,
   uniqueId: string,
@@ -374,7 +517,7 @@ async function isSimulatorAvailable(): Promise<boolean> {
 }
 
 it(
-  'persists and reloads a live intermediate handshake cradle',
+  'persists and reloads real handshake and post-move game cradles',
   async () => {
     try {
       if (!(await isSimulatorAvailable())) {
@@ -390,6 +533,10 @@ it(
       }
       const setup = await fakeBlockchainInfo.beginConnect('block-producer');
       await setup.finalize();
+      for (let index = 0; index < 3; index += 1) {
+        await fakeBlockchainInfo.registerUser(`cafe000${index}`);
+        await fakeBlockchainInfo.registerUser(`dead000${index}`);
+      }
       testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
       testPoller.start();
       const poller = testPoller;
@@ -541,9 +688,155 @@ it(
       assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
 
       await action_with_messages(poller, cradle1, cradle2);
+      await runRealGameRestoreCases(poller);
     } catch (e) {
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  300 * 1000,
 );
+
+async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> {
+  const cases: Array<{ terms: HandTermsModel; expectedMembers: number; canRemount: boolean }> = [
+    {
+      terms: {
+        gameType: 'calpoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+      },
+      expectedMembers: 1,
+      canRemount: true,
+    },
+    {
+      terms: {
+        gameType: 'spacepoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
+      },
+      expectedMembers: 1,
+      canRemount: true,
+    },
+    {
+      terms: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+      },
+      expectedMembers: 2,
+      canRemount: false,
+    },
+  ];
+
+  for (const [index, testCase] of cases.entries()) {
+    const cradles = await createActivePair(poller, index);
+    const proposer = cradles[0].blob!;
+    const mover = cradles[1].blob!;
+    const ids = proposer.proposeGame({
+      game_type: testCase.terms.gameType,
+      timeout: testCase.terms.gameTimeout,
+      parameters: encodeGameProposalParameters(testCase.terms, true),
+    });
+    assert.equal(ids.length, testCase.expectedMembers);
+    await exchangeUntilIdle(cradles);
+    mover.acceptProposal(ids[0]);
+    await exchangeUntilIdle(cradles);
+    assert.deepEqual(mover.activeGameIds, ids);
+
+    const postMove = postMoveHandState(testCase.terms, ids);
+    const beforeMove = Uint8Array.from(mover.getWasmFields()!.serializedGameSession);
+    mover.makeMove(postMove.moverId, postMove.move);
+    await flushWrapperDrain([cradles[1]]);
+    const afterMove = mover.getWasmFields()!;
+    assert.notDeepEqual(
+      afterMove.serializedGameSession,
+      beforeMove,
+      `${testCase.terms.gameType}: actual WASM move must change serialized protocol state`,
+    );
+    mover.setHandState(postMove.handState);
+
+    const status = mover.lastChannelStatus;
+    assert.ok(status, `${testCase.terms.gameType}: active controller must have channel status`);
+    const model = createSessionModel({
+      channel: { status: channelStatusModelFromPayload(status) },
+      game: {
+        handKey: 1,
+        activeIds: ids,
+        currentHandIds: ids,
+        lastDisplayedId: postMove.moverId,
+        activeGameType: testCase.terms.gameType,
+        handState: postMove.handState,
+        instances: Object.fromEntries(
+          ids.map((id) => [
+            id,
+            {
+              id,
+              amount: '100',
+              coinHex: null,
+              presentation: 'off-chain-their-turn' as const,
+              terminal: INITIAL_GAME_TERMINAL_MODEL,
+            },
+          ]),
+        ),
+      },
+      betweenHand: { lastTerms: testCase.terms },
+    });
+    await saveSession({
+      ...afterMove,
+      pairingToken: `real-restore-${testCase.terms.gameType}`,
+      ...snapshotFromSessionModel(model),
+    });
+    await flushSessionSave();
+
+    resetSaveState();
+    const reloaded = await peekSession();
+    assert.ok(reloaded, `${testCase.terms.gameType}: IndexedDB peek must return saved session`);
+    assert.deepEqual(reloaded.currentHandGameIds, ids);
+    assert.deepEqual(reloaded.activeGameIds, ids);
+
+    const restored = new SessionController(poller, `feed000${index}`, 100n, 100n, {
+      sendMessage: () => true,
+      sendAck: () => true,
+      sendKeepalive: () => true,
+      hostLog: () => {},
+      close: () => {},
+    });
+    try {
+      await restored.beginRestore(
+        restoreSession(restored, reloaded, new WasmStateInit(fetchPreset)),
+      );
+      assert.equal(restored.getRestoreStatus(), 'restored');
+      assert.deepEqual(restored.activeGameIds, ids);
+      assert.deepEqual(restored.handState, postMove.handState);
+      assert.deepEqual(
+        restored.getWasmFields()!.serializedGameSession,
+        reloaded.serializedGameSession,
+      );
+
+      const restoredModel = sessionModelFromSave(reloaded);
+      assert.deepEqual(restoredModel.game.currentHandIds, ids);
+      assert.deepEqual(restoredModel.game.handState, postMove.handState);
+      assert.equal(canRemountFinishedGameState(restoredModel.game.handState), testCase.canRemount);
+      if (testCase.terms.gameType === 'krunk') {
+        const krunk = krunkStateCodec.decode(restoredModel.game.handState);
+        assert.ok(krunk);
+        assert.deepEqual(Object.keys(krunk.games), ids);
+        assert.notEqual(krunk.games[ids[0]].role, krunk.games[ids[1]].role);
+      }
+    } finally {
+      restored.cleanup();
+    }
+
+    cradles.forEach((cradle) => cradle.shutdown());
+    resetSaveState();
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    });
+  }
+}

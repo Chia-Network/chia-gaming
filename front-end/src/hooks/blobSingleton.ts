@@ -186,6 +186,7 @@ export async function restoreSession(
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
   sc.activeGameIds = [...save.activeGameIds];
+  sc.restoreMoveReplayJournal(save.moveReplayJournal);
   sc.handState = save.handState ?? null;
   sc.restoreChannelStatus(
     save.channelStatus

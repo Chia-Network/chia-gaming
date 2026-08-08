@@ -11,6 +11,7 @@ export interface SessionMachineEffectController {
 
 export interface SessionMachineEffectRunner {
   setAuthority(state: SessionMachineState): void;
+  getAuthority(): SessionMachineState;
   controller: SessionMachineEffectController;
   runCommand(
     effect: Exclude<
@@ -39,17 +40,20 @@ export function runSessionMachineTransition(
   runner: SessionMachineEffectRunner,
 ): void {
   runner.setAuthority(transition.state);
-  for (const effect of transition.effects) {
-    if (effect.type === 'set-hand-state') {
-      runner.controller.setHandState(effect.state);
-    } else if (effect.type === 'clear-derived-game-presentation') {
-      runner.controller.clearDerivedGamePresentation();
+  try {
+    for (const effect of transition.effects) {
+      if (effect.type === 'set-hand-state') {
+        runner.controller.setHandState(effect.state);
+      } else if (effect.type === 'clear-derived-game-presentation') {
+        runner.controller.clearDerivedGamePresentation();
+      }
     }
-  }
-  for (const effect of transition.effects) {
-    if (effect.type !== 'set-hand-state' && effect.type !== 'clear-derived-game-presentation') {
-      runner.runCommand(effect);
+    for (const effect of transition.effects) {
+      if (effect.type !== 'set-hand-state' && effect.type !== 'clear-derived-game-presentation') {
+        runner.runCommand(effect);
+      }
     }
+  } finally {
+    runner.render(runner.getAuthority());
   }
-  runner.render(transition.state);
 }

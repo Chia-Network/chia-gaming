@@ -33,6 +33,9 @@ interface ErasedGameRegistration {
   readonly gameType: RegisteredGameType;
   readonly displayName: string;
   readonly stateCodec: GameStateCodec<unknown>;
+  readonly handMembershipDescription: string;
+  validateHandMembership(gameIds: readonly string[], state: unknown | null): boolean;
+  decodeFeatureState(value: unknown): unknown | null;
   readonly lifecycle: {
     proposalSenderGoesFirst(iStarted: boolean): boolean;
     initialTurn(iStarted: boolean): GameTurnState;
@@ -102,6 +105,29 @@ export function decodePersistedGameState(value: unknown): DecodedPersistedGameSt
     : null;
 }
 
+export function validateGameHandMembership(
+  gameType: RegisteredGameType,
+  gameIds: readonly string[],
+  persisted: PersistedGameState | null,
+): boolean {
+  const registration = registrationFor(gameType);
+  if (persisted === null) return registration.validateHandMembership(gameIds, null);
+  if (persisted.gameType !== gameType) return false;
+  const state = registration.stateCodec.decode(persisted);
+  return state !== null && registration.validateHandMembership(gameIds, state);
+}
+
+export function gameHandMembershipDescription(gameType: RegisteredGameType): string {
+  return registrationFor(gameType).handMembershipDescription;
+}
+
+export function decodeGameFeatureState(
+  gameType: RegisteredGameType,
+  value: unknown,
+): unknown | null {
+  return registrationFor(gameType).decodeFeatureState(value);
+}
+
 export function canRemountFinishedGameState(value: unknown): boolean {
   return decodePersistedGameState(value)?.canRemountFinished === true;
 }
@@ -137,7 +163,18 @@ export function reduceRegisteredGameState(
   event: DurableGameStateEvent,
 ): PersistedGameState | null {
   const registration = registrationFor(gameType);
+  if (event.type === 'feature-state' && event.gameType !== gameType) {
+    throw new Error(
+      `Feature-state registration mismatch: event ${event.gameType}, reducer ${gameType}`,
+    );
+  }
+  if (event.type === 'feature-state' && current?.gameType !== gameType) {
+    throw new Error(`Feature-state current state does not belong to ${gameType}`);
+  }
   const decoded = current?.gameType === gameType ? registration.stateCodec.decode(current) : null;
+  if (event.type === 'feature-state' && decoded === null) {
+    throw new Error(`Feature-state current ${gameType} payload is invalid`);
+  }
   const next = registration.durableState.reduceEvent(decoded, event);
   return next === null ? null : registration.stateCodec.encode(next);
 }

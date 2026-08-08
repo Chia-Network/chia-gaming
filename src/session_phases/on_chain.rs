@@ -266,8 +266,7 @@ impl OnChainPhase {
             })
     }
 
-    #[cfg(test)]
-    pub fn test_game_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
+    pub fn game_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
         let index = self.get_game_by_id(game_id)?;
         Ok(self.live_games[index].state_number())
     }

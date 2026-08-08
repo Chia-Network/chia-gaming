@@ -4,8 +4,10 @@ import {
   reduceGameStateSnapshot,
   type DurableGameStateEvent,
   type GameFeatureRegistration,
+  type TermsFor,
 } from '../../lib/gameAdapter';
 import {
+  decodeKrunkGameState,
   initialKrunkGameState,
   KrunkHandler,
   krunkStateCodec,
@@ -143,7 +145,8 @@ export function reduceKrunkDurableState(
     return { games };
   }
   if (event.type === 'feature-state') {
-    const state = event.state as KrunkGameState;
+    const state = decodeKrunkGameState(event.state);
+    if (state === null) throw new Error('Invalid Krunk feature-state payload');
     return { games: { ...(current?.games ?? {}), [event.id]: state } };
   }
   if (!current?.games[event.id]) return current;
@@ -174,10 +177,31 @@ export function isValidKrunkStake(stake: bigint): boolean {
   return stake > 0n && stake % 100n === 0n;
 }
 
-export const krunkRegistration: GameFeatureRegistration<'krunk', KrunkHandState> = {
+export function validateKrunkTerms(terms: TermsFor<'krunk'>): boolean {
+  return (
+    terms.myContribution === terms.theirContribution &&
+    isValidKrunkStake(terms.myContribution) &&
+    terms.gameTimeout > 0n
+  );
+}
+
+export const krunkRegistration: GameFeatureRegistration<'krunk', KrunkHandState, KrunkGameState> = {
   gameType: 'krunk',
   displayName: 'Krunk',
   stateCodec: krunkStateCodec,
+  handMembershipDescription:
+    'exactly two ordered currentHandGameIds whose payload IDs exactly match currentHandGameIds in order',
+  validateHandMembership(gameIds, state) {
+    if (gameIds.length !== 2) return false;
+    if (state === null) return true;
+    const payloadIds = Object.keys(state.games);
+    return (
+      payloadIds.length === 2 &&
+      payloadIds.every((id, index) => id === gameIds[index]) &&
+      state.games[gameIds[0]].role !== state.games[gameIds[1]].role
+    );
+  },
+  decodeFeatureState: decodeKrunkGameState,
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
     initialTurn: (iStarted) => (iStarted ? 'their-turn' : 'my-turn'),
@@ -193,19 +217,22 @@ export const krunkRegistration: GameFeatureRegistration<'krunk', KrunkHandState>
         theirContribution: draft.amount,
         gameTimeout,
       };
-      return krunkRegistration.validateTerms(terms) ? terms : null;
+      return validateKrunkTerms(terms) ? terms : null;
     },
   },
-  decodeProposalTerms: (base) => ({ gameType: 'krunk', ...base }),
+  decodeProposalTerms(base) {
+    const terms = { gameType: 'krunk' as const, ...base };
+    return validateKrunkTerms(terms) ? terms : null;
+  },
   encodeProposalParameters: (terms) => Program.fromBigInt(terms.myContribution),
-  validateTerms: (terms) =>
-    terms.myContribution === terms.theirContribution &&
-    isValidKrunkStake(terms.myContribution) &&
-    terms.gameTimeout > 0n,
+  validateTerms: validateKrunkTerms,
   termsEqual: equalBaseTerms,
   persistence: {
     encodeExtras: () => ({}),
-    decodeExtras: (base) => ({ gameType: 'krunk', ...base }),
+    decodeExtras(base) {
+      const terms = { gameType: 'krunk' as const, ...base };
+      return validateKrunkTerms(terms) ? terms : null;
+    },
   },
   durableState: {
     reduce: reduceGameStateSnapshot,

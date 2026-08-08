@@ -5,6 +5,7 @@ import type {
   SessionMachineEffect,
   SessionMachineEvent,
   SessionMachineState,
+  SessionControllerCommand,
 } from './sessionMachineTypes';
 
 type CommandEffect = Exclude<
@@ -34,29 +35,75 @@ export class SessionMachineInterpreter {
     const dependencies = this.dependencies;
     switch (effect.type) {
       case 'controller-accept-proposal':
-        dependencies.controller.acceptProposal(effect.id);
+        this.runControllerCommand(
+          'accept-proposal',
+          () => dependencies.controller.acceptProposal(effect.id),
+          () =>
+            dependencies.dispatch({
+              type: 'proposal-command-succeeded',
+              command: 'accept-proposal',
+              id: effect.id,
+              context: effect.context,
+            }),
+        );
         return;
       case 'controller-cancel-proposal':
-        this.cancelProposal(effect.id);
+        this.runControllerCommand(
+          'cancel-proposal',
+          () => dependencies.controller.cancel_proposal(effect.id),
+          () =>
+            dependencies.dispatch({
+              type: 'proposal-command-succeeded',
+              command: 'cancel-proposal',
+              id: effect.id,
+              context: effect.context,
+            }),
+        );
         return;
       case 'controller-propose-game': {
-        if (!dependencies.controller.isOffChainActive()) return;
-        if (!validateGameTerms(effect.terms)) return;
-        if (dependencies.getState().model.game.activeIds.length > 0) return;
-        const ids = dependencies.controller.proposeGame({
-          game_type: effect.terms.gameType,
-          timeout: effect.terms.gameTimeout,
-          parameters: encodeGameProposalParameters(effect.terms, dependencies.iStarted),
-        });
-        dependencies.dispatch({ type: 'proposal-sent', ids, terms: effect.terms });
+        if (!dependencies.controller.isOffChainActive()) {
+          this.commandFailed('propose-game', new Error('channel is not active off-chain'));
+          return;
+        }
+        if (!validateGameTerms(effect.terms)) {
+          this.commandFailed('propose-game', new Error('proposal terms are invalid'));
+          return;
+        }
+        if (dependencies.getState().model.game.activeIds.length > 0) {
+          this.commandFailed('propose-game', new Error('a game is already active'));
+          return;
+        }
+        this.runControllerCommand(
+          'propose-game',
+          () =>
+            dependencies.controller.proposeGame({
+              game_type: effect.terms.gameType,
+              timeout: effect.terms.gameTimeout,
+              parameters: encodeGameProposalParameters(effect.terms, dependencies.iStarted),
+            }),
+          (ids) => dependencies.dispatch({ type: 'proposal-sent', ids, terms: effect.terms }),
+        );
         return;
       }
       case 'controller-clean-shutdown':
-        dependencies.controller.cleanShutdown();
+        this.runControllerCommand(
+          'clean-shutdown',
+          () => dependencies.controller.cleanShutdown(),
+          () => dependencies.dispatch({ type: 'clean-shutdown-command-succeeded' }),
+        );
         return;
       case 'controller-go-on-chain': {
-        const started = dependencies.controller.goOnChain();
-        dependencies.dispatch({ type: 'go-on-chain-result', started });
+        this.runControllerCommand(
+          'go-on-chain',
+          () => dependencies.controller.goOnChain(),
+          (started) => {
+            if (!started) {
+              this.commandFailed('go-on-chain', new Error('WASM rejected go on chain'));
+              return;
+            }
+            dependencies.dispatch({ type: 'go-on-chain-result', started: true });
+          },
+        );
         return;
       }
       case 'controller-set-last-outcome':
@@ -105,16 +152,27 @@ export class SessionMachineInterpreter {
     for (const key of this.timers.keys()) this.cancelTimer(key);
   }
 
-  private cancelProposal(id: string): void {
+  private runControllerCommand<T>(
+    command: SessionControllerCommand,
+    run: () => T,
+    succeeded: (result: T) => void,
+  ): void {
+    let result: T;
     try {
-      this.dependencies.controller.cancel_proposal(id);
+      result = run();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/no proposal with id|cancel for unknown proposal|not in off-chain phase/i.test(message)) {
-        return;
-      }
-      throw error;
+      this.commandFailed(command, error);
+      return;
     }
+    succeeded(result);
+  }
+
+  private commandFailed(command: SessionControllerCommand, error: unknown): void {
+    this.dependencies.dispatch({
+      type: 'controller-command-failed',
+      command,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
   private cancelTimer(key: string): void {

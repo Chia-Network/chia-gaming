@@ -4,6 +4,7 @@ import {
   reduceGameStateSnapshot,
   type DurableGameStateEvent,
   type GameFeatureRegistration,
+  type TermsFor,
 } from '../../lib/gameAdapter';
 import { calpokerStateCodec, type CalpokerHandState } from './stateCodec';
 
@@ -56,7 +57,9 @@ export function reduceCalpokerDurableState(
   if (event.type === 'abandoned' || event.type === 'remove-group') return null;
   if (event.type === 'accepted-group') return current ?? initialState(event.iStarted);
   if (event.type === 'feature-state') {
-    return calpokerStateCodec.decode(calpokerStateCodec.encode(event.state as CalpokerHandState));
+    const state = calpokerStateCodec.isState(event.state) ? event.state : null;
+    if (state === null) throw new Error('Invalid Calpoker feature-state payload');
+    return state;
   }
   if (!current) return null;
   if (event.type === 'local-turn') return { ...current, isPlayerTurn: event.isMyTurn };
@@ -73,10 +76,21 @@ export function reduceCalpokerDurableState(
   return current;
 }
 
+export function validateCalpokerTerms(terms: TermsFor<'calpoker'>): boolean {
+  return (
+    terms.myContribution === terms.theirContribution &&
+    terms.myContribution > 0n &&
+    terms.gameTimeout > 0n
+  );
+}
+
 export const calpokerRegistration: GameFeatureRegistration<'calpoker', CalpokerHandState> = {
   gameType: 'calpoker',
   displayName: 'California Poker',
   stateCodec: calpokerStateCodec,
+  handMembershipDescription: 'exactly one currentHandGameId',
+  validateHandMembership: (gameIds) => gameIds.length === 1,
+  decodeFeatureState: (value) => (calpokerStateCodec.isState(value) ? value : null),
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
     initialTurn: (iStarted) => (iStarted ? 'their-turn' : 'my-turn'),
@@ -92,22 +106,27 @@ export const calpokerRegistration: GameFeatureRegistration<'calpoker', CalpokerH
         theirContribution: draft.amount,
         gameTimeout,
       };
-      return calpokerRegistration.validateTerms(terms) ? terms : null;
+      return validateCalpokerTerms(terms) ? terms : null;
     },
   },
-  decodeProposalTerms: (base) => ({ gameType: 'calpoker', ...base }),
+  decodeProposalTerms(base) {
+    const terms = { gameType: 'calpoker' as const, ...base };
+    return validateCalpokerTerms(terms) ? terms : null;
+  },
   encodeProposalParameters(terms, iStarted) {
     return Program.fromList([
       Program.fromBigInt(terms.myContribution),
       Program.fromBigInt(this.lifecycle.proposalSenderGoesFirst(iStarted) ? 1n : 0n),
     ]);
   },
-  validateTerms: (terms) =>
-    terms.myContribution > 0n && terms.theirContribution > 0n && terms.gameTimeout > 0n,
+  validateTerms: validateCalpokerTerms,
   termsEqual: equalBaseTerms,
   persistence: {
     encodeExtras: () => ({}),
-    decodeExtras: (base) => ({ gameType: 'calpoker', ...base }),
+    decodeExtras(base) {
+      const terms = { gameType: 'calpoker' as const, ...base };
+      return validateCalpokerTerms(terms) ? terms : null;
+    },
   },
   durableState: {
     reduce: reduceGameStateSnapshot,

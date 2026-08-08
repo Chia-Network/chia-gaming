@@ -37,20 +37,9 @@ export function reduceSessionCommand(
       if (cached) {
         if (gameTermsEqual(cached.terms, betweenHand.lastTerms)) {
           return {
-            state: {
-              ...state,
-              model: {
-                ...state.model,
-                betweenHand: {
-                  ...betweenHand,
-                  newHandRequested: false,
-                },
-              },
-              coordination: { ...state.coordination, sameTermsRequested: false },
-            },
+            state,
             effects: [
-              { type: 'controller-accept-proposal', id: cached.id },
-              { type: 'persist-session' },
+              { type: 'controller-accept-proposal', id: cached.id, context: 'choose-same-terms' },
             ],
           };
         }
@@ -101,7 +90,7 @@ export function reduceSessionCommand(
           },
           coordination: { ...state.coordination, sameTermsRequested: true },
         },
-        effects: [{ type: 'persist-session' }, { type: 'controller-propose-game', terms }],
+        effects: [{ type: 'controller-propose-game', terms }],
       };
     }
     case 'reject-current-proposal': {
@@ -124,23 +113,29 @@ export function reduceSessionCommand(
         };
       }
       return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            betweenHand: {
-              ...betweenHand,
-              cachedPeerProposal: null,
-              rejectedOnceTerms: betweenHand.lastTerms,
-              compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
-              mode: 'compose-proposal',
+        state: cached
+          ? state
+          : {
+              ...state,
+              model: {
+                ...state.model,
+                betweenHand: {
+                  ...betweenHand,
+                  rejectedOnceTerms: betweenHand.lastTerms,
+                  compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
+                  mode: 'compose-proposal',
+                },
+              },
             },
-          },
-        },
-        effects: [
-          ...(cached ? [{ type: 'controller-cancel-proposal' as const, id: cached.id }] : []),
-          { type: 'persist-session' },
-        ],
+        effects: cached
+          ? [
+              {
+                type: 'controller-cancel-proposal',
+                id: cached.id,
+                context: 'reject-current-proposal',
+              },
+            ]
+          : [{ type: 'persist-session' }],
       };
     }
     case 'open-compose':
@@ -161,57 +156,38 @@ export function reduceSessionCommand(
     case 'submit-compose':
       if (!validateGameTerms(event.terms)) return { state, effects: [] };
       return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            betweenHand: {
-              ...betweenHand,
-              compose: { ...betweenHand.compose, proposalSent: true },
-            },
-          },
-        },
-        effects: [
-          { type: 'persist-session' },
-          { type: 'controller-propose-game', terms: event.terms },
-        ],
+        state,
+        effects: [{ type: 'controller-propose-game', terms: event.terms }],
       };
     case 'accept-review': {
       const review = betweenHand.reviewPeerProposal;
       if (!review) return { state, effects: [] };
       return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            betweenHand: { ...betweenHand, mode: 'decision' },
-          },
-        },
-        effects: [
-          { type: 'controller-accept-proposal', id: review.id },
-          { type: 'persist-session' },
-        ],
+        state,
+        effects: [{ type: 'controller-accept-proposal', id: review.id, context: 'accept-review' }],
       };
     }
     case 'reject-review': {
       const review = betweenHand.reviewPeerProposal;
-      return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            betweenHand: {
-              ...betweenHand,
-              reviewPeerProposal: null,
-              compose: { ...betweenHand.compose, proposalSent: false },
-              mode: 'compose-proposal',
+      if (!review) {
+        return {
+          state: {
+            ...state,
+            model: {
+              ...state.model,
+              betweenHand: {
+                ...betweenHand,
+                compose: { ...betweenHand.compose, proposalSent: false },
+                mode: 'compose-proposal',
+              },
             },
           },
-        },
-        effects: [
-          ...(review ? [{ type: 'controller-cancel-proposal' as const, id: review.id }] : []),
-          { type: 'persist-session' },
-        ],
+          effects: [{ type: 'persist-session' }],
+        };
+      }
+      return {
+        state,
+        effects: [{ type: 'controller-cancel-proposal', id: review.id, context: 'reject-review' }],
       };
     }
     case 'rejection-fallback-fired':

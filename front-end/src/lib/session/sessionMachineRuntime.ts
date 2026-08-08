@@ -5,6 +5,7 @@ import { persistSessionSnapshot } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
 import type { GameplayEvent } from './gameSessionEvents';
 import type { SessionMachineEvent, SessionMachineState } from './sessionMachineTypes';
+import type { coinIdHex } from './gameSessionEvents';
 
 export interface SessionMachineRuntimeDependencies {
   controller: SessionController;
@@ -14,6 +15,8 @@ export interface SessionMachineRuntimeDependencies {
   getRestoreError(): string | null;
   emitGameplay(event: GameplayEvent): void;
   onError(error: unknown): void;
+  persist?(): Promise<void>;
+  enrichCoin?: typeof coinIdHex;
 }
 
 export class SessionMachineRuntime {
@@ -30,16 +33,19 @@ export class SessionMachineRuntime {
       iStarted: dependencies.iStarted,
       getState: () => this.state,
       dispatch: (event) => this.dispatch(event),
-      persist: () =>
-        persistSessionSnapshot({
-          controller: dependencies.controller,
-          getState: () => this.state,
-          restoring: dependencies.restoring,
-          getRestoreStatus: dependencies.getRestoreStatus,
-          getRestoreError: dependencies.getRestoreError,
-        }),
+      persist:
+        dependencies.persist ??
+        (() =>
+          persistSessionSnapshot({
+            controller: dependencies.controller,
+            getState: () => this.state,
+            restoring: dependencies.restoring,
+            getRestoreStatus: dependencies.getRestoreStatus,
+            getRestoreError: dependencies.getRestoreError,
+          })),
       emitGameplay: dependencies.emitGameplay,
       onError: dependencies.onError,
+      enrichCoin: dependencies.enrichCoin,
     });
   }
 
@@ -57,6 +63,7 @@ export class SessionMachineRuntime {
       setAuthority: (state) => {
         this.state = state;
       },
+      getAuthority: () => this.state,
       controller: {
         setHandState: (state) => this.controller.setHandState(state),
         clearDerivedGamePresentation: () => this.controller.clearDerivedGamePresentation(),

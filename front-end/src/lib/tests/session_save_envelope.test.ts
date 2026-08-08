@@ -16,6 +16,7 @@ import { decodePersistedGameState } from '../gameRegistry';
 import { deleteSessionRecord, readSessionRecord, writeSessionRecord } from '../session/indexedDb';
 import {
   createSessionModel,
+  decodeSessionSaveEnvelope,
   sessionModelFromSave,
   snapshotFromSessionModel,
   validateSessionSaveEnvelope,
@@ -142,6 +143,114 @@ describe('validateSessionSaveEnvelope', () => {
         }),
       ),
     ).not.toThrow();
+  });
+
+  it.each([
+    [
+      'preferences',
+      baseSave({
+        activeGameIds: ['game-1'],
+        currentHandGameIds: ['game-1'],
+        lastDisplayedGameId: 'game-1',
+        activeGameType: 'calpoker',
+        gameInstances: { 'game-1': ACTIVE_INSTANCE },
+        handState: calpokerStateCodec.encode({
+          playerHand: [1n, 2n],
+          opponentHand: [3n, 4n],
+          moveNumber: 1n,
+          isPlayerTurn: true,
+        }),
+        betweenHandLastTerms: {
+          my_contribution: '20',
+          their_contribution: '20',
+          game_timeout: '15',
+          game_type: 'calpoker',
+        },
+      }),
+    ],
+    [
+      'pre-handshake',
+      baseSave({
+        pairingToken: 'pair',
+        iStarted: true,
+        myContribution: '20',
+        theirContribution: '20',
+        perGameAmount: '20',
+        activeGameIds: ['game-1'],
+        currentHandGameIds: ['game-1'],
+        lastDisplayedGameId: 'game-1',
+        activeGameType: 'calpoker',
+        gameInstances: { 'game-1': ACTIVE_INSTANCE },
+        handState: calpokerStateCodec.encode({
+          playerHand: [1n, 2n],
+          opponentHand: [3n, 4n],
+          moveNumber: 1n,
+          isPlayerTurn: true,
+        }),
+        betweenHandLastTerms: {
+          my_contribution: '20',
+          their_contribution: '20',
+          game_timeout: '15',
+          game_type: 'calpoker',
+        },
+      }),
+    ],
+  ])('rejects a %s record carrying a complete active-game payload', (_kind, save) => {
+    expect(() => validateSessionSaveEnvelope(save)).toThrow('not allowed');
+  });
+
+  it('rejects terminal records with live protocol fields and live records with terminal fields', () => {
+    expect(() =>
+      validateSessionSaveEnvelope(
+        baseSave({
+          channelStatus: { state: 'ResolvedClean' },
+          coinsOfInterest: [],
+          terminalIStarted: true,
+          serializedGameSession: new Uint8Array([1]),
+          pairingToken: 'pair',
+        }),
+      ),
+    ).toThrow('not allowed');
+    expect(() =>
+      validateSessionSaveEnvelope(
+        liveSave({
+          terminalIStarted: true,
+          coinsOfInterest: [],
+        }),
+      ),
+    ).toThrow('not allowed');
+  });
+
+  it('classifies one legitimate snapshot for every v11 phase', () => {
+    const preferences = baseSave({ blockchainType: 'simulator' });
+    const preHandshake = baseSave({
+      pairingToken: 'pair',
+      iStarted: false,
+      myContribution: '20',
+      theirContribution: '20',
+      perGameAmount: '2',
+    });
+    const live = liveSave();
+    const terminal = baseSave({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [],
+      terminalIStarted: true,
+      activeGameIds: [],
+      currentHandGameIds: ['game-1'],
+      lastDisplayedGameId: 'game-1',
+      activeGameType: 'calpoker',
+      gameInstances: { 'game-1': TERMINAL_INSTANCE },
+      betweenHandLastTerms: {
+        my_contribution: '20',
+        their_contribution: '20',
+        game_timeout: '15',
+        game_type: 'calpoker',
+      },
+    });
+    expect(decodeSessionSaveEnvelope(preferences).kind).toBe('preferences');
+    expect(decodeSessionSaveEnvelope(preHandshake).kind).toBe('pre-handshake');
+    expect(decodeSessionSaveEnvelope(live).kind).toBe('live-resumable');
+    expect(decodeSessionSaveEnvelope(terminal).kind).toBe('terminal-frozen');
   });
 
   it.each([
@@ -276,6 +385,161 @@ describe('validateSessionSaveEnvelope', () => {
         }),
       ),
     ).toThrow('exactly match currentHandGameIds');
+  });
+
+  it.each([
+    [
+      'calpoker',
+      calpokerStateCodec.encode({
+        playerHand: [1n, 2n],
+        opponentHand: [3n, 4n],
+        moveNumber: 1n,
+        isPlayerTurn: true,
+      }),
+      {},
+    ],
+    [
+      'spacepoker',
+      spacepokerStateCodec.encode({
+        gameState: { handler: 2n, myTurn: true, N: 4n },
+        playerHoleCards: null,
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [null, null, null, null, null],
+        halfPot: 1n,
+        lastRaise: 0n,
+        iRaisedLast: false,
+        handHistory: [],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        coinTossIOpen: null,
+        unitSizeMojos: 10n,
+        displayMode: 'mojos',
+      }),
+      { spacepoker_unit_size: '10' },
+    ],
+  ] as const)('rejects multi-member %s singleton hands', (gameType, handState, extras) => {
+    expect(() =>
+      validateSessionSaveEnvelope(
+        liveSave({
+          activeGameIds: ['game-1', 'game-2'],
+          currentHandGameIds: ['game-1', 'game-2'],
+          activeGameType: gameType,
+          gameInstances: {
+            'game-1': ACTIVE_INSTANCE,
+            'game-2': { ...ACTIVE_INSTANCE, id: 'game-2' },
+          },
+          handState,
+          betweenHandLastTerms: {
+            my_contribution: '100',
+            their_contribution: '100',
+            game_timeout: '15',
+            game_type: gameType,
+            ...extras,
+          },
+        }),
+      ),
+    ).toThrow('exactly one currentHandGameId');
+  });
+
+  it.each([
+    [['game-1'], { 'game-1': initialKrunkGameState('alice') }],
+    [
+      ['game-1', 'game-2', 'game-3'],
+      {
+        'game-1': initialKrunkGameState('alice'),
+        'game-2': initialKrunkGameState('bob'),
+        'game-3': initialKrunkGameState('alice'),
+      },
+    ],
+  ])('rejects Krunk hands with invalid factory cardinality', (ids, games) => {
+    expect(() =>
+      validateSessionSaveEnvelope(
+        liveSave({
+          activeGameIds: ids,
+          currentHandGameIds: ids,
+          lastDisplayedGameId: ids[0],
+          activeGameType: 'krunk',
+          gameInstances: Object.fromEntries(
+            ids.map((id) => [id, { ...ACTIVE_INSTANCE, id, amount: '100' }]),
+          ),
+          handState: krunkStateCodec.encode({ games }),
+          betweenHandLastTerms: {
+            my_contribution: '100',
+            their_contribution: '100',
+            game_timeout: '15',
+            game_type: 'krunk',
+          },
+        }),
+      ),
+    ).toThrow('exactly two ordered currentHandGameIds');
+  });
+
+  it('rejects missing, extra, and reordered Krunk payload IDs', () => {
+    const ids = ['game-1', 'game-2'];
+    const baseFields = {
+      activeGameIds: ids,
+      currentHandGameIds: ids,
+      lastDisplayedGameId: ids[0],
+      activeGameType: 'krunk' as const,
+      gameInstances: {
+        'game-1': { ...ACTIVE_INSTANCE, id: 'game-1', amount: '100' },
+        'game-2': { ...ACTIVE_INSTANCE, id: 'game-2', amount: '100' },
+      },
+      betweenHandLastTerms: {
+        my_contribution: '100',
+        their_contribution: '100',
+        game_timeout: '15',
+        game_type: 'krunk',
+      },
+    };
+    for (const games of [
+      { 'game-1': initialKrunkGameState('alice') },
+      {
+        'game-1': initialKrunkGameState('alice'),
+        'game-2': initialKrunkGameState('bob'),
+        extra: initialKrunkGameState('alice'),
+      },
+      {
+        'game-2': initialKrunkGameState('bob'),
+        'game-1': initialKrunkGameState('alice'),
+      },
+    ]) {
+      expect(() =>
+        validateSessionSaveEnvelope(
+          liveSave({ ...baseFields, handState: krunkStateCodec.encode({ games }) }),
+        ),
+      ).toThrow('exactly match currentHandGameIds in order');
+    }
+  });
+
+  it('rejects unrelated keyed instances but retains a terminal display member', () => {
+    expect(() =>
+      validateSessionSaveEnvelope(
+        activeSave({
+          gameInstances: {
+            'game-1': ACTIVE_INSTANCE,
+            unrelated: { ...TERMINAL_INSTANCE, id: 'unrelated' },
+          },
+        }),
+      ),
+    ).toThrow('unrelated keyed instance');
+
+    expect(() =>
+      validateSessionSaveEnvelope(
+        activeSave({
+          activeGameIds: ['game-1'],
+          currentHandGameIds: ['game-1'],
+          lastDisplayedGameId: 'terminal',
+          gameInstances: {
+            'game-1': ACTIVE_INSTANCE,
+            terminal: { ...TERMINAL_INSTANCE, id: 'terminal' },
+          },
+        }),
+      ),
+    ).not.toThrow();
   });
 
   it('accepts terminal frozen snapshots with or without remount state', () => {
@@ -449,7 +713,7 @@ describe('validateSessionSaveEnvelope', () => {
       'betweenHandCompose.calpoker.amount',
     ],
   ])('rejects malformed %s state', (_label, fields, message) => {
-    expect(() => validateSessionSaveEnvelope(baseSave(fields as Partial<SessionSave>))).toThrow(
+    expect(() => validateSessionSaveEnvelope(liveSave(fields as Partial<SessionSave>))).toThrow(
       message,
     );
   });
@@ -487,12 +751,12 @@ describe('validateSessionSaveEnvelope', () => {
     ['timeout numeric string', { channelTimeout: '0' }, 'channelTimeout'],
   ])('rejects malformed %s metadata', (_label, fields, message) => {
     expect(() =>
-      validateSessionSaveEnvelope(baseSave(fields as unknown as Partial<SessionSave>)),
+      validateSessionSaveEnvelope(liveSave(fields as unknown as Partial<SessionSave>)),
     ).toThrow(message);
   });
 
   it('guarantees an accepted envelope restores with the same per-game fallback', () => {
-    const save = baseSave({
+    const save = liveSave({
       betweenHandMode: 'decision',
       betweenHandLastTerms: {
         my_contribution: '12',
@@ -511,6 +775,40 @@ describe('validateSessionSaveEnvelope', () => {
 });
 
 describe('durable game envelope round trips', () => {
+  it.each([
+    ['preferences', baseSave({ blockchainType: 'simulator' }), 'preferences'],
+    [
+      'pre-handshake',
+      baseSave({
+        pairingToken: 'pair',
+        iStarted: true,
+        myContribution: '20',
+        theirContribution: '20',
+        perGameAmount: '2',
+      }),
+      'pre-handshake',
+    ],
+    ['live', liveSave(), 'live-resumable'],
+    [
+      'terminal',
+      baseSave({
+        channelStatus: { state: 'ResolvedClean' },
+        coinsOfInterest: [],
+        terminalIStarted: true,
+      }),
+      'terminal-frozen',
+    ],
+  ] as const)(
+    'round-trips a legitimate %s phase through IndexedDB and canonical decode',
+    async (_label, save, kind) => {
+      await writeSessionRecord(save);
+      const restored = await readSessionRecord();
+      expect(restored).not.toBeNull();
+      expect(decodeSessionSaveEnvelope(restored!).kind).toBe(kind);
+      await deleteSessionRecord();
+    },
+  );
+
   const cases = [
     {
       gameType: 'calpoker',
@@ -663,6 +961,36 @@ describe('save boundary enforcement', () => {
     await writeSessionRecord(
       activeSave({
         activeGameIds: ['game-1', 'game-1'],
+      }),
+    );
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await peekSession()).toBeNull();
+    expect(await readSessionRecord()).toBeNull();
+    expect(hasSavedSessionMarker()).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('deletes a cross-phase v11 payload during hydration', async () => {
+    markSavedSession();
+    await writeSessionRecord(
+      baseSave({
+        activeGameIds: ['game-1'],
+        currentHandGameIds: ['game-1'],
+        activeGameType: 'calpoker',
+        gameInstances: { 'game-1': ACTIVE_INSTANCE },
+        handState: calpokerStateCodec.encode({
+          playerHand: [1n],
+          opponentHand: [2n],
+          moveNumber: 1n,
+          isPlayerTurn: true,
+        }),
+        betweenHandLastTerms: {
+          my_contribution: '20',
+          their_contribution: '20',
+          game_timeout: '15',
+          game_type: 'calpoker',
+        },
       }),
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});

@@ -5,7 +5,11 @@ import {
   setSpacepokerComposeDraft,
 } from './composeDraft';
 import { gameSliceReducer, type GameSlice } from './gameSlice';
-import { gameInitialTurn, reduceRegisteredGameState } from '../gameRegistry';
+import {
+  decodeGameFeatureState,
+  gameInitialTurn,
+  reduceRegisteredGameState,
+} from '../gameRegistry';
 import { reduceSessionCommand } from './sessionMachineCommands';
 import { reduceSessionNotification } from './sessionMachineNotifications';
 import type {
@@ -98,7 +102,11 @@ function withDurableGameEvent(
   event: Parameters<typeof reduceRegisteredGameState>[2],
 ): SessionMachineTransition {
   const gameType =
-    event.type === 'accepted-group' ? event.terms.gameType : state.model.game.activeGameType;
+    event.type === 'accepted-group'
+      ? event.terms.gameType
+      : event.type === 'feature-state'
+        ? event.gameType
+        : state.model.game.activeGameType;
   const handState = reduceRegisteredGameState(gameType, state.model.game.handState, event);
   return {
     state: {
@@ -107,6 +115,12 @@ function withDurableGameEvent(
     },
     effects: [{ type: 'set-hand-state', state: handState }],
   };
+}
+
+function withSessionPersistence(transition: SessionMachineTransition): SessionMachineTransition {
+  return transition.effects.some((effect) => effect.type === 'persist-session')
+    ? transition
+    : { ...transition, effects: [...transition.effects, { type: 'persist-session' }] };
 }
 
 function clearProposalIds(
@@ -740,12 +754,26 @@ export function reduceSessionMachine(
         effects: [{ type: 'clear-derived-game-presentation' }],
       };
     }
-    case 'feature-state':
+    case 'feature-state': {
+      if (event.gameType !== state.model.game.activeGameType) {
+        throw new Error(
+          `Internal feature-state gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
+        );
+      }
+      if (!state.model.game.currentHandIds.includes(event.id)) {
+        throw new Error(`Internal feature-state game id ${event.id} is not a current hand member`);
+      }
+      const decoded = decodeGameFeatureState(event.gameType, event.state);
+      if (decoded === null) {
+        throw new Error(`Internal feature-state payload is invalid for ${event.gameType}`);
+      }
       return withDurableGameEvent(state, {
         type: 'feature-state',
+        gameType: event.gameType,
         id: event.id,
-        state: event.state,
+        state: decoded,
       });
+    }
     case 'durable-local-turn': {
       const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'local-turn',
@@ -764,14 +792,114 @@ export function reduceSessionMachine(
       return { state, effects: [{ type: 'controller-cancel-proposal', id: event.id }] };
     case 'request-propose-game':
       return { state, effects: [{ type: 'controller-propose-game', terms: event.terms }] };
-    case 'proposal-sent':
-      return reduceSessionMachine(state, {
-        type: 'track-proposal',
-        ids: event.ids,
-        terms: event.terms,
-        outgoing: true,
+    case 'proposal-sent': {
+      const tracked = reduceSessionMachine(
+        {
+          ...state,
+          model: {
+            ...state.model,
+            betweenHand: {
+              ...state.model.betweenHand,
+              compose: { ...state.model.betweenHand.compose, proposalSent: true },
+            },
+          },
+        },
+        {
+          type: 'track-proposal',
+          ids: event.ids,
+          terms: event.terms,
+          outgoing: true,
+        },
+      );
+      return { state: tracked.state, effects: [{ type: 'persist-session' }] };
+    }
+    case 'proposal-command-succeeded': {
+      const betweenHand = state.model.betweenHand;
+      if (event.command === 'accept-proposal') {
+        if (event.context === 'accept-review') {
+          return {
+            state: {
+              ...state,
+              model: {
+                ...state.model,
+                betweenHand: { ...betweenHand, mode: 'decision' },
+              },
+            },
+            effects: [{ type: 'persist-session' }],
+          };
+        }
+        if (event.context === 'choose-same-terms') {
+          return {
+            state: {
+              ...state,
+              model: {
+                ...state.model,
+                betweenHand: { ...betweenHand, newHandRequested: false },
+              },
+              coordination: { ...state.coordination, sameTermsRequested: false },
+            },
+            effects: [{ type: 'persist-session' }],
+          };
+        }
+      } else if (event.context === 'reject-current-proposal') {
+        return {
+          state: {
+            ...state,
+            model: {
+              ...state.model,
+              betweenHand: {
+                ...betweenHand,
+                cachedPeerProposal: null,
+                rejectedOnceTerms: betweenHand.lastTerms,
+                compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
+                mode: 'compose-proposal',
+              },
+            },
+          },
+          effects: [{ type: 'persist-session' }],
+        };
+      } else if (event.context === 'reject-review') {
+        return {
+          state: {
+            ...state,
+            model: {
+              ...state.model,
+              betweenHand: {
+                ...betweenHand,
+                reviewPeerProposal: null,
+                compose: { ...betweenHand.compose, proposalSent: false },
+                mode: 'compose-proposal',
+              },
+            },
+          },
+          effects: [{ type: 'persist-session' }],
+        };
+      }
+      return { state, effects: [] };
+    }
+    case 'controller-command-failed': {
+      const retryable =
+        event.command === 'propose-game'
+          ? {
+              ...state,
+              model: {
+                ...state.model,
+                betweenHand: {
+                  ...state.model.betweenHand,
+                  newHandRequested: false,
+                  compose: { ...state.model.betweenHand.compose, proposalSent: false },
+                },
+              },
+              coordination: { ...state.coordination, sameTermsRequested: false },
+            }
+          : state;
+      return reduceSessionMachine(retryable, {
+        type: 'enqueue-error',
+        kind: 'action-failed',
+        message: `${event.command} failed: ${event.message}`,
       });
-    case 'start-clean-shutdown':
+    }
+    case 'clean-shutdown-command-succeeded':
       return {
         state: {
           ...state,
@@ -780,8 +908,10 @@ export function reduceSessionMachine(
             channel: { ...state.model.channel, cleanShutdownStarted: true },
           },
         },
-        effects: [{ type: 'persist-session' }, { type: 'controller-clean-shutdown' }],
+        effects: [{ type: 'persist-session' }],
       };
+    case 'start-clean-shutdown':
+      return { state, effects: [{ type: 'controller-clean-shutdown' }] };
     case 'go-on-chain':
       return { state, effects: [{ type: 'controller-go-on-chain' }] };
     case 'go-on-chain-result':
@@ -831,29 +961,35 @@ export function reduceSessionMachine(
         ) {
           return { state, effects: [] };
         }
-        return reduceSessionMachine(state, {
-          type: 'channel-coin-enriched',
-          state: event.channelState,
-          coinHex: event.coinHex,
-        });
+        return withSessionPersistence(
+          reduceSessionMachine(state, {
+            type: 'channel-coin-enriched',
+            state: event.channelState,
+            coinHex: event.coinHex,
+          }),
+        );
       }
       const instance = state.model.game.instances[event.id];
       if (!instance) return { state, effects: [] };
       if (event.target === 'settlement') {
         if (instance.terminal.type === 'none') return { state, effects: [] };
-        return reduceSessionMachine(state, {
-          type: 'game',
-          action: {
-            type: 'settled',
-            id: event.id,
-            terminal: { ...instance.terminal, rewardCoinHex: event.coinHex },
-          },
-        });
+        return withSessionPersistence(
+          reduceSessionMachine(state, {
+            type: 'game',
+            action: {
+              type: 'settled',
+              id: event.id,
+              terminal: { ...instance.terminal, rewardCoinHex: event.coinHex },
+            },
+          }),
+        );
       }
-      return reduceSessionMachine(state, {
-        type: 'game',
-        action: { type: 'coin-enriched', id: event.id, coinHex: event.coinHex },
-      });
+      return withSessionPersistence(
+        reduceSessionMachine(state, {
+          type: 'game',
+          action: { type: 'coin-enriched', id: event.id, coinHex: event.coinHex },
+        }),
+      );
     }
   }
   const shouldPersist =

@@ -31,6 +31,7 @@ import {
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 import { validateSessionSaveEnvelope } from '../session/persistence';
 import { writeSessionRecord } from '../session/indexedDb';
+import { Program } from 'clvm-lib';
 
 const testIndexedDb = indexedDB;
 const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
@@ -404,6 +405,163 @@ describe('in-order delivery', () => {
   });
 });
 
+describe('SessionController WASM action results', () => {
+  function failedResult(reason: string): WasmResult {
+    return {
+      actionSucceeded: false,
+      events: [
+        {
+          Notification: {
+            ActionFailed: { reason },
+          },
+        },
+      ],
+    };
+  }
+
+  it.each([
+    [
+      'proposeGame',
+      (blob: SessionController) =>
+        blob.proposeGame({ game_type: 'x', timeout: 5n, parameters: null }),
+    ],
+    ['acceptProposal', (blob: SessionController) => blob.acceptProposal('7')],
+    ['cancelProposal', (blob: SessionController) => blob.cancel_proposal('7')],
+    ['cleanShutdown', (blob: SessionController) => blob.cleanShutdown()],
+    ['makeMove', (blob: SessionController) => blob.makeMove('7', null)],
+    ['acceptSettlement', (blob: SessionController) => blob.acceptSettlement('7')],
+    ['cheat', (blob: SessionController) => blob.cheat('7', 0n)],
+  ])('rejects actionSucceeded=false from %s', (name, invoke) => {
+    const { blob, cradle } = createReadyBlob();
+    activeBlob = blob;
+    Object.assign(cradle, {
+      propose_games: jest.fn(() => ({ ...failedResult(`${name} domain error`), ids: ['7'] })),
+      accept_proposal: jest.fn(() => failedResult(`${name} domain error`)),
+      cancel_proposal: jest.fn(() => failedResult(`${name} domain error`)),
+      shut_down: jest.fn(() => failedResult(`${name} domain error`)),
+      make_move: jest.fn(() => failedResult(`${name} domain error`)),
+      acceptSettlement: jest.fn(() => failedResult(`${name} domain error`)),
+      cheat: jest.fn(() => failedResult(`${name} domain error`)),
+    });
+
+    expect(() => invoke(blob)).toThrow(`${name} domain error`);
+    expect(blob.cleanShutdownCalled).toBe(false);
+  });
+
+  it('returns failure and does not enter host on-chain mode when WASM rejects', () => {
+    const { blob, cradle } = createReadyBlob();
+    activeBlob = blob;
+    (cradle.go_on_chain as jest.Mock).mockReturnValue(failedResult('go on chain domain error'));
+
+    expect(blob.goOnChain()).toBe(false);
+    expect(blob.onChain).toBe(false);
+  });
+});
+
+describe('SessionController ordered resync replay', () => {
+  it('replays two targeted local instructions in FIFO order with exact payload and entropy', () => {
+    const { blob, cradle } = createReadyBlob();
+    activeBlob = blob;
+    const replay = jest.fn(() => ({ actionSucceeded: true, events: [], resync: [] }));
+    Object.assign(cradle, {
+      make_move: jest
+        .fn()
+        .mockReturnValueOnce({
+          actionSucceeded: true,
+          events: [],
+          moveReplay: {
+            gameId: '7',
+            stateNumber: 11,
+            readable: Uint8Array.from([0x80]),
+            entropy: '11'.repeat(32),
+          },
+        })
+        .mockReturnValueOnce({
+          actionSucceeded: true,
+          events: [],
+          moveReplay: {
+            gameId: '9',
+            stateNumber: 12,
+            readable: Uint8Array.from([1]),
+            entropy: '22'.repeat(32),
+          },
+        }),
+      replay_move: replay,
+    });
+    blob.makeMove('7', null);
+    blob.makeMove('9', Program.fromBigInt(1n));
+
+    blob.processResult({
+      actionSucceeded: true,
+      events: [],
+      resync: [
+        { game_id: 7, state_number: 11, is_my_turn: true },
+        { game_id: 99, state_number: 50, is_my_turn: false },
+        { game_id: 9, state_number: 12, is_my_turn: true },
+      ],
+    });
+
+    expect(replay.mock.calls).toEqual([
+      ['7', Uint8Array.from([0x80]), '11'.repeat(32)],
+      ['9', Uint8Array.from([1]), '22'.repeat(32)],
+    ]);
+  });
+
+  it('fails loudly when an exact local replay receipt is missing', () => {
+    const { blob, cradle } = createReadyBlob();
+    activeBlob = blob;
+    Object.assign(cradle, { replay_move: jest.fn() });
+    const emitted: import('../../types/ChiaGaming').WasmEvent[] = [];
+    const subscription = blob.getObservable().subscribe((event) => emitted.push(event));
+
+    expect(() =>
+      blob.processResult({
+        actionSucceeded: true,
+        events: [],
+        resync: [{ game_id: 7, state_number: 11, is_my_turn: true }],
+      }),
+    ).toThrow('resync requires exactly one journaled local move');
+    expect(emitted.at(-1)).toMatchObject({
+      type: 'error',
+      error: expect.stringContaining('game_id=7 state_number=11'),
+    });
+    subscription.unsubscribe();
+  });
+
+  it('bounds the durable journal and clears entries when a game settles', () => {
+    const { blob, cradle } = createReadyBlob();
+    activeBlob = blob;
+    Object.assign(cradle, {
+      make_move: jest.fn((_id: string, readable: Uint8Array) => ({
+        actionSucceeded: true,
+        events: [],
+        moveReplay: {
+          gameId: '7',
+          stateNumber: Number(readable[0]),
+          readable,
+          entropy: '33'.repeat(32),
+        },
+      })),
+    });
+    for (let state = 0; state < 257; state += 1) {
+      blob.makeMove('7', Program.fromBigInt(BigInt(state)));
+    }
+    expect(blob.getWasmFields()?.moveReplayJournal).toHaveLength(256);
+
+    blob.processResult({
+      events: [
+        {
+          Notification: {
+            GameSettled: { id: '7', outcome: 'settled_cleanly', our_share: '1' },
+          },
+        },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(blob.getWasmFields()?.moveReplayJournal).toEqual([]);
+  });
+});
+
 describe('active game tracking', () => {
   it('retires only the settled member of an atomic hand', () => {
     const { blob } = createReadyBlob();
@@ -488,8 +646,8 @@ describe('game action failure events', () => {
     const events: import('../../types/ChiaGaming').WasmEvent[] = [];
     const subscription = blob.getObservable().subscribe((event) => events.push(event));
 
-    blob.makeMove('41', null);
-    blob.acceptSettlement('42');
+    expect(() => blob.makeMove('41', null)).toThrow('cannot reveal');
+    expect(() => blob.acceptSettlement('42')).toThrow('cannot accept settlement');
     subscription.unsubscribe();
 
     expect(events).toContainEqual({

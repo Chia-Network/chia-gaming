@@ -136,6 +136,10 @@ function isKrunkGameState(value: unknown): value is KrunkGameState {
   );
 }
 
+export function decodeKrunkGameState(value: unknown): KrunkGameState | null {
+  return isKrunkGameState(value) ? value : null;
+}
+
 function isKrunkHandState(value: unknown): value is KrunkHandState {
   if (typeof value !== 'object' || value === null) return false;
   const games = (value as Partial<KrunkHandState>).games;

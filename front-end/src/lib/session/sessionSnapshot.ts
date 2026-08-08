@@ -1,5 +1,5 @@
 import type { SessionSave } from '../../hooks/save';
-import { encodeGameTermsExtras } from '../gameRegistry';
+import { encodeGameTermsExtras, validateGameTerms } from '../gameRegistry';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -9,13 +9,18 @@ import {
 import type { HandTermsModel, SessionModel } from './types';
 
 export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSave> {
-  const termsSnapshot = (terms: HandTermsModel) => ({
-    my_contribution: terms.myContribution.toString(),
-    their_contribution: terms.theirContribution.toString(),
-    game_timeout: terms.gameTimeout.toString(),
-    game_type: terms.gameType,
-    ...encodeGameTermsExtras(terms),
-  });
+  const termsSnapshot = (terms: HandTermsModel) => {
+    if (!validateGameTerms(terms)) {
+      throw new Error(`Session invariant broken: invalid ${terms.gameType} terms`);
+    }
+    return {
+      my_contribution: terms.myContribution.toString(),
+      their_contribution: terms.theirContribution.toString(),
+      game_timeout: terms.gameTimeout.toString(),
+      game_type: terms.gameType,
+      ...encodeGameTermsExtras(terms),
+    };
+  };
 
   const persistedGameIds = Array.from(
     new Set([
@@ -28,6 +33,13 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
     if (!model.game.instances[id]) {
       throw new Error(`Session invariant broken: game ${id} is missing its keyed instance`);
     }
+  }
+  const hasPersistedHand = persistedGameIds.length > 0 || model.game.handState !== null;
+  const hasValidLastTerms = validateGameTerms(model.betweenHand.lastTerms);
+  if (hasPersistedHand && !hasValidLastTerms) {
+    throw new Error(
+      `Session invariant broken: persisted hand has invalid ${model.betweenHand.lastTerms.gameType} terms`,
+    );
   }
 
   return {
@@ -90,7 +102,9 @@ export function snapshotFromSessionModel(model: SessionModel): Partial<SessionSa
         stack_size: model.betweenHand.compose.spacepoker.stackSize.toString(),
       },
     },
-    betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms),
+    ...(hasValidLastTerms
+      ? { betweenHandLastTerms: termsSnapshot(model.betweenHand.lastTerms) }
+      : {}),
     betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
       ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
       : undefined,

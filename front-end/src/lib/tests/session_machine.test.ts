@@ -39,6 +39,7 @@ describe('session machine behavior sequences', () => {
         order.push('authority');
         authority = next;
       },
+      getAuthority: () => authority,
       controller: {
         setHandState: () => order.push('controller'),
         clearDerivedGamePresentation: () => order.push('controller-clear'),
@@ -156,6 +157,7 @@ describe('session machine behavior sequences', () => {
       },
       {
         setAuthority: () => order.push('authority'),
+        getAuthority: () => state,
         controller: {
           setHandState: () => order.push('controller'),
           clearDerivedGamePresentation: () => order.push('controller-clear'),
@@ -260,6 +262,17 @@ describe('session machine behavior sequences', () => {
     const restored = sessionModelFromSave({
       version: 11n,
       playerId: 'p1',
+      serializedGameSession: new Uint8Array([1]),
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'pair',
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      iStarted: true,
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      rewardPuzzleHash: '11'.repeat(32),
+      unackedMessages: [],
       activeGameIds: ['7'],
       currentHandGameIds: ['7'],
       activeGameType: 'calpoker',
@@ -279,6 +292,12 @@ describe('session machine behavior sequences', () => {
         game_timeout: '15',
         game_type: 'calpoker',
       },
+      handState: calpokerStateCodec.encode({
+        playerHand: [],
+        opponentHand: [],
+        moveNumber: 0n,
+        isPlayerTurn: false,
+      }),
       outgoingProposalGroupIds: [['11', '13']],
       outgoingProposalTerms: {
         '11': { my_contribution: '10', their_contribution: '10', game_type: 'calpoker' },
@@ -351,6 +370,21 @@ describe('session machine behavior sequences', () => {
       expect(state.model.game.activeIds).toEqual(ids);
       expect(state.model.game.handState?.gameType).toBe(gameType);
 
+      const decodedAccepted =
+        gameType === 'calpoker'
+          ? calpokerStateCodec.decode(state.model.game.handState)
+          : gameType === 'spacepoker'
+            ? spacepokerStateCodec.decode(state.model.game.handState)
+            : krunkStateCodec.decode(state.model.game.handState)?.games[ids[0]];
+      expect(() =>
+        reduceSessionMachine(state, {
+          type: 'feature-state',
+          gameType,
+          id: ids[0],
+          state: decodedAccepted,
+        }),
+      ).not.toThrow();
+
       const moveId = gameType === 'krunk' ? ids[1] : ids[0];
       state = run(state, {
         type: 'notification-game-status',
@@ -366,6 +400,17 @@ describe('session machine behavior sequences', () => {
       const restoredAfterMove = sessionModelFromSave({
         version: 11n,
         playerId: 'p1',
+        serializedGameSession: new Uint8Array([1]),
+        gameSessionSchemaVersion: 3n,
+        pairingToken: 'pair',
+        messageNumber: 1n,
+        remoteNumber: 0n,
+        iStarted: true,
+        myContribution: '100',
+        theirContribution: '100',
+        perGameAmount: '10',
+        rewardPuzzleHash: '11'.repeat(32),
+        unackedMessages: [],
         ...snapshotFromSessionModel(state.model),
       });
       expect(restoredAfterMove.game.activeIds).toEqual(ids);
@@ -415,4 +460,46 @@ describe('session machine behavior sequences', () => {
       expect(state.model.game.handState).toBeNull();
     },
   );
+
+  it('fails fast for mismatched feature-state type, id, and payload', () => {
+    const initial = createSessionMachineState(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      }),
+    );
+    const state = send(initial, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '10',
+      terms: CALPOKER_TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+
+    expect(() =>
+      reduceSessionMachine(state, {
+        type: 'feature-state',
+        gameType: 'spacepoker',
+        id: '7',
+        state: {},
+      }),
+    ).toThrow('feature-state gameType');
+    expect(() =>
+      reduceSessionMachine(state, {
+        type: 'feature-state',
+        gameType: 'calpoker',
+        id: 'unrelated',
+        state: calpokerStateCodec.decode(state.model.game.handState),
+      }),
+    ).toThrow('feature-state game id');
+    expect(() =>
+      reduceSessionMachine(state, {
+        type: 'feature-state',
+        gameType: 'calpoker',
+        id: '7',
+        state: { malformed: true },
+      }),
+    ).toThrow('feature-state payload');
+  });
 });

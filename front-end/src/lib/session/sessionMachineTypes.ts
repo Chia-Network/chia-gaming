@@ -36,9 +36,22 @@ export interface SessionMachineState {
   coordination: SessionMachineCoordination;
 }
 
+export type SessionControllerCommand =
+  | 'accept-proposal'
+  | 'cancel-proposal'
+  | 'propose-game'
+  | 'clean-shutdown'
+  | 'go-on-chain';
+
+export type ProposalCommandContext =
+  | 'accept-review'
+  | 'choose-same-terms'
+  | 'reject-current-proposal'
+  | 'reject-review';
+
 export type SessionMachineEffect =
-  | { type: 'controller-accept-proposal'; id: string }
-  | { type: 'controller-cancel-proposal'; id: string }
+  | { type: 'controller-accept-proposal'; id: string; context?: ProposalCommandContext }
+  | { type: 'controller-cancel-proposal'; id: string; context?: ProposalCommandContext }
   | { type: 'controller-propose-game'; terms: HandTermsModel }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
@@ -147,6 +160,14 @@ export type SessionMachineEvent =
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; terms: HandTermsModel }
   | { type: 'proposal-sent'; ids: string[]; terms: HandTermsModel }
+  | {
+      type: 'proposal-command-succeeded';
+      command: 'accept-proposal' | 'cancel-proposal';
+      id: string;
+      context?: ProposalCommandContext;
+    }
+  | { type: 'clean-shutdown-command-succeeded' }
+  | { type: 'controller-command-failed'; command: SessionControllerCommand; message: string }
   | { type: 'choose-same-terms' }
   | { type: 'reject-current-proposal' }
   | { type: 'open-compose' }
