@@ -67,5 +67,10 @@ module.exports = {
     perMachine: false,
     allowToChangeInstallationDirectory: true,
   },
-  linux: { target: [{ target: 'AppImage' }, { target: 'deb' }], category: 'Game' },
+  linux: {
+    target: [{ target: 'AppImage' }, { target: 'deb' }],
+    category: 'Game',
+    maintainer: 'Chia Network',
+    syncDesktopName: true,
+  },
 };
