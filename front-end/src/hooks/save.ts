@@ -1065,23 +1065,25 @@ function applyTerminalFields(
 ): void {
   const terminalIStarted =
     fields.terminalIStarted ?? fields.iStarted ?? state.terminalIStarted ?? state.iStarted;
-  Object.assign(state, fields, {
-    terminalIStarted,
-    serializedGameSession: undefined,
-    gameSessionSchemaVersion: undefined,
-    pairingToken: undefined,
-    sessionPeerId: undefined,
-    gameSessionId: undefined,
-    messageNumber: undefined,
-    remoteNumber: undefined,
-    iStarted: undefined,
-    myContribution: undefined,
-    theirContribution: undefined,
-    perGameAmount: undefined,
-    channelTimeout: undefined,
-    unrollTimeout: undefined,
-    unackedMessages: undefined,
-  });
+  Object.assign(state, fields, { terminalIStarted });
+  for (const field of [
+    'serializedGameSession',
+    'gameSessionSchemaVersion',
+    'pairingToken',
+    'sessionPeerId',
+    'gameSessionId',
+    'messageNumber',
+    'remoteNumber',
+    'iStarted',
+    'myContribution',
+    'theirContribution',
+    'perGameAmount',
+    'channelTimeout',
+    'unrollTimeout',
+    'unackedMessages',
+  ] as const) {
+    delete state[field];
+  }
   capPersistedHistories(state);
 }
 

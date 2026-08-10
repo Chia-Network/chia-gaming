@@ -5,7 +5,7 @@ import { SessionController } from '../../hooks/SessionController';
 import { GameplayEvent } from '../../hooks/useGameSession';
 import { krunkSettlementStatus } from '../../lib/settlement';
 import type { GameTerminalModel } from '../../lib/session/types';
-import { reduceKrunkFeatureState } from './adapter';
+import { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './adapter';
 import {
   krunkGameStateFromPersisted,
   KrunkHandler,
@@ -114,37 +114,108 @@ export function applyKrunkMoveRejected(
   return state;
 }
 
+export interface KrunkBoardNotice {
+  text: string;
+  kind: 'error' | 'win' | 'info';
+}
+
+function krunkTerminalNotice(
+  state: KrunkGameState,
+  opponentLabel: string,
+  terminal: GameTerminalModel,
+  gameAmount: string | null,
+): KrunkBoardNotice | null {
+  if (state.handler !== KrunkHandler.Terminal) return null;
+  if (terminal.outcome != null) {
+    const clean =
+      terminal.outcome === 'accept_settlement' ||
+      terminal.outcome === 'we_accepted' ||
+      terminal.outcome === 'settled_cleanly';
+    if (!clean) {
+      return { text: krunkSettlementStatus(terminal.outcome, opponentLabel), kind: 'info' };
+    }
+    const outcome = state.outcome ?? krunkOutcomeFromPlay(state);
+    const ourShare = terminal.myReward === null ? null : BigInt(terminal.myReward);
+    const amount = gameAmount === null ? null : BigInt(gameAmount);
+    const winnerAmount =
+      outcome === 'win'
+        ? ourShare
+        : outcome === 'lose' && ourShare !== null && amount !== null && amount >= ourShare
+          ? amount - ourShare
+          : null;
+    if (outcome === 'win') {
+      if (state.role === 'alice') {
+        return { text: `${opponentLabel} didn't win anything.`, kind: 'info' };
+      }
+      return {
+        text: winnerAmount === null ? 'You won!' : krunkWinMessage(winnerAmount.toString()),
+        kind: 'win',
+      };
+    }
+    if (outcome === 'lose') {
+      if (state.role === 'bob') {
+        return { text: "You didn't win anything.", kind: 'info' };
+      }
+      return {
+        text:
+          winnerAmount === null
+            ? `${opponentLabel} won.`
+            : krunkWinnerMessage(opponentLabel, winnerAmount.toString()),
+        kind: 'info',
+      };
+    }
+    return { text: 'Result unavailable.', kind: 'info' };
+  }
+  if (state.outcome === 'win' && state.moverShare !== null && BigInt(state.moverShare) > 0n) {
+    return { text: krunkWinMessage(state.moverShare), kind: 'win' };
+  }
+  if (state.role === 'bob') {
+    return { text: 'Out of guesses.', kind: 'info' };
+  }
+  return {
+    text:
+      state.outcome === 'win'
+        ? `${opponentLabel} couldn't guess it!`
+        : `${opponentLabel} guessed your word.`,
+    kind: 'info',
+  };
+}
+
 export function krunkTerminalStatus(
   state: KrunkGameState,
   opponentLabel: string,
   terminal: GameTerminalModel,
+  gameAmount: string | null = null,
 ): string | null {
-  if (state.handler !== KrunkHandler.Terminal) return null;
-  if (terminal.outcome != null) {
-    return krunkSettlementStatus(terminal.outcome, opponentLabel);
-  }
-  if (state.role === 'bob') {
-    // Bob win amount is shown from moverShare in the UI (large font).
-    if (state.outcome === 'win') return null;
-    return 'Out of guesses.';
-  }
-  return state.outcome === 'win'
-    ? `${opponentLabel} couldn't guess it!`
-    : `${opponentLabel} guessed your word.`;
+  return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount)?.text ?? null;
+}
+
+export function krunkBoardNotice(
+  state: KrunkGameState,
+  opponentLabel: string,
+  terminal: GameTerminalModel,
+  gameAmount: string | null = null,
+): KrunkBoardNotice | null {
+  if (state.error) return { text: state.error, kind: 'error' };
+  return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount);
 }
 
 /** Win banner copy: mojo below 1e6, chia at/above (same crossover as formatAmount). */
 export function krunkWinMessage(moverShare: string): string {
-  const mojos = BigInt(moverShare);
+  return krunkWinnerMessage('You', moverShare);
+}
+
+export function krunkWinnerMessage(winner: string, amount: string): string {
+  const mojos = BigInt(amount);
   if (mojos < 1_000_000n) {
-    return `You won ${mojos} mojo!`;
+    return `${winner} won ${mojos} mojo!`;
   }
   const TRILLION = 1_000_000_000_000n;
   const whole = mojos / TRILLION;
   const frac = mojos % TRILLION;
-  if (frac === 0n) return `You won ${whole} chia!`;
+  if (frac === 0n) return `${winner} won ${whole} chia!`;
   const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `You won ${whole}.${fracStr} chia!`;
+  return `${winner} won ${whole}.${fracStr} chia!`;
 }
 
 const MAX_GUESSES = 5;
@@ -246,11 +317,10 @@ export function useKrunkHand(
   useEffect(() => {
     const sub = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
-        if (handFinishedRef.current) return;
-
         if ('OpponentMoved' in evt) {
           const evtGameId = evt.OpponentMoved.gameId;
           if (evtGameId && evtGameId !== gameIdRef.current) return;
+          if (handFinishedRef.current) return;
           const next = reduceKrunkFeatureState(gsRef.current, {
             type: 'opponent-moved',
             readable: Uint8Array.from(evt.OpponentMoved.readable),
@@ -260,21 +330,15 @@ export function useKrunkHand(
           projectState(next);
         } else if ('MoveRejected' in evt) {
           if (evt.MoveRejected.gameId !== gameIdRef.current) return;
+          if (handFinishedRef.current) return;
           const next = applyKrunkMoveRejected(gsRef.current, evt.MoveRejected);
           if (next !== gsRef.current) {
             transition(next);
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            projectState(
-              reduceKrunkFeatureState(gsRef.current, {
-                type: 'settled',
-                moverShare: evt.Settled.ourShare,
-              }),
-            );
-          }
+          handFinishedRef.current = true;
+          projectState(reduceKrunkFeatureState(gsRef.current, { type: 'settled' }));
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {

@@ -32,6 +32,9 @@ import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../sessio
 import { validateSessionSaveEnvelope } from '../session/persistence';
 import { writeSessionRecord } from '../session/indexedDb';
 import { Program } from 'clvm-lib';
+import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
+import { reduceSessionNotification } from '../session/sessionMachineNotifications';
+import { createSessionModel } from '../session/model';
 
 const testIndexedDb = indexedDB;
 const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
@@ -459,6 +462,51 @@ describe('SessionController WASM action results', () => {
 });
 
 describe('SessionController ordered resync replay', () => {
+  it('keeps one receipt when repeated drains return the exact same local move', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const receipt = {
+      gameId: '7',
+      stateNumber: 11,
+      readable: Uint8Array.from([0x80]),
+      entropy: '11'.repeat(32),
+    };
+
+    blob.processResult({ actionSucceeded: true, events: [], moveReplay: receipt });
+    blob.processResult({ actionSucceeded: true, events: [], moveReplay: receipt });
+
+    expect(blob.getWasmFields()?.moveReplayJournal).toEqual([receipt]);
+  });
+
+  it('fails at the producer when a repeated replay key has conflicting inputs', () => {
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    blob.processResult({
+      actionSucceeded: true,
+      events: [],
+      moveReplay: {
+        gameId: '7',
+        stateNumber: 11,
+        readable: Uint8Array.from([0x80]),
+        entropy: '11'.repeat(32),
+      },
+    });
+
+    expect(() =>
+      blob.processResult({
+        actionSucceeded: true,
+        events: [],
+        moveReplay: {
+          gameId: '7',
+          stateNumber: 11n,
+          readable: Uint8Array.from([0x81]),
+          entropy: '22'.repeat(32),
+        },
+      }),
+    ).toThrow('conflicting move replay receipt: game_id=7 state_number=11');
+    expect(blob.getWasmFields()?.moveReplayJournal).toHaveLength(1);
+  });
+
   it('replays two targeted local instructions in FIFO order with exact payload and entropy', () => {
     const { blob, cradle } = createReadyBlob();
     activeBlob = blob;
@@ -531,13 +579,14 @@ describe('SessionController ordered resync replay', () => {
   it('bounds the durable journal and clears entries when a game settles', () => {
     const { blob, cradle } = createReadyBlob();
     activeBlob = blob;
+    let stateNumber = 0;
     Object.assign(cradle, {
       make_move: jest.fn((_id: string, readable: Uint8Array) => ({
         actionSucceeded: true,
         events: [],
         moveReplay: {
           gameId: '7',
-          stateNumber: Number(readable[0]),
+          stateNumber: stateNumber++,
           readable,
           entropy: '33'.repeat(32),
         },
@@ -546,7 +595,10 @@ describe('SessionController ordered resync replay', () => {
     for (let state = 0; state < 257; state += 1) {
       blob.makeMove('7', Program.fromBigInt(BigInt(state)));
     }
-    expect(blob.getWasmFields()?.moveReplayJournal).toHaveLength(256);
+    const journal = blob.getWasmFields()?.moveReplayJournal;
+    expect(journal).toHaveLength(256);
+    expect(journal?.[0].stateNumber).toBe(1);
+    expect(journal?.at(-1)?.stateNumber).toBe(256);
 
     blob.processResult({
       events: [
@@ -604,6 +656,83 @@ describe('active game tracking', () => {
     blob.flushDeferredWork();
     expect(blob.activeGameIds).toEqual([]);
   });
+
+  it.each([
+    ['1', '3'],
+    ['3', '1'],
+  ])(
+    'preserves split Krunk terminal drains through session terminalization (%s then %s)',
+    (firstId, lastId) => {
+      const { blob } = createReadyBlob();
+      activeBlob = blob;
+      const terms = {
+        gameType: 'krunk' as const,
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+      };
+      let machine = createSessionMachineState(createSessionModel());
+      machine = reduceSessionMachine(machine, {
+        type: 'track-proposal',
+        ids: ['1', '3'],
+        terms,
+        outgoing: true,
+      }).state;
+      const settledIds: string[] = [];
+      blob.getObservable().subscribe((event) => {
+        if (event.type !== 'notification') return;
+        if (event.data.GameSettled) settledIds.push(String(event.data.GameSettled.id));
+        machine = reduceSessionNotification(machine, event.data, true, reduceSessionMachine).state;
+      });
+
+      blob.processResult({
+        disposition: { kind: 'active' },
+        events: [
+          { Notification: { ProposalAccepted: { id: '1', amount: '100' } } },
+          { Notification: { ProposalAccepted: { id: '3', amount: '100' } } },
+        ],
+      });
+      blob.flushDeferredWork();
+      expect(machine.model.game.activeIds).toEqual(['1', '3']);
+
+      const firstSettlement = {
+        Notification: {
+          GameSettled: {
+            id: firstId,
+            outcome: 'timed_out_waiting_for_our_move' as const,
+            our_share: '0',
+            coin_id: null,
+          },
+        },
+      };
+      blob.processResult({
+        disposition: { kind: 'active' },
+        events: [firstSettlement, firstSettlement],
+      });
+      blob.processResult({
+        disposition: { kind: 'terminal' },
+        events: [
+          {
+            Notification: {
+              GameSettled: {
+                id: lastId,
+                outcome: 'opponent_timed_out',
+                our_share: '100',
+                coin_id: null,
+              },
+            },
+          },
+        ],
+      });
+
+      expect(settledIds).toEqual([firstId, firstId, lastId]);
+      expect(blob.activeGameIds).toEqual([]);
+      expect(machine.model.game.activeIds).toEqual([]);
+      expect(machine.model.game.instances['1'].presentation).toBe('ended');
+      expect(machine.model.game.instances['3'].presentation).toBe('ended');
+      expect(machine.model.betweenHand.mode).toBe('decision');
+    },
+  );
 });
 
 describe('lifecycle flush', () => {
@@ -869,6 +998,26 @@ describe('WASM wallet funding requests', () => {
 });
 
 describe('durability failures', () => {
+  it('routes a rejected background save to the durability channel', async () => {
+    jest.useFakeTimers();
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    const warnings: string[] = [];
+    const sub = blob.getObservable().subscribe((event) => {
+      if (event.type === 'durability-error') warnings.push(event.error);
+    });
+    blob.onSaveNeeded = () => Promise.reject(new Error('background write failed'));
+
+    try {
+      blob.scheduleSave();
+      await jest.advanceTimersByTimeAsync(500);
+      expect(warnings).toEqual(['Session storage failed: background write failed.']);
+    } finally {
+      sub.unsubscribe();
+      jest.useRealTimers();
+    }
+  });
+
   it('warns the user and keeps messages and ACKs queued', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({

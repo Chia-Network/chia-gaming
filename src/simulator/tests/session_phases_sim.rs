@@ -265,7 +265,14 @@ pub enum TestEvent {
 }
 
 #[derive(Debug, Clone)]
+pub struct HostDrainTrace {
+    pub terminal: bool,
+    pub notifications: Vec<GameNotification>,
+}
+
+#[derive(Debug, Clone)]
 enum HostBoundaryEvent {
+    ManagerDrain(HostDrainTrace),
     WatchCoin(CoinString),
     CoinSolutionRequested(CoinString),
     CoinSolutionCallback(CoinString),
@@ -861,6 +868,21 @@ pub struct GameRunOutcome {
     pub simulator: Simulator,
     pub logs: [Vec<String>; 2],
     host_events: [Vec<HostBoundaryEvent>; 2],
+}
+
+impl GameRunOutcome {
+    pub fn host_drain_trace(&self, player: usize) -> Vec<HostDrainTrace> {
+        self.host_events[player]
+            .iter()
+            .filter_map(|event| {
+                if let HostBoundaryEvent::ManagerDrain(trace) = event {
+                    Some(trace.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 fn run_game_container_with_action_list_with_success_predicate(

@@ -1,6 +1,7 @@
 import { applyTermsToComposeDraft } from '../session/composeDraft';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { runSessionMachineTransition } from '../session/sessionMachineEffects';
+import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -16,6 +17,13 @@ const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
   myContribution: 10n,
   theirContribution: 10n,
+  gameTimeout: 15n,
+};
+
+const KRUNK_TERMS = {
+  gameType: 'krunk' as const,
+  myContribution: 100n,
+  theirContribution: 100n,
   gameTimeout: 15n,
 };
 
@@ -98,6 +106,40 @@ describe('session machine behavior sequences', () => {
       mode: 'compose-proposal',
       cachedPeerProposal: null,
       reviewPeerProposal: null,
+    });
+  });
+
+  it('retains Krunk group terms through each member acceptance notification', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = send(state, {
+      type: 'track-proposal',
+      ids: ['1', '2'],
+      terms: KRUNK_TERMS,
+      outgoing: true,
+    });
+
+    state = reduceSessionNotification(
+      state,
+      { ProposalAccepted: { id: '1', amount: '200' } },
+      true,
+      reduceSessionMachine,
+    ).state;
+    expect(state.coordination.proposalTermsById['2']).toEqual(KRUNK_TERMS);
+
+    expect(() => {
+      state = reduceSessionNotification(
+        state,
+        { ProposalAccepted: { id: '2', amount: '200' } },
+        true,
+        reduceSessionMachine,
+      ).state;
+    }).not.toThrow();
+    expect(state.model.game.activeIds).toEqual(['1', '2']);
+
+    const restored = createSessionMachineState(state.model);
+    expect(restored.coordination.proposalTermsById).toMatchObject({
+      '1': KRUNK_TERMS,
+      '2': KRUNK_TERMS,
     });
   });
 

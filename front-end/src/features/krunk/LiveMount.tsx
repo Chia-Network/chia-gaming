@@ -21,6 +21,7 @@ export interface KrunkLiveMountProps {
   opponentName?: string;
   initialPersistedState?: PersistedGameState;
   terminalsById: Record<string, GameTerminalModel>;
+  amountsById: Record<string, string>;
 }
 
 export function KrunkLiveMount(props: KrunkLiveMountProps) {
@@ -39,6 +40,7 @@ export const krunkMountRegistration: GameMountRegistration = {
   renderLive(session, names) {
     return (
       <KrunkLiveMount
+        key={session.handKey}
         gameObject={session.sessionController}
         currentHandGameIds={session.currentHandGameIds}
         activeGameIds={session.activeGameIds}
@@ -49,6 +51,7 @@ export const krunkMountRegistration: GameMountRegistration = {
         appendGameLog={session.appendGameLog}
         initialPersistedState={session.gameSpecificView.handState ?? undefined}
         terminalsById={session.gameSpecificView.terminalsById}
+        amountsById={session.gameSpecificView.amountsById}
         {...names}
       />
     );
@@ -67,6 +70,9 @@ export const krunkMountRegistration: GameMountRegistration = {
         initialPersistedState={model.game.handState ?? undefined}
         terminalsById={Object.fromEntries(
           Object.entries(model.game.instances).map(([id, instance]) => [id, instance.terminal]),
+        )}
+        amountsById={Object.fromEntries(
+          Object.entries(model.game.instances).map(([id, instance]) => [id, instance.amount]),
         )}
         myName={options.myName}
         opponentName={options.opponentName}

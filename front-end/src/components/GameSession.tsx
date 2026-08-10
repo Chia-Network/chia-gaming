@@ -11,13 +11,13 @@ import {
 } from 'react';
 import {
   useGameSession,
+  useSessionControllerAfterCommit,
   GameTerminalAttentionInfo,
   QueuedNotification,
 } from '../hooks/useGameSession';
 import { formatMojos } from '../util';
-import { getPlayerId } from '../hooks/save';
 import { SessionPhase } from '../types/ChiaGaming';
-import { RestoreStatus } from '../hooks/SessionController';
+import { RestoreStatus, type SessionController } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
@@ -526,10 +526,8 @@ export interface GameSessionProps {
   blockchain: BlockchainPoller | null;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({
+const MountedGameSession: React.FC<GameSessionProps & { sessionController: SessionController }> = ({
   params,
-  peerConn,
-  registerMessageHandler,
   appendGameLog,
   sessionSave,
   onGameActivity,
@@ -540,18 +538,9 @@ const GameSession: React.FC<GameSessionProps> = ({
   onCoinsProviderChange,
   suppressPhaseReporting,
   blockchain,
+  sessionController,
 }) => {
-  const uniqueId = getPlayerId();
-
-  const session = useGameSession(
-    params,
-    uniqueId,
-    peerConn,
-    registerMessageHandler,
-    appendGameLog,
-    sessionSave,
-    blockchain,
-  );
+  const session = useGameSession(params, sessionController, appendGameLog, sessionSave, blockchain);
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -820,6 +809,18 @@ const GameSession: React.FC<GameSessionProps> = ({
       )}
     </div>
   );
+};
+
+const GameSession: React.FC<GameSessionProps> = (props) => {
+  const sessionController = useSessionControllerAfterCommit(
+    props.params,
+    props.peerConn,
+    props.registerMessageHandler,
+    props.sessionSave,
+    props.blockchain,
+  );
+  if (!sessionController) return null;
+  return <MountedGameSession {...props} sessionController={sessionController} />;
 };
 
 export default GameSession;

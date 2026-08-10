@@ -75,7 +75,9 @@ pub fn krunk_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
-    use crate::session_phases::effects::{ChannelStatus, GameNotification, GameStatusKind};
+    use crate::session_phases::effects::{
+        ChannelStatus, GameNotification, GameStatusKind, SettlementOutcome,
+    };
     use crate::simulator::tests::session_phases_sim::{
         run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
@@ -232,8 +234,12 @@ mod sim_tests {
 
         res.push(("test_play_krunk_go_on_chain", &|| {
             let mut allocator = AllocEncoder::new();
-            let mut moves = full_group_moves(&mut allocator);
-            moves.push(SimScriptAction::GoOnChain(0));
+            let moves = vec![
+                SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::GoOnChain(0),
+                SimScriptAction::WaitBlocks(120, 0),
+            ];
 
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -243,6 +249,55 @@ mod sim_tests {
             )
             .expect("krunk on-chain resolution should complete");
             for (who, ui) in outcome.local_uis.iter().enumerate() {
+                let drain_trace = outcome.host_drain_trace(who);
+                let terminal_events: Vec<_> = drain_trace
+                    .iter()
+                    .flat_map(|drain| {
+                        drain.notifications.iter().filter_map(move |notification| {
+                            if let GameNotification::GameSettled { id, outcome, .. } = notification {
+                                Some((drain.terminal, *id, outcome.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+                let expected_by_id = if who == 0 {
+                    [
+                        (
+                            true,
+                            GameID(1),
+                            SettlementOutcome::TimedOutWaitingForOurMove,
+                        ),
+                        (true, GameID(3), SettlementOutcome::OpponentTimedOut),
+                    ]
+                } else {
+                    [
+                        (true, GameID(1), SettlementOutcome::OpponentTimedOut),
+                        (
+                            true,
+                            GameID(3),
+                            SettlementOutcome::TimedOutWaitingForOurMove,
+                        ),
+                    ]
+                };
+                assert!(
+                    terminal_events == expected_by_id
+                        || terminal_events == [expected_by_id[1].clone(), expected_by_id[0].clone()],
+                    "player {who} host drain must preserve one complete timeout-event permutation: {terminal_events:?}"
+                );
+                assert_eq!(
+                    drain_trace
+                        .iter()
+                        .filter(|drain| {
+                            drain.notifications.iter().any(
+                                |notification| matches!(notification, GameNotification::GameSettled { .. }),
+                            )
+                        })
+                        .count(),
+                    1,
+                    "player {who} should receive both timeout events in one terminal host drain"
+                );
                 assert!(
                     ui.notifications.iter().any(|notification| matches!(
                         notification,
@@ -265,6 +320,23 @@ mod sim_tests {
                     "player {who} should not fail unroll recognition: {:?}",
                     ui.notifications
                 );
+                for game_id in [GameID(1), GameID(3)] {
+                    let terminal_count = ui
+                        .notifications
+                        .iter()
+                        .filter(|notification| {
+                            matches!(
+                                notification,
+                                GameNotification::GameSettled { id, .. } if *id == game_id
+                            )
+                        })
+                        .count();
+                    assert_eq!(
+                        terminal_count, 1,
+                        "player {who} should receive exactly one terminal event for {game_id:?}: {:?}",
+                        ui.notifications
+                    );
+                }
             }
         }));
 

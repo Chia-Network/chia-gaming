@@ -6,9 +6,8 @@ import {
   canDraftKrunkGuess,
   canQueueKrunkGuess,
   isKrunkDictionaryRejectionError,
+  krunkBoardNotice,
   krunkGuessesWithQueued,
-  krunkTerminalStatus,
-  krunkWinMessage,
   KrunkHandler,
   KrunkGuess,
   KrunkRole,
@@ -31,6 +30,7 @@ export interface KrunkProps {
   opponentName?: string;
   initialPersistedState?: PersistedGameState;
   terminalsById: Record<string, GameTerminalModel>;
+  amountsById: Record<string, string>;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -433,6 +433,7 @@ const Krunk: React.FC<KrunkProps> = ({
   opponentName,
   initialPersistedState,
   terminalsById,
+  amountsById,
 }) => {
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
@@ -666,42 +667,33 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const themLabel = opponentName ?? 'Opponent';
 
-  const bobWon =
-    bobHand.gameState.handler === KrunkHandler.Terminal &&
-    bobHand.gameState.outcome === 'win' &&
-    terminalsById[bobId]?.outcome == null;
   const handComplete =
     bobHand.gameState.handler === KrunkHandler.Terminal &&
     aliceHand.gameState.handler === KrunkHandler.Terminal;
 
-  type KrunkNotice = { text: string; kind: 'error' | 'win' | 'info' };
+  const bobBoardNotice = useMemo(
+    () =>
+      krunkBoardNotice(
+        bobHand.gameState,
+        themLabel,
+        terminalsById[bobId],
+        amountsById[bobId] ?? null,
+      ),
+    [bobHand.gameState, themLabel, terminalsById, amountsById, bobId],
+  );
 
-  const bobBoardNotice = useMemo((): KrunkNotice | null => {
-    if (bobHand.gameState.error) {
-      return { text: bobHand.gameState.error, kind: 'error' };
-    }
-    if (bobWon && bobHand.gameState.moverShare != null) {
-      return { text: krunkWinMessage(bobHand.gameState.moverShare), kind: 'win' };
-    }
-    const bobTerminal = krunkTerminalStatus(bobHand.gameState, themLabel, terminalsById[bobId]);
-    if (bobTerminal !== null) return { text: bobTerminal, kind: 'info' };
-    return null;
-  }, [bobHand.gameState, bobWon, themLabel, terminalsById, bobId]);
+  const aliceBoardNotice = useMemo(
+    () =>
+      krunkBoardNotice(
+        aliceHand.gameState,
+        themLabel,
+        terminalsById[aliceId],
+        amountsById[aliceId] ?? null,
+      ),
+    [aliceHand.gameState, themLabel, terminalsById, amountsById, aliceId],
+  );
 
-  const aliceBoardNotice = useMemo((): KrunkNotice | null => {
-    if (aliceHand.gameState.error) {
-      return { text: aliceHand.gameState.error, kind: 'error' };
-    }
-    const aliceTerminal = krunkTerminalStatus(
-      aliceHand.gameState,
-      themLabel,
-      terminalsById[aliceId],
-    );
-    if (aliceTerminal !== null) return { text: aliceTerminal, kind: 'info' };
-    return null;
-  }, [aliceHand.gameState, themLabel, terminalsById, aliceId]);
-
-  const sharedStatusNotice = useMemo((): KrunkNotice => {
+  const sharedStatusNotice = useMemo(() => {
     if (handComplete) return { text: '', kind: 'info' };
     if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
     if (displayQueue.length > 0) {

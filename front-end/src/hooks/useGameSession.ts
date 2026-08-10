@@ -27,8 +27,9 @@ import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
 import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
+import type { SessionController } from './SessionController';
 import type { SessionSave } from './save';
-import { getDefaultFee } from './save';
+import { getDefaultFee, getPlayerId } from './save';
 
 export type {
   GameplayEvent,
@@ -57,37 +58,63 @@ export {
 } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
 
-export function useGameSession(
+export function useSessionControllerAfterCommit(
   params: GameSessionParams,
-  uniqueId: string,
   peerConn: PeerConnectionResult,
   registerMessageHandler: (
     handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
   ) => void,
+  sessionSave?: SessionSave,
+  blockchain: BlockchainPoller | null = null,
+): SessionController | null {
+  const [controller, setController] = useState<SessionController | null>(null);
+  useEffect(() => {
+    const next = getOrCreateSessionController(
+      blockchain,
+      peerConn,
+      registerMessageHandler,
+      getPlayerId(),
+      params.myContribution,
+      params.theirContribution,
+      params.iStarted,
+      sessionSave,
+      params.pairingToken,
+      params.perGameAmount,
+      getDefaultFee,
+      Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
+      Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
+    ).sessionController;
+    if (params.myAlias) next.myAlias = params.myAlias;
+    if (params.opponentAlias) next.opponentAlias = params.opponentAlias;
+    setController((current) => (current === next ? current : next));
+  }, [
+    blockchain,
+    params.channelTimeout,
+    params.iStarted,
+    params.myAlias,
+    params.myContribution,
+    params.opponentAlias,
+    params.pairingToken,
+    params.perGameAmount,
+    params.theirContribution,
+    params.unrollTimeout,
+    peerConn,
+    registerMessageHandler,
+    sessionSave,
+  ]);
+  return controller;
+}
+
+export function useGameSession(
+  params: GameSessionParams,
+  controller: SessionController,
   appendGameLog: (line: string) => void,
   sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
 ): UseGameSessionResult {
-  const { iStarted, myContribution, theirContribution, perGameAmount } = params;
-  const controller = getOrCreateSessionController(
-    blockchain,
-    peerConn,
-    registerMessageHandler,
-    uniqueId,
-    myContribution,
-    theirContribution,
-    iStarted,
-    sessionSave,
-    params.pairingToken,
-    perGameAmount,
-    getDefaultFee,
-    Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
-    Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
-  ).sessionController;
-  if (params.myAlias) controller.myAlias = params.myAlias;
-  if (params.opponentAlias) controller.opponentAlias = params.opponentAlias;
+  const { iStarted, perGameAmount } = params;
 
   const restoredModel = useMemo(
     () => (sessionSave ? sessionModelFromSave(sessionSave, perGameAmount) : null),
@@ -133,7 +160,10 @@ export function useGameSession(
   }
   const runtime = runtimeRef.current;
   const [machineState, setMachineState] = useState(runtime.getState());
-  runtime.setRender(setMachineState);
+  useEffect(() => {
+    runtime.setRender(setMachineState);
+    return () => runtime.setRender(() => {});
+  }, [runtime]);
   const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
   const dispatchHostProjection = useCallback(() => {
     const status = controller.getRestoreStatus();

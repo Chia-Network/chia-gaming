@@ -717,6 +717,20 @@ impl SimulationHarness {
         };
 
         let result = player.flush_and_collect(allocator)?;
+        self.host_events[player_index].push(HostBoundaryEvent::ManagerDrain(HostDrainTrace {
+            terminal: player.is_fully_resolved(),
+            notifications: result
+                .events
+                .iter()
+                .filter_map(|event| {
+                    if let GameSessionEvent::Notification(notification) = event {
+                        Some(notification.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        }));
         progress.record_resync(player_index, result.resync);
         for coin in result.watch_coins {
             self.host_watched_coins[player_index].insert(coin.clone());
@@ -866,6 +880,20 @@ impl SimulationHarness {
             }
 
             let follow_up = player.flush_and_collect(allocator)?;
+            self.host_events[player_index].push(HostBoundaryEvent::ManagerDrain(HostDrainTrace {
+                terminal: player.is_fully_resolved(),
+                notifications: follow_up
+                    .events
+                    .iter()
+                    .filter_map(|event| {
+                        if let GameSessionEvent::Notification(notification) = event {
+                            Some(notification.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            }));
             progress.record_resync(player_index, follow_up.resync);
             for coin in follow_up.watch_coins {
                 self.host_watched_coins[player_index].insert(coin.clone());

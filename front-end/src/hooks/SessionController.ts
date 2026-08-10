@@ -253,7 +253,7 @@ export class SessionController implements PollingGameSession {
       },
     };
     this.beforeUnloadHandler = () => {
-      void this.flushPendingSave();
+      void this.flushPendingSave().catch((error) => this.reportBackgroundSaveError(error));
     };
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
@@ -355,6 +355,12 @@ export class SessionController implements PollingGameSession {
   reportDurabilityError(error: unknown): void {
     const detail = extractErrorMessage(error);
     const warning = `Session storage failed: ${detail}. Terminal session remains live so saving can be retried.`;
+    this.durabilityWarning = warning;
+    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+  }
+
+  private reportBackgroundSaveError(error: unknown): void {
+    const warning = `Session storage failed: ${extractErrorMessage(error)}.`;
     this.durabilityWarning = warning;
     this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
   }
@@ -766,13 +772,7 @@ export class SessionController implements PollingGameSession {
       this.queueTerminalHandoff(disposition.command);
     }
     if (result.moveReplay) {
-      this.moveReplayJournal.push({
-        ...result.moveReplay,
-        readable: Uint8Array.from(result.moveReplay.readable),
-      });
-      if (this.moveReplayJournal.length > MOVE_REPLAY_JOURNAL_LIMIT) {
-        this.moveReplayJournal.splice(0, this.moveReplayJournal.length - MOVE_REPLAY_JOURNAL_LIMIT);
-      }
+      this.appendMoveReplayReceipt(result.moveReplay);
     }
     this.pendingResync.push(...(result.resync ?? []));
 
@@ -788,6 +788,30 @@ export class SessionController implements PollingGameSession {
     }
     this.drainResyncInstructions();
     this.scheduleDrain();
+  }
+
+  private appendMoveReplayReceipt(receipt: MoveReplayReceipt): void {
+    const stateNumber = BigInt(receipt.stateNumber);
+    const existing = this.moveReplayJournal.find(
+      (entry) => entry.gameId === receipt.gameId && BigInt(entry.stateNumber) === stateNumber,
+    );
+    if (existing) {
+      const readableMatches =
+        existing.readable.length === receipt.readable.length &&
+        existing.readable.every((byte, index) => byte === receipt.readable[index]);
+      if (readableMatches && existing.entropy === receipt.entropy) return;
+      throw new Error(
+        `conflicting move replay receipt: game_id=${receipt.gameId} state_number=${stateNumber}`,
+      );
+    }
+
+    this.moveReplayJournal.push({
+      ...receipt,
+      readable: Uint8Array.from(receipt.readable),
+    });
+    if (this.moveReplayJournal.length > MOVE_REPLAY_JOURNAL_LIMIT) {
+      this.moveReplayJournal.splice(0, this.moveReplayJournal.length - MOVE_REPLAY_JOURNAL_LIMIT);
+    }
   }
 
   private drainResyncInstructions(): void {
@@ -865,14 +889,24 @@ export class SessionController implements PollingGameSession {
     return 'Notification' in event || 'Log' in event || 'ReceiveError' in event;
   }
 
+  private isQueuedGameTerminalEvent(event: GameSessionEvent): boolean {
+    if (!('Notification' in event)) return false;
+    const notification = event.Notification;
+    if (notification.GameSettled || notification.InsufficientBalance) return true;
+    const status = notification.GameStatus;
+    return typeof status?.status === 'string' && status.status.startsWith('ended-');
+  }
+
   private stopProtocolWork(): void {
     this.protocolStopped = true;
     this.blockchain?.stop();
     this.stopKeepaliveTimer();
     this.terminalHandoff = null;
     // A terminal drain is a replacement boundary, not an append-only update:
-    // an older queued status must never render after the terminal result.
-    this.eventQueue = [];
+    // stale status/protocol work must not render after it. Per-game terminal
+    // facts from an earlier manager drain remain authoritative, however, and
+    // may be the only terminal notification emitted for that accepted game.
+    this.eventQueue = this.eventQueue.filter((event) => this.isQueuedGameTerminalEvent(event));
     this.pendingOutboundSends = [];
     this.pendingAcks = [];
     this.unackedMessages = [];
@@ -1295,7 +1329,13 @@ export class SessionController implements PollingGameSession {
     if (this.saveTimer) return;
     const timer = setTimeout(() => {
       this.saveTimer = null;
-      this.onSaveNeeded?.();
+      try {
+        void Promise.resolve(this.onSaveNeeded?.()).catch((error) =>
+          this.reportBackgroundSaveError(error),
+        );
+      } catch (error) {
+        this.reportBackgroundSaveError(error);
+      }
     }, SAVE_DEBOUNCE_MS);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.saveTimer = timer;

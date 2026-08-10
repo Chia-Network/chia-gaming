@@ -44,6 +44,9 @@ function initialCoordination(
       for (const id of proposal.groupIds) proposalTermsById[id] = proposal.terms;
     }
   }
+  for (const groupIds of model.betweenHand.acceptedProposalGroupIds) {
+    for (const id of groupIds) proposalTermsById[id] = model.betweenHand.lastTerms;
+  }
   return {
     firstGameAccepted,
     sameTermsRequested: false,
@@ -639,6 +642,10 @@ export function reduceSessionMachine(
           },
           coordination: {
             ...cleared.coordination,
+            proposalTermsById: {
+              ...cleared.coordination.proposalTermsById,
+              ...Object.fromEntries(event.groupIds.map((id) => [id, event.terms])),
+            },
             ...(first
               ? {
                   iProposedHand: event.weProposed,

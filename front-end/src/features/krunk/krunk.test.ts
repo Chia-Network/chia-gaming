@@ -4,6 +4,7 @@ import {
   canDraftKrunkGuess,
   canQueueKrunkGuess,
   isKrunkDictionaryRejectionError,
+  krunkBoardNotice,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
   krunkTerminalStatus,
@@ -26,12 +27,15 @@ import {
 } from './Krunk';
 import type { GameTerminalModel } from '../../lib/session/types';
 
-function terminal(outcome: GameTerminalModel['outcome'] = null): GameTerminalModel {
+function terminal(
+  outcome: GameTerminalModel['outcome'] = null,
+  myReward: string | null = null,
+): GameTerminalModel {
   return {
     type: outcome === null ? 'none' : 'settled',
     outcome,
     label: null,
-    myReward: null,
+    myReward,
     rewardCoinHex: null,
   };
 }
@@ -234,9 +238,10 @@ describe('Krunk first guess drafting', () => {
           ...timedOut,
         },
         'Peer',
-        terminal('settled_cleanly'),
+        terminal('settled_cleanly', '0'),
+        '100',
       ),
-    ).toBe('Settled.');
+    ).toBe("You didn't win anything.");
   });
 
   it('leaves bob correct-guess copy to the win-amount UI', () => {
@@ -251,7 +256,7 @@ describe('Krunk first guess drafting', () => {
       moverShare: '100',
       error: null,
     };
-    expect(krunkTerminalStatus(bobWin, 'Peer', terminal())).toBeNull();
+    expect(krunkTerminalStatus(bobWin, 'Peer', terminal())).toBe('You won 100 mojo!');
     expect(
       krunkTerminalStatus(
         {
@@ -266,11 +271,117 @@ describe('Krunk first guess drafting', () => {
     ).toBe('Out of guesses.');
   });
 
+  it.each(
+    (['accept_settlement', 'we_accepted', 'settled_cleanly'] as const).flatMap((settlement) =>
+      (['alice', 'bob'] as const).flatMap((role) =>
+        (['win', 'lose'] as const).map((outcome) => ({ settlement, role, outcome })),
+      ),
+    ),
+  )(
+    'shows the per-game winner for $settlement / $role / $outcome',
+    ({ settlement, role, outcome }) => {
+      const state: KrunkGameState = {
+        handler: KrunkHandler.Terminal,
+        myTurn: false,
+        role,
+        guesses: role === 'bob' ? [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }] : [],
+        secretWord: role === 'alice' ? 'CRANE' : null,
+        revealedWord: 'CRANE',
+        outcome,
+        moverShare: null,
+        error: null,
+      };
+
+      const expected =
+        role === 'alice'
+          ? outcome === 'win'
+            ? "Peer didn't win anything."
+            : 'Peer won 20 mojo!'
+          : outcome === 'win'
+            ? 'You won 20 mojo!'
+            : "You didn't win anything.";
+      expect(
+        krunkBoardNotice(
+          state,
+          'Peer',
+          terminal(settlement, outcome === 'win' ? '20' : '80'),
+          '100',
+        ),
+      ).toEqual({
+        text: expected,
+        kind: role === 'bob' && outcome === 'win' ? 'win' : 'info',
+      });
+    },
+  );
+
+  it.each([
+    ['opponent_timed_out', 'Peer timed out.'],
+    ['timed_out_waiting_for_our_move', 'We timed out.'],
+    ['forfeited_opponent_won', 'We forfeited.'],
+  ] as const)('keeps %s copy ahead of reward display', (outcome, text) => {
+    const won: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [],
+      secretWord: 'CRANE',
+      revealedWord: 'CRANE',
+      outcome: 'win',
+      moverShare: '100',
+      error: null,
+    };
+
+    expect(krunkBoardNotice(won, 'Peer', terminal(outcome, '100'), '100')).toEqual({
+      text,
+      kind: 'info',
+    });
+  });
+
   it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {
     expect(krunkWinMessage('100')).toBe('You won 100 mojo!');
     expect(krunkWinMessage('999999')).toBe('You won 999999 mojo!');
     expect(krunkWinMessage('1000000')).toBe('You won 0.000001 chia!');
     expect(krunkWinMessage('1000000000000')).toBe('You won 1 chia!');
+  });
+
+  it('formats an opponent clean win in chia from game amount minus our share', () => {
+    const lost: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      secretWord: 'CRANE',
+      revealedWord: 'CRANE',
+      outcome: 'lose',
+      moverShare: null,
+      error: null,
+    };
+    expect(
+      krunkBoardNotice(
+        lost,
+        'Bob',
+        terminal('accept_settlement', '1000000000000'),
+        '2000000000000',
+      ),
+    ).toEqual({ text: 'Bob won 1 chia!', kind: 'info' });
+  });
+
+  it('derives the clean winner from completed play when outcome projection is late', () => {
+    const late: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      secretWord: 'CRANE',
+      revealedWord: null,
+      outcome: null,
+      moverShare: null,
+      error: null,
+    };
+    expect(krunkBoardNotice(late, 'Bob', terminal('settled_cleanly', '80'), '100')).toEqual({
+      text: 'Bob won 20 mojo!',
+      kind: 'info',
+    });
   });
 
   it('aggregates keyboard letter statuses with NYT green-over-amber priority', () => {

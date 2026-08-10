@@ -278,4 +278,89 @@ describe('canonical feature gameplay reducers', () => {
     expect(durable?.games['krunk-1']).toEqual(projected);
     expect(krunkStateCodec.decode(krunkStateCodec.encode(durable!))).toEqual(durable);
   });
+
+  it('keeps Krunk gameplay outcome and mover share intact after a later settlement', () => {
+    const terminal = {
+      ...initialKrunkGameState('bob'),
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      revealedWord: 'CRANE',
+      outcome: 'win' as const,
+      moverShare: '20',
+    };
+
+    const projected = reduceKrunkFeatureState(terminal, {
+      type: 'settled',
+    });
+    const durable = reduceKrunkDurableState(
+      {
+        games: {
+          'krunk-1': terminal,
+          'krunk-2': initialKrunkGameState('alice'),
+        },
+      },
+      {
+        type: 'settled',
+        id: 'krunk-1',
+        terminal: {
+          type: 'settled',
+          outcome: 'settled_cleanly',
+          label: 'Settled cleanly',
+          myReward: '100',
+          rewardCoinHex: null,
+        },
+      },
+    );
+
+    expect(projected.moverShare).toBe('20');
+    expect(projected.outcome).toBe('win');
+    expect(durable?.games['krunk-1']).toEqual(projected);
+    expect(Object.keys(durable!.games)).toEqual(['krunk-1', 'krunk-2']);
+  });
+
+  it('replaces a completed Krunk hand while preserving duplicate acceptance state', () => {
+    const completed = {
+      ...initialKrunkGameState('alice'),
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      secretWord: 'CRANE',
+    };
+    const firstAcceptance: DurableGameStateEvent = {
+      type: 'accepted-group',
+      id: 'krunk-3',
+      groupIds: ['krunk-3', 'krunk-4'],
+      iStarted: true,
+      iProposedHand: true,
+      terms: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+      },
+    };
+
+    let state = reduceKrunkDurableState(
+      {
+        games: {
+          'krunk-1': completed,
+          'krunk-2': { ...completed, role: 'bob' },
+        },
+      },
+      firstAcceptance,
+    );
+    expect(Object.keys(state!.games)).toEqual(['krunk-3', 'krunk-4']);
+
+    const progressed = {
+      ...state!.games['krunk-3'],
+      handler: KrunkHandler.AliceWaiting,
+      secretWord: 'SLATE',
+    };
+    state = reduceKrunkDurableState(
+      { games: { ...state!.games, 'krunk-3': progressed } },
+      { ...firstAcceptance, id: 'krunk-4' },
+    );
+
+    expect(Object.keys(state!.games)).toEqual(['krunk-3', 'krunk-4']);
+    expect(state!.games['krunk-3']).toEqual(progressed);
+  });
 });

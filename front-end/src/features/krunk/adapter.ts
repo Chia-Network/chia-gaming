@@ -69,7 +69,14 @@ function finishedState(
 
 type KrunkFeatureEvent =
   | { type: 'opponent-moved'; readable: Uint8Array; moverShare: string | null }
-  | { type: 'settled'; moverShare: string | null };
+  | { type: 'settled' };
+
+export function krunkOutcomeFromPlay(game: KrunkGameState): KrunkGameState['outcome'] {
+  const bobWon = game.guesses.some((guess) => guess.clue.every((item) => item === 2n));
+  const finished = bobWon || game.guesses.length >= 5;
+  if (!finished) return null;
+  return game.role === 'bob' ? (bobWon ? 'win' : 'lose') : bobWon ? 'lose' : 'win';
+}
 
 export function reduceKrunkFeatureState(
   game: KrunkGameState,
@@ -80,7 +87,7 @@ export function reduceKrunkFeatureState(
       ...game,
       handler: KrunkHandler.Terminal,
       myTurn: false,
-      moverShare: event.moverShare,
+      outcome: game.outcome ?? krunkOutcomeFromPlay(game),
     };
   }
   const parsed = parseReadable(event.readable);
@@ -136,12 +143,14 @@ export function reduceKrunkDurableState(
     return Object.keys(games).length ? { games } : null;
   }
   if (event.type === 'accepted-group') {
-    const games = { ...(current?.games ?? {}) };
-    event.groupIds.forEach((id, index) => {
-      const proposerIsAlice = index === 0;
-      const role = proposerIsAlice === event.iProposedHand ? ('alice' as const) : ('bob' as const);
-      games[id] ??= initialKrunkGameState(role);
-    });
+    const games = Object.fromEntries(
+      event.groupIds.map((id, index) => {
+        const proposerIsAlice = index === 0;
+        const role =
+          proposerIsAlice === event.iProposedHand ? ('alice' as const) : ('bob' as const);
+        return [id, current?.games[id] ?? initialKrunkGameState(role)];
+      }),
+    );
     return { games };
   }
   if (event.type === 'feature-state') {
@@ -155,10 +164,7 @@ export function reduceKrunkDurableState(
   if (event.type === 'local-turn') {
     next = { ...game, myTurn: event.isMyTurn };
   } else if (event.type === 'settled') {
-    next = reduceKrunkFeatureState(game, {
-      type: 'settled',
-      moverShare: event.terminal.myReward,
-    });
+    next = reduceKrunkFeatureState(game, { type: 'settled' });
   } else if (event.type === 'game-status') {
     if (!event.readable) {
       next = { ...game, myTurn: event.status === 'my-turn' };

@@ -597,6 +597,7 @@ export interface GameSpecificViewModel {
   turnState: GameTurnState;
   terminal: GameTerminalModel;
   terminalsById: Record<string, GameTerminalModel>;
+  amountsById: Record<string, string>;
 }
 
 export function selectGameSpecificView(model: SessionModel): GameSpecificViewModel {
@@ -609,6 +610,9 @@ export function selectGameSpecificView(model: SessionModel): GameSpecificViewMod
     terminal: displayed?.terminal ?? INITIAL_GAME_TERMINAL_MODEL,
     terminalsById: Object.fromEntries(
       Object.entries(model.game.instances).map(([id, instance]) => [id, instance.terminal]),
+    ),
+    amountsById: Object.fromEntries(
+      Object.entries(model.game.instances).map(([id, instance]) => [id, instance.amount]),
     ),
   };
 }

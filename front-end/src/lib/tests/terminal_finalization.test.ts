@@ -10,10 +10,12 @@ import {
   markSavedSession,
   peekSession,
   saveSession,
+  saveTerminalSession,
   stageTerminalSession,
 } from '../../hooks/save';
 import { createSessionModel } from '../session/model';
 import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
+import { decodeSessionSaveEnvelope } from '../session/persistence';
 import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
@@ -235,6 +237,41 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   expect(restored?.gameInstances?.['game-1']?.terminal.label).toBe('Finished');
   expect(restored?.serializedGameSession).toBeUndefined();
   expect(restored?.pairingToken).toBeUndefined();
+});
+
+it('atomically removes live restart fields through the real mutation queue', async () => {
+  const terminalWrite = saveTerminalSession({
+    channelStatus: { state: 'ResolvedClean' },
+    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+  });
+
+  for (const field of [
+    'serializedGameSession',
+    'gameSessionSchemaVersion',
+    'pairingToken',
+    'sessionPeerId',
+    'gameSessionId',
+    'messageNumber',
+    'remoteNumber',
+    'iStarted',
+    'myContribution',
+    'theirContribution',
+    'perGameAmount',
+    'channelTimeout',
+    'unrollTimeout',
+    'unackedMessages',
+  ]) {
+    expect(loadState()).not.toHaveProperty(field);
+  }
+
+  await flushSessionSave();
+  await terminalWrite;
+  const stored = await readSessionRecord();
+  expect(stored).not.toBeNull();
+  expect(decodeSessionSaveEnvelope(stored!).kind).toBe('terminal-frozen');
+  expect(stored).not.toHaveProperty('serializedGameSession');
+  expect(stored).not.toHaveProperty('messageNumber');
+  expect(stored).not.toHaveProperty('unackedMessages');
 });
 
 it('keeps live state and ownership after failure, then retries without teardown durability', async () => {
