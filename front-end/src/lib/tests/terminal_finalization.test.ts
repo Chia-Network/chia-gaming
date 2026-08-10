@@ -14,6 +14,7 @@ import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
+  clearSession,
   discardStagedTerminalSession,
   flushSessionSave,
   hasSavedSessionMarker,
@@ -31,6 +32,7 @@ import { createSessionMachineState } from '../session/sessionMachine';
 import { persistSessionSnapshot } from '../session/sessionMachinePersist';
 import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../gameMountRegistry';
+import { transitionToFreshSession } from '../restoreLifecycle';
 import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
@@ -287,6 +289,50 @@ it('atomically removes live restart fields through the real mutation queue', asy
   expect(stored).not.toHaveProperty('serializedGameSession');
   expect(stored).not.toHaveProperty('messageNumber');
   expect(stored).not.toHaveProperty('unackedMessages');
+});
+
+it('retires a resolved display before accepting a fresh live session', async () => {
+  await saveTerminalSession({
+    channelStatus: { state: 'ResolvedClean' },
+    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+  });
+  await flushSessionSave();
+
+  let displayedSession = 'resolved';
+  let mountedPairingToken: string | null = null;
+  let hubBusy = false;
+  const pairingToken = 'fresh-live-token';
+
+  await transitionToFreshSession({
+    retireTerminalDisplay: () => {
+      displayedSession = 'none';
+    },
+    retireTerminalPersistence: clearSession,
+    persistLiveCheckpoint: async () => {
+      await saveSession({
+        pairingToken,
+        sessionPeerId: 'new-peer',
+        gameSessionId: 'new-session',
+        iStarted: false,
+        myContribution: '60',
+        theirContribution: '40',
+        perGameAmount: '4',
+      });
+      await flushSessionSave();
+    },
+    mountLiveSession: () => {
+      mountedPairingToken = pairingToken;
+      displayedSession = 'live';
+    },
+    reportBusy: () => {
+      hubBusy = true;
+    },
+  });
+
+  expect(displayedSession).toBe('live');
+  expect(mountedPairingToken).toBe(pairingToken);
+  expect(hubBusy).toBe(true);
+  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).kind).toBe('pre-handshake');
 });
 
 it('routes a normally resolved on-chain snapshot through terminal persistence', async () => {

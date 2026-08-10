@@ -86,6 +86,7 @@ import {
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
   shouldSwitchToHubOnResolved,
+  transitionToFreshSession,
 } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
@@ -1249,79 +1250,93 @@ const Shell = () => {
       }
       const channelTimeout = parseOptionalBigInt(request.channel_timeout);
       const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
-      // Persist the full pre-cradle handshake *and flush* before GameSession mounts
-      // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
-      // the same pairing/amounts/peer ids and a stable hub session_id.
-      await saveSession({
-        pairingToken: token,
-        sessionPeerId: request.peerId,
-        gameSessionId: sessionId,
-        sessionId: hubSessionId,
-        ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
-        iStarted: request.iStarted,
-        myContribution: myContribution.toString(),
-        theirContribution: theirContribution.toString(),
-        perGameAmount: perGame.toString(),
-        opponentAlias: request.opponentAlias,
-        ...(channelTimeout !== undefined ? { channelTimeout: channelTimeout.toString() } : {}),
-        ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
-        ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
-      });
-      await flushSessionSave();
-      if (epoch !== sessionStartEpochRef.current) {
-        log(
-          `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
-        );
-        return;
-      }
-      sessionStartedRef.current = false;
-      sessionFinishedCleanupRef.current = false;
-      sessionPhaseRef.current = 'none';
-      if (cleanShutdownGraceTimerRef.current !== null) {
-        clearTimeout(cleanShutdownGraceTimerRef.current);
-        cleanShutdownGraceTimerRef.current = null;
-      }
-      if (abandonTimerRef.current !== null) {
-        clearTimeout(abandonTimerRef.current);
-        abandonTimerRef.current = null;
-      }
-      waitingEnteredAtRef.current = null;
-      waitingStateRef.current = null;
-      setAbandonEnabled(false);
-      setCleanShutdownGraceActive(false);
+      const diagnosticLog = loadState().diagnosticLog;
+      const wasmNotificationHistory = loadState().wasmNotificationHistory;
 
-      setSessionPhase('none');
-      setSessionError(false);
-      setRestoreStatus('idle');
-      setRestoreError(null);
-      setRestoreHubReconciled(true);
-      dashboardSessionModelRef.current = null;
-      setDashboardSessionModel(null);
-      setTerminalPresentation(null);
-      destroySessionController();
-      // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
-      // WASM preset load, so a deploy-stale reload resumed into an empty session.
-      // blobSingleton.newSession clears after session setup succeeds.
-      try {
-        getActiveBlockchain().start();
-      } catch {
-        /* not connected */
-      }
-      setSessionConfig({
-        iStarted: request.iStarted,
-        myContribution,
-        theirContribution,
-        perGameAmount: perGame,
-        restoring: false,
-        pairingToken: token,
-        myAlias: undefined,
-        opponentAlias: request.opponentAlias,
-        channelTimeout,
-        unrollTimeout,
+      await transitionToFreshSession({
+        reportBusy: () => conn.setBusy(true),
+        retireTerminalDisplay: () => {
+          sessionStartedRef.current = false;
+          sessionFinishedCleanupRef.current = false;
+          sessionPhaseRef.current = 'none';
+          if (cleanShutdownGraceTimerRef.current !== null) {
+            clearTimeout(cleanShutdownGraceTimerRef.current);
+            cleanShutdownGraceTimerRef.current = null;
+          }
+          if (abandonTimerRef.current !== null) {
+            clearTimeout(abandonTimerRef.current);
+            abandonTimerRef.current = null;
+          }
+          waitingEnteredAtRef.current = null;
+          waitingStateRef.current = null;
+          setAbandonEnabled(false);
+          setCleanShutdownGraceActive(false);
+          setSessionPhase('none');
+          setSessionError(false);
+          setRestoreStatus('idle');
+          setRestoreError(null);
+          setRestoreHubReconciled(true);
+          dashboardSessionModelRef.current = null;
+          setDashboardSessionModel(null);
+          setTerminalPresentation(null);
+          setSessionConfig(null);
+          setPeerConn(null);
+          destroySessionController();
+        },
+        retireTerminalPersistence: clearSession,
+        persistLiveCheckpoint: async () => {
+          // Persist the full pre-cradle handshake *and flush* before GameSession
+          // mounts and fetches hex assets. A stale-deploy reload mid-fetch must
+          // Resume with the same pairing/amounts/peer ids and hub session_id.
+          await saveSession({
+            pairingToken: token,
+            sessionPeerId: request.peerId,
+            gameSessionId: sessionId,
+            sessionId: hubSessionId,
+            ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
+            iStarted: request.iStarted,
+            myContribution: myContribution.toString(),
+            theirContribution: theirContribution.toString(),
+            perGameAmount: perGame.toString(),
+            opponentAlias: request.opponentAlias,
+            ...(channelTimeout !== undefined ? { channelTimeout: channelTimeout.toString() } : {}),
+            ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
+            ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
+            ...(diagnosticLog && diagnosticLog.length > 0 ? { diagnosticLog } : {}),
+            ...(wasmNotificationHistory && wasmNotificationHistory.length > 0
+              ? { wasmNotificationHistory }
+              : {}),
+          });
+          await flushSessionSave();
+        },
+        mountLiveSession: () => {
+          if (epoch !== sessionStartEpochRef.current) {
+            log(
+              `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
+            );
+            return;
+          }
+          try {
+            getActiveBlockchain().start();
+          } catch {
+            /* not connected */
+          }
+          setSessionConfig({
+            iStarted: request.iStarted,
+            myContribution,
+            theirContribution,
+            perGameAmount: perGame,
+            restoring: false,
+            pairingToken: token,
+            myAlias: undefined,
+            opponentAlias: request.opponentAlias,
+            channelTimeout,
+            unrollTimeout,
+          });
+          setPeerConn(stablePeerConn);
+          setPeerLiveness(null);
+        },
       });
-      setPeerConn(stablePeerConn);
-      setPeerLiveness(null);
-      conn.setBusy(true);
     },
     [stablePeerConn, bindPeerMessageHandler],
   );

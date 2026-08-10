@@ -69,6 +69,20 @@ export function shouldReportHubBusyPresence(
   );
 }
 
+export async function transitionToFreshSession(dependencies: {
+  persistLiveCheckpoint: () => Promise<void>;
+  retireTerminalDisplay: () => void;
+  retireTerminalPersistence: () => Promise<void>;
+  mountLiveSession: () => void;
+  reportBusy: () => void;
+}): Promise<void> {
+  dependencies.reportBusy();
+  dependencies.retireTerminalDisplay();
+  await dependencies.retireTerminalPersistence();
+  await dependencies.persistLiveCheckpoint();
+  dependencies.mountLiveSession();
+}
+
 /**
  * Phase reports are terminal lifecycle inputs to Shell. A restored save is only
  * a persisted projection until WASM restoration and hub reconciliation finish,
