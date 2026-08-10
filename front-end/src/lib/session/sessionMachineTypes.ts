@@ -1,4 +1,3 @@
-import type { CalpokerOutcome } from '../../features/calPoker/outcome';
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
 import type { PersistedGameState } from './gameStateCodec';
 import type { ComposeDraftState } from './composeDraft';
@@ -16,12 +15,14 @@ import type {
 import type { NonTerminalGameStatusPayload } from './presentation';
 import type { RestoreStatus } from '../../hooks/SessionController';
 
+export type OutcomeWin = 'win' | 'lose' | 'tie';
+
 export interface SessionMachineCoordination {
   firstGameAccepted: boolean;
   sameTermsRequested: boolean;
   expectingCounterProposal: boolean;
   iProposedHand: boolean;
-  lastOutcome?: CalpokerOutcome;
+  lastOutcomeWin?: OutcomeWin;
   proposalTermsById: Record<string, HandTermsModel>;
   proposalGroupIdsById: Record<string, string[]>;
   nextNotificationId: bigint;
@@ -55,7 +56,7 @@ export type SessionMachineEffect =
   | { type: 'controller-propose-game'; terms: HandTermsModel }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
-  | { type: 'controller-set-last-outcome'; outcome: CalpokerOutcome }
+  | { type: 'controller-set-last-outcome'; outcomeWin: OutcomeWin }
   | { type: 'timer-schedule'; key: 'rejection-fallback'; generation: number; delayMs: number }
   | { type: 'timer-cancel'; key: 'rejection-fallback' }
   | { type: 'persist-session' }
@@ -121,8 +122,8 @@ export type SessionMachineEvent =
   | { type: 'set-expecting-counter-proposal'; expecting: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | { type: 'set-i-proposed-hand'; proposed: boolean }
-  | { type: 'set-last-outcome'; outcome: CalpokerOutcome }
-  | { type: 'hand-outcome'; outcome: CalpokerOutcome }
+  | { type: 'set-last-outcome'; outcomeWin: OutcomeWin }
+  | { type: 'hand-outcome'; outcomeWin: OutcomeWin }
   | {
       type: 'notification-accepted-group';
       id: string;

@@ -6,6 +6,7 @@ import {
   type GameFeatureRegistration,
   type TermsFor,
 } from '../../lib/gameAdapter';
+import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
 import { calpokerStateCodec, type CalpokerHandState } from './stateCodec';
 
 function initialState(iStarted: boolean): CalpokerHandState {
@@ -34,12 +35,81 @@ type CalpokerFeatureEvent =
   | { type: 'opponent-moved'; readable: Uint8Array; iStarted: boolean }
   | { type: 'game-message'; readable: Uint8Array; iStarted: boolean };
 
+function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigint {
+  return hand.reduce(
+    (bitfield, cardId, index) =>
+      selectedCards.includes(cardId) ? bitfield | (1n << BigInt(index)) : bitfield,
+    0n,
+  );
+}
+
+export function isCalpokerOutcomeReadable(readable: Uint8Array | number[]): boolean {
+  try {
+    const result = Program.deserialize(Uint8Array.from(readable)).toList();
+    return result.length === 6 && result[3].toList().length > 0 && result[4].toList().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function assertCalpokerOutcomeStage(current: CalpokerHandState): void {
+  if (current.moveNumber < 2n) {
+    throw new Error(
+      `Calpoker final readable arrived before local selections were submitted (moveNumber=${current.moveNumber})`,
+    );
+  }
+  if (
+    current.playerHand.length !== 8 ||
+    current.opponentHand.length !== 8 ||
+    current.cardSelections?.length !== 4 ||
+    !current.cardSelections.every((card) => current.playerHand.includes(card))
+  ) {
+    throw new Error('Calpoker final readable arrived without complete local hand selections');
+  }
+}
+
+export function calpokerOutcomeFromState(
+  current: CalpokerHandState,
+  readable: Uint8Array | number[],
+  iStarted: boolean,
+): CalpokerOutcome {
+  return new CalpokerOutcome(
+    iStarted,
+    selectedCardsToBitfield(current.cardSelections ?? [], current.playerHand),
+    iStarted ? current.opponentHand : current.playerHand,
+    iStarted ? current.playerHand : current.opponentHand,
+    readable,
+  );
+}
+
 export function reduceCalpokerFeatureState(
   current: CalpokerHandState,
   event: CalpokerFeatureEvent,
 ): CalpokerHandState {
   if (event.type === 'game-message') {
     return { ...current, ...cardsFromReadable(event.readable, event.iStarted) };
+  }
+  if (isCalpokerOutcomeReadable(event.readable)) {
+    assertCalpokerOutcomeStage(current);
+    const outcome = calpokerOutcomeFromState(current, event.readable, event.iStarted);
+    const display = projectCalpokerFinalDisplay(outcome);
+    return {
+      ...current,
+      playerHand: display.playerCards,
+      opponentHand: display.opponentCards,
+      cardSelections: [],
+      isPlayerTurn: true,
+      displaySnapshot: {
+        gameState: 'final',
+        winner: display.winner,
+        playerBestHandCardIds: display.playerBestHandCardIds,
+        opponentBestHandCardIds: display.opponentBestHandCardIds,
+        playerHaloCardIds: display.playerHaloCardIds,
+        opponentHaloCardIds: display.opponentHaloCardIds,
+        playerDisplayText: display.playerDisplayText,
+        opponentDisplayText: display.opponentDisplayText,
+      },
+    };
   }
   return {
     ...current,
@@ -67,7 +137,7 @@ export function reduceCalpokerDurableState(
   if (event.type === 'game-status') {
     return event.readable
       ? reduceCalpokerFeatureState(current, {
-          type: 'opponent-moved',
+          type: event.moverShare === null ? 'game-message' : 'opponent-moved',
           readable: event.readable,
           iStarted: event.iStarted,
         })

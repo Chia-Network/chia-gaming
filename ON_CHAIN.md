@@ -553,7 +553,7 @@ The zero-reward early-out fires at five distinct points.
 3. **Opponent's turn, mover_share == coin_amount.**  The move was
   acknowledged (no redo needed).  It's the opponent's turn and
    `mover_share == coin_amount`, meaning the opponent gets everything on
-   timeout and has no incentive to move.  `GameSettled { outcome: forfeited_opponent_won, our_share: 0 }`
+   timeout and has no incentive to move.  `GameSettled { outcome: lost, our_share: 0 }`
    fires.  This only applies when it's the opponent's turn — when it's our turn
    and `mover_share == coin_amount`, *we* get everything and auto-accept fires
    instead (see above).

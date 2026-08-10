@@ -25,6 +25,8 @@ export class SessionMachineRuntime {
   private render: (state: SessionMachineState) => void = () => {};
   private readonly interpreter: SessionMachineInterpreter;
   private readonly controller: SessionController;
+  private dispatching = false;
+  private readonly pendingEvents: SessionMachineEvent[] = [];
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
@@ -59,19 +61,32 @@ export class SessionMachineRuntime {
   }
 
   dispatch(event: SessionMachineEvent): void {
-    const transition = reduceSessionMachine(this.state, event);
-    runSessionMachineTransition(transition, {
-      setAuthority: (state) => {
-        this.state = state;
-      },
-      getAuthority: () => this.state,
-      controller: {
-        setHandState: (state) => this.controller.setHandState(state),
-        clearDerivedGamePresentation: () => this.controller.clearDerivedGamePresentation(),
-      },
-      runCommand: (effect) => this.interpreter.run(effect),
-      render: this.render,
-    });
+    this.pendingEvents.push(event);
+    if (this.dispatching) return;
+    this.dispatching = true;
+    try {
+      while (this.pendingEvents.length > 0) {
+        const next = this.pendingEvents.shift()!;
+        const transition = reduceSessionMachine(this.state, next);
+        runSessionMachineTransition(transition, {
+          setAuthority: (state) => {
+            this.state = state;
+          },
+          getAuthority: () => this.state,
+          controller: {
+            setHandState: (state) => this.controller.setHandState(state),
+            clearDerivedGamePresentation: () => this.controller.clearDerivedGamePresentation(),
+          },
+          runCommand: (effect) => this.interpreter.run(effect),
+          render: this.render,
+        });
+      }
+    } catch (error) {
+      this.pendingEvents.length = 0;
+      throw error;
+    } finally {
+      this.dispatching = false;
+    }
   }
 
   transitionFeatureState(gameType: RegisteredGameType, id: string, state: unknown): boolean {

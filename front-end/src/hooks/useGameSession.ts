@@ -28,6 +28,7 @@ import {
   useTerminalSessionPresentation,
 } from '../lib/session/sessionResult';
 import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
+import { liveGameHandOrigin } from '../lib/gameMount';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -136,6 +137,7 @@ export function useGameSession(
     () => (sessionSave ? sessionModelFromSave(sessionSave, perGameAmount) : null),
     [sessionSave, perGameAmount],
   );
+  const restoredHandKeyRef = useRef<number | null>(null);
   const gameplaySubject = useRef(new Subject<GameplayEvent>()).current;
   const gameplayEvent$ = useMemo(() => gameplaySubject.asObservable(), [gameplaySubject]);
   const initialState = useMemo(() => {
@@ -162,6 +164,7 @@ export function useGameSession(
   }, [controller, perGameAmount, restoredModel, sessionSave]);
   const runtimeRef = useRef<SessionMachineRuntime | null>(null);
   if (!runtimeRef.current) {
+    restoredHandKeyRef.current = restoredModel?.game.handState ? restoredModel.game.handKey : null;
     runtimeRef.current = new SessionMachineRuntime(initialState, {
       controller,
       iStarted,
@@ -295,7 +298,8 @@ export function useGameSession(
     [dispatch],
   );
   const onHandOutcome = useCallback(
-    (outcome: CalpokerOutcome) => dispatch({ type: 'hand-outcome', outcome }),
+    (outcome: CalpokerOutcome) =>
+      dispatch({ type: 'hand-outcome', outcomeWin: outcome.my_win_outcome }),
     [dispatch],
   );
   const onTurnChanged = useCallback(
@@ -327,6 +331,7 @@ export function useGameSession(
     gameCoin: view.gameCoin,
     gameTerminal: view.gameTerminal,
     handKey: model.game.handKey,
+    handOrigin: liveGameHandOrigin(restoredHandKeyRef.current, model.game.handKey),
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,
@@ -360,7 +365,7 @@ export function useGameSession(
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     goOnChain: () => dispatch({ type: 'go-on-chain' }),
     betweenHands: view.betweenHands,
-    lastOutcome: coordination.lastOutcome,
+    lastOutcomeWin: coordination.lastOutcomeWin,
     restoredOutcomeWin: sessionSave?.lastOutcomeWin,
     restoreStatus: model.restore.status,
     restoreError: model.restore.error,

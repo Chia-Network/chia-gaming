@@ -276,6 +276,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.sendRequest('get_peak');
   }
 
+  async farmBlock(): Promise<bigint> {
+    return this.sendRequest('farm_block');
+  }
+
   waitForNextBlock(timeoutMs = 15_000): Promise<void> {
     return new Promise((resolve, reject) => {
       const finish = () => {

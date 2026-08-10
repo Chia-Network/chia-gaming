@@ -504,16 +504,16 @@ impl OnChainPhase {
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
 
-    /// Emit the terminal-loser ("forfeit") notifications for a game whose
+    /// Emit terminal-loser notifications for a game whose
     /// opponent just made the terminal move that leaves us with a zero share.
     /// We can never move again and have no timeout to claim, so we surface the
     /// final move's `readable`/`mover_share` (when available, so the UI can
-    /// display the final hand) and a forfeit terminal, then drop the game from
+    /// display the final hand) and a loss terminal, then drop the game from
     /// on-chain tracking.  Detection is generic — driven by the nil validation
     /// program via `is_game_over()` — not anything
     /// game-specific.  Shared by the `Moved` and `Expected` coin-spend arms so
     /// the loser is handled identically however the move is classified.
-    fn emit_loser_forfeit_terminal(
+    fn emit_loser_terminal(
         &mut self,
         effects: &mut Vec<Effect>,
         game_id: &GameID,
@@ -542,7 +542,7 @@ impl OnChainPhase {
         self.game_map.retain(|_, def| def.game_id != *game_id);
         effects.push(Effect::Notify(GameNotification::game_settled(
             *game_id,
-            SettlementOutcome::ForfeitedOpponentWon,
+            SettlementOutcome::Lost,
             Amount::default(),
             None,
         )));
@@ -1139,8 +1139,8 @@ impl OnChainPhase {
                     // The Expected classification means our referee already
                     // advanced through this terminal move, so its readable was
                     // already delivered; there is no fresh readable to forward
-                    // here.  Emit the forfeit terminal and drop the game.
-                    self.emit_loser_forfeit_terminal(&mut effects, &game_id, None);
+                    // here. Emit the loss terminal and drop the game.
+                    self.emit_loser_terminal(&mut effects, &game_id, None);
                 } else {
                     let finished_flag = if terminal { Some(true) } else { None };
 
@@ -1293,11 +1293,7 @@ impl OnChainPhase {
                     && self.get_game_our_current_share(&game_id)? == Amount::default();
 
                 if zero_reward_terminal {
-                    self.emit_loser_forfeit_terminal(
-                        &mut effects,
-                        &game_id,
-                        Some((readable, mover_share)),
-                    );
+                    self.emit_loser_terminal(&mut effects, &game_id, Some((readable, mover_share)));
                 } else {
                     let finished_flag = if terminal { Some(true) } else { None };
 

@@ -313,7 +313,7 @@ export function reduceSpacepokerDurableState(
     };
   }
   return reduceSpacepokerFeatureState(current, {
-    type: 'opponent-moved',
+    type: event.moverShare === null ? 'game-message' : 'opponent-moved',
     readable: event.readable,
   });
 }

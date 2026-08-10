@@ -2,7 +2,11 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
+import type {
+  GameHandOrigin,
+  GameInteractionMode,
+  GameMountRegistration,
+} from '../../lib/gameMount';
 import { formatAmount } from '../../util';
 import type {
   CalpokerDisplaySnapshotView,
@@ -29,6 +33,7 @@ export interface CalpokerLiveMountProps {
   opponentName?: string;
   terminal: GameTerminalModel;
   interactionMode?: GameInteractionMode;
+  handOrigin?: GameHandOrigin;
 }
 
 function snapshotView(
@@ -84,6 +89,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     opponentName,
     terminal,
     interactionMode = 'live',
+    handOrigin = 'fresh',
   } = props;
   const handleTurnChanged = useCallback(
     (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
@@ -99,6 +105,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     terminal,
     gameObject.handState ?? undefined,
     interactionMode === 'live',
+    handOrigin,
   );
   const handleGameLog = useCallback(
     (lines: string[]) => {
@@ -157,6 +164,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
         perGameAmount={session.currentHandAmount}
         terminal={session.gameSpecificView.terminal}
         interactionMode={session.interactionMode}
+        handOrigin={session.handOrigin}
         {...names}
       />
     );
@@ -180,6 +188,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
         perGameAmount={model.betweenHand.lastTerms.myContribution}
         terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
         interactionMode="terminal"
+        handOrigin="terminal"
         myName={options.myName}
         opponentName={options.opponentName}
       />

@@ -4,6 +4,7 @@ import type { SessionController } from '../../hooks/SessionController';
 import { createFrozenHandBridge } from '../../hooks/frozenHandBridge';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
 import { GAME_MOUNTS, hasGameMount } from '../gameMountRegistry';
+import { liveGameHandOrigin } from '../gameMount';
 import { createSessionModel, type SessionModel } from '../session/model';
 import { projectTerminalSessionResult } from '../session/sessionResult';
 
@@ -38,6 +39,31 @@ describe('game mount registry', () => {
 
     expect(first.key).toBe('1');
     expect(second.key).toBe('2');
+  });
+
+  it('scopes restored origin to the captured hand key', () => {
+    expect(liveGameHandOrigin(null, 1)).toBe('fresh');
+    expect(liveGameHandOrigin(4, 4)).toBe('restored');
+    expect(liveGameHandOrigin(4, 5)).toBe('fresh');
+  });
+
+  it('keeps frozen hand state opaque to React prop diagnostics', () => {
+    const initial = {
+      gameType: 'calpoker',
+      version: 1n,
+      state: { playerHand: [1n] },
+    } as const;
+    const next = {
+      gameType: 'calpoker',
+      version: 1n,
+      state: { playerHand: [2n] },
+    } as const;
+    const bridge = createFrozenHandBridge(initial);
+
+    expect(Object.prototype.propertyIsEnumerable.call(bridge, 'handState')).toBe(false);
+    expect(bridge.handState).toBe(initial);
+    bridge.handState = next;
+    expect(bridge.handState).toBe(next);
   });
 
   it('mounts finished Krunk hands without interactive protocol effects', () => {
@@ -108,6 +134,7 @@ describe('game mount registry', () => {
       const live = {
         sessionController: realController,
         handKey: 7,
+        handOrigin: 'restored',
         currentHandGameIds: model.game.currentHandIds,
         activeGameIds: ['1'],
         activeGameId: '1',
@@ -145,6 +172,10 @@ describe('game mount registry', () => {
       expect(terminalMount.key).toBe(liveMount.key);
       expect(terminalMount.key).toBe('7');
       expect(terminalMount.props.interactionMode).toBe('terminal');
+      if (gameType === 'calpoker') {
+        expect(liveMount.props.handOrigin).toBe('restored');
+        expect(terminalMount.props.handOrigin).toBe('terminal');
+      }
       expect(terminal.sessionController).toBe(bridge);
       terminal.sessionController.makeMove('1', null);
       expect(realMakeMove).not.toHaveBeenCalled();

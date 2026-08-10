@@ -921,7 +921,7 @@ impl SpendChannelCoinPhase {
                 } else if *our_turn {
                     SettlementOutcome::ForfeitedSkippedReveal
                 } else {
-                    SettlementOutcome::ForfeitedOpponentWon
+                    SettlementOutcome::Lost
                 };
                 effects.push(Effect::Notify(GameNotification::game_settled(
                     *game_id,

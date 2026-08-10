@@ -452,7 +452,7 @@ Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
 | #1 Settled cleanly                | `settled_cleanly`                | Settled cleanly                |
 | #2 Opponent timed out             | `opponent_timed_out`             | Opponent timed out             |
 | #3 Forfeited skipped reveal       | `forfeited_skipped_reveal`       | Forfeited                      |
-| #4 Forfeited opponent won         | `forfeited_opponent_won`         | Forfeited                      |
+| #4 Lost                          | `lost`                           | Lost                           |
 | #5 Forfeited we accepted          | `forfeited_we_accepted`          | Forfeited                      |
 | #6 We accepted                    | `we_accepted`                    | Accepted                       |
 | #7 Attempt to move failed         | `attempt_to_move_failed`         | Attempt to move failed         |
@@ -479,7 +479,7 @@ old five-case Forfeit / Claim / Terminal / Fold / Move-too-late table:
 | Terminal clean close             | Game already over; timeout claim pays us            | `settled_cleanly`                                               |
 | Opponent timeout path            | Opponent's turn; their timeout claim confirms       | `opponent_timed_out`                                            |
 | Skip losing reveal/move          | Our computed move would give opponent 100%          | `forfeited_skipped_reveal`                                      |
-| Opponent terminal at 0%          | Their terminal move left us at 0% (opponent's turn) | `forfeited_opponent_won`                                        |
+| Opponent terminal at 0%          | Their terminal move completed the game and left us at 0% | `lost`                                                       |
 | Accept at 0%                     | Explicit `AcceptSettlement` while share == 0        | `forfeited_we_accepted`                                         |
 | Intentional accept / auto-accept | Share > 0; timeout claim pays us                    | `we_accepted`                                                   |
 | Move too late                    | Pending move overtaken by opponent timeout claim    | `attempt_to_move_failed`                                        |

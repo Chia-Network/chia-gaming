@@ -6,7 +6,12 @@ import { SessionController } from '../../hooks/SessionController';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
 import { GameplayEvent } from '../../hooks/useGameSession';
-import { reduceCalpokerFeatureState } from './adapter';
+import type { GameHandOrigin } from '../../lib/gameMount';
+import {
+  calpokerOutcomeFromState,
+  isCalpokerOutcomeReadable,
+  reduceCalpokerFeatureState,
+} from './adapter';
 import {
   calpokerStateCodec,
   type CalpokerDisplaySnapshot,
@@ -14,16 +19,6 @@ import {
 } from './stateCodec';
 
 export type { CalpokerDisplaySnapshot, CalpokerHandState } from './stateCodec';
-
-function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigint {
-  let bitfield = 0n;
-  hand.forEach((cardId, index) => {
-    if (selectedCards.includes(cardId)) {
-      bitfield |= 1n << BigInt(index);
-    }
-  });
-  return bitfield;
-}
 
 function calpokerStateFromPersisted(
   persisted: PersistedGameState | null | undefined,
@@ -91,6 +86,7 @@ export function useCalpokerHand(
   terminal: GameTerminalModel,
   initialPersistedState?: PersistedGameState,
   interactive = true,
+  handOrigin: GameHandOrigin = 'fresh',
 ): UseCalpokerHandResult {
   const initialHandState = useMemo(
     () => calpokerStateFromPersisted(initialPersistedState),
@@ -115,7 +111,7 @@ export function useCalpokerHand(
   const outcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const pendingPlayRef = useRef(false);
   const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);
-  const restoredRef = useRef(!!initialHandState);
+  const restoredRef = useRef(handOrigin === 'restored');
   const interactiveRef = useRef(interactive);
   const stateRef = useRef<CalpokerHandState>(
     initialHandState ?? {
@@ -169,28 +165,19 @@ export function useCalpokerHand(
           if (!shouldProcessCalpokerOpponentMoved(handFinishedRef.current, !!outcomeRef.current))
             return;
           const currentMove = moveNumberRef.current;
+          const finalReadable = isCalpokerOutcomeReadable(evt.OpponentMoved.readable);
           const next = reduceCalpokerFeatureState(stateRef.current, {
             type: 'opponent-moved',
             readable: Uint8Array.from(evt.OpponentMoved.readable),
             iStarted,
           });
+          const newOutcome = finalReadable
+            ? calpokerOutcomeFromState(stateRef.current, evt.OpponentMoved.readable, iStarted)
+            : undefined;
           projectState(next);
           onTurnChanged(true);
 
-          if (currentMove === 1n && !iStarted) {
-            // Cards were committed with the turn transition above.
-          } else if (currentMove >= 2n) {
-            const myDiscardsBitfield = selectedCardsToBitfield(
-              cardSelectionsRef.current,
-              playerHandRef.current,
-            );
-            const newOutcome = new CalpokerOutcome(
-              iStarted,
-              myDiscardsBitfield,
-              iStarted ? next.opponentHand : next.playerHand,
-              iStarted ? next.playerHand : next.opponentHand,
-              evt.OpponentMoved.readable,
-            );
+          if (newOutcome) {
             setOutcome(newOutcome);
             outcomeRef.current = newOutcome;
 
@@ -204,6 +191,8 @@ export function useCalpokerHand(
             }
 
             onOutcome(newOutcome);
+          } else if (currentMove === 1n && !iStarted) {
+            // Cards were committed with the turn transition above.
           }
         } else if ('GameMessage' in evt) {
           if (evt.GameMessage.gameId && evt.GameMessage.gameId !== gameIdRef.current) return;
@@ -331,6 +320,9 @@ export function useCalpokerHand(
         ...current,
         playerHand: nextPlayerHand,
         opponentHand: nextOpponentHand ?? current.opponentHand,
+        cardSelections: (current.cardSelections ?? []).filter((card) =>
+          nextPlayerHand.includes(card),
+        ),
       }));
     },
     [commitState],

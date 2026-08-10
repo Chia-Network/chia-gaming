@@ -336,7 +336,7 @@ fn is_our_side_settlement(outcome: SettlementOutcome) -> bool {
             | SettlementOutcome::SettledCleanly
             | SettlementOutcome::WeAccepted
             | SettlementOutcome::ForfeitedSkippedReveal
-            | SettlementOutcome::ForfeitedOpponentWon
+            | SettlementOutcome::Lost
             | SettlementOutcome::ForfeitedWeAccepted
             | SettlementOutcome::AttemptToMoveFailed
             | SettlementOutcome::TimedOutWaitingForOurMove
@@ -6389,17 +6389,41 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
+        let final_readable_index = p0_notifs
+            .iter()
+            .rposition(|n| {
+                matches!(
+                    n,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::MyTurn,
+                        other_params: Some(params),
+                        ..
+                    } if params.readable.is_some()
+                        && params.mover_share == Some(Amount::default())
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!("Alice should receive Bob's final result readable, got: {p0_notifs:?}")
+            });
+        let skipped_reveal_index = p0_notifs
+            .iter()
+            .position(|n| {
+                matches!(
+                    n,
+                    GameNotification::GameSettled {
+                        outcome: SettlementOutcome::ForfeitedSkippedReveal,
+                        our_share,
+                        coin_id: None,
+                        ..
+                    } if *our_share == Amount::default()
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!("Alice should get skipped-reveal settlement, got: {p0_notifs:?}")
+            });
         assert!(
-            p0_notifs.iter().any(|n| matches!(
-                n,
-                GameNotification::GameSettled {
-                    outcome: SettlementOutcome::ForfeitedSkippedReveal,
-                    our_share,
-                    coin_id: None,
-                    ..
-                } if *our_share == Amount::default()
-            )),
-            "Alice should get WeTimedOut with zero reward as forfeit, got: {p0_notifs:?}"
+            final_readable_index < skipped_reveal_index,
+            "Alice's final readable must precede skipped-reveal settlement, got: {p0_notifs:?}"
         );
     }));
 
@@ -6539,8 +6563,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Bob (loser) must receive Alice's terminal move readable + mover_share
         // so the UI can display the final hand result.
-        assert!(
-            p1_notifs.iter().any(|n| matches!(
+        let final_readable_index = p1_notifs
+            .iter()
+            .position(|n| matches!(
                 n,
                 GameNotification::GameStatus {
                     status: GameStatusKind::MyTurn,
@@ -6548,21 +6573,30 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ..
                 } if params.readable.is_some()
                     && params.mover_share == Some(Amount::default())
-            )),
-            "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
-        );
+            ))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
+                )
+            });
 
-        // Bob must receive a forfeit terminal, not be stuck on a phantom turn.
-        assert!(
-            p1_notifs.iter().any(|n| matches!(
+        // Bob must receive a loss terminal, not be stuck on a phantom turn.
+        let loss_index = p1_notifs
+            .iter()
+            .position(|n| matches!(
                 n,
                 GameNotification::GameSettled {
-                    outcome: SettlementOutcome::ForfeitedOpponentWon,
+                    outcome: SettlementOutcome::Lost,
                     our_share,
                     ..
                 } if *our_share == Amount::default()
-            )),
-            "Bob should receive ForfeitedOpponentWon settlement, got: {p1_notifs:?}"
+            ))
+            .unwrap_or_else(|| {
+                panic!("Bob should receive Lost settlement, got: {p1_notifs:?}")
+            });
+        assert!(
+            final_readable_index < loss_index,
+            "Bob's final readable must precede loss settlement, got: {p1_notifs:?}"
         );
 
         assert_eq!(

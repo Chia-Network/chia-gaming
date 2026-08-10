@@ -604,7 +604,7 @@ describe('Krunk draft continuity', () => {
   it.each([
     ['opponent_timed_out', 'Peer got nothing due to timeout.'],
     ['timed_out_waiting_for_our_move', 'Peer got 100 mojo due to timeout.'],
-    ['forfeited_opponent_won', 'We forfeited.'],
+    ['lost', 'We lost.'],
   ] as const)('keeps %s copy ahead of reward display', (outcome, text) => {
     const won: KrunkGameState = {
       handler: KrunkHandler.Terminal,

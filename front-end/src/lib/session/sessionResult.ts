@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Observable } from 'rxjs';
 import type { CalpokerOutcome } from '../../features/calPoker/outcome';
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import type { GameInteractionMode } from '../gameMount';
+import type { GameHandOrigin, GameInteractionMode } from '../gameMount';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameplayEvent } from './gameSessionEvents';
@@ -35,6 +35,7 @@ export interface UseGameSessionResult {
   gameCoin: GameCoinModel;
   gameTerminal: GameTerminalModel;
   handKey: number;
+  handOrigin: GameHandOrigin;
   activeGameId: string | null;
   activeGameIds: string[];
   currentHandGameIds: string[];
@@ -68,7 +69,7 @@ export interface UseGameSessionResult {
   cleanShutdownStarted: boolean;
   goOnChain: () => void;
   betweenHands: boolean;
-  lastOutcome: CalpokerOutcome | undefined;
+  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   restoreStatus: RestoreStatus;
   restoreError: string | null;
@@ -159,6 +160,7 @@ export function projectTerminalSessionResult(
     gameCoin: view.gameCoin,
     gameTerminal: view.gameTerminal,
     handKey: model.game.handKey,
+    handOrigin: 'terminal',
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,

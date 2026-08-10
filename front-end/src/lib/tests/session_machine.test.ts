@@ -2,6 +2,7 @@ import { applyTermsToComposeDraft } from '../session/composeDraft';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { runSessionMachineTransition } from '../session/sessionMachineEffects';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -13,6 +14,7 @@ import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
 import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
 import { krunkStateCodec } from '../../features/krunk/stateCodec';
 import { Program } from 'clvm-lib';
+import type { SessionController } from '../../hooks/SessionController';
 
 const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
@@ -58,6 +60,59 @@ describe('session machine behavior sequences', () => {
     });
     return authority;
   }
+
+  it('keeps bigint-bearing Calpoker outcomes out of shared React session state', () => {
+    const transition = reduceSessionMachine(createSessionMachineState(createSessionModel()), {
+      type: 'hand-outcome',
+      outcomeWin: 'lose',
+    });
+
+    expect(transition.state.coordination.lastOutcomeWin).toBe('lose');
+    expect(transition.effects).toContainEqual({
+      type: 'controller-set-last-outcome',
+      outcomeWin: 'lose',
+    });
+    expect(JSON.stringify(transition.state.coordination.lastOutcomeWin)).toBe('"lose"');
+    expect(transition.state.coordination).not.toHaveProperty('lastOutcome');
+  });
+
+  it('queues dispatches requested during a React projection instead of re-entering it', () => {
+    const controller = {
+      setHandState: () => {},
+      clearDerivedGamePresentation: () => {},
+    } as unknown as SessionController;
+    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      emitGameplay: () => {},
+      onError: () => {},
+      persist: async () => {},
+    });
+    let renderDepth = 0;
+    let maxRenderDepth = 0;
+    let renderCount = 0;
+    runtime.setRender(() => {
+      renderDepth += 1;
+      maxRenderDepth = Math.max(maxRenderDepth, renderDepth);
+      renderCount += 1;
+      if (renderCount === 1) {
+        runtime.dispatch({ type: 'set-i-proposed-hand', proposed: true });
+      }
+      renderDepth -= 1;
+    });
+
+    runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+
+    expect(maxRenderDepth).toBe(1);
+    expect(renderCount).toBe(2);
+    expect(runtime.getState().coordination).toMatchObject({
+      firstGameAccepted: true,
+      iProposedHand: true,
+    });
+  });
 
   it('tracks a grouped proposal through acceptance and insufficient-balance rollback', () => {
     let state = createSessionMachineState(createSessionModel());
@@ -142,6 +197,70 @@ describe('session machine behavior sequences', () => {
       '1': KRUNK_TERMS,
       '2': KRUNK_TERMS,
     });
+  });
+
+  it('resets durable state only when an accepted group starts a new hand', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '20',
+      terms: CALPOKER_TERMS,
+      weProposed: true,
+      iStarted: true,
+    });
+    expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
+      moveNumber: 0n,
+      isPlayerTurn: false,
+    });
+
+    state = send(state, {
+      type: 'feature-state',
+      gameType: 'calpoker',
+      id: '7',
+      state: {
+        playerHand: [],
+        opponentHand: [],
+        cardSelections: [],
+        moveNumber: 2n,
+        isPlayerTurn: true,
+      },
+    });
+    const progressed = state.model.game.handState;
+    const restoredHandKey = state.model.game.handKey;
+    state = createSessionMachineState(state.model, {
+      firstGameAccepted: true,
+      iProposedHand: true,
+    });
+
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '20',
+      terms: CALPOKER_TERMS,
+      weProposed: true,
+      iStarted: true,
+    });
+    expect(state.model.game.handState).toEqual(progressed);
+    expect(state.model.game.handKey).toBe(restoredHandKey);
+
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '9',
+      groupIds: ['9'],
+      amount: '20',
+      terms: CALPOKER_TERMS,
+      weProposed: false,
+      iStarted: true,
+    });
+    expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
+      moveNumber: 0n,
+      isPlayerTurn: false,
+    });
+    expect(state.model.game.currentHandIds).toEqual(['9']);
+    expect(state.model.game.handKey).toBe(restoredHandKey + 1);
   });
 
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
@@ -269,6 +388,104 @@ describe('session machine behavior sequences', () => {
         },
       },
     });
+  });
+
+  it('projects a Calpoker final readable before the following loss terminal', () => {
+    const playerHand = [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n];
+    const opponentHand = [2n, 6n, 9n, 13n, 3n, 7n, 10n, 14n];
+    const finalReadable = Program.fromList([
+      Program.fromBigInt(15n),
+      Program.fromBigInt(31n),
+      Program.fromBigInt(31n),
+      Program.fromList([1n, 1n, 1n, 1n, 1n, 14n, 13n, 12n, 11n, 10n].map(Program.fromBigInt)),
+      Program.fromList([1n, 1n, 1n, 1n, 1n, 10n, 9n, 8n, 7n, 6n].map(Program.fromBigInt)),
+      Program.fromBigInt(-1n),
+    ]).serialize();
+    let state = createSessionMachineState(createSessionModel());
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '20',
+      terms: CALPOKER_TERMS,
+      weProposed: false,
+      iStarted: true,
+    });
+    state = send(state, {
+      type: 'feature-state',
+      gameType: 'calpoker',
+      id: '7',
+      state: {
+        playerHand,
+        opponentHand,
+        cardSelections: playerHand.slice(0, 4),
+        moveNumber: 2n,
+        isPlayerTurn: false,
+      },
+    });
+
+    const readableTransition = reduceSessionNotification(
+      state,
+      {
+        GameStatus: {
+          id: '7',
+          status: 'my-turn',
+          coin_id: null,
+          other_params: {
+            readable: finalReadable,
+            mover_share: '0',
+            game_finished: true,
+          },
+        },
+      },
+      true,
+      reduceSessionMachine,
+    );
+    const readableState = calpokerStateCodec.decode(readableTransition.state.model.game.handState);
+    expect(readableState?.displaySnapshot).toMatchObject({
+      gameState: 'final',
+      winner: 'ai',
+      playerDisplayText: expect.stringMatching(/\S/),
+      opponentDisplayText: expect.stringMatching(/\S/),
+    });
+    expect(readableTransition.effects).toContainEqual({
+      type: 'emit-gameplay',
+      event: {
+        OpponentMoved: {
+          gameId: '7',
+          readable: finalReadable,
+          moverShare: '0',
+        },
+      },
+    });
+    expect(readableTransition.state.model.game.instances['7'].terminal.type).toBe('none');
+
+    const terminalTransition = reduceSessionNotification(
+      readableTransition.state,
+      {
+        GameSettled: {
+          id: '7',
+          outcome: 'lost',
+          our_share: '0',
+          coin_id: null,
+        },
+      },
+      true,
+      reduceSessionMachine,
+    );
+    expect(terminalTransition.effects).toContainEqual({
+      type: 'emit-gameplay',
+      event: {
+        Settled: {
+          gameId: '7',
+          outcome: 'lost',
+          ourShare: '0',
+        },
+      },
+    });
+    expect(
+      calpokerStateCodec.decode(terminalTransition.state.model.game.handState)?.displaySnapshot,
+    ).toEqual(readableState?.displaySnapshot);
   });
 
   it('characterizes incoming proposal review and cancellation cleanup', () => {

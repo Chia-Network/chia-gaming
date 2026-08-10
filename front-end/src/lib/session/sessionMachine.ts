@@ -585,16 +585,19 @@ export function reduceSessionMachine(
       next = { ...state, coordination: { ...state.coordination, iProposedHand: event.proposed } };
       break;
     case 'set-last-outcome':
-      next = { ...state, coordination: { ...state.coordination, lastOutcome: event.outcome } };
+      next = {
+        ...state,
+        coordination: { ...state.coordination, lastOutcomeWin: event.outcomeWin },
+      };
       break;
     case 'hand-outcome':
       return {
         state: {
           ...state,
-          coordination: { ...state.coordination, lastOutcome: event.outcome },
+          coordination: { ...state.coordination, lastOutcomeWin: event.outcomeWin },
         },
         effects: [
-          { type: 'controller-set-last-outcome', outcome: event.outcome },
+          { type: 'controller-set-last-outcome', outcomeWin: event.outcomeWin },
           { type: 'persist-session' },
         ],
       };
@@ -611,11 +614,13 @@ export function reduceSessionMachine(
         startTurn: gameInitialTurn(event.terms.gameType, event.iStarted),
         gameType: event.terms.gameType,
       });
+      const modelWithGame = withGameSlice(cleared.model, game);
       const payload = withDurableGameEvent(
         {
           ...cleared,
           model: {
-            ...withGameSlice(cleared.model, game),
+            ...modelWithGame,
+            game: first ? { ...modelWithGame.game, handState: null } : modelWithGame.game,
             betweenHand: {
               ...cleared.model.betweenHand,
               acceptedProposalGroupIds: cleared.model.betweenHand.acceptedProposalGroupIds.some(

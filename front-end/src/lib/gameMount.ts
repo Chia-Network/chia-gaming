@@ -9,6 +9,14 @@ export interface GameMountNames {
 }
 
 export type GameInteractionMode = 'live' | 'terminal';
+export type GameHandOrigin = 'fresh' | 'restored' | 'terminal';
+
+export function liveGameHandOrigin(
+  restoredHandKey: number | null,
+  currentHandKey: number,
+): Exclude<GameHandOrigin, 'terminal'> {
+  return restoredHandKey === currentHandKey ? 'restored' : 'fresh';
+}
 
 export interface FrozenGameMountOptions extends GameMountNames {
   iStarted: boolean;

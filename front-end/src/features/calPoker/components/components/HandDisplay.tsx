@@ -698,7 +698,7 @@ function HandDisplay(props: HandDisplayProps) {
       <div className="relative">
         {gameState === GAME_STATES.FINAL && isWinner && !timeoutBadge && (
           <div
-            className="absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg"
+            className="absolute z-[110] -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg"
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
@@ -709,7 +709,7 @@ function HandDisplay(props: HandDisplayProps) {
         )}
         {timeoutBadge === 'winner' && (
           <div
-            className="absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg"
+            className="absolute z-[110] -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg"
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
@@ -721,7 +721,7 @@ function HandDisplay(props: HandDisplayProps) {
         {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') &&
           cardRightEdgeOffset !== null && (
             <div
-              className="absolute z-20 -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg"
+              className="absolute z-[110] -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg"
               style={{
                 // Align to the final card rather than the full-width hand
                 // container. Wait for the measurement above so it never first

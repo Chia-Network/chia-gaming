@@ -26,7 +26,10 @@ const text = (value: string) => Program.fromBytes(new TextEncoder().encode(value
 const ints = (values: bigint[]) => Program.fromList(values.map(Program.fromBigInt));
 const readable = (...items: Program[]) => Program.fromList(items).serialize();
 
-const status = (payload: Uint8Array | null, moverShare = '0'): DurableGameStateEvent => ({
+const status = (
+  payload: Uint8Array | null,
+  moverShare: string | null = '0',
+): DurableGameStateEvent => ({
   type: 'game-status',
   id: 'space-1',
   status: 'my-turn',
@@ -249,6 +252,146 @@ describe('canonical feature gameplay reducers', () => {
     });
     expect(durable).toEqual(projected);
     expect(calpokerStateCodec.decode(calpokerStateCodec.encode(durable!))).toEqual(projected);
+  });
+
+  it.each([
+    {
+      role: 'on-chain loser',
+      iStarted: true,
+      playerHand: [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n],
+      opponentHand: [2n, 6n, 9n, 13n, 3n, 7n, 10n, 14n],
+      moveNumber: 2n,
+      winDirection: -1n,
+      expectedWinner: 'ai',
+    },
+    {
+      role: 'on-chain winner',
+      iStarted: false,
+      playerHand: [2n, 6n, 9n, 13n, 3n, 7n, 10n, 14n],
+      opponentHand: [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n],
+      moveNumber: 2n,
+      winDirection: 1n,
+      expectedWinner: 'player',
+    },
+  ])('durably projects the final Calpoker display for the $role before settlement', (testCase) => {
+    const finalReadable = readable(
+      Program.fromBigInt(15n),
+      Program.fromBigInt(31n),
+      Program.fromBigInt(31n),
+      ints([1n, 1n, 1n, 1n, 1n, 14n, 13n, 12n, 11n, 10n]),
+      ints([1n, 1n, 1n, 1n, 1n, 10n, 9n, 8n, 7n, 6n]),
+      Program.fromBigInt(testCase.winDirection),
+    );
+    const current = {
+      playerHand: testCase.playerHand,
+      opponentHand: testCase.opponentHand,
+      cardSelections: testCase.playerHand.slice(0, 4),
+      moveNumber: testCase.moveNumber,
+      isPlayerTurn: false,
+    };
+
+    const projected = reduceCalpokerDurableState(current, {
+      ...status(finalReadable),
+      id: 'calpoker-1',
+      iStarted: testCase.iStarted,
+    });
+
+    expect(projected?.displaySnapshot).toMatchObject({
+      gameState: 'final',
+      winner: testCase.expectedWinner,
+    });
+    expect(projected?.displaySnapshot?.playerDisplayText).not.toBe('');
+    expect(projected?.displaySnapshot?.opponentDisplayText).not.toBe('');
+    expect(projected?.playerHand).not.toEqual(current.playerHand);
+    expect(projected?.opponentHand).not.toEqual(current.opponentHand);
+    expect(calpokerStateCodec.decode(calpokerStateCodec.encode(projected!))).toEqual(projected);
+  });
+
+  it('rejects a final Calpoker readable before local selections reach stage 2', () => {
+    const playerHand = [2n, 6n, 9n, 13n, 3n, 7n, 10n, 14n];
+    const finalReadable = readable(
+      Program.fromBigInt(15n),
+      Program.fromBigInt(31n),
+      Program.fromBigInt(31n),
+      ints([1n, 1n, 1n, 1n, 1n, 14n, 13n, 12n, 11n, 10n]),
+      ints([1n, 1n, 1n, 1n, 1n, 10n, 9n, 8n, 7n, 6n]),
+      Program.fromBigInt(-1n),
+    );
+
+    expect(() =>
+      reduceCalpokerDurableState(
+        {
+          playerHand,
+          opponentHand: [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n],
+          cardSelections: playerHand.slice(0, 4),
+          moveNumber: 1n,
+          isPlayerTurn: false,
+        },
+        { ...status(finalReadable), id: 'calpoker-1', iStarted: false },
+      ),
+    ).toThrow('before local selections were submitted');
+  });
+
+  it('does not invent a Calpoker final display when timeout settles before an outcome readable', () => {
+    const current = {
+      playerHand: [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n],
+      opponentHand: [8n, 9n, 10n, 11n, 12n, 13n, 14n, 15n],
+      cardSelections: [0n, 1n, 2n, 3n],
+      moveNumber: 2n,
+      isPlayerTurn: true,
+    };
+
+    expect(
+      reduceCalpokerDurableState(current, {
+        type: 'settled',
+        id: 'calpoker-1',
+        terminal: {
+          type: 'settled',
+          outcome: 'timed_out_waiting_for_our_move',
+          label: 'Timed out waiting for our move',
+          myReward: '0',
+          rewardCoinHex: null,
+        },
+      }),
+    ).toEqual({ ...current, isPlayerTurn: false });
+  });
+
+  it('durably applies Calpoker and Space Poker advisory messages with game-message semantics', () => {
+    const cards = readable(ints([0n, 1n, 2n]), ints([3n, 4n, 5n]));
+    const calpoker = {
+      playerHand: [],
+      opponentHand: [],
+      cardSelections: [],
+      moveNumber: 1n,
+      isPlayerTurn: false,
+    };
+    expect(
+      reduceCalpokerDurableState(calpoker, {
+        ...status(cards, null),
+        iStarted: true,
+      }),
+    ).toEqual(
+      reduceCalpokerFeatureState(calpoker, {
+        type: 'game-message',
+        readable: cards,
+        iStarted: true,
+      }),
+    );
+
+    const accepted = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    const deal = readable(
+      text('deal'),
+      Program.fromBigInt(10n),
+      Program.fromBigInt(11n),
+      Program.fromBigInt(1n),
+      Program.fromBigInt(0n),
+    );
+    expect(reduceSpacepokerDurableState(accepted, status(deal, null))).toEqual(
+      reduceSpacepokerFeatureState(accepted, {
+        type: 'game-message',
+        readable: deal,
+      }),
+    );
   });
 
   it('uses the same Krunk reducer for durable and mounted clue projection', () => {

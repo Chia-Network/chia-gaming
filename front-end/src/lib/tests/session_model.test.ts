@@ -2227,11 +2227,11 @@ describe('session model selectors', () => {
     };
 
     const terminalEvent = {
-      Settled: { gameId: '7', outcome: 'forfeited_opponent_won' as const, ourShare: '0' },
+      Settled: { gameId: '7', outcome: 'lost' as const, ourShare: '0' },
     };
     expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
       { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7', moverShare: '0' } },
-      { Settled: { gameId: '7', outcome: 'forfeited_opponent_won', ourShare: '0' } },
+      { Settled: { gameId: '7', outcome: 'lost', ourShare: '0' } },
     ]);
   });
 

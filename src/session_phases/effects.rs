@@ -121,8 +121,8 @@ pub enum SettlementOutcome {
     OpponentTimedOut,
     /// Our turn; our move would give them everything; we stop watching.
     ForfeitedSkippedReveal,
-    /// Their terminal move left us at 0; we stop watching.
-    ForfeitedOpponentWon,
+    /// Their terminal move completed the game and left us at 0.
+    Lost,
     /// We intentionally accepted on-chain at share 0; we stop watching.
     ForfeitedWeAccepted,
     /// Intentional on-chain accept with share > 0.

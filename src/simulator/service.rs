@@ -850,6 +850,9 @@ fn dispatch_ws_request(
             let h = game_runner.simulator.get_current_height();
             Ok(format!("{h}\n"))
         }
+        "farm_block" => game_runner
+            .farm_and_chase()
+            .map(|height| format!("{height}\n")),
         "get_block_data" => {
             let block = get_u64_param(&req.params, "block");
             block.and_then(|b| game_runner.get_block_data(b))

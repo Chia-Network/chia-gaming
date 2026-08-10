@@ -10,12 +10,6 @@ export function createFrozenHandBridge(
 ): SessionController {
   let handState = initialHandState;
   const bridge = {
-    get handState() {
-      return handState;
-    },
-    set handState(next: PersistedGameState | null) {
-      handState = next;
-    },
     setHandState(next: PersistedGameState | null) {
       handState = next;
     },
@@ -27,5 +21,13 @@ export function createFrozenHandBridge(
     cheat(_gameId: string, _moverShare: bigint) {},
     nerf() {},
   };
+  Object.defineProperty(bridge, 'handState', {
+    enumerable: false,
+    configurable: true,
+    get: () => handState,
+    set: (next: PersistedGameState | null) => {
+      handState = next;
+    },
+  });
   return bridge as unknown as SessionController;
 }
