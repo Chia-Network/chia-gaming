@@ -133,23 +133,27 @@ Local availability is authoritative for what happens next:
   auto-join). Mutual rejects cancel both attempts cleanly.
 
 The player app self-declares whether it is `busy` over the game channel. Busy
-means session obligation, walletless (`shouldReportHubBusy`), or — on WalletConnect —
-that the wallet has no verified full-node peer yet (`isAwaitingFullNodePeer`,
-also folded into `shouldReportHubBusy` / `shouldReportHubBusyPresence`). The app
-still connects to the hub normally in that case; it just advertises busy. A poll of
-`getFullNodePeerCount()` clears the peer wait once a peer is present, and a
-wallet disconnect re-arms it (the wallet can no longer vouch for a peer). The
-`HubConnection` uses a `getPresence` callback — provided by Shell — to derive
-the authoritative busy+alias state at connect and reconnect time for the
-`identify` message; it reads `hasFullNodePeerRef` synchronously so a reconnect
-never reports a stale not-busy. Presence alias comes from the active session
-aliases or `peekAlias()` (hub-synced prefs). It must never call `getAlias()`,
-which invents and persists a `Player_*` fallback that can overwrite the hub-side
-hub name. Explicit `setBusy(true)` is called when the user accepts a session
-(not when a consent dialog is merely displayed). Idle / terminal clear paths
-must go through `presenceBusy(...)` rather than bare `setBusy(false)`, so the
-full-node-peer wait (and walletless busy) can still hold busy after a session
-ends. Showing a session-consent dialog does not set busy; local availability
+means session obligation, walletless (`shouldReportHubBusy`), or that the active
+blockchain backend is not yet ready for play (`blockchainReady === false`, folded
+into `shouldReportHubBusy` / `shouldReportHubBusyPresence`). Readiness is owned by
+the backend behind `InternalBlockchainInterface.isReadyForPlay()` /
+`onPlayReadinessChange()`: the simulator is ready whenever connected, while
+WalletConnect polls privately for a verified full-node peer (peer count never
+leaves the backend). The app still connects to the hub normally while a backend
+is not ready; it just advertises busy. Shell mirrors the backend's readiness into
+`blockchainReadyRef` via `onPlayReadinessChange`, and a wallet disconnect clears
+it (the backend can no longer vouch for readiness). The `HubConnection` uses a
+`getPresence` callback — provided by Shell — to derive the authoritative
+busy+alias state at connect and reconnect time for the `identify` message; it
+reads `blockchainReadyRef` synchronously so a reconnect never reports a stale
+not-busy. Presence alias comes from the active session aliases or `peekAlias()`
+(hub-synced prefs). It must never call `getAlias()`, which invents and persists a
+`Player_*` fallback that can overwrite the hub-side hub name. Explicit
+`setBusy(true)` is called when the user accepts a session (not when a consent
+dialog is merely displayed). Idle / terminal clear paths must go through
+`presenceBusy(...)` rather than bare `setBusy(false)`, so the backend-readiness
+wait (and walletless busy) can still hold busy after a session ends. Showing a
+session-consent dialog does not set busy; local availability
 (`isAvailableForNewSessionPrompt`) still gates inbound advisories/proposals as
 above. When the app later reports that it is not busy, the hub sets the player
 back to `'waiting'`.

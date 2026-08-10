@@ -620,10 +620,14 @@ export interface InternalBlockchainInterface {
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
-  getFullNodePeerCount(): Promise<bigint>;
 
   beginConnect(uniqueId: string, fresh?: boolean): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
   onConnectionChange(cb: (connected: boolean) => void): () => void;
+  // True when this backend can fund/resolve channels (hub may advertise
+  // not-busy). Simulator: ready whenever connected. WalletConnect: ready once a
+  // full-node peer is verified. Peer count is a private implementation detail.
+  isReadyForPlay(): boolean;
+  onPlayReadinessChange(cb: (ready: boolean) => void): () => void;
 }

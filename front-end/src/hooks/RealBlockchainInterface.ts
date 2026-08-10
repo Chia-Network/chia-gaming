@@ -22,6 +22,7 @@ import { clearWalletConnectStorage } from './save';
 import { jsonStringify } from '../util/jsonSafe';
 
 const PUSH_RETRY_DELAY = 30000;
+const PEER_READINESS_POLL_MS = 5000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
@@ -216,7 +217,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private remoteWalletId: bigint | undefined;
   private remoteWalletEnsurePromise: Promise<void> | null = null;
   private connectionListeners = new Set<(connected: boolean) => void>();
+  private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
+  // Play readiness: the wallet has a verified full-node peer. Polled privately
+  // while connected; peer count never leaves this class.
+  private readyForPlay = false;
+  private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private peerPollEpoch = 0;
   private wcSubscription: { unsubscribe: () => void } | null = null;
   private pendingLocalRemovalsForNextPush: CoinsetCoin[] = [];
   private monitoringReady = false;
@@ -403,18 +410,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       throw new Error('getWalletBalance response missing confirmedWalletBalance');
     }
     return balance;
-  }
-
-  async getFullNodePeerCount(): Promise<bigint> {
-    try {
-      const peerCount = await rpc.getFullNodePeerCount({});
-      log(`[wc-blockchain] getFullNodePeerCount peerCount=${peerCount}`);
-      return peerCount;
-    } catch (e) {
-      console.error('[wc-blockchain] getFullNodePeerCount error', e);
-      log(`[wc-blockchain] getFullNodePeerCount error: ${String(e)}`);
-      throw e;
-    }
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
@@ -713,6 +708,56 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         /* ignore */
       }
     }
+    // Readiness follows connectivity: poll for a full-node peer while connected;
+    // a disconnect drops readiness (the wallet can no longer vouch for a peer).
+    if (connected) {
+      this.startPeerReadinessPoll();
+    } else {
+      this.stopPeerReadinessPoll();
+    }
+  }
+
+  private setReadyForPlay(ready: boolean) {
+    if (ready === this.readyForPlay) return;
+    this.readyForPlay = ready;
+    for (const cb of this.readinessListeners) {
+      try {
+        cb(ready);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private startPeerReadinessPoll() {
+    const epoch = ++this.peerPollEpoch;
+    const check = async () => {
+      try {
+        const peerCount = await rpc.getFullNodePeerCount({});
+        if (epoch !== this.peerPollEpoch) return;
+        log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
+        if (peerCount > 0n) {
+          this.setReadyForPlay(true);
+          return;
+        }
+      } catch (e) {
+        if (epoch !== this.peerPollEpoch) return;
+        log(`[wc-blockchain] full node peer poll error: ${String(e)}`);
+      }
+      if (epoch !== this.peerPollEpoch) return;
+      this.setReadyForPlay(false);
+      this.peerPollTimer = setTimeout(check, PEER_READINESS_POLL_MS);
+    };
+    void check();
+  }
+
+  private stopPeerReadinessPoll() {
+    this.peerPollEpoch++;
+    if (this.peerPollTimer) {
+      clearTimeout(this.peerPollTimer);
+      this.peerPollTimer = null;
+    }
+    this.setReadyForPlay(false);
   }
 
   private subscribeToWcEvents() {
@@ -791,6 +836,18 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.subscribeToWcEvents();
     return () => {
       this.connectionListeners.delete(cb);
+    };
+  }
+
+  isReadyForPlay(): boolean {
+    return this.readyForPlay;
+  }
+
+  onPlayReadinessChange(cb: (ready: boolean) => void): () => void {
+    this.readinessListeners.add(cb);
+    this.subscribeToWcEvents();
+    return () => {
+      this.readinessListeners.delete(cb);
     };
   }
 

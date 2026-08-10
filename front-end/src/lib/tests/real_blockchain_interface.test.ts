@@ -8,6 +8,7 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
     pushTransactions: jest.fn(),
     registerRemoteCoins: jest.fn(),
     selectCoins: jest.fn(),
+    getFullNodePeerCount: jest.fn(async () => 1n),
   },
 }));
 
@@ -54,6 +55,7 @@ const mockGetWallets = rpc.getWallets as jest.Mock;
 const mockPushTransactions = rpc.pushTransactions as jest.Mock;
 const mockRegisterRemoteCoins = rpc.registerRemoteCoins as jest.Mock;
 const mockSelectCoins = rpc.selectCoins as jest.Mock;
+const mockGetFullNodePeerCount = rpc.getFullNodePeerCount as jest.Mock;
 
 function encodedWalletConnectError(payload: unknown): string {
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
@@ -99,6 +101,8 @@ describe('RealBlockchainInterface', () => {
     mockPushTransactions.mockReset();
     mockRegisterRemoteCoins.mockReset();
     mockSelectCoins.mockReset();
+    mockGetFullNodePeerCount.mockReset();
+    mockGetFullNodePeerCount.mockResolvedValue(1n);
     mockWalletListeners.clear();
     mockWalletSession = undefined;
     mockWalletFingerprint = '123456';
@@ -147,6 +151,55 @@ describe('RealBlockchainInterface', () => {
       expect(events).toEqual([true, false, true]);
       expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
       expect((await blockchain.getAddress()).puzzleHash).toBe('11'.repeat(32));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('reports ready for play once a full node peer is verified and drops on disconnect', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      mockGetFullNodePeerCount.mockResolvedValue(2n);
+
+      const blockchain = new RealBlockchainInterface();
+      const ready: boolean[] = [];
+      blockchain.onPlayReadinessChange((r) => ready.push(r));
+      expect(blockchain.isReadyForPlay()).toBe(false);
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(ready).toEqual([true]);
+
+      // Wallet disconnect: the backend can no longer vouch for a peer.
+      mockWalletSession = undefined;
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'initialized', connected: false, sessions: 0 });
+      }
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      expect(ready).toEqual([true, false]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('stays not-ready for play while no full node peer is present', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      mockGetFullNodePeerCount.mockResolvedValue(0n);
+
+      const blockchain = new RealBlockchainInterface();
+      expect(blockchain.isReadyForPlay()).toBe(false);
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(false);
     } finally {
       jest.useRealTimers();
     }

@@ -1,6 +1,5 @@
 import {
   isAvailableForNewSessionPrompt,
-  isAwaitingFullNodePeer,
   isRestoreBlocked,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
@@ -58,15 +57,15 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('off-chain', true)).toBe(true);
   });
 
-  it('keeps presence busy while WalletConnect awaits a full node peer', () => {
-    // Session alone would advertise available — the peer wait must still hold busy.
-    expect(shouldReportHubBusy('none', true, true)).toBe(true);
-    expect(shouldReportHubBusy('resolved', true, true)).toBe(true);
-    // Peer verified (not awaiting) → session phase decides.
-    expect(shouldReportHubBusy('none', true, false)).toBe(false);
-    expect(shouldReportHubBusy('resolved', true, false)).toBe(false);
-    expect(shouldReportHubBusy('off-chain', true, false)).toBe(true);
-    expect(shouldReportHubBusy('on-chain', true, false)).toBe(true);
+  it('keeps presence busy while the blockchain backend is not ready for play', () => {
+    // Session alone would advertise available — a not-ready backend still holds busy.
+    expect(shouldReportHubBusy('none', true, false)).toBe(true);
+    expect(shouldReportHubBusy('resolved', true, false)).toBe(true);
+    // Backend ready → session phase decides.
+    expect(shouldReportHubBusy('none', true, true)).toBe(false);
+    expect(shouldReportHubBusy('resolved', true, true)).toBe(false);
+    expect(shouldReportHubBusy('off-chain', true, true)).toBe(true);
+    expect(shouldReportHubBusy('on-chain', true, true)).toBe(true);
   });
 
   it('keeps hub presence busy for a non-terminal restore cradle even when phase is still none', () => {
@@ -117,67 +116,59 @@ describe('restore lifecycle gates', () => {
         hasCradle: false,
       }),
     ).toBe(true);
-    // Full-node peer wait holds busy even with wallet + no cradle.
+    // A not-ready backend holds busy even with wallet + no cradle.
     expect(
       shouldReportHubBusyPresence('none', true, {
         restoring: false,
         terminalSave: false,
         hasCradle: false,
-        awaitingFullNodePeer: true,
+        blockchainReady: false,
       }),
     ).toBe(true);
-    // Peer-ready must not clear restore obligation while phase is still none.
+    // Backend ready must not clear restore obligation while phase is still none.
     expect(
       shouldReportHubBusyPresence('none', true, {
         restoring: true,
         terminalSave: false,
         hasCradle: true,
-        awaitingFullNodePeer: false,
+        blockchainReady: true,
       }),
     ).toBe(true);
   });
 
-  it('awaits a full node peer only on WalletConnect without a verified peer', () => {
-    expect(isAwaitingFullNodePeer('walletconnect', false)).toBe(true);
-    expect(isAwaitingFullNodePeer('walletconnect', true)).toBe(false);
-    expect(isAwaitingFullNodePeer('simulator', false)).toBe(false);
-    expect(isAwaitingFullNodePeer('simulator', true)).toBe(false);
-    expect(isAwaitingFullNodePeer(undefined, false)).toBe(false);
-  });
-
-  it('rejects inbound matchmaking while awaiting a full node peer or walletless', () => {
-    // Idle session + no pending prompts, but awaiting a peer → unavailable.
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(
-      false,
-    );
-    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, true)).toBe(
-      false,
-    );
-    // Walletless → unavailable even with peer ready.
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, false)).toBe(
-      false,
-    );
-    // Peer verified + wallet → available when otherwise idle.
+  it('rejects inbound matchmaking while the backend is not ready or walletless', () => {
+    // Idle session + no pending prompts, but backend not ready → unavailable.
     expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, false)).toBe(
-      true,
+      false,
     );
     expect(
       isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false),
-    ).toBe(true);
+    ).toBe(false);
+    // Walletless → unavailable even with backend ready.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, true)).toBe(
+      false,
+    );
+    // Backend ready + wallet → available when otherwise idle.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(
+      true,
+    );
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, true)).toBe(
+      true,
+    );
     // Session obligation or pending matchmaking still blocks.
     expect(
-      isAvailableForNewSessionPrompt('off-chain', false, false, false, false, true, false),
+      isAvailableForNewSessionPrompt('off-chain', false, false, false, false, true, true),
     ).toBe(false);
-    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, true, false)).toBe(
+    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, true, true)).toBe(
       false,
     );
-    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, true, false)).toBe(
+    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, true, true)).toBe(
       false,
     );
-    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, true, false)).toBe(
+    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, true, true)).toBe(
       false,
     );
-    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, true, false)).toBe(
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, true, true)).toBe(
       false,
     );
   });

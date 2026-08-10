@@ -81,7 +81,6 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
-  isAwaitingFullNodePeer,
   isRestoreBlocked,
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
@@ -316,19 +315,19 @@ function isTerminalSavedChannel(save: SessionSave): boolean {
   return isTerminalChannelSnapshot(save.channelStatus);
 }
 
-/** Hub busy from phase, wallet, peer wait, and any in-progress non-terminal restore cradle. */
+/** Hub busy from phase, wallet, backend readiness, and any in-progress non-terminal restore cradle. */
 function hubBusyFromSessionState(
   phase: SessionPhase,
   walletConnected: boolean,
   restoring: boolean,
   save: SessionSave | null | undefined,
-  awaitingFullNodePeer = false,
+  blockchainReady = true,
 ): boolean {
   return shouldReportHubBusyPresence(phase, walletConnected, {
     restoring,
     terminalSave: !!save && isTerminalSavedChannel(save),
     hasCradle: !!(save?.serializedGameSession || save?.pairingToken),
-    awaitingFullNodePeer,
+    blockchainReady,
   });
 }
 
@@ -708,11 +707,12 @@ const Shell = () => {
   useEffect(() => {
     walletConnectedRef.current = walletConnected;
   }, [walletConnected]);
-  // Whether the WalletConnect wallet has a verified full node peer. Read
-  // synchronously by getPresence (called from the HubConnection constructor and
-  // on every reconnect) and by isAvailableForNewSessionPrompt, so it lives in a
-  // ref rather than state — no UI depends on it, only the hub busy bit does.
-  const hasFullNodePeerRef = useRef(false);
+  // Whether the active blockchain backend reports it is ready for play (sim:
+  // connected; WalletConnect: full-node peer verified). Read synchronously by
+  // getPresence (called from the HubConnection constructor and on every
+  // reconnect) and by isAvailableForNewSessionPrompt, so it lives in a ref
+  // rather than state — no UI depends on it, only the hub busy bit does.
+  const blockchainReadyRef = useRef(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
@@ -949,15 +949,11 @@ const Shell = () => {
   );
   const blockchainTypeRef = useRef<'simulator' | 'walletconnect' | undefined>(blockchainType);
   // Busy bit reported to the hub: session obligation, walletless, OR the
-  // WalletConnect full-node-peer wait. All setBusy paths that might clear
+  // backend not yet ready for play. All setBusy paths that might clear
   // availability must go through this (not bare false / phase-only busy).
   const presenceBusy = useCallback(
     (phase: SessionPhase) =>
-      shouldReportHubBusy(
-        phase,
-        walletConnectedRef.current,
-        isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
-      ),
+      shouldReportHubBusy(phase, walletConnectedRef.current, blockchainReadyRef.current),
     [],
   );
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
@@ -1162,7 +1158,7 @@ const Shell = () => {
       peerSessionRef.current !== null,
       !!sessionSaveRef.current?.sessionPeerId,
       walletConnectedRef.current,
-      isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+      blockchainReadyRef.current,
     );
   }, []);
 
@@ -1515,7 +1511,7 @@ const Shell = () => {
             true,
             !!sessionConfigRef.current?.restoring,
             sessionSaveRef.current,
-            isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+            blockchainReadyRef.current,
           ),
           sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
         );
@@ -1759,14 +1755,14 @@ const Shell = () => {
             const save = sessionSaveRef.current;
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
-            // WalletConnect also stays busy until a full-node peer is verified.
+            // Backend not ready for play also stays busy.
             return {
               busy: hubBusyFromSessionState(
                 sessionPhaseRef.current,
                 walletConnectedRef.current,
                 !!sessionConfigRef.current?.restoring,
                 save,
-                isAwaitingFullNodePeer(blockchainTypeRef.current, hasFullNodePeerRef.current),
+                blockchainReadyRef.current,
               ),
               // Prefer session aliases, then the hub-synced prefs alias. Never call
               // getAlias() here — inventing Player_* would pollute identify/set_busy.
@@ -1879,15 +1875,16 @@ const Shell = () => {
       }
       // Wallet is back: drop the walletless busy override and recompute presence
       // from phase + any in-progress non-terminal restore cradle (phase alone is
-      // often still `none` mid-resume). Use bcType (not the ref alone) so WC
-      // reconnect stays busy until the peer poll re-verifies after disconnect.
+      // often still `none` mid-resume). blockchainReadyRef was cleared on
+      // disconnect, so we stay busy until the backend re-verifies readiness and
+      // the readiness subscription pushes an update.
       hubConnRef.current?.setBusy(
         hubBusyFromSessionState(
           sessionPhaseRef.current,
           true,
           !!sessionConfigRef.current?.restoring,
           sessionSaveRef.current,
-          isAwaitingFullNodePeer(bcType, hasFullNodePeerRef.current),
+          blockchainReadyRef.current,
         ),
         sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
       );
@@ -2205,64 +2202,39 @@ const Shell = () => {
     restoreHubReconciled,
   );
 
-  // Poll the WalletConnect wallet for a full node peer while the hub is up. We
-  // connect to the hub normally but advertise busy (presenceBusy) until a peer
-  // is verified. Once verified we stop polling; if the wallet disconnects it can
-  // no longer vouch for a peer, so drop back to not-ready (busy) until it
-  // reconnects and the poll re-verifies. Simulator never awaits a peer.
+  // Mirror the active backend's play-readiness into blockchainReadyRef and push
+  // the hub busy bit. The backend owns the computation (sim: connected;
+  // WalletConnect: full-node peer verified) — Shell no longer knows about peer
+  // count. We connect to the hub normally but advertise busy (presenceBusy)
+  // until the backend reports ready. isAvailableForNewSessionPrompt / getPresence
+  // read blockchainReadyRef synchronously (e.g. inbound session_proposal, or
+  // getPresence on a hub reconnect), so the ref update and busy push happen
+  // together. Match getPresence: readiness must not clear restore obligation
+  // while phase is still `none` during resume.
   useEffect(() => {
-    if (!hubOrigin) return;
+    if (!hubOrigin || !walletConnected || !activeBlockchainPoller) {
+      blockchainReadyRef.current = false;
+      return;
+    }
     const alias = () =>
       sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
-    // isAvailableForNewSessionPrompt / getPresence read hasFullNodePeerRef
-    // synchronously (e.g. inbound session_proposal, or getPresence on a hub
-    // reconnect), so update the ref and push the busy bit together. Match
-    // getPresence: peer-ready must not clear restore obligation while phase is
-    // still `none` during resume.
-    const applyPeerReady = (ready: boolean) => {
-      hasFullNodePeerRef.current = ready;
+    const applyReady = (ready: boolean) => {
+      blockchainReadyRef.current = ready;
       hubConnRef.current?.setBusy(
         hubBusyFromSessionState(
           sessionPhaseRef.current,
           walletConnectedRef.current,
           !!sessionConfigRef.current?.restoring,
           sessionSaveRef.current,
-          isAwaitingFullNodePeer(blockchainTypeRef.current, ready),
+          ready,
         ),
         alias(),
       );
     };
-    // doDisconnectWallet clears blockchainType together with walletConnected.
-    // Re-arm before any `!== 'walletconnect'` bail — otherwise a prior verified
-    // peer stays cached and the next WC connect can advertise not-busy before a
-    // fresh getFullNodePeerCount() check.
-    if (blockchainType !== 'walletconnect' || !walletConnected) {
-      applyPeerReady(false);
-      return;
-    }
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const check = async () => {
-      try {
-        const count = await getActiveBlockchain().rpc.getFullNodePeerCount();
-        if (cancelled) return;
-        if (count > 0n) {
-          applyPeerReady(true);
-          return;
-        }
-      } catch (e) {
-        log(`[Shell] full node peer check failed: ${String(e)}`);
-      }
-      if (cancelled) return;
-      applyPeerReady(false);
-      timer = setTimeout(check, 5000);
-    };
-    check();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [blockchainType, hubOrigin, walletConnected]);
+    applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
+    const unsubscribe = activeBlockchainPoller.rpc.onPlayReadinessChange(applyReady);
+    return unsubscribe;
+  }, [activeBlockchainPoller, hubOrigin, walletConnected]);
 
   const handleTabChange = useCallback(
     (tabId: TabId) => {
@@ -2727,9 +2699,10 @@ const Shell = () => {
     walletConnectedRef.current = false;
     setBlockchainType(undefined);
     blockchainTypeRef.current = undefined;
-    // Wallet can no longer vouch for a full-node peer — clear before the peer
-    // poll effect runs so a reconnect cannot read a stale verified peer.
-    hasFullNodePeerRef.current = false;
+    // Backend is gone: it can no longer be ready for play — clear before the
+    // readiness subscription effect re-runs so a reconnect cannot read a stale
+    // ready state.
+    blockchainReadyRef.current = false;
     setBalance(undefined);
     // Pre-game wallet disconnect: drop the boot marker so reload does not
     // force Resume just for a prior blockchainType. Mid-session / resumable

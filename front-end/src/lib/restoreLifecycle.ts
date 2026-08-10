@@ -39,29 +39,18 @@ export function shouldAdvertiseAvailable(
 /**
  * Without a wallet the player cannot fund or resolve a channel, so we advertise
  * busy to the hub regardless of session phase — the lobby must not offer matches
- * we cannot play. On WalletConnect, the same applies until a full-node peer is
- * verified (`awaitingFullNodePeer`). With a wallet (and peer, when required),
- * busy tracks the broader session obligation.
+ * we cannot play. The same applies until the blockchain backend reports it is
+ * ready for play (`blockchainReady`); the backend owns that computation (e.g.
+ * WalletConnect waits for a verified full-node peer). With a wallet and a ready
+ * backend, busy tracks the broader session obligation.
  */
 export function shouldReportHubBusy(
   sessionPhase: SessionPhase,
   walletConnected = true,
-  awaitingFullNodePeer = false,
+  blockchainReady = true,
 ): boolean {
-  if (!walletConnected || awaitingFullNodePeer) return true;
+  if (!walletConnected || !blockchainReady) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
-}
-
-/**
- * Whether WalletConnect presence should report busy because the wallet has no
- * full-node peer yet. Simulator never awaits a peer. The app still connects to
- * the hub normally; it just advertises busy until a peer is verified.
- */
-export function isAwaitingFullNodePeer(
-  blockchainType: 'simulator' | 'walletconnect' | undefined,
-  hasFullNodePeer: boolean,
-): boolean {
-  return blockchainType === 'walletconnect' && !hasFullNodePeer;
 }
 
 /**
@@ -70,8 +59,8 @@ export function isAwaitingFullNodePeer(
  * During restore, `sessionPhase` is often still `none` until WASM reports, so
  * phase alone is not enough: a non-terminal cradle (serialized session or
  * pairing token) must keep us busy so the lobby does not offer matches
- * mid-resume. Terminal Failed/Resolved* cradles do not. WalletConnect also
- * stays busy while awaiting a verified full-node peer.
+ * mid-resume. Terminal Failed/Resolved* cradles do not. A backend that is not
+ * yet ready for play (`blockchainReady === false`) also stays busy.
  */
 export function shouldReportHubBusyPresence(
   sessionPhase: SessionPhase,
@@ -80,11 +69,11 @@ export function shouldReportHubBusyPresence(
     restoring: boolean;
     terminalSave: boolean;
     hasCradle: boolean;
-    awaitingFullNodePeer?: boolean;
+    blockchainReady?: boolean;
   },
 ): boolean {
   return (
-    shouldReportHubBusy(sessionPhase, walletConnected, opts.awaitingFullNodePeer ?? false) ||
+    shouldReportHubBusy(sessionPhase, walletConnected, opts.blockchainReady ?? true) ||
     (opts.restoring && !opts.terminalSave && opts.hasCradle)
   );
 }
@@ -105,9 +94,10 @@ export function shouldReportSessionPhase(
 
 /**
  * Whether inbound matchmaking may open a consent prompt.
- * Must stay aligned with `shouldReportHubBusy` for session + wallet + peer wait,
- * and also exclude temporary local matchmaking state that does not always
- * set hub `busy` (pending advisory/proposal, live peer session, reserved peer).
+ * Must stay aligned with `shouldReportHubBusy` for session + wallet + backend
+ * readiness, and also exclude temporary local matchmaking state that does not
+ * always set hub `busy` (pending advisory/proposal, live peer session, reserved
+ * peer).
  */
 export function isAvailableForNewSessionPrompt(
   sessionPhase: SessionPhase,
@@ -116,10 +106,10 @@ export function isAvailableForNewSessionPrompt(
   hasLivePeerSession: boolean,
   hasReservedPeerId: boolean,
   walletConnected: boolean,
-  awaitingFullNodePeer: boolean,
+  blockchainReady: boolean,
 ): boolean {
   return (
-    !shouldReportHubBusy(sessionPhase, walletConnected, awaitingFullNodePeer) &&
+    !shouldReportHubBusy(sessionPhase, walletConnected, blockchainReady) &&
     !pendingAdvisory &&
     !pendingProposal &&
     !hasLivePeerSession &&
