@@ -364,11 +364,14 @@ export function useSpacepokerHand(
   }, []);
 
   const commitState = useCallback(
-    (update: (current: SpacepokerHandState) => SpacepokerHandState) => {
-      if (!interactiveRef.current) return;
+    (update: (current: SpacepokerHandState) => SpacepokerHandState): boolean => {
+      if (!interactiveRef.current) return false;
       const next = update(stateRef.current);
-      gameObjectRef.current.transitionFeatureState('spacepoker', gameIdRef.current, next);
+      if (!gameObjectRef.current.transitionFeatureState('spacepoker', gameIdRef.current, next)) {
+        return false;
+      }
       projectState(next);
+      return true;
     },
     [projectState],
   );
@@ -408,10 +411,10 @@ export function useSpacepokerHand(
   } = setters;
 
   const transition = useCallback(
-    (next: SpGameState) => {
-      gsRef.current = next;
-      setGs(next);
+    (next: SpGameState): boolean => {
+      if (!setGs(next)) return false;
       onTurnChanged(next.myTurn);
+      return true;
     },
     [onTurnChanged, setGs],
   );
@@ -581,7 +584,7 @@ export function useSpacepokerHand(
 
     if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) {
       try {
-        transition({ ...gs, myTurn: false });
+        if (!transition({ ...gs, myTurn: false })) return;
         go.makeMove(gid, null);
       } catch {}
       return;
@@ -589,7 +592,7 @@ export function useSpacepokerHand(
 
     if (handler === SpHandler.BeginRound && N === 4n && coinTossIOpen === false) {
       try {
-        transition({ ...gs, myTurn: false });
+        if (!transition({ ...gs, myTurn: false })) return;
         go.makeMove(gid, null);
       } catch {}
       return;
@@ -602,18 +605,18 @@ export function useSpacepokerHand(
     ) {
       try {
         if (handler === SpHandler.BeginRound) {
+          if (!transition({ handler: SpHandler.MidRound, myTurn: false, N })) return;
           setHandHistory((prev) => [...prev, { player: 'you', action: 'check' }]);
-          transition({ handler: SpHandler.MidRound, myTurn: false, N });
           go.makeMove(gid, Program.fromBigInt(0n));
         } else {
+          const next =
+            N === 1n
+              ? { handler: SpHandler.End, myTurn: false, N: 1n }
+              : { handler: SpHandler.BeginRound, myTurn: false, N: N - 1n };
+          if (!transition(next)) return;
           setHalfPot((prev) => prev + lastRaiseRef.current);
           setLastRaise(0n);
           setHandHistory((prev) => [...prev, { player: 'you', action: 'check', endsStreet: true }]);
-          if (N === 1n) {
-            transition({ handler: SpHandler.End, myTurn: false, N: 1n });
-          } else {
-            transition({ handler: SpHandler.BeginRound, myTurn: false, N: N - 1n });
-          }
           go.makeMove(gid, null);
         }
       } catch {}
@@ -636,16 +639,24 @@ export function useSpacepokerHand(
       pendingTerminalActionRef.current = pending;
       try {
         if (action === 'reveal') {
+          if (!transition({ handler: SpHandler.Showdown, myTurn: false, N })) {
+            pendingTerminalActionRef.current = null;
+            handFinishedRef.current = false;
+            return;
+          }
           terminalActionByUsRef.current = 'reveal';
           setHandHistory((prev) => [...prev, { player: 'you', action: optimisticHistoryAction }]);
           setTerminalState('revealed');
-          transition({ handler: SpHandler.Showdown, myTurn: false, N });
           go.makeMove(gid, null);
         } else {
+          if (!transition({ handler: SpHandler.Showdown, myTurn: false, N })) {
+            pendingTerminalActionRef.current = null;
+            handFinishedRef.current = false;
+            return;
+          }
           terminalActionByUsRef.current = 'concede';
           setHandHistory((prev) => [...prev, { player: 'you', action: optimisticHistoryAction }]);
           setTerminalState('conceded-by-you');
-          transition({ handler: SpHandler.Showdown, myTurn: false, N });
           go.acceptSettlement(gid);
         }
       } catch {
@@ -681,6 +692,7 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
+    if (!transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N })) return;
     lastActionSnapshotRef.current = {
       halfPot: halfPotRef.current,
       lastRaise: lastRaiseRef.current,
@@ -688,7 +700,6 @@ export function useSpacepokerHand(
       historyLength: handHistoryRef.current.length,
     };
     setHandHistory((prev) => [...prev, { player: 'you', action: 'check' }]);
-    transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
     go.makeMove(gid, Program.fromBigInt(0n));
   }, [setHandHistory, transition]);
 
@@ -698,6 +709,7 @@ export function useSpacepokerHand(
       const gid = gameIdRef.current;
       if (!go || !gid) return;
       const cur = gsRef.current;
+      if (!transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N })) return;
       lastActionSnapshotRef.current = {
         halfPot: halfPotRef.current,
         lastRaise: lastRaiseRef.current,
@@ -709,7 +721,6 @@ export function useSpacepokerHand(
       setLastRaise(units);
       setIRaisedLast(true);
       setHandHistory((prev) => [...prev, { player: 'you', action: 'raise', units }]);
-      transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
       go.makeMove(gid, Program.fromBigInt(mojoAmount));
     },
     [betUnit, setHalfPot, setHandHistory, setIRaisedLast, setLastRaise, transition],
@@ -720,6 +731,11 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
+    const next =
+      cur.N === 1n
+        ? { handler: SpHandler.End, myTurn: false, N: 1n }
+        : { handler: SpHandler.BeginRound, myTurn: false, N: cur.N - 1n };
+    if (!transition(next)) return;
     lastActionSnapshotRef.current = {
       halfPot: halfPotRef.current,
       lastRaise: lastRaiseRef.current,
@@ -739,9 +755,6 @@ export function useSpacepokerHand(
     ]);
     if (cur.N === 1n) {
       recordOutcome(null);
-      transition({ handler: SpHandler.End, myTurn: false, N: 1n });
-    } else {
-      transition({ handler: SpHandler.BeginRound, myTurn: false, N: cur.N - 1n });
     }
     go.makeMove(gid, null);
   }, [recordOutcome, setHalfPot, setHandHistory, setLastRaise, transition]);
@@ -753,6 +766,7 @@ export function useSpacepokerHand(
     const cur = gsRef.current;
     // "Fold" is a UX betting action. Protocol-wise this accepts the current
     // settlement; Space Poker has no fold move in its handlers or validators.
+    if (!transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N })) return;
     handFinishedRef.current = true;
     const previousTerminalState = terminalState;
     terminalActionByUsRef.current = 'fold';
@@ -765,7 +779,6 @@ export function useSpacepokerHand(
     pendingTerminalActionRef.current = pending;
     setHandHistory((prev) => [...prev, { player: 'you', action: 'fold' }]);
     setTerminalState('folded-by-you');
-    transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
     go.acceptSettlement(gid);
     if (pendingTerminalActionRef.current !== pending) return;
   }, [setHandHistory, setTerminalState, terminalState, transition]);

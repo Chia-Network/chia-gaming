@@ -14,13 +14,13 @@ import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
-  clearSession,
   discardStagedTerminalSession,
   flushSessionSave,
   hasSavedSessionMarker,
   loadState,
   markSavedSession,
   peekSession,
+  replaceSession,
   saveSession,
   saveTerminalSession,
   stageTerminalSession,
@@ -307,9 +307,8 @@ it('retires a resolved display before accepting a fresh live session', async () 
     retireTerminalDisplay: () => {
       displayedSession = 'none';
     },
-    retireTerminalPersistence: clearSession,
     persistLiveCheckpoint: async () => {
-      await saveSession({
+      await replaceSession({
         pairingToken,
         sessionPeerId: 'new-peer',
         gameSessionId: 'new-session',
@@ -318,7 +317,6 @@ it('retires a resolved display before accepting a fresh live session', async () 
         theirContribution: '40',
         perGameAmount: '4',
       });
-      await flushSessionSave();
     },
     mountLiveSession: () => {
       mountedPairingToken = pairingToken;
@@ -333,6 +331,36 @@ it('retires a resolved display before accepting a fresh live session', async () 
   expect(mountedPairingToken).toBe(pairingToken);
   expect(hubBusy).toBe(true);
   expect(decodeSessionSaveEnvelope((await readSessionRecord())!).kind).toBe('pre-handshake');
+});
+
+it('keeps the resolved display and terminal checkpoint when fresh persistence fails', async () => {
+  await saveTerminalSession({
+    channelStatus: { state: 'ResolvedClean' },
+    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+  });
+  await flushSessionSave();
+
+  let displayedSession = 'resolved';
+  let mounted = false;
+
+  await expect(
+    transitionToFreshSession({
+      reportBusy: () => {},
+      persistLiveCheckpoint: async () => {
+        throw new Error('checkpoint failed');
+      },
+      retireTerminalDisplay: () => {
+        displayedSession = 'none';
+      },
+      mountLiveSession: () => {
+        mounted = true;
+      },
+    }),
+  ).rejects.toThrow('checkpoint failed');
+
+  expect(displayedSession).toBe('resolved');
+  expect(mounted).toBe(false);
+  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).kind).toBe('terminal-frozen');
 });
 
 it('routes a normally resolved on-chain snapshot through terminal persistence', async () => {

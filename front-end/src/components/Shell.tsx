@@ -29,7 +29,7 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
-  flushSessionSave,
+  replaceSession,
   clearSession,
   hardReset,
   shouldOfferResumeOrStartOver,
@@ -1283,12 +1283,12 @@ const Shell = () => {
           setPeerConn(null);
           destroySessionController();
         },
-        retireTerminalPersistence: clearSession,
         persistLiveCheckpoint: async () => {
-          // Persist the full pre-cradle handshake *and flush* before GameSession
-          // mounts and fetches hex assets. A stale-deploy reload mid-fetch must
-          // Resume with the same pairing/amounts/peer ids and hub session_id.
-          await saveSession({
+          // Atomically replace the terminal envelope with the full pre-cradle
+          // handshake before GameSession mounts and fetches hex assets. A
+          // stale-deploy reload mid-fetch must Resume with the same
+          // pairing/amounts/peer ids and hub session_id.
+          await replaceSession({
             pairingToken: token,
             sessionPeerId: request.peerId,
             gameSessionId: sessionId,
@@ -1307,7 +1307,6 @@ const Shell = () => {
               ? { wasmNotificationHistory }
               : {}),
           });
-          await flushSessionSave();
         },
         mountLiveSession: () => {
           if (epoch !== sessionStartEpochRef.current) {

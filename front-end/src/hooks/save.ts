@@ -1046,6 +1046,42 @@ export function saveSession(fields: Partial<SessionSave>): Promise<void> {
   });
 }
 
+function freshSessionState(previous: SessionSave): SessionSave {
+  return {
+    version: CURRENT_VERSION,
+    playerId: previous.playerId,
+    sessionId: previous.sessionId,
+    myHubPlayerId: previous.myHubPlayerId,
+    alias: previous.alias,
+    theme: previous.theme,
+    defaultFee: previous.defaultFee,
+    feeUnit: previous.feeUnit,
+    hubUrl: previous.hubUrl,
+    activeTab: previous.activeTab,
+    unreadGame: previous.unreadGame,
+    walletAlert: previous.walletAlert,
+    hubAlert: previous.hubAlert,
+    blockchainType: previous.blockchainType,
+    rewardPuzzleHash: null,
+  };
+}
+
+/**
+ * Atomically replace the current durable session envelope. The previous disk
+ * record and in-memory cache remain authoritative unless the replacement write
+ * succeeds.
+ */
+export async function replaceSession(fields: Partial<SessionSave>): Promise<void> {
+  await hydrateSessionCacheFromDisk();
+  if (persistPromise) await flushSessionSave();
+  const replacement = Object.assign(freshSessionState(loadState()), fields);
+  capPersistedHistories(replacement);
+  await queueWrite(replacement);
+  cached = replacement;
+  stagedTerminal = null;
+  savePreferences(replacement);
+}
+
 /**
  * Persist a terminal channel snapshot without any state that could restart its
  * protocol. Display/history fields supplied by the caller are retained.
@@ -1177,23 +1213,7 @@ export function clearSession(): Promise<void> {
   }
   settleScheduledPersist();
   const prev = loadState();
-  cached = {
-    version: CURRENT_VERSION,
-    playerId: prev.playerId,
-    sessionId: prev.sessionId,
-    myHubPlayerId: prev.myHubPlayerId,
-    alias: prev.alias,
-    theme: prev.theme,
-    defaultFee: prev.defaultFee,
-    feeUnit: prev.feeUnit,
-    hubUrl: prev.hubUrl,
-    activeTab: prev.activeTab,
-    unreadGame: prev.unreadGame,
-    walletAlert: prev.walletAlert,
-    hubAlert: prev.hubAlert,
-    blockchainType: prev.blockchainType,
-    rewardPuzzleHash: null,
-  };
+  cached = freshSessionState(prev);
   savePreferences(cached);
   const deletePromise = (writeChain = writeChain
     .catch(() => {})

@@ -9,6 +9,7 @@ import {
   calpokerResponderFinishesAtReveal,
   shouldRestoreCalpokerSelection,
   useCalpokerHand,
+  type UseCalpokerHandResult,
 } from './useCalpokerHand';
 import {
   calpokerSettlementVerb,
@@ -148,6 +149,46 @@ describe('Calpoker fresh hand startup', () => {
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(makeMove).toHaveBeenCalledWith('7', null);
+  });
+
+  it('does not project or submit when the session rejects the opening state commit', () => {
+    const makeMove = jest.fn();
+    const onTurnChanged = jest.fn();
+    const controller = {
+      handState: calpokerStateCodec.encode({
+        playerHand: [],
+        opponentHand: [],
+        cardSelections: [],
+        moveNumber: 0n,
+        isPlayerTurn: true,
+      }),
+      isChannelReady: () => true,
+      transitionFeatureState: () => false,
+      makeMove,
+    } as unknown as SessionController;
+    let hand: UseCalpokerHandResult | undefined;
+
+    function Harness() {
+      hand = useCalpokerHand(
+        controller,
+        '7',
+        false,
+        EMPTY,
+        () => {},
+        onTurnChanged,
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+
+    expect(hand?.moveNumber).toBe(0n);
+    expect(makeMove).not.toHaveBeenCalled();
+    expect(onTurnChanged).not.toHaveBeenCalled();
   });
 
   it('does not replay the opening nil move when mounting a restored session', () => {

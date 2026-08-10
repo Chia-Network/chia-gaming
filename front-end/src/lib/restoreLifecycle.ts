@@ -72,14 +72,12 @@ export function shouldReportHubBusyPresence(
 export async function transitionToFreshSession(dependencies: {
   persistLiveCheckpoint: () => Promise<void>;
   retireTerminalDisplay: () => void;
-  retireTerminalPersistence: () => Promise<void>;
   mountLiveSession: () => void;
   reportBusy: () => void;
 }): Promise<void> {
   dependencies.reportBusy();
-  dependencies.retireTerminalDisplay();
-  await dependencies.retireTerminalPersistence();
   await dependencies.persistLiveCheckpoint();
+  dependencies.retireTerminalDisplay();
   dependencies.mountLiveSession();
 }
 

@@ -1,3 +1,7 @@
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { EMPTY } from 'rxjs';
+
 import {
   isTerminalSpacepokerHandler,
   opponentTerminalAction,
@@ -9,12 +13,17 @@ import {
   terminalRecoveryAfterOpponentMove,
   retainsVoluntaryTerminalPresentation,
   voluntarySpacepokerSettlementAction,
+  useSpacepokerHand,
+  type UseSpacepokerHandResult,
 } from './useSpacepokerHand';
 import { spacePokerFooterPresentation } from './SpacePoker';
 import {
   gameplayEventForActionFailed,
   gameplayEventForGameActionError,
 } from '../../hooks/useGameSession';
+import type { SessionController } from '../../hooks/SessionController';
+import { INITIAL_GAME_TERMINAL_MODEL } from '../../lib/session/model';
+import { spacepokerStateCodec } from './stateCodec';
 
 describe('Space Poker terminal UX', () => {
   it('attributes only actual opponent folds and no-reveal flags', () => {
@@ -199,5 +208,70 @@ describe('Space Poker terminal UX', () => {
     expect(terminalRecoveryAfterOpponentMove('reveal', false)).toBe('reveal');
     expect(terminalRecoveryAfterOpponentMove('concede', false)).toBe('concede');
     expect(terminalRecoveryAfterOpponentMove('reveal', true)).toBeNull();
+  });
+});
+
+describe('Space Poker feature-state authority', () => {
+  let renderer: ReactTestRenderer | null = null;
+
+  afterEach(() => {
+    if (renderer) act(() => renderer?.unmount());
+    renderer = null;
+  });
+
+  it('does not project or submit when the session rejects a local action commit', () => {
+    const makeMove = jest.fn();
+    const onTurnChanged = jest.fn();
+    const controller = {
+      handState: spacepokerStateCodec.encode({
+        gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+        playerHoleCards: [1n, 2n],
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [3n, 4n, 5n, null, null],
+        halfPot: 1n,
+        lastRaise: 0n,
+        iRaisedLast: false,
+        handHistory: [],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        coinTossIOpen: true,
+        unitSizeMojos: 10n,
+        displayMode: 'units',
+      }),
+      isChannelReady: () => true,
+      transitionFeatureState: () => false,
+      makeMove,
+    } as unknown as SessionController;
+    let hand: UseSpacepokerHandResult | undefined;
+
+    function Harness() {
+      hand = useSpacepokerHand(
+        controller,
+        '7',
+        false,
+        EMPTY,
+        100n,
+        10n,
+        onTurnChanged,
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => {
+      hand?.handleCheck();
+    });
+
+    expect(hand?.gameState).toEqual({ handler: SpHandler.MidRound, myTurn: true, N: 3n });
+    expect(hand?.handHistory).toEqual([]);
+    expect(makeMove).not.toHaveBeenCalled();
+    expect(onTurnChanged).not.toHaveBeenCalled();
   });
 });

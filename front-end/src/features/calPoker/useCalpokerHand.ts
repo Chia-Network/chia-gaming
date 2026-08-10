@@ -147,11 +147,14 @@ export function useCalpokerHand(
   }, []);
 
   const commitState = useCallback(
-    (update: (current: CalpokerHandState) => CalpokerHandState) => {
-      if (!interactiveRef.current) return;
+    (update: (current: CalpokerHandState) => CalpokerHandState): boolean => {
+      if (!interactiveRef.current) return false;
       const next = update(stateRef.current);
-      gameObjectRef.current.transitionFeatureState('calpoker', gameIdRef.current, next);
+      if (!gameObjectRef.current.transitionFeatureState('calpoker', gameIdRef.current, next)) {
+        return false;
+      }
       projectState(next);
+      return true;
     },
     [projectState],
   );
@@ -232,7 +235,9 @@ export function useCalpokerHand(
     if (!gid) return;
     if (cardSelectionsRef.current.length !== 4) return;
     const cards = cardSelectionsRef.current;
-    commitState((current) => ({ ...current, moveNumber: 2n, isPlayerTurn: false }));
+    if (!commitState((current) => ({ ...current, moveNumber: 2n, isPlayerTurn: false }))) {
+      return;
+    }
     go.makeMove(gid, Program.fromList(cards.map((c) => Program.fromBigInt(c))));
     onTurnChanged(false);
     pendingPlayRef.current = false;
@@ -248,7 +253,9 @@ export function useCalpokerHand(
     const currentMove = moveNumberRef.current;
 
     if (currentMove === 0n) {
-      commitState((current) => ({ ...current, moveNumber: 1n, isPlayerTurn: false }));
+      if (!commitState((current) => ({ ...current, moveNumber: 1n, isPlayerTurn: false }))) {
+        return;
+      }
       go.makeMove(gid, null);
       onTurnChanged(false);
     } else if (currentMove === 1n) {
@@ -259,7 +266,9 @@ export function useCalpokerHand(
         pendingPlayRef.current = true;
       }
     } else if (currentMove === 2n) {
-      commitState((current) => ({ ...current, moveNumber: 3n, isPlayerTurn: false }));
+      if (!commitState((current) => ({ ...current, moveNumber: 3n, isPlayerTurn: false }))) {
+        return;
+      }
       go.makeMove(gid, null);
       onTurnChanged(false);
     }
@@ -289,7 +298,7 @@ export function useCalpokerHand(
     // A cheat is just an (illegal) move; drive the same turn-change path a
     // normal move uses so the status shows "Playing our move on-chain" while
     // it lands, instead of staying on our turn.
-    commitState((current) => ({ ...current, isPlayerTurn: false }));
+    if (!commitState((current) => ({ ...current, isPlayerTurn: false }))) return;
     go.cheat(gid, 0n);
     onTurnChanged(false);
   }, [onTurnChanged, commitState]);
