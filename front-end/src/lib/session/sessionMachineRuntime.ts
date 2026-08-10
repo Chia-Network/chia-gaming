@@ -5,6 +5,7 @@ import { persistSessionSnapshot } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
 import type { GameplayEvent } from './gameSessionEvents';
 import type { SessionMachineEvent, SessionMachineState } from './sessionMachineTypes';
+import type { RegisteredGameType } from './types';
 import type { coinIdHex } from './gameSessionEvents';
 
 export interface SessionMachineRuntimeDependencies {
@@ -71,6 +72,13 @@ export class SessionMachineRuntime {
       runCommand: (effect) => this.interpreter.run(effect),
       render: this.render,
     });
+  }
+
+  transitionFeatureState(gameType: RegisteredGameType, id: string, state: unknown): boolean {
+    const game = this.state.model.game;
+    if (game.activeGameType !== gameType || !game.currentHandIds.includes(id)) return false;
+    this.dispatch({ type: 'feature-state', gameType, id, state });
+    return true;
   }
 
   persist(): Promise<void> {

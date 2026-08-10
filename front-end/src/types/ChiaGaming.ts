@@ -58,27 +58,10 @@ export interface WasmResult {
   events?: GameSessionEvent[];
   watchCoins?: Array<{ coin_name: string; coin_string: string }>;
   unwatchCoins?: Array<{ coin_name: string; coin_string: string }>;
-  /** Ordered Rust resync instructions; field names match serde's snake_case output. */
-  resync?: ResyncInfo[];
-  /** Exact successful local move inputs required for deterministic replay. */
-  moveReplay?: MoveReplayReceipt;
   /** Whether the WASM action completed before its result was drained. */
   actionSucceeded?: boolean;
   ids?: string[];
   disposition?: WasmDisposition;
-}
-
-export interface ResyncInfo {
-  game_id: bigint | number;
-  state_number: bigint | number;
-  is_my_turn: boolean;
-}
-
-export interface MoveReplayReceipt {
-  gameId: string;
-  stateNumber: bigint | number;
-  readable: Uint8Array;
-  entropy: string;
 }
 
 export type WasmDisposition =
@@ -254,7 +237,7 @@ export type WasmEvent =
   | {
       type: 'game-action-error';
       gameId: string;
-      action: 'make-move' | 'accept-settlement';
+      action: 'make-move' | 'accept-settlement' | 'feature-state';
       error: string;
     }
   | { type: 'durability-error'; error: string }
@@ -342,12 +325,6 @@ export interface WasmConnection {
     new_entropy: string,
   ) => WasmResult | undefined;
   make_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
-  replay_move: (
-    cid: number,
-    id: string,
-    readable: Uint8Array,
-    entropy: string,
-  ) => WasmResult | undefined;
   cheat: (cid: number, id: string, mover_share: string) => WasmResult | undefined;
   accept_settlement: (cid: number, id: string) => WasmResult | undefined;
   shut_down: (cid: number) => WasmResult | undefined;
@@ -478,10 +455,6 @@ export class ChiaGame {
 
   make_move(id: string, readable: Uint8Array): WasmResult | undefined {
     return this.wasm.make_move(this.session, id, readable);
-  }
-
-  replay_move(id: string, readable: Uint8Array, entropy: string): WasmResult | undefined {
-    return this.wasm.replay_move(this.session, id, readable, entropy);
   }
 
   make_move_with_entropy_for_testing(

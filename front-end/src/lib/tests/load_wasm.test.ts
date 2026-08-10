@@ -735,7 +735,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         gameTimeout: 15n,
       },
       expectedMembers: 2,
-      canRemount: false,
+      canRemount: true,
     },
   ];
 
@@ -960,7 +960,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     );
     runtimes.push(runtime);
     controller.onFeatureStateTransition = (gameType, id, state) =>
-      runtime.dispatch({ type: 'feature-state', gameType, id, state });
+      runtime.transitionFeatureState(gameType, id, state);
     controller.onSaveNeeded = persist;
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {

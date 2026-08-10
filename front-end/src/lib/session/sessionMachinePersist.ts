@@ -6,6 +6,7 @@ import {
   type SessionSave,
 } from '../../hooks/save';
 import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
+import { isTerminalChannelSnapshot } from './selectors';
 import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionMachineState } from './sessionMachineTypes';
 
@@ -51,7 +52,7 @@ export function assembleSessionSave(
   delete snapshot.humanHistory;
   delete snapshot.diagnosticLog;
   return {
-    terminal: authoritativeStatus.sessionDisposition === 'Abandoned',
+    terminal: isTerminalChannelSnapshot(authoritativeStatus),
     save: {
       blockchainType: getBlockchainType(),
       serializedGameSession: wasm.serializedGameSession,
@@ -66,7 +67,6 @@ export function assembleSessionSave(
       rewardPuzzleHash: wasm.rewardPuzzleHash,
       unackedMessages: wasm.unackedMessages,
       activeGameIds: model.game.activeIds,
-      moveReplayJournal: wasm.moveReplayJournal,
       iProposedHand: state.coordination.iProposedHand,
       activeGameType: model.game.activeGameType,
       handState: model.game.handState,

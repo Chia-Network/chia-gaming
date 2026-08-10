@@ -71,7 +71,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myName,
   opponentName,
   terminalOutcome,
+  interactionMode = 'live',
 }) => {
+  const interactive = interactionMode === 'live';
   const settlementByUsFlag = terminalOutcome == null ? null : settlementByUs(terminalOutcome);
   const settlementVerb = terminalOutcome ? calpokerSettlementVerb(terminalOutcome) : 'timed out';
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
@@ -201,6 +203,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   playerCardsRef.current = playerCards;
 
   useEffect(() => {
+    if (!interactive) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (gameState !== GAME_STATES.SELECTING) return;
       if (e.altKey || e.ctrlKey || e.metaKey) return;
@@ -221,7 +224,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, setCardSelections]);
+  }, [gameState, interactive, setCardSelections]);
 
   const isDisabled = cardSelections.length !== 4;
 

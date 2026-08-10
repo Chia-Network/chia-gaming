@@ -156,7 +156,7 @@ function isKrunkHandState(value: unknown): value is KrunkHandState {
 export const krunkStateCodec = defineGameStateCodec<KrunkHandState>({
   gameType: 'krunk',
   version: 2n,
-  canRemountFinished: false,
+  canRemountFinished: true,
   isState: isKrunkHandState,
   gameIds: (state) => Object.keys(state.games),
 });

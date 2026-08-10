@@ -2,7 +2,7 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type { GameMountRegistration } from '../../lib/gameMount';
+import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
 import { formatAmount } from '../../util';
 import type {
   CalpokerDisplaySnapshotView,
@@ -28,6 +28,7 @@ export interface CalpokerLiveMountProps {
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
+  interactionMode?: GameInteractionMode;
 }
 
 function snapshotView(
@@ -82,6 +83,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     myName,
     opponentName,
     terminal,
+    interactionMode = 'live',
   } = props;
   const handleTurnChanged = useCallback(
     (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
@@ -96,6 +98,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     handleTurnChanged,
     terminal,
     gameObject.handState ?? undefined,
+    interactionMode === 'live',
   );
   const handleGameLog = useCallback(
     (lines: string[]) => {
@@ -132,6 +135,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       myName={myName}
       opponentName={opponentName}
       terminalOutcome={hand.terminalOutcome}
+      interactionMode={interactionMode}
     />
   );
 }
@@ -141,6 +145,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
     const gameId = session.activeGameId ?? session.gameSpecificView.displayGameId ?? '';
     return (
       <CalpokerLiveMount
+        key={session.handKey}
         gameObject={session.sessionController}
         gameId={gameId}
         iStarted={session.iStarted}
@@ -151,6 +156,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
         appendGameLog={session.appendGameLog}
         perGameAmount={session.currentHandAmount}
         terminal={session.gameSpecificView.terminal}
+        interactionMode={session.interactionMode}
         {...names}
       />
     );
@@ -173,6 +179,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
         appendGameLog={() => {}}
         perGameAmount={model.betweenHand.lastTerms.myContribution}
         terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
+        interactionMode="terminal"
         myName={options.myName}
         opponentName={options.opponentName}
       />

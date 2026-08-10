@@ -16,6 +16,8 @@ import { GameplayEvent } from '../../hooks/useGameSession';
 import { formatAmount } from '../../util';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
+import type { GameInteractionMode } from '../../lib/gameMount';
+import { krunkStateCodec } from './stateCodec';
 
 export interface KrunkProps {
   gameObject: SessionController;
@@ -31,6 +33,7 @@ export interface KrunkProps {
   initialPersistedState?: PersistedGameState;
   terminalsById: Record<string, GameTerminalModel>;
   amountsById: Record<string, string>;
+  interactionMode?: GameInteractionMode;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -58,6 +61,7 @@ export function krunkGameSlots(
   currentHandGameIds: string[],
   iProposedHand: boolean,
   activeGameIds: string[] = currentHandGameIds,
+  persistedState?: PersistedGameState,
 ): {
   aliceGameId: string | null;
   bobGameId: string | null;
@@ -66,9 +70,23 @@ export function krunkGameSlots(
 } {
   const first = currentHandGameIds[0] ?? null;
   const second = currentHandGameIds[1] ?? null;
-  const slots = iProposedHand
+  const persistedGames = krunkStateCodec.decode(persistedState)?.games;
+  const persistedAlice = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'alice');
+  const persistedBob = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'bob');
+  if (
+    persistedGames &&
+    currentHandGameIds.every((id) => persistedGames[id]) &&
+    (!persistedAlice || !persistedBob)
+  ) {
+    throw new Error('Krunk persisted roles must contain one alice and one bob');
+  }
+  const fallback = iProposedHand
     ? { aliceGameId: first, bobGameId: second }
     : { aliceGameId: second, bobGameId: first };
+  const slots =
+    persistedAlice && persistedBob
+      ? { aliceGameId: persistedAlice, bobGameId: persistedBob }
+      : fallback;
   return {
     ...slots,
     aliceActive: slots.aliceGameId !== null && activeGameIds.includes(slots.aliceGameId),
@@ -434,14 +452,17 @@ const Krunk: React.FC<KrunkProps> = ({
   initialPersistedState,
   terminalsById,
   amountsById,
+  interactionMode = 'live',
 }) => {
+  const interactive = interactionMode === 'live';
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
   // roles are flipped: they're bob in game 0 and alice in game 1.
-  const { aliceGameId, bobGameId, aliceActive } = krunkGameSlots(
+  const { aliceGameId, bobGameId } = krunkGameSlots(
     currentHandGameIds,
     iProposedHand,
     activeGameIds,
+    initialPersistedState,
   );
   const aliceId = aliceGameId ?? '';
   const bobId = bobGameId ?? '';
@@ -451,6 +472,8 @@ const Krunk: React.FC<KrunkProps> = ({
   // keyboard input while waiting on a clue).
   const aliceInHand = aliceGameId !== null && currentHandGameIds.includes(aliceGameId);
   const bobInHand = bobGameId !== null && currentHandGameIds.includes(bobGameId);
+  const aliceInteractive = interactive && aliceInHand;
+  const bobInteractive = interactive && bobInHand;
   const onAliceTurnChanged = useCallback(
     (isMyTurn: boolean) => {
       if (aliceGameId !== null) onTurnChanged(aliceGameId, isMyTurn);
@@ -473,7 +496,7 @@ const Krunk: React.FC<KrunkProps> = ({
     false,
     gameplayEvent$,
     onAliceTurnChanged,
-    aliceInHand,
+    aliceInteractive,
     initialPersistedState,
   );
 
@@ -483,7 +506,7 @@ const Krunk: React.FC<KrunkProps> = ({
     true,
     gameplayEvent$,
     onBobTurnChanged,
-    bobInHand,
+    bobInteractive,
     initialPersistedState,
   );
   const setAliceSecretWord = aliceHand.setSecretWord;
@@ -531,7 +554,7 @@ const Krunk: React.FC<KrunkProps> = ({
   ]);
 
   // Word picker gate: must commit secret word (alice side) before Bob input.
-  const wordCommitted = aliceHand.gameState.handler !== KrunkHandler.WaitingCommit;
+  const wordCommitted = aliceHand.gameState.secretWord !== null;
   const [wordDraft, setWordDraft] = useState('');
   const [guessDraft, setGuessDraft] = useState('');
   const [guessQueue, setGuessQueue] = useState<string[]>([]);
@@ -616,7 +639,8 @@ const Krunk: React.FC<KrunkProps> = ({
     if (bobGameOver && guessQueue.length > 0) setGuessQueue([]);
   }, [bobGameOver, guessQueue.length]);
 
-  const pickingWord = aliceActive && !wordCommitted;
+  const pickingWord = aliceInteractive && !wordCommitted;
+  const showWordDraft = aliceInHand && !wordCommitted;
   // Prefer pick while the secret word is still needed; otherwise guess
   // whenever there is room to type/queue — including while BobWaiting on a clue.
   const keyboardMode: 'pick' | 'guess' | null = pickingWord
@@ -625,7 +649,7 @@ const Krunk: React.FC<KrunkProps> = ({
       ? 'guess'
       : null;
   const activeDraft = keyboardMode === 'pick' ? wordDraft : guessDraft;
-  const showGuessDraft = canDraftGuess;
+  const showGuessDraft = canDraftGuess || guessDraft.length > 0;
   const keyboardFocusRef = useRef<HTMLDivElement>(null);
 
   const commitWord = useCallback(() => {
@@ -823,7 +847,7 @@ const Krunk: React.FC<KrunkProps> = ({
           </p>
           <Grid guesses={aliceHand.gameState.guesses} />
 
-          {pickingWord ? (
+          {showWordDraft ? (
             <div className="flex gap-1 mt-2">
               {[0, 1, 2, 3, 4].map((i) => (
                 <EmptyCell key={i} letter={wordDraft.charAt(i)} />
@@ -862,9 +886,9 @@ const Krunk: React.FC<KrunkProps> = ({
           {actionLabel}
         </button>
       </div>
-      <p className="min-h-5 text-center text-sm text-canvas-text-contrast">
-        {sharedStatusNotice.text}
-      </p>
+      {sharedStatusNotice.text && (
+        <p className="text-center text-sm text-canvas-text-contrast">{sharedStatusNotice.text}</p>
+      )}
     </div>
   );
 };

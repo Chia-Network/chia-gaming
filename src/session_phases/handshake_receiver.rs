@@ -17,7 +17,7 @@ use crate::common::types::{
 };
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::effects::{
-    format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, ResyncInfo,
+    format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
@@ -608,14 +608,11 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
         _env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         _puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
-        Ok((
-            vec![Effect::Log(format!(
-                "[receiver-handshake:coin-puzzle] {}",
-                format_coin(coin_id),
-            ))],
-            vec![],
-        ))
+    ) -> Result<Vec<Effect>, Error> {
+        Ok(vec![Effect::Log(format!(
+            "[receiver-handshake:coin-puzzle] {}",
+            format_coin(coin_id),
+        ))])
     }
 }
 
@@ -653,7 +650,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         <Self as SpendWalletReceiver>::coin_puzzle_and_solution(
             self,
             env,

@@ -5,14 +5,6 @@ use super::*;
 
 const MAX_QUIESCENCE_ROUNDS: usize = 8;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ResyncEvent {
-    pub player: usize,
-    pub game_id: GameID,
-    pub state_number: usize,
-    pub is_my_turn: bool,
-}
-
 #[derive(Default, Debug)]
 pub(super) struct DrainProgress {
     events: usize,
@@ -20,21 +12,15 @@ pub(super) struct DrainProgress {
     callbacks: usize,
     terminal_handoffs: usize,
     submissions: usize,
-    resync_events: Vec<ResyncEvent>,
 }
 
 impl DrainProgress {
-    pub(super) fn resync_events(&self) -> &[ResyncEvent] {
-        &self.resync_events
-    }
-
     fn made_progress(&self) -> bool {
         self.events > 0
             || self.messages > 0
             || self.callbacks > 0
             || self.terminal_handoffs > 0
             || self.submissions > 0
-            || !self.resync_events.is_empty()
     }
 
     fn merge(&mut self, other: DrainProgress) {
@@ -43,18 +29,6 @@ impl DrainProgress {
         self.callbacks += other.callbacks;
         self.terminal_handoffs += other.terminal_handoffs;
         self.submissions += other.submissions;
-        self.resync_events.extend(other.resync_events);
-    }
-
-    fn record_resync(&mut self, player: usize, resync: Vec<ResyncInfo>) {
-        for resync in resync {
-            self.resync_events.push(ResyncEvent {
-                player,
-                game_id: resync.game_id,
-                state_number: resync.state_number,
-                is_my_turn: resync.is_my_turn,
-            });
-        }
     }
 }
 
@@ -360,19 +334,13 @@ impl SimulationHarness {
         entropy: Hash,
     ) -> Result<(), Error> {
         self.cradles[player].make_move(allocator, game_id, readable, entropy)?;
-        self.local_uis[player].game_accepted_ids.remove(game_id);
+        for ui in &mut self.local_uis {
+            ui.game_accepted_ids.remove(game_id);
+        }
         self.local_uis[player]
             .opponent_moved_in_game
             .remove(game_id);
         Ok(())
-    }
-
-    pub(super) fn move_state_number(
-        &self,
-        player: usize,
-        game_id: &GameID,
-    ) -> Result<usize, Error> {
-        self.cradles[player].move_state_number(game_id)
     }
 
     pub(super) fn propose_games(
@@ -731,7 +699,6 @@ impl SimulationHarness {
                 })
                 .collect(),
         }));
-        progress.record_resync(player_index, result.resync);
         for coin in result.watch_coins {
             self.host_watched_coins[player_index].insert(coin.clone());
             self.host_events[player_index].push(HostBoundaryEvent::WatchCoin(coin));
@@ -894,7 +861,6 @@ impl SimulationHarness {
                     })
                     .collect(),
             }));
-            progress.record_resync(player_index, follow_up.resync);
             for coin in follow_up.watch_coins {
                 self.host_watched_coins[player_index].insert(coin.clone());
                 self.host_events[player_index].push(HostBoundaryEvent::WatchCoin(coin));

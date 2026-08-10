@@ -8,6 +8,8 @@ export interface GameMountNames {
   opponentName?: string;
 }
 
+export type GameInteractionMode = 'live' | 'terminal';
+
 export interface FrozenGameMountOptions extends GameMountNames {
   iStarted: boolean;
   iProposedHand: boolean;

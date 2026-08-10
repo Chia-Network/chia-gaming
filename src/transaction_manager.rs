@@ -31,7 +31,7 @@ use crate::common::types::{
 };
 use crate::game_session::{CoinObservation, DrainResult, GameSession};
 use crate::session_phases::effects::{
-    GameSessionEvent, GameSessionEventQueue, ResyncInfo, TimeoutClaimSemantic,
+    GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -152,7 +152,6 @@ pub struct ManagerDrain {
     pub events: GameSessionEventQueue,
     pub watch_coins: Vec<CoinString>,
     pub unwatch_coins: Vec<CoinString>,
-    pub resync: Vec<ResyncInfo>,
 }
 
 /// The minimal interface the [`TransactionManager`] needs from the cradle it
@@ -929,7 +928,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             events: std::mem::take(&mut self.pending_events),
             watch_coins: std::mem::take(&mut self.pending_watch_coins),
             unwatch_coins: std::mem::take(&mut self.pending_unwatch_coins),
-            resync: result.resync,
         })
     }
 }
@@ -1001,18 +999,6 @@ mod tests {
         fn queue_drain(&mut self, events: Vec<GameSessionEvent>) {
             self.scripted_drains.push_back(DrainResult {
                 events: events.into_iter().collect(),
-                resync: vec![],
-            });
-        }
-
-        fn queue_drain_with_resync(
-            &mut self,
-            events: Vec<GameSessionEvent>,
-            resync: Vec<ResyncInfo>,
-        ) {
-            self.scripted_drains.push_back(DrainResult {
-                events: events.into_iter().collect(),
-                resync,
             });
         }
     }
@@ -2229,27 +2215,6 @@ mod tests {
     }
 
     #[test]
-    fn surfaces_resync_signals_in_order_without_coalescing() {
-        let mut allocator = AllocEncoder::new();
-        let mut mock = MockGameSession::default();
-        let first = ResyncInfo {
-            game_id: crate::common::types::GameID(9),
-            state_number: 7,
-            is_my_turn: true,
-        };
-        let second = ResyncInfo {
-            game_id: crate::common::types::GameID(11),
-            state_number: 8,
-            is_my_turn: false,
-        };
-        mock.queue_drain_with_resync(vec![], vec![first, first, second]);
-        let mut mgr = TransactionManager::new(mock);
-
-        let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(drain.resync, vec![first, first, second]);
-    }
-
-    #[test]
     fn requeue_submitted_replays_retained_transactions() {
         let mut allocator = AllocEncoder::new();
         let mut mock = MockGameSession::default();
@@ -2271,6 +2236,26 @@ mod tests {
         let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].name.as_deref(), Some("tx-a"));
+    }
+
+    #[test]
+    fn restored_manager_requeues_retained_on_chain_submission() {
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        manager
+            .pending_submissions
+            .push((test_bundle("restored-on-chain-move"), None));
+        assert_eq!(manager.drain_submissions().unwrap().len(), 1);
+
+        let encoded = bencodex::to_vec(&manager).expect("serialize manager");
+        let mut restored: TransactionManager<PersistableMockGameSession> =
+            bencodex::from_slice(&encoded).expect("restore manager");
+        restored.requeue_submitted();
+
+        let replay = restored
+            .drain_submissions()
+            .expect("requeue retained spend");
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].name.as_deref(), Some("restored-on-chain-move"));
     }
 
     #[test]

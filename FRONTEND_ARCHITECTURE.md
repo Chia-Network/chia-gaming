@@ -488,6 +488,9 @@ time. There is no render-driven save effect and no React/model mirror ref.
 `SessionController.onSaveNeeded` invokes the same runtime persistence path for
 ordinary debounced WASM changes. Transaction submission and resubmission remain
 owned by Rust's `TransactionManager`, not by a frontend transaction field.
+Likewise, move redo after an unroll is serialized Rust protocol state. The
+frontend submits a semantic move once and does not persist a move journal,
+receive replay instructions, or reissue the move through WASM.
 
 `GameSlice` atomically owns `activeIds`, `currentHandIds`, keyed instances,
 `lastDisplayedId`, hand key, and active game type. Its reducer updates a game
@@ -602,9 +605,9 @@ live in the separate exhaustive `GAME_MOUNTS` registry so the pure registration
 graph does not import React. Rendering indexes that registry directly—there are
 no duplicate game arrays or switch dispatchers—and the dependency direction
 does not cycle. All three codecs support live restore. The codec's explicit
-`canRemountFinished` capability is `true` for Calpoker and Space Poker and
-`false` for Krunk, so finished-session rendering never infers remount support
-from payload presence alone.
+`canRemountFinished` capability is `true` for Cal Poker, Space Poker, and Krunk,
+so cold finished-session rendering validates the game-owned payload before
+remounting instead of inferring support from payload presence alone.
 
 **Game dashboard (status banner):** The compact strip above the Game tab content
 (`GameDashboard` in `Shell.tsx`) is selector-driven. `selectGameDashboardView`
@@ -1093,18 +1096,29 @@ releases the peer relay/hub busy state. If either durability step fails, the
 staged terminal candidate is discarded while the live cache and controller
 remain owned and retryable; teardown is not attempted.
 
-**Finished-hand display.** After that terminal boundary, Shell may remount a
-validated, persisted game hand as a display-only view. The remount receives a
-frozen controller whose action methods cannot reach the protocol, and it never
-restarts polling, peer delivery, or WASM. The terminal save retains only
-presentation payloads needed by supported game-specific rehydrators; an absent,
-unsupported, or stale payload renders the terminal summary instead. This keeps
-Rust authoritative for terminal lifecycle while preserving the last hand for
-the user. The finished-hand wrapper is inert.
-`selectFinishedSessionDisplay` consults the owning codec's explicit
-finished-remount capability. Krunk state is restored during a live session, but
-its codec currently sets that capability to false, so a terminal Krunk session
-uses the terminal fallback rather than remounting a frozen board.
+**Presentation, protocol, and restoration lifetimes.** These are three separate
+boundaries:
+
+- The current hand's React feature tree is a visual lifetime. It remains mounted
+  through individual game settlements and successful channel finalization.
+  Finalization changes its generic interaction mode from `live` to `terminal`
+  without changing the feature component type or `handKey`; only acceptance of
+  a new hand changes that key.
+- The real `SessionController`, peer relay, callbacks, subscriptions, and
+  blockchain attachment are a protocol lifetime. After the terminal reduction
+  queue and atomic terminal save have flushed, they are detached and destroyed.
+  The retained feature receives a frozen bridge, an empty gameplay stream, and
+  one selector projection built entirely from the finalized `SessionModel`.
+- `FinishedSessionGameView` is cold-restoration infrastructure. It mounts a
+  validated persisted hand only when no live React tree survived, such as after
+  a page reload. Its wrapper remains inert and its error/fallback handling is
+  isolated from the in-place terminal path.
+
+The terminal save retains only presentation payloads needed by supported
+game-specific rehydrators; an absent, unsupported, or stale payload renders the
+terminal summary instead. `selectFinishedSessionDisplay` consults the owning
+codec's explicit finished-remount capability. Cal Poker, Space Poker, and Krunk
+all provide validated cold terminal remounts.
 
 ### WalletConnect BigInt Serialization
 
@@ -1229,6 +1243,14 @@ to host events, dispatches typed machine events, attaches/detaches the
 blockchain poller, and returns selector-derived view data plus dispatch
 callbacks. It does not contain notification policy, command interpretation,
 durable game reduction, or persistence assembly.
+
+When Shell supplies a finalized terminal presentation, `useGameSession`
+atomically projects every model-derived field from that model, replaces the real
+controller with a memoized frozen bridge, and exposes an empty gameplay stream
+and inert command callbacks. The existing feature mount remains in place under
+the same hand key; effects that subscribe, attach blockchain services, autoplay,
+or install command-producing keyboard handlers are disabled by the generic
+interaction mode rather than by inspecting protocol phases.
 
 The cohesive session modules own those responsibilities:
 

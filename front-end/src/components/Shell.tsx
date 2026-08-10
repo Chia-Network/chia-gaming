@@ -108,6 +108,7 @@ import {
 } from '../lib/session/model';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
+import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import {
   appendRecent,
   DIAGNOSTIC_LOG_LIMIT,
@@ -624,6 +625,8 @@ const Shell = () => {
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [terminalPresentation, setTerminalPresentation] =
+    useState<TerminalSessionPresentation | null>(null);
   const [finishedSessionIdentity, setFinishedSessionIdentity] = useState<{
     myName: string;
     opponentName?: string;
@@ -1194,6 +1197,7 @@ const Shell = () => {
       setPeerConn(null);
       dashboardSessionModelRef.current = null;
       setDashboardSessionModel(null);
+      setTerminalPresentation(null);
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
@@ -1293,6 +1297,7 @@ const Shell = () => {
       setRestoreHubReconciled(true);
       dashboardSessionModelRef.current = null;
       setDashboardSessionModel(null);
+      setTerminalPresentation(null);
       destroySessionController();
       // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
       // WASM preset load, so a deploy-stale reload resumed into an empty session.
@@ -2026,6 +2031,7 @@ const Shell = () => {
       setPeerConn(null);
       dashboardSessionModelRef.current = null;
       setDashboardSessionModel(null);
+      setTerminalPresentation(null);
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
@@ -2095,6 +2101,13 @@ const Shell = () => {
       dashboardSessionModelRef.current = terminal.model;
       setDashboardSessionModel(terminal.model);
       setFinishedSessionIdentity(terminal.identity);
+      setTerminalPresentation({
+        model: terminal.model,
+        myName: terminal.identity.myName,
+        opponentName: terminal.identity.opponentName,
+        iStarted: terminal.identity.iStarted,
+        iProposedHand: terminal.identity.iProposedHand,
+      });
       abandonPendingRef.current = false;
       sessionFinishedCleanupRef.current = true;
       sessionPhaseRef.current = 'resolved';
@@ -2111,10 +2124,7 @@ const Shell = () => {
 
       sessionSaveRef.current = null;
       sessionSavePropRef.current = undefined;
-      sessionStartedRef.current = false;
       clearSessionTimers();
-      setSessionConfig(null);
-      setPeerConn(null);
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
@@ -2222,6 +2232,7 @@ const Shell = () => {
         iStarted: save.terminalIStarted ?? false,
         iProposedHand: save.iProposedHand ?? false,
       });
+      setTerminalPresentation(null);
       sessionSaveRef.current = save;
       sessionSavePropRef.current = undefined;
       sessionStartedRef.current = false;
@@ -3551,6 +3562,7 @@ const Shell = () => {
                     onProtocolStateProviderChange={handleProtocolStateProviderChange}
                     onCoinsProviderChange={handleCoinsProviderChange}
                     suppressPhaseReporting={restoreBlocked}
+                    terminalPresentation={terminalPresentation}
                   />
                 </GameSessionErrorBoundary>
                 {sessionConsentOverlay}

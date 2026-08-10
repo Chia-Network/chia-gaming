@@ -52,7 +52,6 @@ impl ManagedGameSession for ScriptedGameSession {
                 .unwrap_or_default()
                 .into_iter()
                 .collect(),
-            resync: vec![],
         })
     }
 }

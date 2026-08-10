@@ -2,7 +2,7 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type { GameMountRegistration } from '../../lib/gameMount';
+import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
 
@@ -22,6 +22,7 @@ export interface KrunkLiveMountProps {
   initialPersistedState?: PersistedGameState;
   terminalsById: Record<string, GameTerminalModel>;
   amountsById: Record<string, string>;
+  interactionMode?: GameInteractionMode;
 }
 
 export function KrunkLiveMount(props: KrunkLiveMountProps) {
@@ -52,6 +53,7 @@ export const krunkMountRegistration: GameMountRegistration = {
         initialPersistedState={session.gameSpecificView.handState ?? undefined}
         terminalsById={session.gameSpecificView.terminalsById}
         amountsById={session.gameSpecificView.amountsById}
+        interactionMode={session.interactionMode}
         {...names}
       />
     );
@@ -74,6 +76,7 @@ export const krunkMountRegistration: GameMountRegistration = {
         amountsById={Object.fromEntries(
           Object.entries(model.game.instances).map(([id, instance]) => [id, instance.amount]),
         )}
+        interactionMode="terminal"
         myName={options.myName}
         opponentName={options.opponentName}
       />

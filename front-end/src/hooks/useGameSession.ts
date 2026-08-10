@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Subject } from 'rxjs';
+import { EMPTY, Subject } from 'rxjs';
 import type { CalpokerOutcome } from '../features/calPoker/outcome';
 import {
   createComposeDraftState,
@@ -21,7 +21,12 @@ import {
 } from '../lib/session/gameSessionEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
-import type { UseGameSessionResult } from '../lib/session/sessionResult';
+import {
+  projectTerminalSessionResult,
+  type TerminalSessionPresentation,
+  type UseGameSessionResult,
+  useTerminalSessionPresentation,
+} from '../lib/session/sessionResult';
 import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
@@ -30,6 +35,7 @@ import { getOrCreateSessionController, initStarted, setInitStarted } from './blo
 import type { SessionController } from './SessionController';
 import type { SessionSave } from './save';
 import { getDefaultFee, getPlayerId } from './save';
+import { createFrozenHandBridge } from './frozenHandBridge';
 
 export type {
   GameplayEvent,
@@ -68,9 +74,11 @@ export function useSessionControllerAfterCommit(
   ) => void,
   sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
+  terminalMode = false,
 ): SessionController | null {
   const [controller, setController] = useState<SessionController | null>(null);
   useEffect(() => {
+    if (terminalMode) return;
     const next = getOrCreateSessionController(
       blockchain,
       peerConn,
@@ -103,6 +111,7 @@ export function useSessionControllerAfterCommit(
     peerConn,
     registerMessageHandler,
     sessionSave,
+    terminalMode,
   ]);
   return controller;
 }
@@ -113,8 +122,15 @@ export function useGameSession(
   appendGameLog: (line: string) => void,
   sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
+  terminalPresentation?: TerminalSessionPresentation | null,
 ): UseGameSessionResult {
   const { iStarted, perGameAmount } = params;
+  const terminalState = useTerminalSessionPresentation(terminalPresentation);
+  const terminalMode = terminalState.presentation != null;
+  const frozenBridge = useMemo(
+    () => createFrozenHandBridge(terminalState.presentation?.model.game.handState ?? null),
+    [terminalState.presentation?.model.game.handState],
+  );
 
   const restoredModel = useMemo(
     () => (sessionSave ? sessionModelFromSave(sessionSave, perGameAmount) : null),
@@ -181,26 +197,27 @@ export function useGameSession(
     });
   }, [controller, dispatch, params.restoring]);
 
-  useEffect(
-    () =>
-      controller.onRestoreStatusChange(() => {
-        dispatchHostProjection();
-      }),
-    [controller, dispatchHostProjection],
-  );
+  useEffect(() => {
+    if (terminalMode) return;
+    return controller.onRestoreStatusChange(() => {
+      dispatchHostProjection();
+    });
+  }, [controller, dispatchHostProjection, terminalMode]);
 
   useEffect(() => {
+    if (terminalMode) return;
     controller.onFeatureStateTransition = (gameType, id, state) => {
-      dispatch({ type: 'feature-state', gameType, id, state });
+      return runtime.transitionFeatureState(gameType, id, state);
     };
     controller.onSaveNeeded = () => runtime.persist();
     return () => {
       controller.onFeatureStateTransition = null;
       controller.onSaveNeeded = null;
     };
-  }, [controller, dispatch, runtime]);
+  }, [controller, dispatch, runtime, terminalMode]);
 
   useEffect(() => {
+    if (terminalMode) return;
     const subscription = controller.getObservable().subscribe({
       next: (event: WasmEvent) => {
         switch (event.type) {
@@ -217,9 +234,11 @@ export function useGameSession(
             dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
             break;
           case 'game-action-error':
-            gameplaySubject.next(
-              gameplayEventForGameActionError(event.gameId, event.action, event.error),
-            );
+            if (event.action !== 'feature-state') {
+              gameplaySubject.next(
+                gameplayEventForGameActionError(event.gameId, event.action, event.error),
+              );
+            }
             dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
             break;
           case 'durability-error':
@@ -236,13 +255,13 @@ export function useGameSession(
     });
     if (!initStarted) setInitStarted(true);
     return () => subscription.unsubscribe();
-  }, [controller, dispatch, dispatchHostProjection, gameplaySubject, iStarted]);
+  }, [controller, dispatch, dispatchHostProjection, gameplaySubject, iStarted, terminalMode]);
 
   useEffect(() => {
-    if (!blockchain) return;
+    if (!blockchain || terminalMode) return;
     controller.attachBlockchain(blockchain);
     return () => controller.detachBlockchain(blockchain);
-  }, [blockchain, controller]);
+  }, [blockchain, controller, terminalMode]);
 
   useEffect(
     () => () => {
@@ -250,6 +269,9 @@ export function useGameSession(
     },
     [runtime],
   );
+  useEffect(() => {
+    if (terminalMode) runtime.dispose();
+  }, [runtime, terminalMode]);
 
   const setComposeGameTimeout = useCallback(
     (timeout: bigint) => dispatch({ type: 'set-compose-timeout', timeout }),
@@ -293,7 +315,7 @@ export function useGameSession(
   const compose = model.betweenHand.compose;
   const sessionPhase = selectSessionPhase(model, coordination.hostOnChain);
 
-  return {
+  const liveResult: UseGameSessionResult = {
     sessionModel: model,
     gameConnectionState: model.channel.connection,
     perGameAmount,
@@ -348,5 +370,15 @@ export function useGameSession(
     dismissChannel: () => dispatch({ type: 'dismiss-channel' }),
     dismissGame: () => dispatch({ type: 'dismiss-game-notification' }),
     gameSpecificView,
+    interactionMode: 'live',
   };
+  return terminalState.presentation
+    ? projectTerminalSessionResult(
+        liveResult,
+        terminalState.presentation,
+        frozenBridge,
+        EMPTY,
+        terminalState,
+      )
+    : liveResult;
 }

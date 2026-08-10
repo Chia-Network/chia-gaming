@@ -1,3 +1,6 @@
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { EMPTY, Subject } from 'rxjs';
 import {
   KrunkHandler,
   applyKrunkMoveRejected,
@@ -24,7 +27,11 @@ import {
   krunkGameSlots,
   krunkLetterStatuses,
   newlyResolvedKrunkIndex,
+  type KrunkProps,
 } from './Krunk';
+import Krunk from './Krunk';
+import { initialKrunkGameState, krunkStateCodec } from './stateCodec';
+import type { SessionController } from '../../hooks/SessionController';
 import type { GameTerminalModel } from '../../lib/session/types';
 
 function terminal(
@@ -86,7 +93,263 @@ describe('Krunk terms', () => {
   });
 });
 
-describe('Krunk first guess drafting', () => {
+describe('Krunk draft continuity', () => {
+  it('preserves the picker entry area across both timeouts and terminal presentation', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const persisted = krunkStateCodec.encode({
+      games: {
+        picker: {
+          ...initialKrunkGameState('alice'),
+          handler: KrunkHandler.WaitingCommit,
+          secretWord: null,
+        },
+        guesser: {
+          ...initialKrunkGameState('bob'),
+          handler: KrunkHandler.BobWaiting,
+        },
+      },
+    });
+    const gameplay = new Subject<import('../../hooks/useGameSession').GameplayEvent>();
+    const renderPhases: string[] = [];
+    const baseProps = {
+      gameObject: {
+        makeMove: jest.fn(),
+        transitionFeatureState: jest.fn((_, __, state) => state),
+      } as unknown as SessionController,
+      currentHandGameIds: ['picker', 'guesser'],
+      activeGameIds: ['picker', 'guesser'],
+      iProposedHand: true,
+      gameplayEvent$: gameplay,
+      betSize: 100n,
+      onTurnChanged: () => {},
+      onGameLog: () => {},
+      initialPersistedState: persisted,
+      terminalsById: {},
+      amountsById: { picker: '100', guesser: '100' },
+      interactionMode: 'live' as const,
+      opponentName: 'Peer',
+    };
+    const renderKrunk = (props: KrunkProps) =>
+      React.createElement(
+        React.Profiler,
+        {
+          id: 'krunk-hand',
+          onRender: (_id, phase) => renderPhases.push(phase),
+        },
+        React.createElement(Krunk, props),
+      );
+    let renderer: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(renderKrunk(baseProps));
+    });
+    for (const letter of ['C', 'R', 'A']) {
+      const key = renderer!.root
+        .findAllByType('button')
+        .find((button) => button.props.children === letter);
+      act(() => key!.props.onClick());
+    }
+    const draftLetters = () =>
+      renderer!.root
+        .findAll(
+          (node) =>
+            typeof node.props.className === 'string' &&
+            node.props.className.includes('border-dashed') &&
+            typeof node.props.children === 'string' &&
+            node.props.children !== '',
+        )
+        .map((node) => node.props.children);
+    expect(draftLetters()).toEqual(['C', 'R', 'A']);
+
+    const pickerTimeout = terminal('opponent_timed_out', '100');
+    act(() => {
+      gameplay.next({
+        Settled: { gameId: 'picker', outcome: 'opponent_timed_out', ourShare: '100' },
+      });
+      renderer!.update(
+        renderKrunk({
+          ...baseProps,
+          activeGameIds: ['guesser'],
+          terminalsById: { picker: pickerTimeout },
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props.children === 'Peer got nothing due to timeout.'),
+    ).toHaveLength(1);
+
+    const guesserTimeout = terminal('timed_out_waiting_for_our_move', '0');
+    act(() => {
+      gameplay.next({
+        Settled: {
+          gameId: 'guesser',
+          outcome: 'timed_out_waiting_for_our_move',
+          ourShare: '0',
+        },
+      });
+      renderer!.update(
+        renderKrunk({
+          ...baseProps,
+          activeGameIds: [],
+          terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props.children === 'You got nothing due to timeout.'),
+    ).toHaveLength(1);
+
+    act(() => {
+      renderer!.update(
+        renderKrunk({
+          ...baseProps,
+          activeGameIds: [],
+          terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
+          interactionMode: 'terminal',
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props['data-testid'] === 'finished-session-game-view'),
+    ).toHaveLength(0);
+    expect(renderPhases.filter((phase) => phase === 'mount')).toHaveLength(1);
+    expect(draftLetters()).toEqual(['C', 'R', 'A']);
+
+    act(() => renderer!.unmount());
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it('does not retry a feature transition when durable authority rejects the commit', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const makeMove = jest.fn();
+    const transitionFeatureState = jest.fn(() => false);
+    const persisted = krunkStateCodec.encode({
+      games: {
+        picker: initialKrunkGameState('alice'),
+        guesser: initialKrunkGameState('bob'),
+      },
+    });
+    let renderer: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        React.createElement(Krunk, {
+          gameObject: { makeMove, transitionFeatureState } as unknown as SessionController,
+          currentHandGameIds: ['picker', 'guesser'],
+          activeGameIds: ['picker', 'guesser'],
+          iProposedHand: true,
+          gameplayEvent$: EMPTY,
+          betSize: 100n,
+          onTurnChanged: () => {},
+          onGameLog: () => {},
+          initialPersistedState: persisted,
+          terminalsById: {},
+          amountsById: { picker: '100', guesser: '100' },
+        }),
+      );
+    });
+
+    const root = renderer!.root;
+    for (const letter of ['C', 'R', 'A', 'N', 'E']) {
+      const key = root.findAllByType('button').find((button) => button.props.children === letter);
+      act(() => key!.props.onClick());
+    }
+    const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
+    expect(() => act(() => pick!.props.onClick())).not.toThrow();
+
+    expect(transitionFeatureState).toHaveBeenCalledTimes(1);
+    expect(makeMove).not.toHaveBeenCalled();
+    act(() => renderer!.unmount());
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it('keeps current-hand picker input available when activeIds omits its game', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const makeMove = jest.fn();
+    const transitionFeatureState = jest.fn(() => true);
+    const persisted = krunkStateCodec.encode({
+      games: {
+        picker: initialKrunkGameState('alice'),
+        guesser: initialKrunkGameState('bob'),
+      },
+    });
+    let renderer: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        React.createElement(Krunk, {
+          gameObject: { makeMove, transitionFeatureState } as unknown as SessionController,
+          currentHandGameIds: ['picker', 'guesser'],
+          activeGameIds: ['guesser'],
+          iProposedHand: true,
+          gameplayEvent$: EMPTY,
+          betSize: 100n,
+          onTurnChanged: () => {},
+          onGameLog: () => {},
+          initialPersistedState: persisted,
+          terminalsById: {},
+          amountsById: { picker: '100', guesser: '100' },
+        }),
+      );
+    });
+
+    const root = renderer!.root;
+    for (const letter of ['C', 'R', 'A', 'N', 'E']) {
+      const key = root.findAllByType('button').find((button) => button.props.children === letter);
+      expect(key).toBeDefined();
+      act(() => key!.props.onClick());
+    }
+    const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
+    expect(pick).toBeDefined();
+    expect(pick!.props.disabled).toBe(false);
+    act(() => pick!.props.onClick());
+
+    expect(transitionFeatureState).toHaveBeenCalledWith(
+      'krunk',
+      'picker',
+      expect.objectContaining({
+        handler: KrunkHandler.AliceWaiting,
+        secretWord: 'CRANE',
+      }),
+    );
+    expect(makeMove).toHaveBeenCalledWith('picker', expect.anything());
+    act(() => renderer!.unmount());
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
   it('supplies the new clue index during the render that resolves it', () => {
     expect(newlyResolvedKrunkIndex(1, 0)).toBe(0);
     expect(newlyResolvedKrunkIndex(3, 2)).toBe(2);
@@ -107,6 +370,30 @@ describe('Krunk first guess drafting', () => {
       aliceGameId: '1',
       bobGameId: '0',
       aliceActive: true,
+      bobActive: false,
+    });
+  });
+
+  it('uses persisted roles instead of stale proposal orientation on finished restore', () => {
+    const alice = {
+      ...initialKrunkGameState('alice'),
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      secretWord: 'CRANE',
+      outcome: 'win' as const,
+    };
+    const bob = {
+      ...initialKrunkGameState('bob'),
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      outcome: 'lose' as const,
+    };
+    const persisted = krunkStateCodec.encode({ games: { '0': alice, '1': bob } });
+
+    expect(krunkGameSlots(['0', '1'], false, [], persisted)).toEqual({
+      aliceGameId: '0',
+      bobGameId: '1',
+      aliceActive: false,
       bobActive: false,
     });
   });
@@ -211,7 +498,7 @@ describe('Krunk first guess drafting', () => {
     };
 
     expect(krunkTerminalStatus(timedOut, 'Peer', terminal('timed_out_waiting_for_our_move'))).toBe(
-      'We timed out.',
+      'You got nothing due to timeout.',
     );
     expect(
       krunkTerminalStatus(
@@ -222,7 +509,7 @@ describe('Krunk first guess drafting', () => {
         'Peer',
         terminal('opponent_timed_out'),
       ),
-    ).toBe('Peer timed out.');
+    ).toBe('Peer got nothing due to timeout.');
     expect(
       krunkTerminalStatus(
         {
@@ -315,8 +602,8 @@ describe('Krunk first guess drafting', () => {
   );
 
   it.each([
-    ['opponent_timed_out', 'Peer timed out.'],
-    ['timed_out_waiting_for_our_move', 'We timed out.'],
+    ['opponent_timed_out', 'Peer got nothing due to timeout.'],
+    ['timed_out_waiting_for_our_move', 'Peer got 100 mojo due to timeout.'],
     ['forfeited_opponent_won', 'We forfeited.'],
   ] as const)('keeps %s copy ahead of reward display', (outcome, text) => {
     const won: KrunkGameState = {
@@ -333,6 +620,25 @@ describe('Krunk first guess drafting', () => {
 
     expect(krunkBoardNotice(won, 'Peer', terminal(outcome, '100'), '100')).toEqual({
       text,
+      kind: 'info',
+    });
+  });
+
+  it('shows the local guesser receiving the full amount when the picker times out', () => {
+    const bob: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'bob',
+      guesses: [],
+      secretWord: null,
+      revealedWord: null,
+      outcome: 'win',
+      moverShare: null,
+      error: null,
+    };
+
+    expect(krunkBoardNotice(bob, 'Peer', terminal('opponent_timed_out', '100'), '100')).toEqual({
+      text: 'You got 100 mojo due to timeout.',
       kind: 'info',
     });
   });

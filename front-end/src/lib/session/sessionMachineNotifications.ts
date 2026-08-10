@@ -252,7 +252,9 @@ export function reduceSessionNotification(
     const groupIds = current.coordination.proposalGroupIdsById[id] ?? [id];
     const terms = current.coordination.proposalTermsById[id];
     if (!terms) throw new Error(`ProposalAccepted ${id} missing tracked game terms`);
-    const first = current.model.game.activeIds.length === 0;
+    const first =
+      current.model.game.currentHandIds.length !== groupIds.length ||
+      current.model.game.currentHandIds.some((groupId, index) => groupId !== groupIds[index]);
     step({
       type: 'notification-accepted-group',
       id,
@@ -337,6 +339,10 @@ export function reduceSessionNotification(
         cancelStale();
         step({ type: 'clear-proposals' });
       }
+      return { state: current, effects };
+    }
+    const instance = current.model.game.instances[id];
+    if (instance && instance.terminal.type !== 'none') {
       return { state: current, effects };
     }
     const payload: NonTerminalGameStatusPayload = { ...status, status: status.status };

@@ -33,6 +33,7 @@ import {
   type ChannelStatusModel,
   type SessionModel,
 } from '../lib/session/model';
+import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -524,6 +525,7 @@ export interface GameSessionProps {
   ) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
+  terminalPresentation?: TerminalSessionPresentation | null;
 }
 
 const MountedGameSession: React.FC<GameSessionProps & { sessionController: SessionController }> = ({
@@ -539,8 +541,17 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   suppressPhaseReporting,
   blockchain,
   sessionController,
+  terminalPresentation,
 }) => {
-  const session = useGameSession(params, sessionController, appendGameLog, sessionSave, blockchain);
+  const session = useGameSession(
+    params,
+    sessionController,
+    appendGameLog,
+    sessionSave,
+    blockchain,
+    terminalPresentation,
+  );
+  const terminalMode = session.interactionMode === 'terminal';
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -552,17 +563,25 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
 
   useEffect(() => {
     if (!onProtocolStateProviderChange) return;
+    if (terminalMode) {
+      onProtocolStateProviderChange(null);
+      return;
+    }
     const gameObject = session.sessionController;
     onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
-  }, [session.sessionController, onProtocolStateProviderChange]);
+  }, [session.sessionController, onProtocolStateProviderChange, terminalMode]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;
+    if (terminalMode) {
+      onCoinsProviderChange(null);
+      return;
+    }
     const gameObject = session.sessionController;
     onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
     return () => onCoinsProviderChange(null);
-  }, [session.sessionController, onCoinsProviderChange]);
+  }, [session.sessionController, onCoinsProviderChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {
@@ -717,7 +736,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
         <div
           ref={gameAreaRef}
           tabIndex={-1}
-          inert={gameInterfaceIsInertForBetweenHandDialog}
+          inert={terminalMode || gameInterfaceIsInertForBetweenHandDialog}
+          data-game-interaction-mode={session.interactionMode}
+          aria-disabled={terminalMode || undefined}
           className="relative overflow-hidden z-0 focus:outline-none"
         >
           {showGameInterface && (
@@ -732,8 +753,8 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
                 }
               >
                 {renderLiveGameMount(session, {
-                  myName: params.myAlias,
-                  opponentName: params.opponentAlias,
+                  myName: terminalPresentation?.myName ?? params.myAlias,
+                  opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
                 })}
               </Suspense>
             </GameAreaErrorBoundary>
@@ -818,6 +839,7 @@ const GameSession: React.FC<GameSessionProps> = (props) => {
     props.registerMessageHandler,
     props.sessionSave,
     props.blockchain,
+    props.terminalPresentation != null,
   );
   if (!sessionController) return null;
   return <MountedGameSession {...props} sessionController={sessionController} />;

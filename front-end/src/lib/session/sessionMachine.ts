@@ -599,7 +599,9 @@ export function reduceSessionMachine(
         ],
       };
     case 'notification-accepted-group': {
-      const first = state.model.game.activeIds.length === 0;
+      const first =
+        state.model.game.currentHandIds.length !== event.groupIds.length ||
+        state.model.game.currentHandIds.some((id, index) => id !== event.groupIds[index]);
       const cleared = clearProposalIds(state, event.groupIds);
       const game = gameSliceReducer(gameSliceFromModel(cleared.model), {
         type: 'accepted-group',
@@ -678,17 +680,22 @@ export function reduceSessionMachine(
         payload: event.payload,
         channelState: event.channelState,
       });
-      return withDurableGameEvent(
-        { ...state, model: withGameSlice(state.model, game) },
-        {
-          type: 'game-status',
-          id: event.id,
-          status: event.payload.status === 'my-turn' ? 'my-turn' : 'their-turn',
-          readable: event.readable,
-          moverShare: event.moverShare,
-          iStarted: event.iStarted,
-        },
-      );
+      const projected = { ...state, model: withGameSlice(state.model, game) };
+      const featureTurn =
+        event.payload.status === 'my-turn' || event.payload.status === 'their-turn'
+          ? event.payload.status
+          : null;
+      if (event.readable === null && featureTurn === null) {
+        return { state: projected, effects: [] };
+      }
+      return withDurableGameEvent(projected, {
+        type: 'game-status',
+        id: event.id,
+        status: featureTurn ?? 'their-turn',
+        readable: event.readable,
+        moverShare: event.moverShare,
+        iStarted: event.iStarted,
+      });
     }
     case 'notification-game-terminal': {
       const game = gameSliceReducer(gameSliceFromModel(state.model), {

@@ -37,4 +37,5 @@ export interface CaliforniapokerProps {
   myName?: string;
   opponentName?: string;
   terminalOutcome?: import('../../../lib/settlement').SettlementOutcome | null;
+  interactionMode?: import('../../../lib/gameMount').GameInteractionMode;
 }

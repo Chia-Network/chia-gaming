@@ -90,6 +90,7 @@ export function useCalpokerHand(
   onTurnChanged: (isMyTurn: boolean) => void,
   terminal: GameTerminalModel,
   initialPersistedState?: PersistedGameState,
+  interactive = true,
 ): UseCalpokerHandResult {
   const initialHandState = useMemo(
     () => calpokerStateFromPersisted(initialPersistedState),
@@ -115,6 +116,7 @@ export function useCalpokerHand(
   const pendingPlayRef = useRef(false);
   const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);
   const restoredRef = useRef(!!initialHandState);
+  const interactiveRef = useRef(interactive);
   const stateRef = useRef<CalpokerHandState>(
     initialHandState ?? {
       playerHand: [],
@@ -132,6 +134,7 @@ export function useCalpokerHand(
   gameObjectRef.current = gameObject;
   gameIdRef.current = gameId;
   isPlayerTurnRef.current = isPlayerTurn;
+  interactiveRef.current = interactive;
 
   const projectState = useCallback((next: CalpokerHandState) => {
     stateRef.current = next;
@@ -149,6 +152,7 @@ export function useCalpokerHand(
 
   const commitState = useCallback(
     (update: (current: CalpokerHandState) => CalpokerHandState) => {
+      if (!interactiveRef.current) return;
       const next = update(stateRef.current);
       gameObjectRef.current.transitionFeatureState('calpoker', gameIdRef.current, next);
       projectState(next);
@@ -157,6 +161,7 @@ export function useCalpokerHand(
   );
 
   useEffect(() => {
+    if (!interactive) return;
     const subscription = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
         if ('OpponentMoved' in evt) {
@@ -229,7 +234,7 @@ export function useCalpokerHand(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameplayEvent$, iStarted, onOutcome, onTurnChanged, projectState]);
+  }, [gameplayEvent$, iStarted, interactive, onOutcome, onTurnChanged, projectState]);
 
   const submitMove1 = useCallback(() => {
     const go = gameObjectRef.current;
@@ -273,6 +278,7 @@ export function useCalpokerHand(
 
   // Autofire moves 0 and 2; auto-submit queued move 1
   useEffect(() => {
+    if (!interactive) return;
     if (restoredRef.current) {
       restoredRef.current = false;
       return;
@@ -285,7 +291,7 @@ export function useCalpokerHand(
     } else if (m === 1n && pendingPlayRef.current) {
       submitMove1();
     }
-  }, [isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
+  }, [interactive, isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
 
   const handleCheat = useCallback(() => {
     const go = gameObjectRef.current;

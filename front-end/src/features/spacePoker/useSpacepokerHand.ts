@@ -210,6 +210,7 @@ export function useSpacepokerHand(
   onTurnChanged: (isMyTurn: boolean) => void,
   terminal: GameTerminalModel,
   initialPersistedState?: PersistedGameState,
+  interactive = true,
 ): UseSpacepokerHandResult {
   if (unitSizeMojos <= 0n) {
     throw new Error('Space Poker requires a positive unit size');
@@ -329,6 +330,7 @@ export function useSpacepokerHand(
       displayMode,
     },
   );
+  const interactiveRef = useRef(interactive);
 
   gsRef.current = gs;
   gameObjectRef.current = _gameObject;
@@ -340,6 +342,7 @@ export function useSpacepokerHand(
   iRaisedLastRef.current = iRaisedLast;
   handHistoryRef.current = handHistory;
   terminalStateRef.current = terminalState;
+  interactiveRef.current = interactive;
 
   const projectState = useCallback((next: SpacepokerHandState) => {
     stateRef.current = next;
@@ -362,6 +365,7 @@ export function useSpacepokerHand(
 
   const commitState = useCallback(
     (update: (current: SpacepokerHandState) => SpacepokerHandState) => {
+      if (!interactiveRef.current) return;
       const next = update(stateRef.current);
       gameObjectRef.current.transitionFeatureState('spacepoker', gameIdRef.current, next);
       projectState(next);
@@ -491,6 +495,7 @@ export function useSpacepokerHand(
   // Dispatch based on the readable tag. The tag tells us what the
   // handler computed; it's the single source of truth for what happened.
   useEffect(() => {
+    if (!interactive) return;
     const sub = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
         if (terminalClosureRef.current) return;
@@ -549,6 +554,7 @@ export function useSpacepokerHand(
     return () => sub.unsubscribe();
   }, [
     gameplayEvent$,
+    interactive,
     onTurnChanged,
     applySettlement,
     projectState,
@@ -563,6 +569,7 @@ export function useSpacepokerHand(
   // outstanding raise and we have no remaining raise capacity.
   // End: auto-play reveal or game-level accept.
   useEffect(() => {
+    if (!interactive) return;
     if (handFinishedRef.current) return;
     if (!terminalAutoSubmissionAllowed(terminalRecovery)) return;
     const { handler, myTurn, N } = gs;
@@ -650,6 +657,7 @@ export function useSpacepokerHand(
     }
   }, [
     gs,
+    interactive,
     outcome,
     coinTossIOpen,
     lastRaise,

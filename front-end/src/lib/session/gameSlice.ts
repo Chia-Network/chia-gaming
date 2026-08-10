@@ -102,8 +102,11 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
       if (action.groupIds.length === 0) {
         throw new Error('Game slice invariant broken: accepted group is empty');
       }
-      const first = slice.activeIds.length === 0;
-      const instances = first ? {} : { ...slice.instances };
+      const sameHand =
+        slice.currentHandIds.length === action.groupIds.length &&
+        slice.currentHandIds.every((id, index) => id === action.groupIds[index]);
+      const newHand = !sameHand;
+      const instances = newHand ? {} : { ...slice.instances };
       for (const id of action.groupIds) {
         instances[id] = instances[id] ?? newInstance(id, action.amount, action.startTurn);
       }
@@ -111,22 +114,13 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
         ...requireInstance({ ...slice, instances }, action.acceptedId),
         amount: action.amount,
       };
-      const activeIds = [
-        ...slice.activeIds,
-        ...action.groupIds.filter((id) => !slice.activeIds.includes(id)),
-      ];
       next = {
-        handKey: first ? slice.handKey + 1 : slice.handKey,
-        activeIds,
-        currentHandIds: first
-          ? [...action.groupIds]
-          : [
-              ...slice.currentHandIds,
-              ...action.groupIds.filter((id) => !slice.currentHandIds.includes(id)),
-            ],
+        handKey: newHand ? slice.handKey + 1 : slice.handKey,
+        activeIds: newHand ? [...action.groupIds] : slice.activeIds,
+        currentHandIds: newHand ? [...action.groupIds] : slice.currentHandIds,
         instances,
-        lastDisplayedId: first ? action.acceptedId : slice.lastDisplayedId,
-        activeGameType: first ? (action.gameType ?? slice.activeGameType) : slice.activeGameType,
+        lastDisplayedId: newHand ? action.acceptedId : slice.lastDisplayedId,
+        activeGameType: newHand ? (action.gameType ?? slice.activeGameType) : slice.activeGameType,
       };
       break;
     }

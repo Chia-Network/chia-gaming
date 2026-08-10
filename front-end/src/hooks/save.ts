@@ -1,4 +1,4 @@
-import { ChannelStatusPayload, MoveReplayReceipt } from '../types/ChiaGaming';
+import { ChannelStatusPayload } from '../types/ChiaGaming';
 import { isTerminalChannelSnapshot } from '../lib/session/model';
 import {
   deleteSessionRecord,
@@ -83,7 +83,6 @@ export interface SessionSave {
   diagnosticLog?: string[];
   durabilityWarning?: string;
   activeGameIds?: string[];
-  moveReplayJournal?: MoveReplayReceipt[];
   currentHandGameIds?: string[];
   lastDisplayedGameId?: string;
   gameInstances?: Record<

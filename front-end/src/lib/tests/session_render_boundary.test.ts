@@ -1,9 +1,17 @@
 import { createElement, StrictMode, useCallback, useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { EMPTY } from 'rxjs';
 import { destroySessionController } from '../../hooks/blobSingleton';
+import { createFrozenHandBridge } from '../../hooks/frozenHandBridge';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import type { PeerConnectionResult } from '../../types/ChiaGaming';
+import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
+import {
+  projectTerminalSessionResult,
+  useTerminalSessionPresentation,
+  type UseGameSessionResult,
+} from '../session/sessionResult';
 
 const peerConnection: PeerConnectionResult = {
   sendMessage: () => true,
@@ -87,5 +95,60 @@ describe('GameSession render boundary', () => {
     expect(registrations).toBe(1);
     expect(observedController).not.toBeNull();
     expect(observedController!.storedMessages).toEqual([{ msgno: 1n, msg: Uint8Array.from([1]) }]);
+  });
+
+  it('dismisses terminal errors locally while protocol controls stay frozen', () => {
+    const model = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+      },
+      game: {
+        queue: [
+          {
+            id: 1n,
+            kind: 'durability-error',
+            title: 'Session storage failed',
+            message: 'Garbled save: invalid handState.',
+          },
+        ],
+      },
+    });
+    const source = { model, iStarted: true, iProposedHand: true };
+    const liveMakeMove = jest.fn();
+    const liveDismissGame = jest.fn();
+    const live = {
+      sessionController: { makeMove: liveMakeMove },
+      dismissGame: liveDismissGame,
+    } as unknown as UseGameSessionResult;
+    const bridge = createFrozenHandBridge(model.game.handState);
+    let observed: UseGameSessionResult | null = null;
+
+    function TerminalHarness() {
+      const terminal = useTerminalSessionPresentation(source);
+      const projected = projectTerminalSessionResult(
+        live,
+        terminal.presentation!,
+        bridge,
+        EMPTY,
+        terminal,
+      );
+      observed = projected;
+      return createElement(
+        'button',
+        { onClick: projected.dismissGame },
+        String(projected.gameQueue.length),
+      );
+    }
+
+    act(() => {
+      renderer = create(createElement(TerminalHarness));
+    });
+    expect(observed!.gameQueue).toHaveLength(1);
+    act(() => renderer!.root.findByType('button').props.onClick());
+    expect(observed!.gameQueue).toHaveLength(0);
+
+    observed!.sessionController.makeMove('7', null);
+    expect(liveMakeMove).not.toHaveBeenCalled();
+    expect(liveDismissGame).not.toHaveBeenCalled();
   });
 });

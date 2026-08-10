@@ -13,8 +13,6 @@ import {
   ProposeGameParams,
   WasmEvent,
   NeedCoinSpendRequest,
-  MoveReplayReceipt,
-  ResyncInfo,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import { spend_bundle_to_clvm, coerceToBytes } from '../util';
@@ -52,7 +50,6 @@ export interface WasmFields {
   myAlias: string | undefined;
   opponentAlias: string | undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
-  moveReplayJournal: MoveReplayReceipt[];
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -66,7 +63,6 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
 const ACTIVE_DRAIN_EVENT_BUDGET = 100;
-const MOVE_REPLAY_JOURNAL_LIMIT = 256;
 
 function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
   return (
@@ -179,9 +175,6 @@ export class SessionController implements PollingGameSession {
   private pendingAcks: bigint[] = [];
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
-  private moveReplayJournal: MoveReplayReceipt[] = [];
-  private pendingResync: ResyncInfo[] = [];
-  private drainingResync = false;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -199,7 +192,7 @@ export class SessionController implements PollingGameSession {
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
   onFeatureStateTransition:
-    | ((gameType: RegisteredGameType, gameId: string, state: unknown) => void)
+    | ((gameType: RegisteredGameType, gameId: string, state: unknown) => boolean)
     | null = null;
   getFee: () => bigint = () => 0n;
 
@@ -238,8 +231,6 @@ export class SessionController implements PollingGameSession {
     this.iStarted = false;
     this.channelReady = false;
     this.storedMessages = [];
-    this.moveReplayJournal = [];
-    this.pendingResync = [];
     this.cleanShutdownCalled = false;
     this.onChain = false;
     this.reloading = false;
@@ -320,8 +311,6 @@ export class SessionController implements PollingGameSession {
     this.pendingAcks = [];
     this.unackedMessages = [];
     this.reorderQueue.clear();
-    this.moveReplayJournal = [];
-    this.pendingResync = [];
     this.needsImmediateDurability = false;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
@@ -771,91 +760,16 @@ export class SessionController implements PollingGameSession {
     if (disposition.kind === 'await-outbound-terminal') {
       this.queueTerminalHandoff(disposition.command);
     }
-    if (result.moveReplay) {
-      this.appendMoveReplayReceipt(result.moveReplay);
-    }
-    this.pendingResync.push(...(result.resync ?? []));
 
     // A terminal manager drain can still contain already-queued on-chain
     // submissions (for example a mature timeout claim). Actual abandonment
     // clears that queue in Rust before it reaches this boundary.
     this.drainAndSubmitTransactions();
     if (terminal) {
-      this.moveReplayJournal = [];
-      this.pendingResync = [];
       this.flushDeferredWork();
       return;
     }
-    this.drainResyncInstructions();
     this.scheduleDrain();
-  }
-
-  private appendMoveReplayReceipt(receipt: MoveReplayReceipt): void {
-    const stateNumber = BigInt(receipt.stateNumber);
-    const existing = this.moveReplayJournal.find(
-      (entry) => entry.gameId === receipt.gameId && BigInt(entry.stateNumber) === stateNumber,
-    );
-    if (existing) {
-      const readableMatches =
-        existing.readable.length === receipt.readable.length &&
-        existing.readable.every((byte, index) => byte === receipt.readable[index]);
-      if (readableMatches && existing.entropy === receipt.entropy) return;
-      throw new Error(
-        `conflicting move replay receipt: game_id=${receipt.gameId} state_number=${stateNumber}`,
-      );
-    }
-
-    this.moveReplayJournal.push({
-      ...receipt,
-      readable: Uint8Array.from(receipt.readable),
-    });
-    if (this.moveReplayJournal.length > MOVE_REPLAY_JOURNAL_LIMIT) {
-      this.moveReplayJournal.splice(0, this.moveReplayJournal.length - MOVE_REPLAY_JOURNAL_LIMIT);
-    }
-  }
-
-  private drainResyncInstructions(): void {
-    if (this.drainingResync) return;
-    this.drainingResync = true;
-    try {
-      while (this.pendingResync.length > 0) {
-        const instruction = this.pendingResync[0];
-        if (!instruction.is_my_turn) {
-          this.pendingResync.shift();
-          continue;
-        }
-        const gameId = String(instruction.game_id);
-        const stateNumber = BigInt(instruction.state_number);
-        const matches = this.moveReplayJournal.filter(
-          (entry) => entry.gameId === gameId && BigInt(entry.stateNumber) === stateNumber,
-        );
-        if (matches.length !== 1) {
-          throw new Error(
-            `resync requires exactly one journaled local move: game_id=${gameId} state_number=${stateNumber} is_my_turn=true matches=${matches.length}`,
-          );
-        }
-        if (!this.cradle) throw new Error('resync replay requires an active WASM cradle');
-        const replay = matches[0];
-        const replayResult = this.cradle.replay_move(
-          replay.gameId,
-          replay.readable,
-          replay.entropy,
-        );
-        this.processResultWithoutJournaling(replayResult);
-        this.assertActionSucceeded(replayResult, 'resync replay');
-        this.pendingResync.shift();
-      }
-    } catch (error) {
-      const message = extractErrorMessage(error);
-      this.rxjsEmitter?.next({ type: 'error', error: message });
-      throw error;
-    } finally {
-      this.drainingResync = false;
-    }
-  }
-
-  private processResultWithoutJournaling(result: WasmResult | undefined): void {
-    this.processResult(result ? { ...result, moveReplay: undefined } : undefined);
   }
 
   private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
@@ -1072,19 +986,11 @@ export class SessionController implements PollingGameSession {
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
           const endedId = gs.id != null ? String(gs.id) : null;
           this.activeGameIds = this.activeGameIds.filter((id) => id !== endedId);
-          if (endedId !== null) {
-            this.moveReplayJournal = this.moveReplayJournal.filter(
-              (entry) => entry.gameId !== endedId,
-            );
-          }
         }
       }
       if (tag === 'GameSettled' && n.GameSettled) {
         const settledId = String(n.GameSettled.id);
         this.activeGameIds = this.activeGameIds.filter((id) => id !== settledId);
-        this.moveReplayJournal = this.moveReplayJournal.filter(
-          (entry) => entry.gameId !== settledId,
-        );
       }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
@@ -1554,10 +1460,6 @@ export class SessionController implements PollingGameSession {
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
       lastOutcomeWin: this.lastOutcomeWin,
-      moveReplayJournal: this.moveReplayJournal.map((entry) => ({
-        ...entry,
-        readable: Uint8Array.from(entry.readable),
-      })),
     };
   }
 
@@ -1586,11 +1488,23 @@ export class SessionController implements PollingGameSession {
     this.scheduleSave();
   }
 
-  transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): void {
-    if (!this.onFeatureStateTransition) {
-      throw new Error('Feature state transition callback is unavailable');
+  transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): boolean {
+    try {
+      if (!this.onFeatureStateTransition) {
+        throw new Error('Feature state transition callback is unavailable');
+      }
+      return this.onFeatureStateTransition(gameType, gameId, state);
+    } catch (error) {
+      const message = extractErrorMessage(error);
+      console.error('[session] feature state transition failed:', message);
+      this.rxjsEmitter?.next({
+        type: 'game-action-error',
+        gameId,
+        action: 'feature-state',
+        error: message,
+      });
+      return false;
     }
-    this.onFeatureStateTransition(gameType, gameId, state);
   }
 
   /**
@@ -1600,15 +1514,7 @@ export class SessionController implements PollingGameSession {
   clearDerivedGamePresentation(): void {
     this.activeGameIds = [];
     this.handState = null;
-    this.moveReplayJournal = [];
     this.scheduleSave();
-  }
-
-  restoreMoveReplayJournal(journal: MoveReplayReceipt[] | undefined): void {
-    this.moveReplayJournal = (journal ?? []).slice(-MOVE_REPLAY_JOURNAL_LIMIT).map((entry) => ({
-      ...entry,
-      readable: Uint8Array.from(entry.readable),
-    }));
   }
 
   markRestored() {

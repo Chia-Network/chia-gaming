@@ -9,11 +9,18 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
+import { krunkStateCodec } from '../../features/krunk/stateCodec';
 
 const TERMS = {
   gameType: 'calpoker' as const,
   myContribution: 10n,
   theirContribution: 10n,
+  gameTimeout: 15n,
+};
+const KRUNK_TERMS = {
+  gameType: 'krunk' as const,
+  myContribution: 100n,
+  theirContribution: 100n,
   gameTimeout: 15n,
 };
 
@@ -114,6 +121,145 @@ describe('session machine effect interpreter', () => {
 });
 
 describe('session machine causal sequences', () => {
+  it.each([
+    { player: 'proposer', iStarted: true, weProposed: true, pickerId: '1' },
+    { player: 'acceptor', iStarted: false, weProposed: false, pickerId: '2' },
+  ])(
+    'preserves current Krunk authority through unroll for the $player picker',
+    ({ iStarted, weProposed, pickerId }) => {
+      const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+        controller: fakeController({
+          setHandState: jest.fn(),
+          clearDerivedGamePresentation: jest.fn(),
+        }),
+        iStarted,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        emitGameplay: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        persist: async () => {},
+      });
+      const ids = ['1', '2'];
+      runtime.dispatch({
+        type: 'notification-accepted-group',
+        id: ids[0],
+        groupIds: ids,
+        amount: '100',
+        terms: KRUNK_TERMS,
+        weProposed,
+        iStarted,
+      });
+
+      const assertPickerAuthority = () => {
+        const game = runtime.getState().model.game;
+        const hand = krunkStateCodec.decode(game.handState);
+        expect(game.currentHandIds).toEqual(ids);
+        expect(game.activeGameType).toBe('krunk');
+        expect(game.handState?.gameType).toBe('krunk');
+        expect(Object.keys(hand!.games)).toEqual(ids);
+        expect(hand!.games[pickerId].role).toBe('alice');
+        return hand!.games[pickerId];
+      };
+      const pickWord = () => {
+        const picker = assertPickerAuthority();
+        expect(
+          runtime.transitionFeatureState('krunk', pickerId, {
+            ...picker,
+            handler: 1n,
+            myTurn: false,
+            secretWord: 'CRANE',
+          }),
+        ).toBe(true);
+        expect(assertPickerAuthority().secretWord).toBe('CRANE');
+      };
+
+      assertPickerAuthority();
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted,
+        notification: { ChannelStatus: { state: 'GoingOnChain' } },
+      });
+      pickWord();
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted,
+        notification: { ChannelStatus: { state: 'Unrolling' } },
+      });
+      assertPickerAuthority();
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted,
+        notification: {
+          GameStatus: { id: pickerId, status: 'on-chain-my-turn', coin_id: null },
+        },
+      });
+      assertPickerAuthority();
+    },
+  );
+
+  it('drops a retired feature callback while current malformed callbacks still fail fast', () => {
+    const setHandState = jest.fn();
+    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller: fakeController({
+        setHandState,
+        clearDerivedGamePresentation: jest.fn(),
+      }),
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      emitGameplay: () => {},
+      onError: (error) => {
+        throw error;
+      },
+      persist: async () => {},
+    });
+    runtime.dispatch({
+      type: 'notification-accepted-group',
+      id: '1',
+      groupIds: ['1', '2'],
+      amount: '100',
+      terms: KRUNK_TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+    runtime.dispatch({
+      type: 'notification-game-terminal',
+      id: '1',
+      terminal: {
+        type: 'settled',
+        outcome: 'opponent_timed_out',
+        label: 'Opponent timed out',
+        myReward: '100',
+        rewardCoinHex: null,
+      },
+    });
+    runtime.dispatch({
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '20',
+      terms: TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+    const authority = runtime.getState();
+    const durableCommits = setHandState.mock.calls.length;
+
+    expect(runtime.transitionFeatureState('calpoker', '2', { stale: true })).toBe(false);
+    expect(runtime.transitionFeatureState('krunk', '7', { stale: true })).toBe(false);
+    expect(runtime.getState()).toBe(authority);
+    expect(setHandState).toHaveBeenCalledTimes(durableCommits);
+
+    expect(() => runtime.transitionFeatureState('calpoker', '7', { malformed: true })).toThrow(
+      'Internal feature-state payload is invalid for calpoker',
+    );
+    expect(runtime.getState()).toBe(authority);
+  });
+
   it('persists each accepted deferred coin enrichment once and ignores stale generations', async () => {
     const pending: Array<(coinHex: string | null) => void> = [];
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];

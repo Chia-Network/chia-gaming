@@ -1,7 +1,6 @@
-use super::harness::{ResyncEvent, SimulationHarness};
+use super::harness::SimulationHarness;
 use super::*;
-use crate::common::types::Hash;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AssertionReadiness {
@@ -117,47 +116,6 @@ fn process_assertion_block(
     StepOutcome::Ready
 }
 
-#[derive(Clone, Debug)]
-struct ExecutedMove {
-    player: usize,
-    game_id: GameID,
-    state_number: usize,
-    action_index: usize,
-    readable: ReadableMove,
-    entropy: Hash,
-}
-
-fn enqueue_resync_replays(
-    events: &[ResyncEvent],
-    history: &[ExecutedMove],
-    replay_queue: &mut VecDeque<ExecutedMove>,
-) -> Result<(), Error> {
-    for event in events {
-        if !event.is_my_turn {
-            continue;
-        }
-        let matches: Vec<_> = history
-            .iter()
-            .filter(|executed| {
-                executed.player == event.player
-                    && executed.game_id == event.game_id
-                    && executed.state_number == event.state_number
-            })
-            .collect();
-        if matches.len() != 1 {
-            return Err(Error::StrErr(format!(
-                "resync requires exactly one executed move: player={} game_id={:?} state_number={} is_my_turn=true matches={} history={history:?}",
-                event.player,
-                event.game_id,
-                event.state_number,
-                matches.len(),
-            )));
-        }
-        replay_queue.push_back(matches[0].clone());
-    }
-    Ok(())
-}
-
 pub(in super::super) fn run_script(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
@@ -175,8 +133,6 @@ pub(in super::super) fn run_script(
     let gid_diag_on = gid_diag_enabled();
     let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
     let mut ending = None;
-    let mut executed_moves = Vec::new();
-    let mut replay_queue = VecDeque::new();
     let mut assertion_scheduler = AssertionScheduler::default();
 
     let has_explicit_go_on_chain = moves_input
@@ -185,7 +141,7 @@ pub(in super::super) fn run_script(
 
     while !matches!(ending, Some(0)) {
         harness.begin_step(move_number, moves_input.get(move_number));
-        let (progress, early_success) = harness.pump_block(
+        let (_progress, early_success) = harness.pump_block(
             allocator,
             identities,
             launcher_coin,
@@ -198,7 +154,6 @@ pub(in super::super) fn run_script(
         if early_success {
             return Ok((harness, true));
         }
-        enqueue_resync_replays(progress.resync_events(), &executed_moves, &mut replay_queue)?;
         harness.finish_step_timing(move_number);
 
         if process_assertions(
@@ -208,17 +163,6 @@ pub(in super::super) fn run_script(
             &mut assertion_scheduler,
         ) == StepOutcome::AwaitNextBlock
         {
-            continue;
-        }
-
-        if let Some(replay) = replay_queue.pop_front() {
-            harness.make_move(
-                allocator,
-                replay.player,
-                &replay.game_id,
-                replay.readable,
-                replay.entropy,
-            )?;
             continue;
         }
 
@@ -257,23 +201,7 @@ pub(in super::super) fn run_script(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Move", gid, gid);
                         }
-                        let state_number = harness.move_state_number(*who, gid)?;
-                        let entropy: Hash = rng.random();
-                        harness.make_move(
-                            allocator,
-                            *who,
-                            gid,
-                            readable.clone(),
-                            entropy.clone(),
-                        )?;
-                        executed_moves.push(ExecutedMove {
-                            player: *who,
-                            game_id: *gid,
-                            state_number,
-                            action_index: action_idx,
-                            readable: readable.clone(),
-                            entropy,
-                        });
+                        harness.make_move(allocator, *who, gid, readable.clone(), rng.random())?;
                         ()
                     }
                     SimScriptAction::ProposeNewGame(who, _trigger)
@@ -563,13 +491,7 @@ pub(in super::super) fn run_script(
                 }
                 if schedule.post_action_drain == PostActionDrain::OnChain && harness.any_on_chain()
                 {
-                    let progress =
-                        harness.drain_to_quiescence(allocator, identities, launcher_coin)?;
-                    enqueue_resync_replays(
-                        progress.resync_events(),
-                        &executed_moves,
-                        &mut replay_queue,
-                    )?;
+                    harness.drain_to_quiescence(allocator, identities, launcher_coin)?;
                 }
                 if process_assertions(
                     &harness,
@@ -590,106 +512,6 @@ pub(in super::super) fn run_script(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn executed_move(
-        player: usize,
-        game_id: GameID,
-        state_number: usize,
-        action_index: usize,
-    ) -> ExecutedMove {
-        ExecutedMove {
-            player,
-            game_id,
-            state_number,
-            action_index,
-            readable: ReadableMove::from_program(Rc::new(Program::from_hex("80").expect("nil"))),
-            entropy: Hash::from_bytes([action_index as u8; 32]),
-        }
-    }
-
-    #[test]
-    fn resync_enqueues_exact_fifo_replays_without_coalescing() {
-        let history = [
-            executed_move(1, GameID(3), 17, 4),
-            executed_move(1, GameID(3), 19, 8),
-            executed_move(1, GameID(5), 20, 9),
-        ];
-        let events = [
-            ResyncEvent {
-                player: 1,
-                game_id: GameID(3),
-                state_number: 19,
-                is_my_turn: true,
-            },
-            ResyncEvent {
-                player: 1,
-                game_id: GameID(3),
-                state_number: 19,
-                is_my_turn: true,
-            },
-            ResyncEvent {
-                player: 1,
-                game_id: GameID(5),
-                state_number: 20,
-                is_my_turn: true,
-            },
-        ];
-        let mut queue = VecDeque::new();
-
-        enqueue_resync_replays(&events, &history, &mut queue).expect("exact matches");
-
-        let action_indexes: Vec<_> = queue.iter().map(|replay| replay.action_index).collect();
-        assert_eq!(action_indexes, vec![8, 8, 9]);
-    }
-
-    #[test]
-    fn non_my_turn_resync_is_observed_without_replay() {
-        let mut queue = VecDeque::new();
-        enqueue_resync_replays(
-            &[
-                ResyncEvent {
-                    player: 0,
-                    game_id: GameID(1),
-                    state_number: 4,
-                    is_my_turn: false,
-                },
-                ResyncEvent {
-                    player: 1,
-                    game_id: GameID(5),
-                    state_number: 23,
-                    is_my_turn: false,
-                },
-            ],
-            &[],
-            &mut queue,
-        )
-        .expect("opponent owns the next action");
-        assert!(queue.is_empty());
-    }
-
-    #[test]
-    fn my_turn_resync_without_exact_state_history_fails_fast() {
-        let history = [executed_move(1, GameID(5), 22, 7)];
-        let mut queue = VecDeque::new();
-        let error = enqueue_resync_replays(
-            &[ResyncEvent {
-                player: 1,
-                game_id: GameID(5),
-                state_number: 23,
-                is_my_turn: true,
-            }],
-            &history,
-            &mut queue,
-        )
-        .expect_err("state number mismatch must not use heuristic history");
-
-        assert!(
-            format!("{error:?}")
-                .contains("player=1 game_id=GameID(5) state_number=23 is_my_turn=true matches=0"),
-            "unexpected diagnostic: {error:?}"
-        );
-        assert!(queue.is_empty());
-    }
 
     #[test]
     fn deferred_assertion_resumes_the_whole_contiguous_block_at_one_tip() {
@@ -716,31 +538,5 @@ mod tests {
         );
         assert_eq!(evaluations, 3);
         assert_eq!(cursor, actions.len());
-    }
-
-    #[test]
-    fn exact_replay_queue_does_not_detach_deferred_assertion() {
-        let assertion_index = 12;
-        let mut scheduler = AssertionScheduler::default();
-        scheduler.deferred_by_action_index.insert(
-            assertion_index,
-            DeferredAssertion::GameCoinPublished {
-                player: 1,
-                game_id: GameID(3),
-                parent: CoinString::from_parts(
-                    &CoinID::new(Hash::from_bytes([1; 32])),
-                    &PuzzleHash::from_bytes([2; 32]),
-                    &Amount::new(100),
-                ),
-                submitted_height: 40,
-            },
-        );
-        let mut replay_queue = VecDeque::from([executed_move(1, GameID(3), 9, 7)]);
-
-        assert_eq!(replay_queue.pop_front().unwrap().action_index, 7);
-        assert!(scheduler
-            .deferred_by_action_index
-            .contains_key(&assertion_index));
-        assert!(!scheduler.deferred_by_action_index.contains_key(&7));
     }
 }

@@ -18,16 +18,15 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
-    SettlementOutcome,
+    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, SettlementOutcome,
 };
 use crate::shutdown::get_conditions_with_channel_state;
 use crate::utils::proper_list;
 
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::types::{
-    BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState, WireGameSpec,
-    WireProposalGroup,
+    validate_new_move_action, BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage,
+    PotatoState, WireGameSpec, WireProposalGroup,
 };
 
 use crate::session_phases::proposal::GameProposal;
@@ -1682,6 +1681,12 @@ impl FromLocalUI for OffChainPhase {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
+        validate_new_move_action(
+            id,
+            self.channel_state()?.game_is_my_turn(id),
+            &self.game_action_queue,
+            false,
+        )?;
         let (_continued, effects) =
             self.do_game_action(GameAction::Move(*id, readable.clone(), new_entropy))?;
 
@@ -1727,8 +1732,8 @@ impl SpendWalletReceiver for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         _coin_id: &CoinString,
         _puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
-        Ok((vec![], vec![]))
+    ) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
     }
 }
 
@@ -1766,7 +1771,7 @@ impl PeerLifecyclePhase for OffChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Vec<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         <Self as SpendWalletReceiver>::coin_puzzle_and_solution(
             self,
             env,

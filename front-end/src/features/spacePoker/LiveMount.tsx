@@ -2,7 +2,7 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type { GameMountRegistration } from '../../lib/gameMount';
+import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { HandTermsModel } from '../../lib/session/types';
 import type { GameTerminalModel } from '../../lib/session/types';
@@ -23,6 +23,7 @@ export interface SpacepokerLiveMountProps {
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
+  interactionMode?: GameInteractionMode;
 }
 
 export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
@@ -38,6 +39,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     myName,
     opponentName,
     terminal,
+    interactionMode = 'live',
   } = props;
   const unitSizeMojos = resolveSpacepokerUnitSize({
     terms,
@@ -73,6 +75,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
       myName={myName}
       opponentName={opponentName}
       terminal={terminal}
+      interactionMode={interactionMode}
     />
   );
 }
@@ -85,6 +88,7 @@ export const spacepokerMountRegistration: GameMountRegistration = {
     }
     return (
       <SpacepokerLiveMount
+        key={session.handKey}
         gameObject={session.sessionController}
         gameId={session.activeGameId ?? session.gameSpecificView.displayGameId ?? ''}
         iStarted={session.iStarted}
@@ -94,6 +98,7 @@ export const spacepokerMountRegistration: GameMountRegistration = {
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
         terminal={session.gameSpecificView.terminal}
+        interactionMode={session.interactionMode}
         {...names}
       />
     );
@@ -119,6 +124,7 @@ export const spacepokerMountRegistration: GameMountRegistration = {
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
         terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
+        interactionMode="terminal"
         myName={options.myName}
         opponentName={options.opponentName}
       />

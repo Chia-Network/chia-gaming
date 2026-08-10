@@ -12,6 +12,7 @@ import {
 import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
 import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
 import { krunkStateCodec } from '../../features/krunk/stateCodec';
+import { Program } from 'clvm-lib';
 
 const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
@@ -140,6 +141,133 @@ describe('session machine behavior sequences', () => {
     expect(restored.coordination.proposalTermsById).toMatchObject({
       '1': KRUNK_TERMS,
       '2': KRUNK_TERMS,
+    });
+  });
+
+  it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '1',
+      groupIds: ['1', '2'],
+      amount: '100',
+      terms: KRUNK_TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+    state = send(state, {
+      type: 'notification-game-terminal',
+      id: '1',
+      terminal: {
+        type: 'settled',
+        outcome: 'opponent_timed_out',
+        label: 'Opponent timed out',
+        myReward: '100',
+        rewardCoinHex: null,
+      },
+    });
+    const krunkHandKey = state.model.game.handKey;
+    expect(state.model.game.activeIds).toEqual(['2']);
+    expect(state.model.game.currentHandIds).toEqual(['1', '2']);
+    expect(Object.keys(krunkStateCodec.decode(state.model.game.handState)!.games)).toEqual([
+      '1',
+      '2',
+    ]);
+
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '20',
+      terms: CALPOKER_TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+
+    expect(state.model.game.activeIds).toEqual(['7']);
+    expect(state.model.game.currentHandIds).toEqual(['7']);
+    expect(state.model.game.activeGameType).toBe('calpoker');
+    expect(state.model.game.handState?.gameType).toBe('calpoker');
+    expect(state.model.game.handKey).toBe(krunkHandKey + 1);
+    expect(Object.keys(state.model.game.instances)).toEqual(['7']);
+  });
+
+  it('ignores replayed readables after one Krunk game settles without suppressing its sibling', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '1',
+      groupIds: ['1', '2'],
+      amount: '100',
+      terms: KRUNK_TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+    state = reduceSessionNotification(
+      state,
+      {
+        GameSettled: {
+          id: '1',
+          outcome: 'opponent_timed_out',
+          our_share: '100',
+          coin_id: null,
+        },
+      },
+      false,
+      reduceSessionMachine,
+    ).state;
+    const terminalInstance = state.model.game.instances['1'];
+    const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.games['1'];
+    const staleReadable = Program.fromList([
+      Program.fromBytes(new TextEncoder().encode('SLATE')),
+      Program.fromList([0n, 1n, 0n, 2n, 0n].map(Program.fromBigInt)),
+    ]).serialize();
+
+    const stale = reduceSessionNotification(
+      state,
+      {
+        GameStatus: {
+          id: '1',
+          status: 'my-turn',
+          coin_id: null,
+          other_params: { readable: staleReadable, mover_share: '100' },
+        },
+      },
+      false,
+      reduceSessionMachine,
+    );
+    expect(stale.state.model.game.instances['1']).toEqual(terminalInstance);
+    expect(krunkStateCodec.decode(stale.state.model.game.handState)!.games['1']).toEqual(
+      terminalPayload,
+    );
+    expect(stale.effects.filter((effect) => effect.type === 'emit-gameplay')).toEqual([]);
+
+    const sibling = reduceSessionNotification(
+      stale.state,
+      {
+        GameStatus: {
+          id: '2',
+          status: 'my-turn',
+          coin_id: null,
+          other_params: {
+            readable: Program.fromBytes(new Uint8Array()).serialize(),
+            mover_share: '100',
+          },
+        },
+      },
+      false,
+      reduceSessionMachine,
+    );
+    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.games['2'].handler).toBe(4n);
+    expect(sibling.effects).toContainEqual({
+      type: 'emit-gameplay',
+      event: {
+        OpponentMoved: {
+          gameId: '2',
+          readable: Program.fromBytes(new Uint8Array()).serialize(),
+          moverShare: '100',
+        },
+      },
     });
   });
 
@@ -502,6 +630,152 @@ describe('session machine behavior sequences', () => {
       expect(state.model.game.handState).toBeNull();
     },
   );
+
+  it('keeps Krunk WaitingCommit durable state valid across post-unroll status projection', () => {
+    let state = createSessionMachineState(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      }),
+    );
+    state = run(state, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7', '9'],
+      amount: '100',
+      terms: KRUNK_TERMS,
+      weProposed: true,
+      iStarted: false,
+    });
+    const accepted = state.model.game.handState;
+    expect(krunkStateCodec.decode(accepted)?.games['7']).toMatchObject({
+      handler: 0n,
+      myTurn: true,
+      role: 'alice',
+    });
+
+    state = {
+      ...state,
+      model: {
+        ...state.model,
+        channel: {
+          ...state.model.channel,
+          status: { ...state.model.channel.status, state: 'GoingOnChain' },
+        },
+      },
+    };
+    state = {
+      ...state,
+      model: {
+        ...state.model,
+        channel: {
+          ...state.model.channel,
+          status: { ...state.model.channel.status, state: 'Unrolling' },
+        },
+      },
+    };
+    state = run(state, {
+      type: 'notification-game-status',
+      id: '7',
+      payload: {
+        id: '7',
+        status: 'on-chain-my-turn',
+        coin_id: new Uint8Array([1]),
+      },
+      channelState: 'Unrolling',
+      readable: null,
+      moverShare: null,
+      iStarted: false,
+    });
+
+    expect(state.model.game.instances['7'].presentation).toBe('on-chain-my-turn');
+    expect(state.model.game.handState).toEqual(accepted);
+    const decoded = krunkStateCodec.decode(state.model.game.handState);
+    expect(decoded?.games['7']).toMatchObject({
+      handler: 0n,
+      myTurn: true,
+      role: 'alice',
+    });
+    expect(() =>
+      reduceSessionMachine(state, {
+        type: 'feature-state',
+        gameType: 'krunk',
+        id: '7',
+        state: {
+          ...decoded!.games['7'],
+          handler: 1n,
+          myTurn: false,
+          secretWord: 'CRANE',
+        },
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      sessionModelFromSave({
+        version: 11n,
+        playerId: 'p1',
+        serializedGameSession: new Uint8Array([1]),
+        gameSessionSchemaVersion: 3n,
+        pairingToken: 'pair',
+        messageNumber: 1n,
+        remoteNumber: 0n,
+        iStarted: false,
+        myContribution: '100',
+        theirContribution: '100',
+        perGameAmount: '100',
+        rewardPuzzleHash: '11'.repeat(32),
+        unackedMessages: [],
+        ...snapshotFromSessionModel(state.model),
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    { gameType: 'calpoker' as const, terms: CALPOKER_TERMS },
+    {
+      gameType: 'spacepoker' as const,
+      terms: {
+        gameType: 'spacepoker' as const,
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
+      },
+    },
+  ])('does not invent $gameType durable turns from chain progress statuses', ({ terms }) => {
+    let state = createSessionMachineState(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+      }),
+    );
+    state = run(state, {
+      type: 'notification-accepted-group',
+      id: '7',
+      groupIds: ['7'],
+      amount: '100',
+      terms,
+      weProposed: true,
+      iStarted: false,
+    });
+    const accepted = state.model.game.handState;
+
+    for (const status of [
+      'on-chain-my-turn',
+      'on-chain-their-turn',
+      'playing-move',
+      'replaying',
+    ] as const) {
+      state = run(state, {
+        type: 'notification-game-status',
+        id: '7',
+        payload: { id: '7', status, coin_id: new Uint8Array([1]) },
+        channelState: 'Unrolling',
+        readable: null,
+        moverShare: null,
+        iStarted: false,
+      });
+      expect(state.model.game.handState).toEqual(accepted);
+    }
+  });
 
   it('fails fast for mismatched feature-state type, id, and payload', () => {
     const initial = createSessionMachineState(

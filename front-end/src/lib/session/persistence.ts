@@ -575,36 +575,6 @@ function validateOptionalScalarFields(save: SessionSave): void {
       }
     });
   }
-  if (save.moveReplayJournal !== undefined) {
-    if (!Array.isArray(save.moveReplayJournal) || save.moveReplayJournal.length > 256) {
-      throw new Error('Garbled save: invalid moveReplayJournal');
-    }
-    const keys = new Set<string>();
-    save.moveReplayJournal.forEach((entry, index) => {
-      const record = requireRecord(entry, `moveReplayJournal[${index}]`);
-      const gameId = requireString(record.gameId, `moveReplayJournal[${index}].gameId`);
-      const stateNumber =
-        typeof record.stateNumber === 'bigint'
-          ? record.stateNumber
-          : typeof record.stateNumber === 'number' && Number.isSafeInteger(record.stateNumber)
-            ? BigInt(record.stateNumber)
-            : null;
-      if (stateNumber === null || stateNumber < 0n) {
-        throw new Error(`Garbled save: invalid moveReplayJournal[${index}].stateNumber`);
-      }
-      const key = `${gameId}:${stateNumber}`;
-      if (keys.has(key)) {
-        throw new Error(`Garbled save: duplicate moveReplayJournal key ${key}`);
-      }
-      keys.add(key);
-      if (!(record.readable instanceof Uint8Array)) {
-        throw new Error(`Garbled save: invalid moveReplayJournal[${index}].readable`);
-      }
-      if (typeof record.entropy !== 'string' || !/^[0-9a-fA-F]{64}$/.test(record.entropy)) {
-        throw new Error(`Garbled save: invalid moveReplayJournal[${index}].entropy`);
-      }
-    });
-  }
 }
 
 function validateChannelStatus(value: unknown): void {
@@ -693,7 +663,6 @@ const CHANNEL_PAYLOAD_FIELDS: readonly SessionSaveField[] = [
 ];
 const GAME_PAYLOAD_FIELDS: readonly SessionSaveField[] = [
   'activeGameIds',
-  'moveReplayJournal',
   'currentHandGameIds',
   'lastDisplayedGameId',
   'gameInstances',

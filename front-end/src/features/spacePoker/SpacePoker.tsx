@@ -16,6 +16,7 @@ import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import { formatAmount } from '../../util';
 import { settlementLabel } from '../../lib/settlement';
 import type { GameTerminalModel } from '../../lib/session/types';
+import type { GameInteractionMode } from '../../lib/gameMount';
 
 const RANK_LABELS: Record<number, string> = {
   2: '2',
@@ -505,6 +506,7 @@ export function spacePokerFooterPresentation(
 }
 
 interface ActionBarProps {
+  interactive: boolean;
   handler: SpHandler;
   myTurn: boolean;
   round: string;
@@ -520,6 +522,7 @@ interface ActionBarProps {
 }
 
 function ActionBar({
+  interactive,
   handler,
   myTurn,
   round,
@@ -539,7 +542,7 @@ function ActionBar({
   const raiseAmountInput = Math.min(raiseAmount, maxRaiseInput);
   const isBeginRound = handler === SpHandler.BeginRound;
   const autoPong = isBeginRound && round === '4' && coinTossIOpen === false;
-  const actionsEnabled = myTurn && inBetting && !autoPong && !forcedAuto;
+  const actionsEnabled = interactive && myTurn && inBetting && !autoPong && !forcedAuto;
   const checkCallLabel =
     handler === SpHandler.MidRound && lastRaiseUnits !== '0' ? 'Call' : 'Check';
 
@@ -608,6 +611,7 @@ export interface SpacePokerProps {
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
+  interactionMode?: GameInteractionMode;
 }
 
 export default function SpacePoker({
@@ -622,7 +626,9 @@ export default function SpacePoker({
   myName,
   opponentName,
   terminal,
+  interactionMode = 'live',
 }: SpacePokerProps) {
+  const interactive = interactionMode === 'live';
   const betSizeValue = BigInt(betSize);
   const unitSizeMojosValue = BigInt(unitSizeMojos);
   const sp = useSpacepokerHand(
@@ -635,6 +641,7 @@ export default function SpacePoker({
     onTurnChanged,
     terminal,
     gameObject.handState ?? undefined,
+    interactive,
   );
   const { handler, myTurn, N } = sp.gameState;
 
@@ -650,7 +657,7 @@ export default function SpacePoker({
     if (!gameObject) return;
     gameObject.nerf();
   }, [gameObject]);
-  useCheatNerfKeys(handleCheat, handleNerf);
+  useCheatNerfKeys(handleCheat, handleNerf, interactive);
 
   // Write to the session history panel when the hand finishes.
   // If restoring from a persisted terminal state, skip logging (already logged).
@@ -934,6 +941,7 @@ export default function SpacePoker({
             )}
             {/* Action bar */}
             <ActionBar
+              interactive={interactive}
               handler={handler}
               myTurn={myTurn}
               round={String(N)}

@@ -11,7 +11,7 @@ workflow guidance stays in `DEBUGGING_GUIDE.md`.
 | `src/test_support/sim_script.rs`                           | Public script vocabulary: `SimScriptAction`, `ActionSchedule`, data-bearing `ActionReadiness`, assertions, triggers, and default constants |
 | `src/simulator/tests/session_phases_sim.rs`                | Shared simulator types/setup, outcome validation, and integration scenarios                                 |
 | `src/simulator/tests/session_phases_sim/harness.rs`        | Private production-order host boundary, chain/event state, quiescence, readiness observations, and fault injection |
-| `src/simulator/tests/session_phases_sim/script_runner.rs`  | Script cursor, transient resync replay FIFO, action execution, and indexed assertion scheduler              |
+| `src/simulator/tests/session_phases_sim/script_runner.rs`  | Script cursor, action execution, and indexed assertion scheduler                                            |
 | `src/test_support/calpoker_sim.rs`                         | Calpoker test helpers such as `prefix_test_moves`                                                           |
 | `src/test_support/spacepoker_sim.rs`                       | Space Poker test helpers                                                                                    |
 | `src/test_support/debug_game.rs`                           | Debug game setup helpers for focused channel/on-chain tests                                                 |
@@ -221,18 +221,12 @@ condition is satisfied.
 `received_proposal_ids`, `game_accepted_ids`, `opponent_moved_in_game`,
 `game_finished_ids` (populated when `GameSettled` arrives), `accepted_proposal_ids`, and `channel_created`.
 
-Resync is typed and lossless end to end. `GameSession` owns the transient
-`pending_resync` FIFO and drains it into each flush result as
-`Vec<ResyncInfo { game_id, state_number, is_my_turn }>`; `TransactionManager`
-only forwards that result and does not buffer or coalesce resync hints. The
-harness appends every item in source order as
-`ResyncEvent { player, game_id, state_number, is_my_turn }`. The runner turns
-our-turn events into a transient FIFO of exact prior move payloads. A replay
-requires exactly one executed move matching the full
-`(player, game_id, state_number)` tuple and reuses that move's readable payload
-and entropy. Replays do not increment, decrement, or otherwise rewind the
-script cursor, so they cannot repeat intervening control actions or lose
-multiple resync events.
+The simulator never reissues a scripted move. Each `SimScriptAction::Move`
+represents one semantic UI command. If an unacknowledged move must be redone
+after an unroll, the serialized Rust `ChannelState` supplies the cached referee
+state and `SpendChannelCoinPhase::finish_on_chain_transition` constructs the
+on-chain move. The script cursor only advances forward; there is no resync
+event, replay queue, or cursor-rewind heuristic in the harness.
 
 ## Two-Phase AcceptProposal
 

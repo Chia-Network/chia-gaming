@@ -16,13 +16,29 @@ export interface FinishedSessionGameViewProps {
   iProposedHand?: boolean;
 }
 
-function FinishedSessionFallback({ label }: { label: string | null }) {
+function FinishedSessionFallback({
+  label,
+  reason,
+  detail,
+}: {
+  label: string | null;
+  reason: 'unavailable' | 'render-error';
+  detail?: string | null;
+}) {
   return (
     <div
-      className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+      className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center text-canvas-solid"
       data-testid="finished-session-fallback"
     >
-      {label ?? 'No hand details available'}
+      {label && <p>{label}</p>}
+      <p>
+        {reason === 'render-error' ? 'Game details failed to render.' : 'Game details unavailable.'}
+      </p>
+      {detail && (
+        <pre className="max-w-full overflow-auto whitespace-pre-wrap text-left text-xs">
+          {detail}
+        </pre>
+      )}
     </div>
   );
 }
@@ -34,17 +50,18 @@ interface FinishedSessionErrorBoundaryProps {
 }
 
 interface FinishedSessionErrorBoundaryState {
-  hasError: boolean;
+  error: Error | null;
+  componentStack: string | null;
 }
 
 export class FinishedSessionErrorBoundary extends Component<
   FinishedSessionErrorBoundaryProps,
   FinishedSessionErrorBoundaryState
 > {
-  state: FinishedSessionErrorBoundaryState = { hasError: false };
+  state: FinishedSessionErrorBoundaryState = { error: null, componentStack: null };
 
-  static getDerivedStateFromError(): FinishedSessionErrorBoundaryState {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error): FinishedSessionErrorBoundaryState {
+    return { error, componentStack: null };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -53,17 +70,26 @@ export class FinishedSessionErrorBoundary extends Component<
       error,
       info.componentStack,
     );
+    this.setState({ componentStack: info.componentStack ?? null });
   }
 
   componentDidUpdate(previous: FinishedSessionErrorBoundaryProps) {
-    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
+    if (previous.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null, componentStack: null });
     }
   }
 
   render() {
-    if (this.state.hasError) {
-      return <FinishedSessionFallback label={this.props.fallbackLabel} />;
+    if (this.state.error) {
+      return (
+        <FinishedSessionFallback
+          label={this.props.fallbackLabel}
+          reason="render-error"
+          detail={[this.state.error.stack ?? this.state.error.message, this.state.componentStack]
+            .filter(Boolean)
+            .join('\n')}
+        />
+      );
     }
     return this.props.children;
   }
@@ -97,7 +123,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
 
   if (!display.canRemountHand || !handState) {
-    return <FinishedSessionFallback label={display.terminalLabel} />;
+    return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;
   }
 
   const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;

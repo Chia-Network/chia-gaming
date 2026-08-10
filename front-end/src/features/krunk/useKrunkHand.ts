@@ -127,6 +127,23 @@ function krunkTerminalNotice(
 ): KrunkBoardNotice | null {
   if (state.handler !== KrunkHandler.Terminal) return null;
   if (terminal.outcome != null) {
+    if (
+      terminal.outcome === 'opponent_timed_out' ||
+      terminal.outcome === 'timed_out_waiting_for_our_move'
+    ) {
+      const weTimedOut = terminal.outcome === 'timed_out_waiting_for_our_move';
+      const guesserLabel = state.role === 'bob' ? 'You' : opponentLabel;
+      const guesserTimedOut = state.role === 'bob' ? weTimedOut : !weTimedOut;
+      if (!guesserTimedOut && gameAmount === null) {
+        throw new Error('Krunk timeout winner is missing the game amount');
+      }
+      return {
+        text: `${guesserLabel} got ${
+          guesserTimedOut ? 'nothing' : krunkAmountLabel(gameAmount!)
+        } due to timeout.`,
+        kind: 'info',
+      };
+    }
     const clean =
       terminal.outcome === 'accept_settlement' ||
       terminal.outcome === 'we_accepted' ||
@@ -205,17 +222,19 @@ export function krunkWinMessage(moverShare: string): string {
   return krunkWinnerMessage('You', moverShare);
 }
 
-export function krunkWinnerMessage(winner: string, amount: string): string {
+function krunkAmountLabel(amount: string): string {
   const mojos = BigInt(amount);
-  if (mojos < 1_000_000n) {
-    return `${winner} won ${mojos} mojo!`;
-  }
+  if (mojos < 1_000_000n) return `${mojos} mojo`;
   const TRILLION = 1_000_000_000_000n;
   const whole = mojos / TRILLION;
   const frac = mojos % TRILLION;
-  if (frac === 0n) return `${winner} won ${whole} chia!`;
+  if (frac === 0n) return `${whole} chia`;
   const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `${winner} won ${whole}.${fracStr} chia!`;
+  return `${whole}.${fracStr} chia`;
+}
+
+export function krunkWinnerMessage(winner: string, amount: string): string {
+  return `${winner} won ${krunkAmountLabel(amount)}!`;
 }
 
 const MAX_GUESSES = 5;
@@ -279,9 +298,12 @@ export function useKrunkHand(
   const transition = useCallback(
     (next: KrunkGameState) => {
       if (gameIdRef.current) {
-        gameObjectRef.current.transitionFeatureState('krunk', gameIdRef.current, next);
+        if (!gameObjectRef.current.transitionFeatureState('krunk', gameIdRef.current, next)) {
+          return false;
+        }
       }
       projectState(next);
+      return true;
     },
     [projectState],
   );
@@ -293,14 +315,13 @@ export function useKrunkHand(
       moverShare: string | null = null,
     ) => {
       const cur = gsRef.current;
-      handFinishedRef.current = true;
       // Outcome from local POV: alice wins if bob never guessed correctly
       // (all clues != all-2s), bob wins if he guessed correctly.
       const correct = (c: KrunkGuess['clue']) => c.every((v) => v === 2n);
       const bobGuessedCorrectly =
         cur.guesses.some((g) => correct(g.clue)) || (lastClue !== null && correct(lastClue));
       const aliceWon = !bobGuessedCorrectly;
-      transition({
+      const committed = transition({
         ...cur,
         handler: KrunkHandler.Terminal,
         myTurn: false,
@@ -309,6 +330,8 @@ export function useKrunkHand(
         outcome:
           (cur.role === 'alice' && aliceWon) || (cur.role === 'bob' && !aliceWon) ? 'win' : 'lose',
       });
+      if (committed) handFinishedRef.current = true;
+      return committed;
     },
     [transition],
   );
@@ -370,9 +393,9 @@ export function useKrunkHand(
       const isReveal =
         !!latest && (latest.clue.every((v) => v === 2n) || gs.guesses.length >= MAX_GUESSES);
       if (isReveal) {
-        finishGame(gs.secretWord, latest.clue);
+        if (!finishGame(gs.secretWord, latest.clue)) return;
       } else {
-        transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false });
+        if (!transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false })) return;
       }
       go.makeMove(gid, null);
     } catch (e) {
@@ -397,14 +420,15 @@ export function useKrunkHand(
         console.warn('[krunk] secret word must be 5 letters');
         return;
       }
+      const committed = transition({
+        ...cur,
+        secretWord: normalised,
+        handler: KrunkHandler.AliceWaiting,
+        myTurn: false,
+        error: null,
+      });
+      if (!committed) return;
       try {
-        transition({
-          ...cur,
-          secretWord: normalised,
-          handler: KrunkHandler.AliceWaiting,
-          myTurn: false,
-          error: null,
-        });
         go.makeMove(gid, wordToProgram(normalised));
       } catch (e) {
         console.error('[krunk] commit failed', e);
@@ -432,19 +456,20 @@ export function useKrunkHand(
         console.warn('[krunk] guess must be 5 letters');
         return;
       }
+      const committed = transition({
+        ...cur,
+        guesses: [
+          ...cur.guesses,
+          // Use -1 as a "pending" sentinel; replaced when alice's
+          // clue readable arrives.
+          { word: normalised, clue: PENDING_CLUE },
+        ],
+        handler: KrunkHandler.BobWaiting,
+        myTurn: false,
+        error: null,
+      });
+      if (!committed) return;
       try {
-        transition({
-          ...cur,
-          guesses: [
-            ...cur.guesses,
-            // Use -1 as a "pending" sentinel; replaced when alice's
-            // clue readable arrives.
-            { word: normalised, clue: PENDING_CLUE },
-          ],
-          handler: KrunkHandler.BobWaiting,
-          myTurn: false,
-          error: null,
-        });
         go.makeMove(gid, wordToProgram(normalised));
       } catch (e) {
         console.error('[krunk] guess failed', e);

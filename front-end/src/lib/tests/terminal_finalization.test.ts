@@ -1,6 +1,17 @@
 import 'fake-indexeddb/auto';
 
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
 import type { SessionController } from '../../hooks/SessionController';
+import {
+  initialKrunkGameState,
+  krunkStateCodec,
+  KrunkHandler,
+} from '../../features/krunk/stateCodec';
+import { reduceKrunkDurableState } from '../../features/krunk/adapter';
+import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
+import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
   discardStagedTerminalSession,
@@ -16,6 +27,10 @@ import {
 import { createSessionModel } from '../session/model';
 import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope } from '../session/persistence';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { persistSessionSnapshot } from '../session/sessionMachinePersist';
+import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
+import { renderFrozenGameMount } from '../gameMountRegistry';
 import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
@@ -272,6 +287,238 @@ it('atomically removes live restart fields through the real mutation queue', asy
   expect(stored).not.toHaveProperty('serializedGameSession');
   expect(stored).not.toHaveProperty('messageNumber');
   expect(stored).not.toHaveProperty('unackedMessages');
+});
+
+it('routes a normally resolved on-chain snapshot through terminal persistence', async () => {
+  const save = jest.fn(async () => {});
+  const saveTerminal = jest.fn(async () => {});
+  const controller = {
+    getWasmFields: () => ({
+      serializedGameSession: liveCradle,
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'live-token',
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      iStarted: true,
+      handState,
+      channelStatus: { state: 'ResolvedClean' },
+      wasmNotificationHistory: [],
+      diagnosticLog: [],
+    }),
+    getCoinsOfInterest: () => [{ label: 'Reward coin', id: 'coin-1' }],
+  } as unknown as SessionController;
+
+  await persistSessionSnapshot({
+    controller,
+    getState: () => createSessionMachineState(model),
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    save,
+    saveTerminal,
+  });
+
+  expect(save).not.toHaveBeenCalled();
+  expect(saveTerminal).toHaveBeenCalledTimes(1);
+  expect(saveTerminal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channelStatus: { state: 'ResolvedClean' },
+      serializedGameSession: liveCradle,
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    }),
+  );
+});
+
+it('freezes both role-aware Krunk timeout boards after queued terminal reductions', async () => {
+  const ids = ['picker', 'guesser'];
+  const pickerBeforeTimeout = {
+    ...initialKrunkGameState('alice'),
+    handler: KrunkHandler.AliceWaiting,
+    myTurn: false,
+    secretWord: 'CRANE',
+  };
+  const acceptedHandState = krunkStateCodec.encode({
+    games: {
+      picker: pickerBeforeTimeout,
+      guesser: initialKrunkGameState('bob'),
+    },
+  });
+  const timeoutModel = createSessionModel({
+    channel: {
+      status: {
+        state: 'ResolvedUnrolled',
+        ourBalance: '100',
+        theirBalance: '100',
+      },
+    },
+    game: {
+      activeIds: [],
+      currentHandIds: ids,
+      activeGameType: 'krunk',
+      lastDisplayedId: 'picker',
+      handState: acceptedHandState,
+      instances: {
+        picker: {
+          id: 'picker',
+          amount: '100',
+          coinHex: null,
+          presentation: 'ended',
+          terminal: {
+            type: 'settled',
+            outcome: 'opponent_timed_out',
+            label: 'Opponent timed out',
+            myReward: '100',
+            rewardCoinHex: null,
+          },
+        },
+        guesser: {
+          id: 'guesser',
+          amount: '100',
+          coinHex: null,
+          presentation: 'ended',
+          terminal: {
+            type: 'settled',
+            outcome: 'opponent_timed_out',
+            label: 'Opponent timed out',
+            myReward: '100',
+            rewardCoinHex: null,
+          },
+        },
+      },
+    },
+    betweenHand: {
+      lastTerms: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+      },
+    },
+  });
+  const transitions: Array<{
+    settledId: string;
+    payloadIds: string[];
+    terminalIds: string[];
+  }> = [];
+  const controller = {
+    handState: acceptedHandState,
+    flushPendingSave: async () => {
+      for (const settledId of ids) {
+        const current = krunkStateCodec.decode(controller.handState);
+        expect(current).not.toBeNull();
+        const next = reduceKrunkDurableState(current, { type: 'settled', id: settledId });
+        expect(next).not.toBeNull();
+        controller.handState = krunkStateCodec.encode(next!);
+        const decoded = krunkStateCodec.decode(controller.handState);
+        expect(decoded).not.toBeNull();
+        transitions.push({
+          settledId,
+          payloadIds: Object.keys(decoded!.games),
+          terminalIds: Object.entries(decoded!.games)
+            .filter(([, state]) => state.handler === KrunkHandler.Terminal)
+            .map(([id]) => id),
+        });
+      }
+    },
+  } as unknown as SessionController;
+  const stageTerminal = jest.fn(async () => {});
+
+  const terminal = await finalizeTerminalSession(
+    {
+      controller,
+      model: timeoutModel,
+      identity: {
+        myName: 'Alice',
+        opponentName: 'Bob',
+        iStarted: false,
+        iProposedHand: true,
+      },
+      coins: [],
+    },
+    {
+      stageTerminal,
+      flushSave: async () => {},
+      discardTerminal: () => {},
+      updateMarker: () => {},
+      teardown: () => {},
+    },
+  );
+
+  expect(selectFinishedSessionDisplay(terminal.model)).toEqual({
+    canRemountHand: true,
+    terminalLabel: 'Opponent timed out',
+  });
+  expect(transitions).toEqual([
+    {
+      settledId: 'picker',
+      payloadIds: ids,
+      terminalIds: ['picker'],
+    },
+    {
+      settledId: 'guesser',
+      payloadIds: ids,
+      terminalIds: ids,
+    },
+  ]);
+  const frozenHand = krunkStateCodec.decode(terminal.model.game.handState);
+  expect(frozenHand).not.toBeNull();
+  expect(Object.keys(frozenHand!.games)).toEqual(ids);
+  expect(
+    Object.values(frozenHand!.games).every((state) => state.handler === KrunkHandler.Terminal),
+  ).toBe(true);
+  expect(
+    krunkBoardNotice(
+      frozenHand!.games.picker,
+      'Bob',
+      timeoutModel.game.instances.picker.terminal,
+      '100',
+    ),
+  ).toEqual({
+    text: 'Bob got nothing due to timeout.',
+    kind: 'info',
+  });
+  expect(
+    krunkBoardNotice(
+      frozenHand!.games.guesser,
+      'Bob',
+      timeoutModel.game.instances.guesser.terminal,
+      '100',
+    ),
+  ).toEqual({
+    text: 'You got 100 mojo due to timeout.',
+    kind: 'info',
+  });
+  const frozen = renderFrozenGameMount(terminal.model, controller, {
+    iStarted: false,
+    iProposedHand: true,
+  });
+  expect(frozen.props).toMatchObject({
+    currentHandGameIds: ids,
+    activeGameIds: [],
+    interactionMode: 'terminal',
+  });
+  const markup = renderToStaticMarkup(
+    React.createElement(FinishedSessionGameView, {
+      model: terminal.model,
+      myName: 'Alice',
+      opponentName: 'Bob',
+      iStarted: false,
+      iProposedHand: true,
+    }),
+  );
+  expect(markup).toContain('data-testid="finished-session-game-view"');
+  expect(markup).not.toContain('Game details unavailable');
+  expect(stageTerminal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      currentHandGameIds: ids,
+      activeGameIds: [],
+      handState: controller.handState,
+      gameInstances: {
+        picker: timeoutModel.game.instances.picker,
+        guesser: timeoutModel.game.instances.guesser,
+      },
+    }),
+  );
 });
 
 it('keeps live state and ownership after failure, then retries without teardown durability', async () => {

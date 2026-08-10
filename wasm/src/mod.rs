@@ -103,13 +103,6 @@ mod gaming_wasm {
         "events": Array<GameSessionEvent>,
         "watchCoins": Array<{ coin_name: string, coin_string: string }>,
         "unwatchCoins": Array<{ coin_name: string, coin_string: string }>,
-        "resync": Array<{ game_id: bigint | number, state_number: bigint | number, is_my_turn: boolean }>,
-        "moveReplay"?: {
-            gameId: string,
-            stateNumber: bigint | number,
-            readable: Uint8Array,
-            entropy: string,
-        },
     };
 
     export type GameSessionConfig = {
@@ -145,7 +138,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 3;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 4;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -890,7 +883,6 @@ mod gaming_wasm {
             None
         };
         with_game(cid, move |cradle: &mut JsGameSession| {
-            let state_number = cradle.cradle.cradle().move_state_number(&game_id)?;
             let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.random());
             let action_succeeded = match cradle.cradle.make_move(
                 &mut cradle.allocator,
@@ -913,34 +905,7 @@ mod gaming_wasm {
             let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
             let pending_terminal = cradle.cradle.pending_terminal_handoff();
             let terminal = cradle.cradle.is_fully_resolved();
-            let result =
-                manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)?;
-            if action_succeeded {
-                let receipt = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(
-                    &receipt,
-                    &"gameId".into(),
-                    &game_id_to_string(&game_id).into(),
-                );
-                let _ = js_sys::Reflect::set(
-                    &receipt,
-                    &"stateNumber".into(),
-                    &(state_number as u64).into(),
-                );
-                let readable_bytes = readable_move.to_program().bytes();
-                let _ = js_sys::Reflect::set(
-                    &receipt,
-                    &"readable".into(),
-                    &js_sys::Uint8Array::from(readable_bytes),
-                );
-                let _ = js_sys::Reflect::set(
-                    &receipt,
-                    &"entropy".into(),
-                    &hex::encode(entropy.0).into(),
-                );
-                let _ = js_sys::Reflect::set(&result, &"moveReplay".into(), &receipt);
-            }
-            Ok(result)
+            manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)
         })
     }
 
@@ -952,16 +917,6 @@ mod gaming_wasm {
         new_entropy: &str,
     ) -> Result<JsValue, JsValue> {
         make_move_inner(cid, id, readable, Some(new_entropy))
-    }
-
-    #[wasm_bindgen]
-    pub fn replay_move(
-        cid: i32,
-        id: &str,
-        readable: &[u8],
-        entropy: &str,
-    ) -> Result<JsValue, JsValue> {
-        make_move_inner(cid, id, readable, Some(entropy))
     }
 
     #[wasm_bindgen]
@@ -1365,13 +1320,10 @@ mod gaming_wasm {
             .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let unwatch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.unwatch_coins))
             .map_err(|e| types::Error::StrErr(e.to_string()))?;
-        let resync = serde_wasm_bindgen::to_value(&drain.resync)
-            .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
         let _ = js_sys::Reflect::set(&obj, &"unwatchCoins".into(), &unwatch_coins);
-        let _ = js_sys::Reflect::set(&obj, &"resync".into(), &resync);
         let _ = js_sys::Reflect::set(
             &obj,
             &"actionSucceeded".into(),

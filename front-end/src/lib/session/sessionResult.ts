@@ -1,6 +1,8 @@
+import { useCallback, useEffect, useState } from 'react';
 import type { Observable } from 'rxjs';
 import type { CalpokerOutcome } from '../../features/calPoker/outcome';
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
+import type { GameInteractionMode } from '../gameMount';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameplayEvent } from './gameSessionEvents';
@@ -15,6 +17,11 @@ import type {
   SessionModel,
 } from './types';
 import type { selectGameSpecificView } from './selectors';
+import {
+  selectGameSessionView,
+  selectGameSpecificView as selectTerminalGameSpecificView,
+  selectSessionPhase,
+} from './selectors';
 
 export interface UseGameSessionResult {
   sessionModel: SessionModel;
@@ -71,4 +78,128 @@ export interface UseGameSessionResult {
   dismissChannel: () => void;
   dismissGame: () => void;
   gameSpecificView: ReturnType<typeof selectGameSpecificView>;
+  interactionMode: GameInteractionMode;
+}
+
+export interface TerminalSessionPresentation {
+  model: SessionModel;
+  myName?: string;
+  opponentName?: string;
+  iStarted: boolean;
+  iProposedHand: boolean;
+}
+
+const NOOP = () => {};
+
+export interface TerminalSessionPresentationState {
+  presentation: TerminalSessionPresentation | null;
+  dismissChannel: () => void;
+  dismissGame: () => void;
+}
+
+export function useTerminalSessionPresentation(
+  source: TerminalSessionPresentation | null | undefined,
+): TerminalSessionPresentationState {
+  const [model, setModel] = useState<SessionModel | null>(source?.model ?? null);
+  useEffect(() => {
+    if (!source) {
+      setModel(null);
+    } else {
+      setModel((current) => current ?? source.model);
+    }
+  }, [source]);
+  const dismissChannel = useCallback(() => {
+    setModel((current) => {
+      const terminal = current ?? source?.model;
+      return terminal
+        ? {
+            ...terminal,
+            channel: { ...terminal.channel, queue: terminal.channel.queue.slice(1) },
+          }
+        : current;
+    });
+  }, [source]);
+  const dismissGame = useCallback(() => {
+    setModel((current) => {
+      const terminal = current ?? source?.model;
+      return terminal
+        ? {
+            ...terminal,
+            game: { ...terminal.game, queue: terminal.game.queue.slice(1) },
+          }
+        : current;
+    });
+  }, [source]);
+  return {
+    presentation: source ? { ...source, model: model ?? source.model } : null,
+    dismissChannel,
+    dismissGame,
+  };
+}
+
+export function projectTerminalSessionResult(
+  live: UseGameSessionResult,
+  presentation: TerminalSessionPresentation,
+  bridge: SessionController,
+  gameplayEvent$: Observable<GameplayEvent>,
+  dismissals?: Pick<TerminalSessionPresentationState, 'dismissChannel' | 'dismissGame'>,
+): UseGameSessionResult {
+  const { model, iStarted, iProposedHand } = presentation;
+  const view = selectGameSessionView(model);
+
+  return {
+    ...live,
+    sessionModel: model,
+    gameConnectionState: model.channel.connection,
+    currentHandAmount: view.currentHandAmount,
+    myRunningBalance: model.myRunningBalance,
+    iStarted,
+    playerNumber: iStarted ? 1 : 2,
+    channelStatus: view.channelStatus,
+    gameCoin: view.gameCoin,
+    gameTerminal: view.gameTerminal,
+    handKey: model.game.handKey,
+    activeGameId: view.activeGameId,
+    activeGameIds: view.activeGameIds,
+    currentHandGameIds: model.game.currentHandIds,
+    iProposedHand,
+    activeGameType: view.activeGameType,
+    displayGameId: view.displayGameId,
+    sessionController: bridge,
+    gameplayEvent$,
+    appendGameLog: NOOP,
+    onHandOutcome: NOOP,
+    onTurnChanged: NOOP,
+    betweenHandMode: model.betweenHand.mode,
+    cachedPeerProposal: model.betweenHand.cachedPeerProposal,
+    reviewPeerProposal: model.betweenHand.reviewPeerProposal,
+    lastHandTerms: model.betweenHand.lastTerms,
+    composeDraftState: model.betweenHand.compose,
+    chooseNewHandSameTerms: NOOP,
+    chooseDoNotUseCurrentProposal: NOOP,
+    openComposeProposal: NOOP,
+    setComposeGameTimeout: NOOP,
+    setComposeGameType: NOOP,
+    setCalpokerComposeAmount: NOOP,
+    setKrunkComposeAmount: NOOP,
+    setSpacepokerComposeDraft: NOOP,
+    composeProposalSent: model.betweenHand.compose.proposalSent,
+    newHandRequested: model.betweenHand.newHandRequested,
+    submitComposedProposal: NOOP,
+    acceptReviewedProposal: NOOP,
+    rejectReviewedProposal: NOOP,
+    startCleanShutdown: NOOP,
+    cleanShutdownStarted: model.channel.cleanShutdownStarted,
+    goOnChain: NOOP,
+    betweenHands: view.betweenHands,
+    restoreStatus: model.restore.status,
+    restoreError: model.restore.error,
+    sessionPhase: selectSessionPhase(model, false),
+    channelQueue: view.channelQueue,
+    gameQueue: view.gameQueue,
+    dismissChannel: dismissals?.dismissChannel ?? NOOP,
+    dismissGame: dismissals?.dismissGame ?? NOOP,
+    gameSpecificView: selectTerminalGameSpecificView(model),
+    interactionMode: 'terminal',
+  };
 }

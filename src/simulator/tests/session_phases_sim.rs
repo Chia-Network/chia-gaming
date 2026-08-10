@@ -17,7 +17,7 @@ use crate::common::types::{
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
-    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind, ResyncInfo,
+    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind,
     SettlementOutcome, UnrollInitiator,
 };
 use crate::session_phases::game_collection;
@@ -882,6 +882,20 @@ impl GameRunOutcome {
                 }
             })
             .collect()
+    }
+
+    pub fn transaction_submission_count_for_coin(&self, player: usize, coin: &CoinString) -> usize {
+        let coin_id = coin.to_coin_id();
+        self.host_events[player]
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    HostBoundaryEvent::TransactionSubmitted(inputs)
+                        if inputs.contains(&coin_id)
+                )
+            })
+            .count()
     }
 }
 
@@ -3525,6 +3539,29 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
                 "player 1 (bob) should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
             );
+            let resolved_index = outcome.local_uis[0]
+                .events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event,
+                        TestEvent::Notification(GameNotification::ChannelStatus {
+                            state: ChannelStatus::ResolvedUnrolled,
+                            ..
+                        })
+                    )
+                })
+                .expect("alice should observe the unroll resolution");
+            let observed_on_chain_moves = outcome.local_uis[0]
+                .events
+                .iter()
+                .skip(resolved_index + 1)
+                .filter(|event| matches!(event, TestEvent::OpponentMoved { .. }))
+                .count();
+            assert_eq!(
+                observed_on_chain_moves, 1,
+                "the observed on-chain opponent move must emit exactly one readable event"
+            );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
@@ -3553,6 +3590,48 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ], "bob_redo_alice_timeout p1");
+        },
+    ));
+
+    res.push((
+        "test_internal_redo_then_queued_user_move_completes",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+            ];
+            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+            moves.extend(game_moves[..3].iter().cloned());
+            moves.push(SimScriptAction::NerfMessages(1));
+            moves.push(game_moves[3].clone());
+            moves.push(SimScriptAction::GoOnChain(1));
+            // This is a new semantic action, queued once. The simulator does not
+            // replay Bob's dropped move; Rust redoes it internally, emits Alice's
+            // fresh opponent-move event, and only then dispatches this final move.
+            moves.push(game_moves[4].clone());
+            moves.push(SimScriptAction::WaitBlocks(20, 0));
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("internal redo and queued move should complete");
+
+            for (player, cradle) in outcome.cradles.iter().enumerate() {
+                assert!(
+                    !cradle.is_failed(),
+                    "player {player} must not fail after internal redo plus queued move"
+                );
+            }
+            assert!(
+            outcome.local_uis[0].notifications.iter().any(|notification| {
+                matches!(notification, GameNotification::GameSettled { id, .. } if *id == GameID(1))
+            }),
+            "Alice should observe the game settle after her queued final move"
+        );
         },
     ));
 

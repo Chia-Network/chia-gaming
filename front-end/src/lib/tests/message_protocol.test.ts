@@ -31,7 +31,6 @@ import {
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 import { validateSessionSaveEnvelope } from '../session/persistence';
 import { writeSessionRecord } from '../session/indexedDb';
-import { Program } from 'clvm-lib';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { createSessionModel } from '../session/model';
@@ -159,7 +158,7 @@ function createReadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefined
     saveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
-      gameSessionSchemaVersion: 3n,
+      gameSessionSchemaVersion: 4n,
       pairingToken: blob.pairingToken,
       messageNumber: blob.messageNumber,
       remoteNumber: blob.remoteNumber,
@@ -202,7 +201,7 @@ function createUnreadyBlob(onDeliver?: (msg: Uint8Array) => WasmResult | undefin
     saveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
-      gameSessionSchemaVersion: 3n,
+      gameSessionSchemaVersion: 4n,
       pairingToken: blob.pairingToken,
       messageNumber: blob.messageNumber,
       remoteNumber: blob.remoteNumber,
@@ -461,159 +460,6 @@ describe('SessionController WASM action results', () => {
   });
 });
 
-describe('SessionController ordered resync replay', () => {
-  it('keeps one receipt when repeated drains return the exact same local move', () => {
-    const { blob } = createReadyBlob();
-    activeBlob = blob;
-    const receipt = {
-      gameId: '7',
-      stateNumber: 11,
-      readable: Uint8Array.from([0x80]),
-      entropy: '11'.repeat(32),
-    };
-
-    blob.processResult({ actionSucceeded: true, events: [], moveReplay: receipt });
-    blob.processResult({ actionSucceeded: true, events: [], moveReplay: receipt });
-
-    expect(blob.getWasmFields()?.moveReplayJournal).toEqual([receipt]);
-  });
-
-  it('fails at the producer when a repeated replay key has conflicting inputs', () => {
-    const { blob } = createReadyBlob();
-    activeBlob = blob;
-    blob.processResult({
-      actionSucceeded: true,
-      events: [],
-      moveReplay: {
-        gameId: '7',
-        stateNumber: 11,
-        readable: Uint8Array.from([0x80]),
-        entropy: '11'.repeat(32),
-      },
-    });
-
-    expect(() =>
-      blob.processResult({
-        actionSucceeded: true,
-        events: [],
-        moveReplay: {
-          gameId: '7',
-          stateNumber: 11n,
-          readable: Uint8Array.from([0x81]),
-          entropy: '22'.repeat(32),
-        },
-      }),
-    ).toThrow('conflicting move replay receipt: game_id=7 state_number=11');
-    expect(blob.getWasmFields()?.moveReplayJournal).toHaveLength(1);
-  });
-
-  it('replays two targeted local instructions in FIFO order with exact payload and entropy', () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    const replay = jest.fn(() => ({ actionSucceeded: true, events: [], resync: [] }));
-    Object.assign(cradle, {
-      make_move: jest
-        .fn()
-        .mockReturnValueOnce({
-          actionSucceeded: true,
-          events: [],
-          moveReplay: {
-            gameId: '7',
-            stateNumber: 11,
-            readable: Uint8Array.from([0x80]),
-            entropy: '11'.repeat(32),
-          },
-        })
-        .mockReturnValueOnce({
-          actionSucceeded: true,
-          events: [],
-          moveReplay: {
-            gameId: '9',
-            stateNumber: 12,
-            readable: Uint8Array.from([1]),
-            entropy: '22'.repeat(32),
-          },
-        }),
-      replay_move: replay,
-    });
-    blob.makeMove('7', null);
-    blob.makeMove('9', Program.fromBigInt(1n));
-
-    blob.processResult({
-      actionSucceeded: true,
-      events: [],
-      resync: [
-        { game_id: 7, state_number: 11, is_my_turn: true },
-        { game_id: 99, state_number: 50, is_my_turn: false },
-        { game_id: 9, state_number: 12, is_my_turn: true },
-      ],
-    });
-
-    expect(replay.mock.calls).toEqual([
-      ['7', Uint8Array.from([0x80]), '11'.repeat(32)],
-      ['9', Uint8Array.from([1]), '22'.repeat(32)],
-    ]);
-  });
-
-  it('fails loudly when an exact local replay receipt is missing', () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    Object.assign(cradle, { replay_move: jest.fn() });
-    const emitted: import('../../types/ChiaGaming').WasmEvent[] = [];
-    const subscription = blob.getObservable().subscribe((event) => emitted.push(event));
-
-    expect(() =>
-      blob.processResult({
-        actionSucceeded: true,
-        events: [],
-        resync: [{ game_id: 7, state_number: 11, is_my_turn: true }],
-      }),
-    ).toThrow('resync requires exactly one journaled local move');
-    expect(emitted.at(-1)).toMatchObject({
-      type: 'error',
-      error: expect.stringContaining('game_id=7 state_number=11'),
-    });
-    subscription.unsubscribe();
-  });
-
-  it('bounds the durable journal and clears entries when a game settles', () => {
-    const { blob, cradle } = createReadyBlob();
-    activeBlob = blob;
-    let stateNumber = 0;
-    Object.assign(cradle, {
-      make_move: jest.fn((_id: string, readable: Uint8Array) => ({
-        actionSucceeded: true,
-        events: [],
-        moveReplay: {
-          gameId: '7',
-          stateNumber: stateNumber++,
-          readable,
-          entropy: '33'.repeat(32),
-        },
-      })),
-    });
-    for (let state = 0; state < 257; state += 1) {
-      blob.makeMove('7', Program.fromBigInt(BigInt(state)));
-    }
-    const journal = blob.getWasmFields()?.moveReplayJournal;
-    expect(journal).toHaveLength(256);
-    expect(journal?.[0].stateNumber).toBe(1);
-    expect(journal?.at(-1)?.stateNumber).toBe(256);
-
-    blob.processResult({
-      events: [
-        {
-          Notification: {
-            GameSettled: { id: '7', outcome: 'settled_cleanly', our_share: '1' },
-          },
-        },
-      ],
-    });
-    blob.flushDeferredWork();
-    expect(blob.getWasmFields()?.moveReplayJournal).toEqual([]);
-  });
-});
-
 describe('active game tracking', () => {
   it('retires only the settled member of an atomic hand', () => {
     const { blob } = createReadyBlob();
@@ -755,6 +601,34 @@ describe('lifecycle flush', () => {
 });
 
 describe('game action failure events', () => {
+  it('reports feature-state authority failures without throwing from the event handler', () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { blob } = createReadyBlob();
+    activeBlob = blob;
+    blob.onFeatureStateTransition = () => {
+      throw new Error('Feature-state current state does not belong to krunk');
+    };
+    const events: import('../../types/ChiaGaming').WasmEvent[] = [];
+    const subscription = blob.getObservable().subscribe((event) => events.push(event));
+
+    expect(() =>
+      blob.transitionFeatureState('krunk', '41', {
+        handler: 0n,
+      }),
+    ).not.toThrow();
+    subscription.unsubscribe();
+
+    expect(events).toEqual([
+      {
+        type: 'game-action-error',
+        gameId: '41',
+        action: 'feature-state',
+        error: 'Feature-state current state does not belong to krunk',
+      },
+    ]);
+    errorSpy.mockRestore();
+  });
+
   it('scopes failed terminal submissions to their game and action', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
@@ -1184,7 +1058,7 @@ describe('restore ordering', () => {
 
     const cradle = makeMockCradle();
     const restoreWasmConnection = {
-      game_session_serialization_schema: () => 3,
+      game_session_serialization_schema: () => 4,
     } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
@@ -1201,7 +1075,7 @@ describe('restore ordering', () => {
       version: 11n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
-      gameSessionSchemaVersion: 3n,
+      gameSessionSchemaVersion: 4n,
       messageNumber: 5n,
       remoteNumber: 1n,
       iStarted: true,
@@ -1303,7 +1177,7 @@ describe('cradle serialization schema restore guard', () => {
       getWasmConnection: jest.fn(
         async () =>
           ({
-            game_session_serialization_schema: () => 3,
+            game_session_serialization_schema: () => 4,
           }) as unknown as WasmConnection,
       ),
       deserializeGame: deserializeMock,
@@ -1337,7 +1211,7 @@ describe('cradle serialization schema restore guard', () => {
   it('does not delete same-schema records that fail deserialization', async () => {
     void saveSession({
       serializedGameSession: new Uint8Array([1, 2, 3]),
-      gameSessionSchemaVersion: 3n,
+      gameSessionSchemaVersion: 4n,
       pairingToken: 'restore-corruption-test',
       messageNumber: 1n,
       remoteNumber: 0n,

@@ -59,27 +59,27 @@ export function finalizeTerminalSession(
   const existing = pendingFinalizations.get(args.controller);
   if (existing) return existing;
 
-  const handState = structuredClone(args.controller.handState ?? args.model.game.handState);
-  const model: SessionModel = {
-    ...args.model,
-    game: { ...args.model.game, handState },
-  };
   const identity = { ...args.identity };
   const coins = args.coins.map((coin) => ({ ...coin }));
-  const terminalFields = structuredClone({
-    ...snapshotFromSessionModel(model),
-    handState,
-    terminalIStarted: identity.iStarted,
-    iProposedHand: identity.iProposedHand,
-    ...(identity.myName ? { myAlias: identity.myName } : {}),
-    opponentAlias: identity.opponentName,
-    channelStatus: channelStatusPayloadFromModel(model.channel.status),
-    cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
-    coinsOfInterest: coins,
-  });
 
   const finalization = (async () => {
     await args.controller.flushPendingSave();
+    const handState = structuredClone(args.controller.handState ?? args.model.game.handState);
+    const model: SessionModel = {
+      ...args.model,
+      game: { ...args.model.game, handState },
+    };
+    const terminalFields = structuredClone({
+      ...snapshotFromSessionModel(model),
+      handState,
+      terminalIStarted: identity.iStarted,
+      iProposedHand: identity.iProposedHand,
+      ...(identity.myName ? { myAlias: identity.myName } : {}),
+      opponentAlias: identity.opponentName,
+      channelStatus: channelStatusPayloadFromModel(model.channel.status),
+      cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
+      coinsOfInterest: coins,
+    });
     await dependencies.stageTerminal(terminalFields);
     try {
       await dependencies.flushSave();

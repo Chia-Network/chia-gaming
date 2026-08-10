@@ -21,13 +21,6 @@ pub fn format_coin(coin: &CoinString) -> String {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ResyncInfo {
-    pub game_id: GameID,
-    pub state_number: usize,
-    pub is_my_turn: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ChannelStatus {
     Handshaking,
