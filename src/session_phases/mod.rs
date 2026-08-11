@@ -18,16 +18,15 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, ResyncInfo,
-    SettlementOutcome,
+    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, SettlementOutcome,
 };
 use crate::shutdown::get_conditions_with_channel_state;
 use crate::utils::proper_list;
 
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::types::{
-    BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState, WireGameSpec,
-    WireProposalGroup,
+    validate_new_move_action, BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage,
+    PotatoState, WireGameSpec, WireProposalGroup,
 };
 
 use crate::session_phases::proposal::GameProposal;
@@ -749,9 +748,13 @@ impl OffChainPhase {
                     };
                     let ch = self.channel_state_mut()?;
                     ch.apply_received_accept_proposal(game_id)?;
+                    let our_turn = ch.game_is_my_turn(game_id).ok_or_else(|| {
+                        Error::StrErr(format!("accepted game {game_id} has no turn authority"))
+                    })?;
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: *game_id,
                         amount,
+                        our_turn,
                     }));
                 }
                 BatchAction::CancelProposal(game_id) => {
@@ -1114,9 +1117,15 @@ impl OffChainPhase {
                         let their_short =
                             proposal.their_contribution > ch.their_out_of_game_balance();
                         if our_short || their_short {
+                            let our_turn = ch.game_is_my_turn(&game_id).ok_or_else(|| {
+                                Error::StrErr(format!(
+                                    "insufficient-balance game {game_id} has no turn authority"
+                                ))
+                            })?;
                             effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                                 id: game_id,
                                 amount,
+                                our_turn,
                             }));
                             effects.push(Effect::Notify(GameNotification::InsufficientBalance {
                                 id: game_id,
@@ -1128,9 +1137,13 @@ impl OffChainPhase {
                             continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
+                        let our_turn = ch.game_is_my_turn(&game_id).ok_or_else(|| {
+                            Error::StrErr(format!("accepted game {game_id} has no turn authority"))
+                        })?;
                         effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                             id: game_id,
                             amount,
+                            our_turn,
                         }));
                     }
                     batch_actions.push(BatchAction::AcceptProposal(game_id));
@@ -1632,9 +1645,15 @@ impl FromLocalUI for OffChainPhase {
                     })?;
                     proposal.my_contribution.clone() + proposal.their_contribution.clone()
                 };
+                let our_turn = self.channel_state()?.game_is_my_turn(id).ok_or_else(|| {
+                    Error::StrErr(format!(
+                        "insufficient-balance game {id} has no turn authority"
+                    ))
+                })?;
                 all_effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                     id: *id,
                     amount,
+                    our_turn,
                 }));
             }
             all_effects.push(Effect::Notify(GameNotification::InsufficientBalance {
@@ -1682,6 +1701,12 @@ impl FromLocalUI for OffChainPhase {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
+        validate_new_move_action(
+            id,
+            self.channel_state()?.game_is_my_turn(id),
+            &self.game_action_queue,
+            false,
+        )?;
         let (_continued, effects) =
             self.do_game_action(GameAction::Move(*id, readable.clone(), new_entropy))?;
 
@@ -1727,8 +1752,8 @@ impl SpendWalletReceiver for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         _coin_id: &CoinString,
         _puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        Ok((vec![], None))
+    ) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
     }
 }
 
@@ -1766,7 +1791,7 @@ impl PeerLifecyclePhase for OffChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         <Self as SpendWalletReceiver>::coin_puzzle_and_solution(
             self,
             env,

@@ -773,12 +773,23 @@ observations, and projects Rust facts into UI. It may enforce explicit product
 capability policy—for example, this client currently starts at most one
 concurrent proposal group—but proposal groups are atomic only at formation and
 acceptance: Krunk's paired games still progress and settle independently.
+It does not replay game moves. Each semantic move is submitted once; post-unroll
+redo is reconstructed from Rust-owned channel and on-chain state.
 
 | Concern | Owner |
 | --- | --- |
 | Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |
 | Raw peer bytes, ACK durability, wallet RPC, chain polling | JavaScript host |
 | UI projection, notification presentation, client capability constraints | JavaScript UI |
+
+The browser also separates three lifetimes that end at different moments.
+Protocol lifetime ends only after queued terminal reductions and the durable
+terminal snapshot are flushed, at which point the real controller and transport
+attachments are destroyed. Visual lifetime can continue: the same React hand
+component and `handKey` remain mounted, but receive the finalized model through
+an inert frozen bridge. Cold restoration is separate again:
+`FinishedSessionGameView` remounts a validated persisted Cal Poker, Space Poker,
+or Krunk hand only when no live tree survived (for example, after reload).
 
 ### Handlers
 

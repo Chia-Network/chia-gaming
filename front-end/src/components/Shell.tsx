@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
-import { GameSessionErrorBoundary } from './GameSession';
+import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
@@ -29,9 +29,10 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
-  saveTerminalSession,
-  flushSessionSave,
+  patchLiveSessionPresentation,
+  replaceSession,
   clearSession,
+  clearSessionPairing,
   hardReset,
   shouldOfferResumeOrStartOver,
   hydrateSessionCacheFromDisk,
@@ -40,6 +41,7 @@ import {
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   loadState,
+  LiveSessionSave,
   SessionSave,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -87,21 +89,18 @@ import {
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
   shouldSwitchToHubOnResolved,
+  transitionToFreshSession,
 } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
   isCleanShutdownInProgress,
-  channelStatusPayloadFromModel,
-  isTerminalChannelSnapshot,
   PRE_ACTIVE_CHANNEL_STATES,
   selectGameDashboardView,
   selectGameTabDotColor,
   selectStatusBarBalances,
-  legacyCoinsOfInterestFromModel,
   sessionAmountsFromSave,
   sessionModelFromSave,
-  snapshotFromSessionModel,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type GameDashboardActionKind,
@@ -111,6 +110,8 @@ import {
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
+import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
+import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import {
   appendRecent,
   DIAGNOSTIC_LOG_LIMIT,
@@ -145,11 +146,11 @@ function normalizeHubOrigin(origin: string): string {
 }
 
 function humanHistoryFromSave(save: SessionSave): string[] | undefined {
-  return save.humanHistory;
+  return save.history.humanHistory;
 }
 
 function diagnosticLogFromSave(save: SessionSave): string[] | undefined {
-  return save.diagnosticLog;
+  return save.history.diagnosticLog;
 }
 
 /**
@@ -158,12 +159,22 @@ function diagnosticLogFromSave(save: SessionSave): string[] | undefined {
  */
 function sessionSaveForReactProps(save: SessionSave | null): SessionSave | undefined {
   if (!save) return undefined;
-  const { serializedGameSession, unackedMessages, handState, ...rest } = save;
-  const propSafeSave = reactPropSafeValue(rest) as SessionSave;
+  if (save.phase !== 'live') return reactPropSafeValue(save) as SessionSave;
+  const { serializedGameSession, unackedMessages, ...liveRest } = save.live;
+  const handState = save.presentation.handState;
+  const propSafeSave = reactPropSafeValue({
+    ...save,
+    live: {
+      ...liveRest,
+      serializedGameSession: new Uint8Array(),
+      unackedMessages: [],
+    },
+    presentation: { ...save.presentation, handState: null },
+  }) as LiveSessionSave;
   // Attach binaries by reference and keep them non-enumerable so React/dev
   // tools never walk millions of numeric keys.
   if (serializedGameSession !== undefined) {
-    Object.defineProperty(propSafeSave, 'serializedGameSession', {
+    Object.defineProperty(propSafeSave.live, 'serializedGameSession', {
       value: serializedGameSession,
       enumerable: false,
       configurable: true,
@@ -171,15 +182,15 @@ function sessionSaveForReactProps(save: SessionSave | null): SessionSave | undef
     });
   }
   if (unackedMessages !== undefined) {
-    Object.defineProperty(propSafeSave, 'unackedMessages', {
+    Object.defineProperty(propSafeSave.live, 'unackedMessages', {
       value: unackedMessages,
       enumerable: false,
       configurable: true,
       writable: true,
     });
   }
-  if (Object.prototype.hasOwnProperty.call(save, 'handState')) {
-    Object.defineProperty(propSafeSave, 'handState', {
+  if (Object.prototype.hasOwnProperty.call(save.presentation, 'handState')) {
+    Object.defineProperty(propSafeSave.presentation, 'handState', {
       value: handState,
       enumerable: false,
       configurable: true,
@@ -306,12 +317,28 @@ function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolea
 }
 
 function savedChannelStatus(save: SessionSave): SessionModel['channel']['status']['state'] | null {
-  if (save.channelStatus) return save.channelStatus.state;
+  if ((save.phase === 'live' || save.phase === 'terminal') && save.presentation.channelStatus) {
+    return save.presentation.channelStatus.state;
+  }
   return null;
 }
 
 function isTerminalSavedChannel(save: SessionSave): boolean {
-  return isTerminalChannelSnapshot(save.channelStatus);
+  return save.phase === 'terminal';
+}
+
+function savedMyAlias(save: SessionSave | null | undefined): string | undefined {
+  if (save?.phase === 'live' || save?.phase === 'pre-handshake') return save.pairing.myAlias;
+  if (save?.phase === 'terminal') return save.terminal.myAlias ?? undefined;
+  return undefined;
+}
+
+function savedOpponentAlias(save: SessionSave | null | undefined): string | undefined {
+  if (save?.phase === 'live' || save?.phase === 'pre-handshake') {
+    return save.pairing.opponentAlias;
+  }
+  if (save?.phase === 'terminal') return save.terminal.opponentAlias ?? undefined;
+  return undefined;
 }
 
 /** Hub busy from phase, wallet, and any in-progress non-terminal restore cradle. */
@@ -324,14 +351,13 @@ function hubBusyFromSessionState(
   return shouldReportHubBusyPresence(phase, walletConnected, {
     restoring,
     terminalSave: !!save && isTerminalSavedChannel(save),
-    hasCradle: !!(save?.serializedGameSession || save?.pairingToken),
+    hasCradle: save?.phase === 'live' || save?.phase === 'pre-handshake',
   });
 }
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
 function tabForResumedSave(save: SessionSave): TabId | null {
-  if (save.serializedGameSession || save.pairingToken) return 'game';
-  if (isTerminalSavedChannel(save)) return 'game';
+  if (save.phase !== 'preferences') return 'game';
   return null;
 }
 
@@ -609,7 +635,7 @@ const Shell = () => {
   const uniqueId = getPlayerId();
   // Do not mint hub sessionId here — boot must hydrate IndexedDB first
   // when a saved-session marker is present, or a remint poisons preferences.
-  const [, setSessionId] = useState(() => loadState().sessionId ?? '');
+  const [, setSessionId] = useState(() => loadState().identity.sessionId ?? '');
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
@@ -627,11 +653,12 @@ const Shell = () => {
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
   const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const [terminalPresentation, setTerminalPresentation] =
+    useState<TerminalSessionPresentation | null>(null);
   const [finishedSessionIdentity, setFinishedSessionIdentity] = useState<{
     myName: string;
     opponentName?: string;
     iStarted: boolean;
-    iProposedHand: boolean;
   } | null>(null);
   const [cleanShutdownGraceActive, setCleanShutdownGraceActive] = useState(false);
   const cleanShutdownGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -885,7 +912,7 @@ const Shell = () => {
         waitingEnteredAtRef.current = now;
         waitingStateRef.current = channelState;
         setAbandonEnabled(false);
-        saveSession({ waitingStateEnteredAt: now });
+        patchLiveSessionPresentation({ waitingStateEnteredAt: now });
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
           if (dashboardSessionModelRef.current?.channel.status.state !== channelState) return;
@@ -900,7 +927,7 @@ const Shell = () => {
       if (waitingEnteredAtRef.current !== null) {
         waitingEnteredAtRef.current = null;
         waitingStateRef.current = null;
-        saveSession({ waitingStateEnteredAt: undefined });
+        patchLiveSessionPresentation({ waitingStateEnteredAt: null });
       }
       setAbandonEnabled(false);
     }
@@ -1084,7 +1111,7 @@ const Shell = () => {
         const next = appendRecent(historyRef.current, line, HUMAN_HISTORY_LIMIT);
         historyRef.current = next;
         setHistory(next);
-        saveSession({ humanHistory: next });
+        saveSession({ scope: 'common', history: { humanHistory: next } });
       });
     },
     [deferStateUpdate],
@@ -1092,20 +1119,15 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
-    const peerId = peerSessionRef.current?.peerId ?? null;
-    const gameSessionId = peerSessionRef.current?.sessionId ?? null;
-    const diagnosticLog = loadState().diagnosticLog;
-    const wasmNotificationHistory = loadState().wasmNotificationHistory;
+    const diagnosticLog = loadState().history.diagnosticLog;
+    const wasmNotificationHistory = loadState().history.wasmNotificationHistory;
     clearSession();
-    const preserved: Record<string, unknown> = {};
-    if (humanHistory.length > 0) preserved.humanHistory = humanHistory;
-    if (diagnosticLog && diagnosticLog.length > 0) preserved.diagnosticLog = diagnosticLog;
-    if (wasmNotificationHistory && wasmNotificationHistory.length > 0) {
-      preserved.wasmNotificationHistory = wasmNotificationHistory;
+    if (humanHistory.length > 0 || diagnosticLog || wasmNotificationHistory) {
+      saveSession({
+        scope: 'common',
+        history: { humanHistory, diagnosticLog, wasmNotificationHistory },
+      });
     }
-    if (peerId) preserved.sessionPeerId = peerId;
-    if (gameSessionId) preserved.gameSessionId = gameSessionId;
-    if (Object.keys(preserved).length > 0) saveSession(preserved as any);
   }, []);
 
   const syncPeerLiveness = useCallback(() => {
@@ -1142,7 +1164,11 @@ const Shell = () => {
       pendingAdvisoryRef.current === null &&
       pendingProposalRef.current === null &&
       peerSessionRef.current === null &&
-      !sessionSaveRef.current?.sessionPeerId
+      !(
+        (sessionSaveRef.current?.phase === 'live' ||
+          sessionSaveRef.current?.phase === 'pre-handshake') &&
+        sessionSaveRef.current.pairing.peerId
+      )
     );
   }, []);
 
@@ -1150,11 +1176,13 @@ const Shell = () => {
     hubConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
   }, []);
 
-  const resetPeerRelayState = useCallback(() => {
+  const resetPeerRelayState = useCallback((options?: { persistSession?: boolean }) => {
     peerSessionRef.current?.destroy();
     peerSessionRef.current = null;
     peerMessageHandlerRef.current = null;
-    saveSession({ sessionPeerId: undefined, gameSessionId: undefined });
+    if (options?.persistSession !== false) {
+      clearSessionPairing();
+    }
     setPeerLiveness(null);
   }, []);
 
@@ -1195,6 +1223,7 @@ const Shell = () => {
       setPeerConn(null);
       dashboardSessionModelRef.current = null;
       setDashboardSessionModel(null);
+      setTerminalPresentation(null);
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
@@ -1246,78 +1275,100 @@ const Shell = () => {
       }
       const channelTimeout = parseOptionalBigInt(request.channel_timeout);
       const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
-      // Persist the full pre-cradle handshake *and flush* before GameSession mounts
-      // and fetches hex assets. A stale-deploy reload mid-fetch must Resume with
-      // the same pairing/amounts/peer ids and a stable hub session_id.
-      await saveSession({
-        pairingToken: token,
-        sessionPeerId: request.peerId,
-        gameSessionId: sessionId,
-        sessionId: hubSessionId,
-        ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
-        iStarted: request.iStarted,
-        myContribution: myContribution.toString(),
-        theirContribution: theirContribution.toString(),
-        perGameAmount: perGame.toString(),
-        opponentAlias: request.opponentAlias,
-        ...(channelTimeout !== undefined ? { channelTimeout: channelTimeout.toString() } : {}),
-        ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
-        ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
-      });
-      await flushSessionSave();
-      if (epoch !== sessionStartEpochRef.current) {
-        log(
-          `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
-        );
-        return;
-      }
-      sessionStartedRef.current = false;
-      sessionFinishedCleanupRef.current = false;
-      sessionPhaseRef.current = 'none';
-      if (cleanShutdownGraceTimerRef.current !== null) {
-        clearTimeout(cleanShutdownGraceTimerRef.current);
-        cleanShutdownGraceTimerRef.current = null;
-      }
-      if (abandonTimerRef.current !== null) {
-        clearTimeout(abandonTimerRef.current);
-        abandonTimerRef.current = null;
-      }
-      waitingEnteredAtRef.current = null;
-      waitingStateRef.current = null;
-      setAbandonEnabled(false);
-      setCleanShutdownGraceActive(false);
+      const diagnosticLog = loadState().history.diagnosticLog;
+      const wasmNotificationHistory = loadState().history.wasmNotificationHistory;
 
-      setSessionPhase('none');
-      setSessionError(false);
-      setRestoreStatus('idle');
-      setRestoreError(null);
-      setRestoreHubReconciled(true);
-      dashboardSessionModelRef.current = null;
-      setDashboardSessionModel(null);
-      destroySessionController();
-      // Do not clearSessionPreservingHistory here — that wiped IndexedDB before
-      // WASM preset load, so a deploy-stale reload resumed into an empty session.
-      // blobSingleton.newSession clears after session setup succeeds.
-      try {
-        getActiveBlockchain().start();
-      } catch {
-        /* not connected */
-      }
-      setSessionConfig({
-        iStarted: request.iStarted,
-        myContribution,
-        theirContribution,
-        perGameAmount: perGame,
-        restoring: false,
-        pairingToken: token,
-        myAlias: undefined,
-        opponentAlias: request.opponentAlias,
-        channelTimeout,
-        unrollTimeout,
+      await transitionToFreshSession({
+        reportBusy: () => conn.setBusy(true),
+        retireTerminalDisplay: () => {
+          sessionStartedRef.current = false;
+          sessionFinishedCleanupRef.current = false;
+          sessionPhaseRef.current = 'none';
+          if (cleanShutdownGraceTimerRef.current !== null) {
+            clearTimeout(cleanShutdownGraceTimerRef.current);
+            cleanShutdownGraceTimerRef.current = null;
+          }
+          if (abandonTimerRef.current !== null) {
+            clearTimeout(abandonTimerRef.current);
+            abandonTimerRef.current = null;
+          }
+          waitingEnteredAtRef.current = null;
+          waitingStateRef.current = null;
+          setAbandonEnabled(false);
+          setCleanShutdownGraceActive(false);
+          setSessionPhase('none');
+          setSessionError(false);
+          setRestoreStatus('idle');
+          setRestoreError(null);
+          setRestoreHubReconciled(true);
+          dashboardSessionModelRef.current = null;
+          setDashboardSessionModel(null);
+          setTerminalPresentation(null);
+          setSessionConfig(null);
+          setPeerConn(null);
+          destroySessionController();
+        },
+        persistLiveCheckpoint: async () => {
+          // Atomically replace the terminal envelope with the full pre-cradle
+          // handshake before GameSession mounts and fetches hex assets. A
+          // stale-deploy reload mid-fetch must Resume with the same
+          // pairing/amounts/peer ids and hub session_id.
+          await replaceSession({
+            pairing: {
+              token,
+              peerId: request.peerId,
+              gameSessionId: sessionId,
+              iStarted: request.iStarted,
+              myContribution: myContribution.toString(),
+              theirContribution: theirContribution.toString(),
+              perGameAmount: perGame.toString(),
+              opponentAlias: request.opponentAlias,
+              ...(channelTimeout !== undefined
+                ? { channelTimeout: channelTimeout.toString() }
+                : {}),
+              ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
+            },
+            identity: {
+              sessionId: hubSessionId,
+              ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
+            },
+            history: {
+              ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
+              ...(diagnosticLog && diagnosticLog.length > 0 ? { diagnosticLog } : {}),
+              ...(wasmNotificationHistory && wasmNotificationHistory.length > 0
+                ? { wasmNotificationHistory }
+                : {}),
+            },
+          });
+        },
+        mountLiveSession: () => {
+          if (epoch !== sessionStartEpochRef.current) {
+            log(
+              `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
+            );
+            return;
+          }
+          try {
+            getActiveBlockchain().start();
+          } catch {
+            /* not connected */
+          }
+          setSessionConfig({
+            iStarted: request.iStarted,
+            myContribution,
+            theirContribution,
+            perGameAmount: perGame,
+            restoring: false,
+            pairingToken: token,
+            myAlias: undefined,
+            opponentAlias: request.opponentAlias,
+            channelTimeout,
+            unrollTimeout,
+          });
+          setPeerConn(stablePeerConn);
+          setPeerLiveness(null);
+        },
       });
-      setPeerConn(stablePeerConn);
-      setPeerLiveness(null);
-      conn.setBusy(true);
     },
     [stablePeerConn, bindPeerMessageHandler],
   );
@@ -1397,7 +1448,7 @@ const Shell = () => {
         const next = appendRecent(logLinesRef.current, line, DIAGNOSTIC_LOG_LIMIT);
         logLinesRef.current = next;
         setLogLines(next);
-        saveSession({ diagnosticLog: next });
+        saveSession({ scope: 'common', history: { diagnosticLog: next } });
       });
     });
   }, [deferStateUpdate]);
@@ -1495,7 +1546,7 @@ const Shell = () => {
             !!sessionConfigRef.current?.restoring,
             sessionSaveRef.current,
           ),
-          sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+          sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
         );
         const poller = activeBlockchainPoller;
         if (poller && sessionController) {
@@ -1511,7 +1562,7 @@ const Shell = () => {
         // but advertise busy so the lobby will not offer new matches.
         hubConnRef.current?.setBusy(
           shouldReportHubBusy(sessionPhaseRef.current, false),
-          sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+          sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
         );
       }
     });
@@ -1650,15 +1701,17 @@ const Shell = () => {
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');
             const save = sessionSaveRef.current;
-            const prevMine = save?.myHubPlayerId ?? loadState().myHubPlayerId;
+            const pairing =
+              save?.phase === 'live' || save?.phase === 'pre-handshake' ? save.pairing : undefined;
+            const prevMine = save?.identity.myHubPlayerId ?? loadState().identity.myHubPlayerId;
             // Pre-cradle routing is by peer player_id. If *we* remapped (hub
             // restart or session_id churn), abort rather than handshaking at a
             // stale sessionPeerId. First-ever register (no prior id) is fine.
             if (
               prevMine &&
               prevMine !== playerId &&
-              (save?.pairingToken || sessionConfigRef.current?.pairingToken) &&
-              !save?.serializedGameSession &&
+              (pairing?.token || sessionConfigRef.current?.pairingToken) &&
+              save?.phase !== 'live' &&
               shouldCancelOnPeerUnreachable(
                 sessionPhaseRef.current,
                 dashboardSessionModelRef.current?.channel.status.state,
@@ -1673,17 +1726,17 @@ const Shell = () => {
               log(
                 `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
               );
-              saveSession({ myHubPlayerId: playerId });
+              saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
               cancelAttemptedSession();
               return;
             }
-            saveSession({ myHubPlayerId: playerId });
-            if (save) save.myHubPlayerId = playerId;
+            saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+            if (save) save.identity.myHubPlayerId = playerId;
             const terminalSave = !!save && isTerminalSavedChannel(save);
-            if (!peerSessionRef.current && save?.sessionPeerId && conn) {
+            if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
-                save.sessionPeerId,
-                save.gameSessionId ?? generateSessionId(),
+                pairing.peerId,
+                pairing.gameSessionId ?? generateSessionId(),
                 conn,
               );
               bindPeerMessageHandler(peerSessionRef.current);
@@ -1694,13 +1747,13 @@ const Shell = () => {
               // gone, in which case we cannot play and must report busy.
               conn.setBusy(
                 !terminalSave || !walletConnectedRef.current,
-                save.myAlias ?? peekAlias(),
+                pairing.myAlias ?? peekAlias(),
               );
-            } else if (save?.serializedGameSession || save?.pairingToken) {
+            } else if (save?.phase === 'live' || save?.phase === 'pre-handshake') {
               setRestoreHubReconciled(true);
               conn.setBusy(
                 !terminalSave || !walletConnectedRef.current,
-                save.myAlias ?? peekAlias(),
+                pairing?.myAlias ?? peekAlias(),
               );
             }
             if (peerSessionRef.current && sessionController) {
@@ -1745,7 +1798,7 @@ const Shell = () => {
               ),
               // Prefer session aliases, then the hub-synced prefs alias. Never call
               // getAlias() here — inventing Player_* would pollute identify/set_busy.
-              alias: sessionConfigRef.current?.myAlias ?? save?.myAlias ?? peekAlias(),
+              alias: sessionConfigRef.current?.myAlias ?? savedMyAlias(save) ?? peekAlias(),
             };
           },
         });
@@ -1839,7 +1892,7 @@ const Shell = () => {
       // Pre-game wallet connection: force Resume/Start Over on reload even
       // before a cradle exists. Preference writes must not clear this marker.
       markSavedSession();
-      saveSession({ blockchainType: bcType });
+      saveSession({ scope: 'common', preferences: { blockchainType: bcType } });
       activeBlockchainRef.current = iface;
       setActiveBlockchainPoller(poller);
       setBlockchainType(bcType);
@@ -1860,7 +1913,7 @@ const Shell = () => {
           !!sessionConfigRef.current?.restoring,
           sessionSaveRef.current,
         ),
-        sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
@@ -1878,7 +1931,7 @@ const Shell = () => {
       const { iface, pollMs } = getInterface(bcType);
       try {
         markSavedSession();
-        saveSession({ blockchainType: bcType });
+        saveSession({ scope: 'common', preferences: { blockchainType: bcType } });
         setBlockchainType(bcType);
         setConnecting(true);
         const setup = await iface.beginConnect(uniqueId, fresh);
@@ -2006,8 +2059,13 @@ const Shell = () => {
       sessionStartEpochRef.current += 1;
       abandonPendingRef.current = false;
       const alias =
-        sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
-      const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
+      const saved = sessionSaveRef.current;
+      const peerId =
+        peerSessionRef.current?.peerId ??
+        (saved?.phase === 'live' || saved?.phase === 'pre-handshake'
+          ? saved.pairing.peerId
+          : undefined);
       // Terminal/clean finish must not send session_reject — that signal means
       // decline/abort. Cooperative close already completed through the protocol;
       // the peer should keep pinging until its own local shutdown finishes.
@@ -2027,6 +2085,7 @@ const Shell = () => {
       setPeerConn(null);
       dashboardSessionModelRef.current = null;
       setDashboardSessionModel(null);
+      setTerminalPresentation(null);
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
@@ -2048,7 +2107,12 @@ const Shell = () => {
     abandonPendingRef.current = true;
     const state = dashboardSessionModelRef.current?.channel.status.state;
     if (state && PRE_ACTIVE_CHANNEL_STATES.has(state)) {
-      const peerId = peerSessionRef.current?.peerId ?? sessionSaveRef.current?.sessionPeerId;
+      const saved = sessionSaveRef.current;
+      const peerId =
+        peerSessionRef.current?.peerId ??
+        (saved?.phase === 'live' || saved?.phase === 'pre-handshake'
+          ? saved.pairing.peerId
+          : undefined);
       if (peerId) sendSessionReject(peerId);
     }
     sessionController?.abandon();
@@ -2061,31 +2125,51 @@ const Shell = () => {
    * Resume/Start Over instead of silently booting into hub prefs alone.
    */
   const finishResolvedSessionDisplay = useCallback(
-    (hasError: boolean) => {
-      const alias =
-        sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias();
+    async (hasError: boolean): Promise<boolean> => {
+      const controller = sessionController;
       const model = dashboardSessionModelRef.current;
-      const handState = sessionController
-        ? (sessionController.handState ?? null)
-        : (model?.game.handState ?? null);
-      const finishedModel =
-        model && handState !== model.game.handState
-          ? { ...model, game: { ...model.game, handState } }
-          : model;
-      const terminalCoins = coinsGetterRef.current?.() ?? frozenCoins;
-      setFrozenCoins(terminalCoins);
-      if (finishedModel && finishedModel !== model) {
-        dashboardSessionModelRef.current = finishedModel;
-        setDashboardSessionModel(finishedModel);
+      if (!controller || !model) {
+        setSessionError(true);
+        return false;
       }
+      const alias =
+        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
+      const terminalCoins = coinsGetterRef.current?.() ?? frozenCoins;
       const identity = {
         myName: alias ?? '',
         opponentName:
-          sessionConfigRef.current?.opponentAlias ?? sessionSaveRef.current?.opponentAlias,
-        iStarted: sessionConfigRef.current?.iStarted ?? sessionSaveRef.current?.iStarted ?? false,
-        iProposedHand: sessionSaveRef.current?.iProposedHand ?? false,
+          sessionConfigRef.current?.opponentAlias ?? savedOpponentAlias(sessionSaveRef.current),
+        iStarted:
+          sessionConfigRef.current?.iStarted ??
+          (sessionSaveRef.current?.phase === 'live' ||
+          sessionSaveRef.current?.phase === 'pre-handshake'
+            ? sessionSaveRef.current.pairing.iStarted
+            : false),
       };
-      setFinishedSessionIdentity(identity);
+      let terminal;
+      try {
+        terminal = await finalizeTerminalSession({
+          controller,
+          model,
+          identity,
+          coins: terminalCoins,
+        });
+      } catch (error) {
+        controller.reportDurabilityError(error);
+        setSessionError(true);
+        return false;
+      }
+
+      setFrozenCoins(terminal.coins);
+      dashboardSessionModelRef.current = terminal.model;
+      setDashboardSessionModel(terminal.model);
+      setFinishedSessionIdentity(terminal.identity);
+      setTerminalPresentation({
+        model: terminal.model,
+        myName: terminal.identity.myName,
+        opponentName: terminal.identity.opponentName,
+        iStarted: terminal.identity.iStarted,
+      });
       abandonPendingRef.current = false;
       sessionFinishedCleanupRef.current = true;
       sessionPhaseRef.current = 'resolved';
@@ -2098,36 +2182,15 @@ const Shell = () => {
 
       // Stop the live peer route and cradle; do not send session_reject and do
       // not wipe the dashboard model (that would flash "No Session").
-      resetPeerRelayState();
-      destroySessionController();
-
-      // Clear only live protocol fields. clearSession() would drop the boot
-      // marker and finished channel snapshot — then reload skips Resume while
-      // still auto-connecting the saved hub.
-      if (finishedModel) {
-        const status = finishedModel.channel.status;
-        void saveTerminalSession({
-          ...snapshotFromSessionModel(finishedModel),
-          handState,
-          terminalIStarted: identity.iStarted,
-          channelStatus: channelStatusPayloadFromModel(status),
-          cleanShutdownStarted: finishedModel.channel.cleanShutdownStarted || undefined,
-          coinsOfInterest: terminalCoins,
-        });
-      } else {
-        void saveTerminalSession({ coinsOfInterest: terminalCoins });
-      }
-      markSavedSession();
+      resetPeerRelayState({ persistSession: false });
 
       sessionSaveRef.current = null;
       sessionSavePropRef.current = undefined;
-      sessionStartedRef.current = false;
       clearSessionTimers();
-      setSessionConfig(null);
-      setPeerConn(null);
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
+      return true;
     },
     [clearSessionTimers, frozenCoins, resetPeerRelayState],
   );
@@ -2140,10 +2203,9 @@ const Shell = () => {
         const switchHub = shouldSwitchToHubOnResolved(previousPhase, !!hasError);
         const bcType = blockchainTypeRef.current;
         if (bcType) startBalancePolling(bcType);
-        finishResolvedSessionDisplay(!!hasError);
-        if (switchHub) {
-          setActiveTab('hub');
-        }
+        void finishResolvedSessionDisplay(!!hasError).then((finished) => {
+          if (finished && switchHub) setActiveTab('hub');
+        });
         return;
       }
 
@@ -2212,6 +2274,9 @@ const Shell = () => {
   /** Restore a finished/terminal session freeze without remounting live WASM. */
   const restoreFinishedSessionFromSave = useCallback(
     (save: SessionSave) => {
+      if (save.phase !== 'terminal' || !Array.isArray(save.terminal.coinsOfInterest)) {
+        throw new Error('Garbled terminal save: missing frozen coin list');
+      }
       setActiveTab('game');
       const channelState = savedChannelStatus(save);
       const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
@@ -2222,13 +2287,13 @@ const Shell = () => {
       const model = sessionModelFromSave(save);
       dashboardSessionModelRef.current = model;
       setDashboardSessionModel(model);
-      setFrozenCoins(save.coinsOfInterest ?? legacyCoinsOfInterestFromModel(model));
+      setFrozenCoins(save.terminal.coinsOfInterest);
       setFinishedSessionIdentity({
-        myName: save.myAlias ?? peekAlias() ?? '',
-        opponentName: save.opponentAlias,
-        iStarted: save.terminalIStarted ?? false,
-        iProposedHand: save.iProposedHand ?? false,
+        myName: save.terminal.myAlias ?? peekAlias() ?? '',
+        opponentName: save.terminal.opponentAlias ?? undefined,
+        iStarted: save.terminal.iStarted,
       });
+      setTerminalPresentation(null);
       sessionSaveRef.current = save;
       sessionSavePropRef.current = undefined;
       sessionStartedRef.current = false;
@@ -2239,7 +2304,7 @@ const Shell = () => {
       setRestoreHubReconciled(true);
       hubConnRef.current?.setBusy(
         shouldReportHubBusy('resolved', walletConnectedRef.current),
-        save.myAlias ?? peekAlias(),
+        save.terminal.myAlias ?? peekAlias(),
       );
       setResuming(false);
     },
@@ -2252,7 +2317,7 @@ const Shell = () => {
   const performResume = useCallback(
     (save: SessionSave) => {
       setActiveTab('game');
-      const bcType = save.blockchainType ?? 'simulator';
+      const bcType = save.preferences.blockchainType ?? 'simulator';
       setResuming(true);
       setRestoreStatus('restoring');
       setRestoreError(null);
@@ -2263,26 +2328,26 @@ const Shell = () => {
       sessionSaveRef.current = save;
       // Cradle-less pairingToken saves are a pre-handshake checkpoint: mount
       // GameSession without sessionSave so getOrCreate runs newSession, not restore.
-      sessionSavePropRef.current = save.serializedGameSession
-        ? sessionSaveForReactProps(save)
-        : undefined;
+      sessionSavePropRef.current =
+        save.phase === 'live' ? sessionSaveForReactProps(save) : undefined;
       const {
         myContribution,
         theirContribution,
         perGameAmount: perGame,
       } = sessionAmountsFromSave(save);
-      if (save.pairingToken) {
+      if (save.phase === 'live' || save.phase === 'pre-handshake') {
+        const pairing = save.pairing;
         setSessionConfig({
-          iStarted: save.iStarted ?? false,
+          iStarted: pairing.iStarted,
           myContribution,
           theirContribution,
           perGameAmount: perGame,
-          restoring: !!save.serializedGameSession,
-          pairingToken: save.pairingToken,
-          myAlias: save.myAlias,
-          opponentAlias: save.opponentAlias,
-          channelTimeout: parseOptionalBigInt(save.channelTimeout),
-          unrollTimeout: parseOptionalBigInt(save.unrollTimeout),
+          restoring: save.phase === 'live',
+          pairingToken: pairing.token,
+          myAlias: pairing.myAlias,
+          opponentAlias: pairing.opponentAlias,
+          channelTimeout: parseOptionalBigInt(pairing.channelTimeout),
+          unrollTimeout: parseOptionalBigInt(pairing.unrollTimeout),
         });
         setPeerConn(stablePeerConn);
       }
@@ -2303,9 +2368,13 @@ const Shell = () => {
         abandonTimerRef.current = null;
       }
       const restoredChannelStatus = savedChannelStatus(save);
-      if (save.waitingStateEnteredAt != null && isAbandonWaitingState(restoredChannelStatus)) {
-        const elapsed = BigInt(Date.now()) - save.waitingStateEnteredAt;
-        waitingEnteredAtRef.current = save.waitingStateEnteredAt;
+      const restoredPresentation = save.phase === 'live' ? save.presentation : null;
+      if (
+        restoredPresentation?.waitingStateEnteredAt != null &&
+        isAbandonWaitingState(restoredChannelStatus)
+      ) {
+        const elapsed = BigInt(Date.now()) - restoredPresentation.waitingStateEnteredAt;
+        waitingEnteredAtRef.current = restoredPresentation.waitingStateEnteredAt;
         waitingStateRef.current = restoredChannelStatus;
         if (elapsed >= ABANDON_DELAY_MS) {
           setAbandonEnabled(true);
@@ -2325,21 +2394,21 @@ const Shell = () => {
         waitingEnteredAtRef.current = null;
         waitingStateRef.current = null;
         setAbandonEnabled(false);
-        if (save.waitingStateEnteredAt != null) {
-          saveSession({ waitingStateEnteredAt: undefined });
+        if (restoredPresentation?.waitingStateEnteredAt != null) {
+          patchLiveSessionPresentation({ waitingStateEnteredAt: null });
         }
       }
 
       // Restore clean shutdown grace from persisted timestamp
-      if (save.cleanShutdownGraceStartedAt != null) {
-        const elapsed = BigInt(Date.now()) - save.cleanShutdownGraceStartedAt;
+      if (restoredPresentation?.cleanShutdownGraceStartedAt != null) {
+        const elapsed = BigInt(Date.now()) - restoredPresentation.cleanShutdownGraceStartedAt;
         if (elapsed < GRACE_DELAY_MS) {
           setCleanShutdownGraceActive(true);
           cleanShutdownGraceTimerRef.current = setTimeout(
             () => {
               cleanShutdownGraceTimerRef.current = null;
               setCleanShutdownGraceActive(false);
-              saveSession({ cleanShutdownGraceStartedAt: undefined });
+              patchLiveSessionPresentation({ cleanShutdownGraceStartedAt: null });
             },
             Number(GRACE_DELAY_MS - elapsed),
           );
@@ -2424,16 +2493,16 @@ const Shell = () => {
     const resumeTab = tabForResumedSave(save);
     if (resumeTab) setActiveTab(resumeTab);
 
-    const hasLiveSession = !!(save.serializedGameSession || save.pairingToken);
+    const hasLiveSession = save.phase === 'live' || save.phase === 'pre-handshake';
     if (hasLiveSession) {
       performResume(save);
     } else if (isTerminalSavedChannel(save)) {
       restoreFinishedSessionFromSave(save);
-      if (save.blockchainType) {
-        void handleConnect(save.blockchainType, true);
+      if (save.preferences.blockchainType) {
+        void handleConnect(save.preferences.blockchainType, true);
       }
-    } else if (save.blockchainType) {
-      void handleConnect(save.blockchainType, true);
+    } else if (save.preferences.blockchainType) {
+      void handleConnect(save.preferences.blockchainType, true);
     } else {
       setResuming(false);
     }
@@ -2496,16 +2565,16 @@ const Shell = () => {
       } else if (prev.save) {
         const resumeTab = tabForResumedSave(prev.save);
         if (resumeTab) setActiveTab(resumeTab);
-        if (prev.save.serializedGameSession || prev.save.pairingToken) {
+        if (prev.save.phase === 'live' || prev.save.phase === 'pre-handshake') {
           performResume(prev.save);
         } else if (isTerminalSavedChannel(prev.save)) {
           restoreFinishedSessionFromSave(prev.save);
-          const bcType = prev.save.blockchainType ?? getBlockchainType();
+          const bcType = prev.save.preferences.blockchainType ?? getBlockchainType();
           if (bcType) {
             void handleConnect(bcType, true);
           }
         } else {
-          const bcType = prev.save.blockchainType ?? getBlockchainType();
+          const bcType = prev.save.preferences.blockchainType ?? getBlockchainType();
           if (bcType) {
             void handleConnect(bcType, true);
           }
@@ -2580,7 +2649,8 @@ const Shell = () => {
       const hasAttempt =
         peerSessionRef.current !== null ||
         !!sessionConfigRef.current?.pairingToken ||
-        !!sessionSaveRef.current?.pairingToken;
+        sessionSaveRef.current?.phase === 'live' ||
+        sessionSaveRef.current?.phase === 'pre-handshake';
       const shouldCancel = shouldCancelAttemptOnDisconnect(
         hasAttempt,
         sessionPhaseRef.current,
@@ -2592,7 +2662,10 @@ const Shell = () => {
           peerSessionRef.current?.peerId ??
           pendingProposalRef.current?.from_id ??
           pendingAdvisoryRef.current?.peer_id ??
-          sessionSaveRef.current?.sessionPeerId;
+          (sessionSaveRef.current?.phase === 'live' ||
+          sessionSaveRef.current?.phase === 'pre-handshake'
+            ? sessionSaveRef.current.pairing.peerId
+            : undefined);
         if (peerId) sendSessionReject(peerId);
       }
       if (shouldCancel) {
@@ -2650,21 +2723,22 @@ const Shell = () => {
     // cradle remains in IDB and can be clobbered by incidental saves.
     const hasResumableSession =
       sessionPhaseRef.current !== 'none' ||
-      !!(sessionSaveRef.current?.serializedGameSession || sessionSaveRef.current?.pairingToken) ||
+      sessionSaveRef.current?.phase === 'live' ||
+      sessionSaveRef.current?.phase === 'pre-handshake' ||
       !!sessionConfigRef.current?.pairingToken;
     if (!hasResumableSession) {
       clearSavedSessionMarker();
     }
     // Clear blockchainType before cancel so clearSession's async tail does not
     // re-mark Resume from a wallet preference this disconnect is dropping.
-    saveSession({ blockchainType: undefined });
+    saveSession({ scope: 'common', preferences: { blockchainType: undefined } });
     // Wallet is orthogonal to the hub: stay connected and only cancel pending
     // matchmaking (no hub teardown). Then advertise busy — without a wallet we
     // cannot fund or resolve a channel, so the lobby must not offer matches.
     cancelPendingMatchmaking({ preserveHub: true });
     hubConnRef.current?.setBusy(
       shouldReportHubBusy(sessionPhaseRef.current, false),
-      sessionConfigRef.current?.myAlias ?? sessionSaveRef.current?.myAlias ?? peekAlias(),
+      sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
     );
   }, [stopBalancePolling, cancelPendingMatchmaking]);
 
@@ -2718,11 +2792,14 @@ const Shell = () => {
       clearTimeout(cleanShutdownGraceTimerRef.current);
     }
     setCleanShutdownGraceActive(true);
-    saveSession({ cleanShutdownGraceStartedAt: BigInt(Date.now()) });
+    saveSession({
+      scope: 'presentation',
+      presentation: { cleanShutdownGraceStartedAt: BigInt(Date.now()) },
+    });
     cleanShutdownGraceTimerRef.current = setTimeout(() => {
       cleanShutdownGraceTimerRef.current = null;
       setCleanShutdownGraceActive(false);
-      saveSession({ cleanShutdownGraceStartedAt: undefined });
+      patchLiveSessionPresentation({ cleanShutdownGraceStartedAt: null });
     }, Number(GRACE_DELAY_MS));
   }, []);
 
@@ -3055,614 +3132,619 @@ const Shell = () => {
   // GameSession/hub can finish restore, then flip to ready in one paint.
   const shellHidden = bootState.kind === 'autoResuming';
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        width: '100vw',
-        height: '100vh',
-        ...(shellHidden ? { visibility: 'hidden' as const } : {}),
-      }}
-      className="bg-canvas-bg-subtle text-canvas-text"
-      aria-hidden={shellHidden || undefined}
-    >
-      {/* Tab bar with branding */}
+    <>
+      <UncaughtClientErrorReporter />
       <div
         style={{
-          flexShrink: 0,
           display: 'flex',
-          alignItems: 'flex-end',
-          gap: '0.25rem',
-          padding: '0.5rem 1rem 0',
-          borderBottom: '1px solid var(--color-canvas-border)',
-          background: 'var(--color-canvas-bg-active)',
+          flexDirection: 'column',
+          position: 'relative',
+          width: '100vw',
+          height: '100vh',
+          ...(shellHidden ? { visibility: 'hidden' as const } : {}),
         }}
+        className="bg-canvas-bg-subtle text-canvas-text"
+        aria-hidden={shellHidden || undefined}
       >
-        {/* Tabs */}
-        {TAB_DEFS.map((tab) => {
-          const active = activeTab === tab.id;
-          const showDot =
-            !active &&
-            ((tab.id === 'game' && unreadGame) ||
-              (tab.id === 'wallet' && walletAlert) ||
-              (tab.id === 'hub' && hubAlert));
-
-          let dotColor: string | null = null;
-          switch (tab.id) {
-            case 'wallet':
-              dotColor = walletConnected
-                ? 'var(--color-success-solid)'
-                : 'var(--color-alert-solid)';
-              break;
-            case 'hub':
-              if (hubLiveness === 'connected') {
-                dotColor = 'var(--color-success-solid)';
-              } else if (hubLiveness === 'reconnecting') {
-                dotColor = 'var(--color-warning-solid)';
-              } else if (hubLiveness === 'inactive') {
-                dotColor = 'var(--color-alert-solid)';
-              } else {
-                dotColor = 'var(--color-canvas-text-subtle)';
-              }
-              break;
-            case 'game': {
-              const gameDot: GameTabDotColor = selectGameTabDotColor({
-                sessionPhase,
-                sessionError,
-                peerLiveness,
-                cleanShutdownInProgress: isCleanShutdownInProgress(dashboardSessionModel),
-              });
-              const gameDotCss: Record<GameTabDotColor, string> = {
-                green: 'var(--color-success-solid)',
-                yellow: 'var(--color-warning-solid)',
-                red: 'var(--color-alert-solid)',
-                gray: 'var(--color-canvas-text-subtle)',
-              };
-              dotColor = gameDotCss[gameDot];
-              break;
-            }
-          }
-
-          return (
-            <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              style={
-                active
-                  ? {
-                      background: 'var(--canvas-bg-subtle)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '0.35rem',
-                    }
-                  : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
-              }
-              className={
-                'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
-                (active
-                  ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
-                  : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
-              }
-            >
-              {dotColor && (
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: dotColor,
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-              {tab.label}
-              {showDot && (
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
-              )}
-            </button>
-          );
-        })}
-
-        {/* Right side: Branding + Theme */}
-        <div
-          style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}
-          className="flex items-center gap-2"
-        >
-          <img
-            src="images/chia_logo.png"
-            alt="Chia Logo"
-            className="max-w-12 h-auto"
-            style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
-          />
-          <button
-            onClick={() => setIsDark((d) => !d)}
-            className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
-            aria-label="toggle theme"
-            title="Toggle theme"
-          >
-            <span className="text-sm leading-none">{isDark ? '\u2600' : '\u263E'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Tab content */}
-      <div
-        style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
-        className="bg-canvas-bg-subtle"
-      >
-        {/* Wallet tab */}
+        {/* Tab bar with branding */}
         <div
           style={{
-            position: 'absolute',
-            inset: 0,
-            display: activeTab === 'wallet' ? 'flex' : 'none',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'auto',
-          }}
-        >
-          <Button
-            variant={transactionPublishNerfed ? 'solid' : 'outline'}
-            color={transactionPublishNerfed ? 'primary' : 'neutral'}
-            size="sm"
-            className="absolute right-4 top-4"
-            onClick={toggleTransactionPublishNerf}
-          >
-            Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
-          </Button>
-          {walletConnected ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
-                <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
-              </div>
-              {balance !== undefined && (
-                <p className="text-2xl font-bold text-canvas-text-contrast">
-                  {balance.toLocaleString()} mojos
-                </p>
-              )}
-              <div className="w-full max-w-xs text-sm text-canvas-text">
-                <div className="flex items-center gap-2 mb-1">
-                  <span>Transaction fee</span>
-                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                    <button
-                      onClick={() => handleFeeUnitChange('mojo')}
-                      className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      mojo
-                    </button>
-                    <button
-                      onClick={() => handleFeeUnitChange('xch')}
-                      className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      XCH
-                    </button>
-                  </div>
-                </div>
-                {feeEditing ? (
-                  <div className="flex gap-2">
-                    <input
-                      ref={feeInputRef}
-                      type="text"
-                      inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                      value={feeInput}
-                      onChange={(e) => setFeeInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && feeInputValid) commitFee();
-                        if (e.key === 'Escape') cancelEditFee();
-                      }}
-                      className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-                    />
-                    <button
-                      onClick={commitFee}
-                      disabled={!feeInputValid}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                    >
-                      Set
-                    </button>
-                    <button
-                      onClick={cancelEditFee}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={startEditingFee}
-                    className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
-                  >
-                    {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
-                  </button>
-                )}
-              </div>
-              <Button variant="solid" onClick={handleDisconnectWallet}>
-                Disconnect
-              </Button>
-            </div>
-          ) : connectionSetup ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <p className="text-lg font-semibold text-canvas-text-contrast">Scan QR Code</p>
-              <p className="text-sm text-canvas-text text-center">
-                Open your Chia wallet and scan this QR code to connect
-              </p>
-              <div className="p-4 rounded-xl border-2 border-canvas-border bg-white shadow-md">
-                {qrDataUrl ? (
-                  <img
-                    src={qrDataUrl}
-                    alt="Connection QR"
-                    className="w-[200px] h-auto rounded-md"
-                  />
-                ) : (
-                  <div className="w-[200px] h-[200px] flex items-center justify-center text-canvas-solid">
-                    Generating…
-                  </div>
-                )}
-              </div>
-              <div className="w-full max-w-sm flex gap-2">
-                <textarea
-                  readOnly
-                  value={connectionSetup.qrUri}
-                  rows={3}
-                  className="flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none"
-                />
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(connectionSetup.qrUri);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  }}
-                  className="self-center p-2 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                  title="Copy URI to clipboard"
-                >
-                  {copied ? (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      className="w-4 h-4"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      className="w-4 h-4"
-                    >
-                      <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-                      <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-              <div className="w-full max-w-sm text-sm text-canvas-text">
-                <div className="flex items-center gap-2 mb-1">
-                  <span>Transaction fee</span>
-                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                    <button
-                      onClick={() => handleFeeUnitChange('mojo')}
-                      className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      mojo
-                    </button>
-                    <button
-                      onClick={() => handleFeeUnitChange('xch')}
-                      className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      XCH
-                    </button>
-                  </div>
-                </div>
-                {feeEditing ? (
-                  <div className="flex gap-2">
-                    <input
-                      ref={feeInputRef}
-                      type="text"
-                      inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                      value={feeInput}
-                      onChange={(e) => setFeeInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && feeInputValid) commitFee();
-                        if (e.key === 'Escape') cancelEditFee();
-                      }}
-                      className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-                    />
-                    <button
-                      onClick={commitFee}
-                      disabled={!feeInputValid}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                    >
-                      Set
-                    </button>
-                    <button
-                      onClick={cancelEditFee}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={startEditingFee}
-                    className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
-                  >
-                    {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
-                  </button>
-                )}
-              </div>
-              <p className="text-sm text-canvas-text animate-pulse">
-                Waiting for wallet to connect…
-              </p>
-              <Button variant="solid" onClick={handleCancelConnect}>
-                Cancel
-              </Button>
-              <SimulatorSetupModal
-                open={showSimModal}
-                onConnect={handleFinalize}
-                connecting={connecting}
-              />
-            </div>
-          ) : connecting ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
-              <p className="text-sm text-canvas-text animate-pulse">Connecting…</p>
-              <Button variant="solid" onClick={handleCancelConnect}>
-                Cancel
-              </Button>
-            </div>
-          ) : !walletConnected && activeBlockchainRef.current ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-3 h-3 rounded-full bg-alert-solid" />
-                <span className="text-lg font-semibold text-alert-text">Disconnected</span>
-              </div>
-              <p className="text-sm text-canvas-text">Connection was lost</p>
-              <Button variant="solid" onClick={handleReconnect}>
-                Reconnect
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
-              <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
-              <div className="w-full max-w-sm flex flex-col gap-3">
-                <Button
-                  variant="solid"
-                  fullWidth
-                  onClick={() => handleConnect('simulator', false, true)}
-                >
-                  Continue with Simulator
-                </Button>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 border-t border-canvas-border" />
-                  <span className="text-canvas-text font-medium text-sm">OR</span>
-                  <div className="flex-1 border-t border-canvas-border" />
-                </div>
-                <Button
-                  variant="solid"
-                  fullWidth
-                  onClick={() => handleConnect('walletconnect', false, true)}
-                >
-                  Link Wallet
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Hub tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: activeTab === 'hub' ? 'flex' : 'none',
-            flexDirection: 'column',
-          }}
-        >
-          {hubOrigin ? (
-            <>
-              <div className="flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0">
-                <span>
-                  {hubLiveness === 'connected'
-                    ? `Connected to ${hubOrigin}`
-                    : `${TRACKER_LIVENESS_LABELS[hubLiveness ?? 'disconnected']} from ${hubOrigin}`}
-                </span>
-                <div className="flex items-center gap-2">
-                  {hubLiveness === 'disconnected' && (
-                    <button
-                      onClick={() => connectToHub(hubOrigin)}
-                      className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium border border-canvas-border hover:bg-canvas-solid transition-colors"
-                    >
-                      Retry
-                    </button>
-                  )}
-                  <button
-                    onClick={handleDisconnectHub}
-                    className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-              {hubConnectionError && (
-                <p className="px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle">
-                  {hubConnectionError}
-                </p>
-              )}
-              <iframe
-                id="hub-iframe"
-                className="bg-canvas-bg-subtle"
-                style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
-                src={iframeUrl}
-              />
-            </>
-          ) : (
-            <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
-          )}
-        </div>
-
-        {/* Game Session tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
+            flexShrink: 0,
             display: 'flex',
-            flexDirection: 'column',
-            visibility: activeTab === 'game' ? 'visible' : 'hidden',
+            alignItems: 'flex-end',
+            gap: '0.25rem',
+            padding: '0.5rem 1rem 0',
+            borderBottom: '1px solid var(--color-canvas-border)',
+            background: 'var(--color-canvas-bg-active)',
           }}
         >
-          <GameDashboard
-            view={dashboardView}
-            balances={statusBarBalances}
-            onAction={handleDashboardAction}
-            getProtocolState={getProtocolState}
-            getCoins={getCoins}
-          />
-          <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-            {keepSession && restoreStatus === 'failed' ? (
-              <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
-                <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
-                <p className="max-w-lg text-sm text-center select-text cursor-text">
-                  {restoreError ?? 'The saved session could not be restored.'}
-                </p>
-                <button
-                  onClick={handleStartOver}
-                  disabled={startingOver}
-                  className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
-                >
-                  {startingOver ? 'Starting over\u2026' : 'Start over'}
-                </button>
-              </div>
-            ) : keepSession ? (
-              <div className="relative w-full h-full">
-                <GameSessionErrorBoundary>
-                  <GameSession
-                    key={sessionConfig!.pairingToken}
-                    params={sessionConfig!}
-                    peerConn={peerConn!}
-                    registerMessageHandler={registerMessageHandler}
-                    appendGameLog={appendHistory}
-                    sessionSave={sessionSavePropRef.current}
-                    blockchain={activeBlockchainPoller}
-                    onGameActivity={onGameActivity}
-                    onSessionPhaseChange={handleSessionPhaseChange}
-                    onRestoreStatusChange={handleRestoreStatusChange}
-                    onSessionModelChange={handleSessionModelChange}
-                    onProtocolStateProviderChange={handleProtocolStateProviderChange}
-                    onCoinsProviderChange={handleCoinsProviderChange}
-                    suppressPhaseReporting={restoreBlocked}
+          {/* Tabs */}
+          {TAB_DEFS.map((tab) => {
+            const active = activeTab === tab.id;
+            const showDot =
+              !active &&
+              ((tab.id === 'game' && unreadGame) ||
+                (tab.id === 'wallet' && walletAlert) ||
+                (tab.id === 'hub' && hubAlert));
+
+            let dotColor: string | null = null;
+            switch (tab.id) {
+              case 'wallet':
+                dotColor = walletConnected
+                  ? 'var(--color-success-solid)'
+                  : 'var(--color-alert-solid)';
+                break;
+              case 'hub':
+                if (hubLiveness === 'connected') {
+                  dotColor = 'var(--color-success-solid)';
+                } else if (hubLiveness === 'reconnecting') {
+                  dotColor = 'var(--color-warning-solid)';
+                } else if (hubLiveness === 'inactive') {
+                  dotColor = 'var(--color-alert-solid)';
+                } else {
+                  dotColor = 'var(--color-canvas-text-subtle)';
+                }
+                break;
+              case 'game': {
+                const gameDot: GameTabDotColor = selectGameTabDotColor({
+                  sessionPhase,
+                  sessionError,
+                  peerLiveness,
+                  cleanShutdownInProgress: isCleanShutdownInProgress(dashboardSessionModel),
+                });
+                const gameDotCss: Record<GameTabDotColor, string> = {
+                  green: 'var(--color-success-solid)',
+                  yellow: 'var(--color-warning-solid)',
+                  red: 'var(--color-alert-solid)',
+                  gray: 'var(--color-canvas-text-subtle)',
+                };
+                dotColor = gameDotCss[gameDot];
+                break;
+              }
+            }
+
+            return (
+              <button
+                key={tab.id}
+                onClick={() => handleTabChange(tab.id)}
+                style={
+                  active
+                    ? {
+                        background: 'var(--canvas-bg-subtle)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                      }
+                    : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
+                }
+                className={
+                  'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
+                  (active
+                    ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
+                    : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
+                }
+              >
+                {dotColor && (
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: dotColor,
+                      flexShrink: 0,
+                    }}
                   />
-                </GameSessionErrorBoundary>
-                {sessionConsentOverlay}
+                )}
+                {tab.label}
+                {showDot && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
+                )}
+              </button>
+            );
+          })}
+
+          {/* Right side: Branding + Theme */}
+          <div
+            style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}
+            className="flex items-center gap-2"
+          >
+            <img
+              src="images/chia_logo.png"
+              alt="Chia Logo"
+              className="max-w-12 h-auto"
+              style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
+            />
+            <button
+              onClick={() => setIsDark((d) => !d)}
+              className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
+              aria-label="toggle theme"
+              title="Toggle theme"
+            >
+              <span className="text-sm leading-none">{isDark ? '\u2600' : '\u263E'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tab content */}
+        <div
+          style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
+          className="bg-canvas-bg-subtle"
+        >
+          {/* Wallet tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: activeTab === 'wallet' ? 'flex' : 'none',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'auto',
+            }}
+          >
+            <Button
+              variant={transactionPublishNerfed ? 'solid' : 'outline'}
+              color={transactionPublishNerfed ? 'primary' : 'neutral'}
+              size="sm"
+              className="absolute right-4 top-4"
+              onClick={toggleTransactionPublishNerf}
+            >
+              Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+            </Button>
+            {walletConnected ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
+                  <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
+                </div>
+                {balance !== undefined && (
+                  <p className="text-2xl font-bold text-canvas-text-contrast">
+                    {balance.toLocaleString()} mojos
+                  </p>
+                )}
+                <div className="w-full max-w-xs text-sm text-canvas-text">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span>Transaction fee</span>
+                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
+                      <button
+                        onClick={() => handleFeeUnitChange('mojo')}
+                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        mojo
+                      </button>
+                      <button
+                        onClick={() => handleFeeUnitChange('xch')}
+                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        XCH
+                      </button>
+                    </div>
+                  </div>
+                  {feeEditing ? (
+                    <div className="flex gap-2">
+                      <input
+                        ref={feeInputRef}
+                        type="text"
+                        inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                        value={feeInput}
+                        onChange={(e) => setFeeInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && feeInputValid) commitFee();
+                          if (e.key === 'Escape') cancelEditFee();
+                        }}
+                        className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                      />
+                      <button
+                        onClick={commitFee}
+                        disabled={!feeInputValid}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
+                      >
+                        Set
+                      </button>
+                      <button
+                        onClick={cancelEditFee}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={startEditingFee}
+                      className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
+                    >
+                      {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                    </button>
+                  )}
+                </div>
+                <Button variant="solid" onClick={handleDisconnectWallet}>
+                  Disconnect
+                </Button>
               </div>
-            ) : sessionCanMount ? (
-              <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                Restoring session...
-              </div>
-            ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
-              <div className="relative w-full h-full">
-                <FinishedSessionGameView
-                  model={sessionModelForReactProps(dashboardSessionModel)}
-                  myName={finishedSessionIdentity?.myName ?? peekAlias()}
-                  opponentName={finishedSessionIdentity?.opponentName}
-                  iStarted={finishedSessionIdentity?.iStarted ?? false}
-                  iProposedHand={finishedSessionIdentity?.iProposedHand ?? false}
+            ) : connectionSetup ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <p className="text-lg font-semibold text-canvas-text-contrast">Scan QR Code</p>
+                <p className="text-sm text-canvas-text text-center">
+                  Open your Chia wallet and scan this QR code to connect
+                </p>
+                <div className="p-4 rounded-xl border-2 border-canvas-border bg-white shadow-md">
+                  {qrDataUrl ? (
+                    <img
+                      src={qrDataUrl}
+                      alt="Connection QR"
+                      className="w-[200px] h-auto rounded-md"
+                    />
+                  ) : (
+                    <div className="w-[200px] h-[200px] flex items-center justify-center text-canvas-solid">
+                      Generating…
+                    </div>
+                  )}
+                </div>
+                <div className="w-full max-w-sm flex gap-2">
+                  <textarea
+                    readOnly
+                    value={connectionSetup.qrUri}
+                    rows={3}
+                    className="flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(connectionSetup.qrUri);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                    className="self-center p-2 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                    title="Copy URI to clipboard"
+                  >
+                    {copied ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
+                        <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <div className="w-full max-w-sm text-sm text-canvas-text">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span>Transaction fee</span>
+                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
+                      <button
+                        onClick={() => handleFeeUnitChange('mojo')}
+                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        mojo
+                      </button>
+                      <button
+                        onClick={() => handleFeeUnitChange('xch')}
+                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        XCH
+                      </button>
+                    </div>
+                  </div>
+                  {feeEditing ? (
+                    <div className="flex gap-2">
+                      <input
+                        ref={feeInputRef}
+                        type="text"
+                        inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                        value={feeInput}
+                        onChange={(e) => setFeeInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && feeInputValid) commitFee();
+                          if (e.key === 'Escape') cancelEditFee();
+                        }}
+                        className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                      />
+                      <button
+                        onClick={commitFee}
+                        disabled={!feeInputValid}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
+                      >
+                        Set
+                      </button>
+                      <button
+                        onClick={cancelEditFee}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={startEditingFee}
+                      className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
+                    >
+                      {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                    </button>
+                  )}
+                </div>
+                <p className="text-sm text-canvas-text animate-pulse">
+                  Waiting for wallet to connect…
+                </p>
+                <Button variant="solid" onClick={handleCancelConnect}>
+                  Cancel
+                </Button>
+                <SimulatorSetupModal
+                  open={showSimModal}
+                  onConnect={handleFinalize}
+                  connecting={connecting}
                 />
-                {sessionConsentOverlay}
+              </div>
+            ) : connecting ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
+                <p className="text-sm text-canvas-text animate-pulse">Connecting…</p>
+                <Button variant="solid" onClick={handleCancelConnect}>
+                  Cancel
+                </Button>
+              </div>
+            ) : !walletConnected && activeBlockchainRef.current ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full bg-alert-solid" />
+                  <span className="text-lg font-semibold text-alert-text">Disconnected</span>
+                </div>
+                <p className="text-sm text-canvas-text">Connection was lost</p>
+                <Button variant="solid" onClick={handleReconnect}>
+                  Reconnect
+                </Button>
               </div>
             ) : (
-              <div className="relative w-full h-full">
-                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                  No active game session
+              <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
+                <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
+                <div className="w-full max-w-sm flex flex-col gap-3">
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('simulator', false, true)}
+                  >
+                    Continue with Simulator
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 border-t border-canvas-border" />
+                    <span className="text-canvas-text font-medium text-sm">OR</span>
+                    <div className="flex-1 border-t border-canvas-border" />
+                  </div>
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('walletconnect', false, true)}
+                  >
+                    Link Wallet
+                  </Button>
                 </div>
-                {sessionConsentOverlay}
+              </div>
+            )}
+          </div>
+
+          {/* Hub tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: activeTab === 'hub' ? 'flex' : 'none',
+              flexDirection: 'column',
+            }}
+          >
+            {hubOrigin ? (
+              <>
+                <div className="flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0">
+                  <span>
+                    {hubLiveness === 'connected'
+                      ? `Connected to ${hubOrigin}`
+                      : `${TRACKER_LIVENESS_LABELS[hubLiveness ?? 'disconnected']} from ${hubOrigin}`}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {hubLiveness === 'disconnected' && (
+                      <button
+                        onClick={() => connectToHub(hubOrigin)}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium border border-canvas-border hover:bg-canvas-solid transition-colors"
+                      >
+                        Retry
+                      </button>
+                    )}
+                    <button
+                      onClick={handleDisconnectHub}
+                      className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+                {hubConnectionError && (
+                  <p className="px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle">
+                    {hubConnectionError}
+                  </p>
+                )}
+                <iframe
+                  id="hub-iframe"
+                  className="bg-canvas-bg-subtle"
+                  style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                  src={iframeUrl}
+                />
+              </>
+            ) : (
+              <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
+            )}
+          </div>
+
+          {/* Game Session tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              visibility: activeTab === 'game' ? 'visible' : 'hidden',
+            }}
+          >
+            <GameDashboard
+              view={dashboardView}
+              balances={statusBarBalances}
+              onAction={handleDashboardAction}
+              getProtocolState={getProtocolState}
+              getCoins={getCoins}
+            />
+            <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
+              {keepSession && restoreStatus === 'failed' ? (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
+                  <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
+                  <p className="max-w-lg text-sm text-center select-text cursor-text">
+                    {restoreError ?? 'The saved session could not be restored.'}
+                  </p>
+                  <button
+                    onClick={handleStartOver}
+                    disabled={startingOver}
+                    className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+                  >
+                    {startingOver ? 'Starting over\u2026' : 'Start over'}
+                  </button>
+                </div>
+              ) : keepSession ? (
+                <div className="relative w-full h-full">
+                  <GameSessionErrorBoundary>
+                    <GameSession
+                      key={sessionConfig!.pairingToken}
+                      params={sessionConfig!}
+                      peerConn={peerConn!}
+                      registerMessageHandler={registerMessageHandler}
+                      appendGameLog={appendHistory}
+                      sessionSave={sessionSavePropRef.current}
+                      blockchain={activeBlockchainPoller}
+                      onGameActivity={onGameActivity}
+                      onSessionPhaseChange={handleSessionPhaseChange}
+                      onRestoreStatusChange={handleRestoreStatusChange}
+                      onSessionModelChange={handleSessionModelChange}
+                      onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                      onCoinsProviderChange={handleCoinsProviderChange}
+                      suppressPhaseReporting={restoreBlocked}
+                      terminalPresentation={terminalPresentation}
+                    />
+                  </GameSessionErrorBoundary>
+                  {sessionConsentOverlay}
+                </div>
+              ) : sessionCanMount ? (
+                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                  Restoring session...
+                </div>
+              ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
+                <div className="relative w-full h-full">
+                  <FinishedSessionGameView
+                    model={sessionModelForReactProps(dashboardSessionModel)}
+                    myName={finishedSessionIdentity?.myName ?? peekAlias()}
+                    opponentName={finishedSessionIdentity?.opponentName}
+                    iStarted={finishedSessionIdentity?.iStarted ?? false}
+                  />
+                  {sessionConsentOverlay}
+                </div>
+              ) : (
+                <div className="relative w-full h-full">
+                  <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                    No active game session
+                  </div>
+                  {sessionConsentOverlay}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* History tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              padding: '1rem',
+              display: activeTab === 'history' ? 'block' : 'none',
+            }}
+          >
+            <HistoryPanel lines={history} />
+          </div>
+
+          {/* Log tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              padding: '1rem',
+              display: activeTab === 'log' ? 'block' : 'none',
+            }}
+          >
+            {logLines.length > 0 ? (
+              <LogPanel lines={logLines} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                No log entries yet
               </div>
             )}
           </div>
         </div>
 
-        {/* History tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            padding: '1rem',
-            display: activeTab === 'history' ? 'block' : 'none',
-          }}
-        >
-          <HistoryPanel lines={history} />
-        </div>
-
-        {/* Log tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            padding: '1rem',
-            display: activeTab === 'log' ? 'block' : 'none',
-          }}
-        >
-          {logLines.length > 0 ? (
-            <LogPanel lines={logLines} />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-              No log entries yet
-            </div>
-          )}
-        </div>
-      </div>
-
-      {confirmDialog && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            background: 'rgba(0,0,0,0.5)',
-          }}
-        >
+        {confirmDialog && (
           <div
             style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 9999,
               display: 'flex',
-              flexDirection: 'column',
+              justifyContent: 'center',
               alignItems: 'center',
-              gap: '0.75rem',
-              padding: '1.5rem',
-              borderRadius: '0.5rem',
-              border: '1px solid var(--color-canvas-border)',
-              background: 'var(--color-canvas-bg)',
-              maxWidth: '24rem',
-              width: '90%',
+              background: 'rgba(0,0,0,0.5)',
             }}
           >
-            <p className="text-canvas-text-contrast font-semibold text-lg">{confirmDialog.title}</p>
-            <p className="text-canvas-text text-sm text-center">{confirmDialog.body}</p>
-            <button
-              onClick={confirmDialog.onConfirm}
-              className="w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '0.75rem',
+                padding: '1.5rem',
+                borderRadius: '0.5rem',
+                border: '1px solid var(--color-canvas-border)',
+                background: 'var(--color-canvas-bg)',
+                maxWidth: '24rem',
+                width: '90%',
+              }}
             >
-              {confirmDialog.confirmLabel ?? 'Proceed'}
-            </button>
-            <button
-              onClick={() => setConfirmDialog(null)}
-              className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-            >
-              Cancel
-            </button>
+              <p className="text-canvas-text-contrast font-semibold text-lg">
+                {confirmDialog.title}
+              </p>
+              <p className="text-canvas-text text-sm text-center">{confirmDialog.body}</p>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+              >
+                {confirmDialog.confirmLabel ?? 'Proceed'}
+              </button>
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 };
 

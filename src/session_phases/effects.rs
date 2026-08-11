@@ -21,11 +21,6 @@ pub fn format_coin(coin: &CoinString) -> String {
     }
 }
 
-pub struct ResyncInfo {
-    pub state_number: usize,
-    pub is_my_turn: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ChannelStatus {
     Handshaking,
@@ -108,6 +103,7 @@ pub enum GameStatusKind {
     OnChainMyTurn,
     OnChainTheirTurn,
     Replaying,
+    PlayingMove,
     IllegalMoveDetected,
     EndedCancelled,
     EndedError,
@@ -125,8 +121,8 @@ pub enum SettlementOutcome {
     OpponentTimedOut,
     /// Our turn; our move would give them everything; we stop watching.
     ForfeitedSkippedReveal,
-    /// Their terminal move left us at 0; we stop watching.
-    ForfeitedOpponentWon,
+    /// Their terminal move completed the game and left us at 0.
+    Lost,
     /// We intentionally accepted on-chain at share 0; we stop watching.
     ForfeitedWeAccepted,
     /// Intentional on-chain accept with share > 0.
@@ -219,6 +215,7 @@ pub enum GameNotification {
     ProposalAccepted {
         id: GameID,
         amount: Amount,
+        our_turn: bool,
     },
     ProposalCancelled {
         id: GameID,

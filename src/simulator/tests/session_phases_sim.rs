@@ -12,8 +12,8 @@ use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, PrivateKey,
-    Program, PuzzleHash, Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, IntoErr,
+    PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
@@ -32,8 +32,15 @@ use crate::utils::proper_list;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker_sim::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{make_debug_games, DebugGameCurry};
-use crate::test_support::sim_script::{ProposeTrigger, SimScriptAction};
+use crate::test_support::sim_script::{
+    ActionReadiness, PostActionDrain, ProposeTrigger, SimAssertion, SimScriptAction,
+};
 use crate::utils::pair_of_array_mut;
+
+mod harness;
+mod script_runner;
+
+use harness::SimulationHarness;
 
 #[derive(Default)]
 pub struct SimulatedPeer {
@@ -257,6 +264,25 @@ pub enum TestEvent {
     Notification(GameNotification),
 }
 
+#[derive(Debug, Clone)]
+pub struct HostDrainTrace {
+    pub terminal: bool,
+    pub notifications: Vec<GameNotification>,
+}
+
+#[derive(Debug, Clone)]
+enum HostBoundaryEvent {
+    ManagerDrain(HostDrainTrace),
+    WatchCoin(CoinString),
+    CoinSolutionRequested(CoinString),
+    CoinSolutionCallback(CoinString),
+    TransactionSubmitted(Vec<CoinID>),
+    Notification {
+        notification: GameNotification,
+        notification_coin_in_mempool: bool,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpectedNotification {
     GameSettledOurSide,
@@ -267,6 +293,7 @@ pub enum ExpectedNotification {
     GameSettledOpponentSlashedUs,
     GameSettledOpponentCheated,
     GameStatusMovedByUs,
+    GameStatusPlayingMove,
     GameStatusOnChainTurn,
     GameStatusSubmittingTimeoutClaim,
     GameStatusEndedError,
@@ -309,7 +336,7 @@ fn is_our_side_settlement(outcome: SettlementOutcome) -> bool {
             | SettlementOutcome::SettledCleanly
             | SettlementOutcome::WeAccepted
             | SettlementOutcome::ForfeitedSkippedReveal
-            | SettlementOutcome::ForfeitedOpponentWon
+            | SettlementOutcome::Lost
             | SettlementOutcome::ForfeitedWeAccepted
             | SettlementOutcome::AttemptToMoveFailed
             | SettlementOutcome::TimedOutWaitingForOurMove
@@ -404,6 +431,13 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     },
                     ExpectedNotification::GameStatusMovedByUs,
                 ) => params.moved_by_us.unwrap_or(false),
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::PlayingMove,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusPlayingMove,
+                ) => true,
                 (
                     GameNotification::GameStatus {
                         status:
@@ -513,6 +547,9 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
                 "Notif(GameSettledOpponentCheated)".to_string()
             }
             ExpectedNotification::GameStatusMovedByUs => "Notif(GameStatusMovedByUs)".to_string(),
+            ExpectedNotification::GameStatusPlayingMove => {
+                "Notif(GameStatusPlayingMove)".to_string()
+            }
             ExpectedNotification::GameStatusOnChainTurn => {
                 "Notif(GameStatusOnChainTurn)".to_string()
             }
@@ -718,6 +755,7 @@ impl ToLocalUI for LocalTestUIReceiver {
                     GameStatusKind::OnChainMyTurn
                         | GameStatusKind::OnChainTheirTurn
                         | GameStatusKind::Replaying
+                        | GameStatusKind::PlayingMove
                         | GameStatusKind::IllegalMoveDetected
                 ) {
                     self.events
@@ -829,92 +867,35 @@ pub struct GameRunOutcome {
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
     pub logs: [Vec<String>; 2],
+    host_events: [Vec<HostBoundaryEvent>; 2],
 }
 
-fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
-    if let Some((_, players)) = blocked {
-        return players & (1 << i) != 0;
+impl GameRunOutcome {
+    pub fn host_drain_trace(&self, player: usize) -> Vec<HostDrainTrace> {
+        self.host_events[player]
+            .iter()
+            .filter_map(|event| {
+                if let HostBoundaryEvent::ManagerDrain(trace) = event {
+                    Some(trace.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
-    false
-}
-
-fn gid_diag_enabled() -> bool {
-    std::env::var("SIM_GID_DIAG").is_ok()
-}
-
-fn gid_diag(test_name: &str, action_idx: usize, label: &str, requested: &GameID, runtime: &GameID) {
-    eprintln!(
-        "GID-DIAG test={test_name} action={action_idx} op={label} requested={:?} runtime={:?}",
-        requested, runtime
-    );
-}
-
-fn move_ready(moves: &[SimScriptAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
-    if mn >= moves.len() {
-        return false;
-    }
-    match &moves[mn] {
-        SimScriptAction::Move(who, gid, _, _)
-        | SimScriptAction::FakeMove(who, gid, _, _)
-        | SimScriptAction::BadSignatureMove(who, gid, _) => {
-            local_uis[*who].game_accepted_ids.contains(gid)
-                || local_uis[*who].opponent_moved_in_game.contains(gid)
-        }
-        _ => false,
-    }
-}
-
-fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameID) -> bool {
-    local_uis[who].game_accepted_ids.contains(gid)
-        || local_uis[who].notifications.iter().any(|n| {
-            matches!(n,
-                GameNotification::InsufficientBalance { id, .. }
-                | GameNotification::ProposalCancelled { id, .. }
-                    if id == gid
-            ) || is_terminal_for_id(n, gid)
-        })
-}
-
-fn accept_proposal_ready(
-    moves: &[SimScriptAction],
-    mn: usize,
-    local_uis: &[LocalTestUIReceiver; 2],
-) -> bool {
-    if mn >= moves.len() {
-        return false;
-    }
-    if let SimScriptAction::AcceptProposal(who, gid) = &moves[mn] {
-        if local_uis[*who].accepted_proposal_ids.contains(gid) {
-            accept_resolved(local_uis, *who, gid)
-        } else {
-            local_uis[*who].received_proposal_ids.contains(gid)
-        }
-    } else {
-        false
-    }
-}
-
-fn propose_ready(
-    moves: &[SimScriptAction],
-    mn: usize,
-    local_uis: &[LocalTestUIReceiver; 2],
-) -> bool {
-    if mn >= moves.len() {
-        return false;
-    }
-    match &moves[mn] {
-        SimScriptAction::ProposeNewGame(who, trigger)
-        | SimScriptAction::ProposeNewGameWithTimeout(who, trigger, _)
-        | SimScriptAction::ProposeNewGameTheirTurn(who, trigger)
-        | SimScriptAction::ProposeKrunkGroup(who, trigger) => match trigger {
-            ProposeTrigger::Channel => local_uis[*who].channel_created,
-            ProposeTrigger::AfterGame(gid) => {
-                local_uis[0].game_finished_ids.contains(gid)
-                    || local_uis[1].game_finished_ids.contains(gid)
-            }
-        },
-        _ => false,
+    pub fn transaction_submission_count_for_coin(&self, player: usize, coin: &CoinString) -> usize {
+        let coin_id = coin.to_coin_id();
+        self.host_events[player]
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    HostBoundaryEvent::TransactionSubmitted(inputs)
+                        if inputs.contains(&coin_id)
+                )
+            })
+            .count()
     }
 }
 
@@ -930,16 +911,13 @@ fn run_game_container_with_action_list_with_success_predicate(
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
     let bal = per_player_balance.unwrap_or(100);
-    let mut move_number = 0;
-    let gid_diag_on = gid_diag_enabled();
-    let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
     // Coinset adapter for each side.
     let game_type_map = game_collection(allocator);
 
     let neutral_pk: PrivateKey = rng.random();
     let neutral_identity = ChiaIdentity::new(allocator, neutral_pk)?;
 
-    let mut local_uis = [
+    let local_uis = [
         LocalTestUIReceiver::default(),
         LocalTestUIReceiver::default(),
     ];
@@ -1004,816 +982,27 @@ fn run_game_container_with_action_list_with_success_predicate(
         TransactionManager::new(cradle1),
         TransactionManager::new(cradle2),
     ];
-    let mut handshake_done = false;
-    let mut can_move = false;
-    let mut ending = None;
-
-    let mut wait_blocks = None;
-    let mut report_backlogs = [Vec::default(), Vec::default()];
-    let mut force_destroyed_coins: Vec<CoinString> = Vec::new();
-    let mut nerf_transactions_for: u8 = 0;
-    let mut nerfed_tx_backlog: Vec<SpendBundle> = Vec::new();
-    let mut nerf_messages_for: u8 = 0;
-    let mut blocked_coin_reports_for: u8 = 0;
-    let mut start_step = 0;
-    let mut num_steps = 0;
-    let mut logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
-    let mut tamper_next_batch_signature = [false, false];
-
     // Give coins to the cradles.
     cradles[0].set_funding_coin(allocator, parent_coin_0)?;
     cradles[1].set_funding_coin(allocator, parent_coin_1)?;
-
-    let global_move = |moves: &[SimScriptAction], move_number: usize| {
-        move_number < moves.len()
-            && matches!(
-                &moves[move_number],
-                SimScriptAction::CleanShutdown(_)
-                    | SimScriptAction::WaitBlocks(_, _)
-                    | SimScriptAction::GoOnChain(_)
-                    | SimScriptAction::AcceptSettlement(_, _)
-                    | SimScriptAction::Timeout(_)
-                    | SimScriptAction::Cheat(_, _, _)
-                    | SimScriptAction::ForceDestroyCoin(_, _)
-                    | SimScriptAction::NerfTransactions(_)
-                    | SimScriptAction::UnNerfTransactions(_)
-                    | SimScriptAction::UnNerfTransactionsFor(_)
-                    | SimScriptAction::BlockCoinReports(_)
-                    | SimScriptAction::UnblockCoinReports(_)
-                    | SimScriptAction::CancelProposal(_, _)
-                    | SimScriptAction::CorruptStateNumber(_, _)
-                    | SimScriptAction::ForceUnroll(_)
-                    | SimScriptAction::NerfMessages(_)
-                    | SimScriptAction::UnNerfMessages
-                    | SimScriptAction::SaveUnrollSnapshot(_)
-                    | SimScriptAction::ForceStaleUnroll(_)
-                    | SimScriptAction::InjectRawMessage(_, _)
-                    | SimScriptAction::SelfAcceptProposal(_, _)
-                    | SimScriptAction::WrongParityProposal(_)
-                    | SimScriptAction::InvalidProposalParameters(_)
-                    | SimScriptAction::InvalidProposalTimeout(_)
-                    | SimScriptAction::BadSignatureMove(_, _, _)
-            )
-    };
-    let has_explicit_go_on_chain = moves_input.iter().any(|m| {
-        matches!(
-            m,
-            SimScriptAction::GoOnChain(_)
-                | SimScriptAction::ForceUnroll(_)
-                | SimScriptAction::ForceStaleUnroll(_)
-        )
-    });
-
-    let timing_enabled = std::env::var("SIM_TIMING").is_ok();
-    let mut step_start = std::time::Instant::now();
-
-    while !matches!(ending, Some(0)) {
-        num_steps += 1;
-
-        let handshake_flags = [
-            cradles[0].handshake_finished(),
-            cradles[1].handshake_finished(),
-        ];
-        let channel_created_flags = [local_uis[0].channel_created, local_uis[1].channel_created];
-        assert!(
-            num_steps < 200,
-            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain} handshake_finished={handshake_flags:?} channel_created={channel_created_flags:?}",
-            moves_input.get(move_number)
-        );
-
-        if matches!(wait_blocks, Some((0, _))) {
-            wait_blocks = None;
-        }
-
-        let t0 = std::time::Instant::now();
-        simulator.farm_block(&neutral_identity.puzzle_hash);
-        let current_height = simulator.get_current_height();
-        if timing_enabled {
-            let farm_elapsed = t0.elapsed();
-            eprintln!("  step {num_steps}: farm_block {farm_elapsed:.2?}");
-        }
-
-        // Coins force-destroyed by test actions are reported as spent to any
-        // player that is watching them.
-        let forced_destroyed: HashSet<CoinString> = force_destroyed_coins.drain(..).collect();
-
-        if let Some(p) = &pred {
-            if p(move_number, &cradles) {
-                return Ok(GameRunOutcome {
-                    identities: [identities[0].clone(), identities[1].clone()],
-                    cradles,
-                    local_uis,
-                    simulator,
-                    logs,
-                });
-            }
-        }
-
-        for i in 0..=1 {
-            if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
-                local_uis[i].go_on_chain = false;
-            } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
-                if !has_explicit_go_on_chain && !local_uis[i].got_error {
-                    panic!(
-                        "unexpected off-chain->on-chain transition in non-on-chain test: player={i} move_number={move_number} got_error={} next_action={:?}",
-                        local_uis[i].got_error,
-                        moves_input.get(move_number)
-                    );
-                }
-                local_uis[i].go_on_chain = false;
-                let got_error = local_uis[i].got_error;
-                cradles[i].go_on_chain(allocator, got_error)?;
-            }
-
-            // Feed the full live coin set so the manager reproduces the
-            // previous full-coin-set diff exactly.  Force-destroyed coins are
-            // dropped from the set so they read as deleted.
-            let mut records = simulator.get_all_coin_states();
-            if !forced_destroyed.is_empty() {
-                records.retain(|rec| !forced_destroyed.contains(&rec.coin));
-            }
-
-            if reports_blocked(i, &wait_blocks) || blocked_coin_reports_for & (1 << i) != 0 {
-                report_backlogs[i].push((current_height, records));
-            } else {
-                let t_nb = std::time::Instant::now();
-                cradles[i].report_coin_states(allocator, current_height as u64, &records)?;
-                if timing_enabled {
-                    let nb_elapsed = t_nb.elapsed();
-                    if nb_elapsed.as_millis() > 10 {
-                        eprintln!("  step {num_steps}: p{i} report_coin_states {nb_elapsed:.2?}");
-                    }
-                }
-            }
-
-            {
-                let result = cradles[i].flush_and_collect(allocator)?;
-                let mut terminal_command = cradles[i]
-                    .pending_terminal_handoff()
-                    .map(|command| command.message);
-
-                // Collect coin solution requests, launcher/coin-spend
-                // requests from this flush and all subsequent flushes they
-                // trigger, processing every other event inline in FIFO order.
-                // Outbound transactions are intercepted by the manager and
-                // drained after this player's event processing completes.
-                let mut pending_events = result.events;
-                let mut submissions_to_push: Vec<SpendBundle> = Vec::new();
-                if matches!(result.resync, Some((_, true))) {
-                    can_move = true;
-                    let saved = move_number;
-                    while move_number > 0
-                        && (move_number >= moves_input.len()
-                            || !matches!(
-                                moves_input[move_number],
-                                SimScriptAction::Move(_, _, _, _)
-                            ))
-                    {
-                        move_number -= 1;
-                    }
-                    let dominated_by_other = match moves_input.get(move_number) {
-                        Some(SimScriptAction::Move(who, _, _, _)) => *who != i,
-                        _ => true,
-                    };
-                    if dominated_by_other {
-                        move_number = saved;
-                    }
-                }
-
-                loop {
-                    let mut coin_requests = Vec::new();
-                    let mut need_launcher = false;
-                    let mut coin_spend_req: Option<CoinSpendRequest> = None;
-                    for event in pending_events.iter() {
-                        match event {
-                            GameSessionEvent::NeedLauncherCoin => {
-                                need_launcher = true;
-                            }
-                            GameSessionEvent::NeedCoinSpend(req) => {
-                                coin_spend_req = Some(req.clone());
-                            }
-                            GameSessionEvent::OutboundTransaction(tx, _) => {
-                                // The manager normally intercepts these; collect
-                                // any that still arrive for uniform handling.
-                                submissions_to_push.push(tx.clone());
-                            }
-                            GameSessionEvent::OutboundMessage(msg) => {
-                                if nerf_messages_for & (1 << i) != 0 {
-                                    continue;
-                                }
-                                if cradles[i].is_peer_disconnected() {
-                                    continue;
-                                }
-                                let delivered_msg = if tamper_next_batch_signature[i] {
-                                    let peer_message: PeerMessage =
-                                        bencodex::from_slice(msg).into_gen()?;
-                                    if let PeerMessage::Batch {
-                                        actions,
-                                        mut signatures,
-                                        clean_shutdown,
-                                    } = peer_message
-                                    {
-                                        signatures.channel_half_sig = Default::default();
-                                        tamper_next_batch_signature[i] = false;
-                                        bencodex::to_vec(&PeerMessage::Batch {
-                                            actions,
-                                            signatures,
-                                            clean_shutdown,
-                                        })
-                                        .into_gen()?
-                                    } else {
-                                        msg.clone()
-                                    }
-                                } else {
-                                    msg.clone()
-                                };
-                                let t_msg = std::time::Instant::now();
-                                cradles[i ^ 1].deliver_message(&delivered_msg)?;
-                                if timing_enabled {
-                                    let msg_elapsed = t_msg.elapsed();
-                                    if msg_elapsed.as_millis() > 10 {
-                                        eprintln!(
-                                            "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
-                                            i ^ 1
-                                        );
-                                    }
-                                }
-                            }
-                            GameSessionEvent::OutboundTerminalMessage(_) => {
-                                return Err(Error::StrErr(
-                                    "terminal handoff bypassed TransactionManager disposition"
-                                        .to_string(),
-                                ));
-                            }
-                            GameSessionEvent::Notification(n) => {
-                                local_uis[i].notification(n)?;
-                            }
-                            GameSessionEvent::ReceiveError(e) => {
-                                eprintln!("SIM receive error p{i}: {e}");
-                                local_uis[i].notification(&GameNotification::ChannelStatus {
-                                    state: ChannelStatus::Failed,
-                                    session_disposition: None,
-                                    advisory: Some(format!("error receiving peer message: {e}")),
-                                    coin: None,
-                                    our_balance: None,
-                                    their_balance: None,
-                                    game_allocated: None,
-                                    have_potato: None,
-                                    zero_payout: None,
-                                    unroll_initiator: None,
-                                    semantic_phase: None,
-                                })?;
-                            }
-                            GameSessionEvent::CoinSolutionRequest(coin) => {
-                                coin_requests.push(coin.clone());
-                            }
-                            GameSessionEvent::Log(line) => {
-                                logs[i].push(line.clone());
-                            }
-                            GameSessionEvent::WatchCoin { .. } => {}
-                        }
-                    }
-
-                    if let Some(message) = terminal_command.as_ref() {
-                        if nerf_messages_for & (1 << i) == 0 {
-                            cradles[i ^ 1].deliver_message(message)?;
-                            cradles[i].complete_outbound_terminal_handoff()?;
-                        }
-                    }
-
-                    let has_followup =
-                        need_launcher || coin_spend_req.is_some() || !coin_requests.is_empty();
-                    if !has_followup {
-                        break;
-                    }
-
-                    if i == 0 && need_launcher {
-                        cradles[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
-                    }
-
-                    if let Some(req) = coin_spend_req {
-                        let wallet_bundle = build_wallet_bundle_for_request(
-                            allocator,
-                            &simulator,
-                            &identities[i],
-                            &req,
-                        )?;
-                        cradles[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
-                    }
-
-                    for coin in coin_requests.iter() {
-                        let ps_res = simulator
-                            .get_puzzle_and_solution(&coin.to_coin_id())
-                            .expect("should work");
-                        for (_ci, cradle) in cradles.iter_mut().enumerate() {
-                            cradle.report_puzzle_and_solution(
-                                allocator,
-                                coin,
-                                ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
-                            )?;
-                        }
-                    }
-                    let follow_up = cradles[i].flush_and_collect(allocator)?;
-                    terminal_command = cradles[i]
-                        .pending_terminal_handoff()
-                        .map(|command| command.message);
-                    pending_events = follow_up.events;
-                }
-
-                // Drain transactions the manager captured during this player's
-                // block processing and submit them to the simulator's mempool.
-                submissions_to_push
-                    .extend(cradles[i].drain_submissions().expect("drain_submissions"));
-                for tx in submissions_to_push.iter() {
-                    if nerf_transactions_for & (1 << i) != 0 {
-                        nerfed_tx_backlog.push(tx.clone());
-                        continue;
-                    }
-                    let t_tx = std::time::Instant::now();
-                    let included_result = simulator.push_transactions(allocator, &tx.spends)?;
-                    if timing_enabled {
-                        let tx_elapsed = t_tx.elapsed();
-                        if tx_elapsed.as_millis() > 10 {
-                            eprintln!(
-                                "  step {num_steps}: p{i} push_transactions({:?}) {tx_elapsed:.2?}",
-                                tx.name
-                            );
-                        }
-                    }
-                    let is_expected_duplicate = included_result.code == 3
-                        && matches!(included_result.e, Some(5) | Some(20));
-                    let include_ok = included_result.code == 1 || is_expected_duplicate;
-                    assert!(
-                        include_ok,
-                        "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
-                        tx.name,
-                        included_result.code,
-                        included_result.e,
-                        included_result.diagnostic
-                    );
-                }
-            }
-        }
-
-        if timing_enabled {
-            let step_elapsed = step_start.elapsed();
-            if step_elapsed.as_millis() > 50 {
-                eprintln!(
-                    "  step {num_steps} TOTAL: {step_elapsed:.2?} (move_number={move_number})"
-                );
-            }
-        }
-        step_start = std::time::Instant::now();
-
-        let should_end = cradles.iter().enumerate().all(|(i, c)| {
-            c.is_fully_resolved() && local_uis[i].all_accepted_games_have_terminal_notification()
-        }) && ending.is_none();
-        if should_end {
-            ending = Some(10);
-        }
-
-        if let Some(ending) = &mut ending {
-            *ending -= 1;
-        }
-
-        if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
-            if start_step == 0 {
-                start_step += 1;
-                continue;
-            }
-
-            handshake_done = true;
-        }
-
-        if let Some((wb, _)) = &mut wait_blocks {
-            #[allow(clippy::needless_range_loop)]
-            for i in 0..=1 {
-                for (backlog_height, backlog_records) in report_backlogs[i].iter() {
-                    cradles[i].report_coin_states(
-                        allocator,
-                        *backlog_height as u64,
-                        backlog_records,
-                    )?;
-                }
-                report_backlogs[i].clear();
-            }
-            if *wb > 0 {
-                *wb -= 1;
-            };
-        } else if can_move
-            || global_move(moves_input, move_number)
-            || move_ready(moves_input, move_number, &local_uis)
-            || accept_proposal_ready(moves_input, move_number, &local_uis)
-            || propose_ready(moves_input, move_number, &local_uis)
-        {
-            can_move = false;
-
-            if move_number < moves_input.len() {
-                let ga = &moves_input[move_number];
-                move_number += 1;
-                let action_idx = move_number - 1;
-
-                match ga {
-                    SimScriptAction::Move(who, gid, readable, _share) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "Move", gid, gid);
-                        }
-                        let entropy = rng.random();
-                        let t_mv = std::time::Instant::now();
-                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
-                        if timing_enabled {
-                            let mv_elapsed = t_mv.elapsed();
-                            eprintln!("  step {num_steps}: p{who} make_move(move_number={move_number}) {mv_elapsed:.2?}");
-                        }
-                        local_uis[*who].game_accepted_ids.remove(gid);
-                        local_uis[*who].opponent_moved_in_game.remove(gid);
-                    }
-                    SimScriptAction::ProposeNewGame(who, _trigger)
-                    | SimScriptAction::ProposeNewGameTheirTurn(who, _trigger)
-                    | SimScriptAction::ProposeNewGameWithTimeout(who, _trigger, _) => {
-                        let my_turn = matches!(
-                            ga,
-                            SimScriptAction::ProposeNewGame(_, _)
-                                | SimScriptAction::ProposeNewGameWithTimeout(_, _, _)
-                        );
-                        let timeout = match ga {
-                            SimScriptAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
-                            _ => 15,
-                        };
-                        let parameters = if game_type == b"calpoker" {
-                            let node = (Amount::new(100), (my_turn, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (my_turn, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"debug" {
-                            let node = (
-                                Amount::new(100),
-                                (Amount::new(100), (my_turn, (extras.clone(), ()))),
-                            )
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else {
-                            extras.clone()
-                        };
-                        let new_ids = cradles[*who].propose_games(
-                            allocator,
-                            &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
-                                timeout: Timeout::new(timeout),
-                                parameters,
-                            }],
-                        )?;
-                        local_uis[*who]
-                            .proposed_game_ids
-                            .extend(new_ids.iter().cloned());
-                    }
-                    SimScriptAction::ProposeKrunkGroup(who, _trigger) => {
-                        let new_ids = cradles[*who].propose_games(
-                            allocator,
-                            &[GameProposal {
-                                game_type: GameType(b"krunk".to_vec()),
-                                timeout: Timeout::new(15),
-                                parameters: Program::from_hex("64")?,
-                            }],
-                        )?;
-                        local_uis[*who]
-                            .proposed_game_ids
-                            .extend(new_ids.iter().cloned());
-                    }
-                    SimScriptAction::AcceptProposal(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptProposal", gid, gid);
-                        }
-                        if !local_uis[*who].accepted_proposal_ids.contains(gid) {
-                            cradles[*who].accept_proposal(allocator, gid)?;
-                            local_uis[*who].accepted_proposal_ids.push(*gid);
-                            move_number -= 1;
-                        }
-                    }
-                    SimScriptAction::CancelProposal(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "CancelProposal", gid, gid);
-                        }
-                        cradles[*who].cancel_proposal(allocator, gid)?;
-                    }
-                    SimScriptAction::GoOnChain(who) => {
-                        assert!(
-                            !cradles[*who].channel_status_terminal(),
-                            "SimScriptAction::GoOnChain({who}) but channel is already terminal: move_number={move_number} notifications={:?}",
-                            local_uis[*who].notifications
-                        );
-                        if cradles[*who].is_on_chain() {
-                            panic!(
-                                "SimScriptAction::GoOnChain({who}) but player is already on chain: move_number={move_number}",
-                            );
-                        }
-                        if !cradles[*who].handshake_finished() {
-                            move_number -= 1;
-                            continue;
-                        }
-                        local_uis[*who].go_on_chain = true;
-                    }
-                    SimScriptAction::FakeMove(who, gid, readable, move_data) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "FakeMove", gid, gid);
-                        }
-                        let entropy = rng.random();
-                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
-                        // Flush pending actions into the events queue
-                        // (without draining) so replace_last_message can
-                        // find the outbound batch.
-                        cradles[*who].flush_pending(allocator)?;
-                        local_uis[*who].game_accepted_ids.remove(gid);
-                        local_uis[*who].opponent_moved_in_game.remove(gid);
-
-                        cradles[*who].replace_last_message(|msg_envelope| {
-                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
-                                let mut new_actions = actions.clone();
-                                let mut found = false;
-                                for action in new_actions.iter_mut() {
-                                    if let BatchAction::Move(_game_id, ref mut gmd) = action {
-                                        gmd.basic.move_made.append(&mut move_data.clone());
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if !found {
-                                    return Err(Error::StrErr(format!(
-                                        "FakeMove sabotage: no BatchAction::Move found in {msg_envelope:?}"
-                                    )));
-                                }
-                                Ok(PeerMessage::Batch {
-                                    actions: new_actions,
-                                    signatures: signatures.clone(),
-                                    clean_shutdown: clean_shutdown.clone(),
-                                })
-                            } else {
-                                Err(Error::StrErr(format!(
-                                    "FakeMove sabotage expected PeerMessage::Batch, got {msg_envelope:?}"
-                                )))
-                            }
-                        })?;
-                    }
-                    SimScriptAction::BadSignatureMove(who, gid, readable) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "BadSignatureMove", gid, gid);
-                        }
-                        tamper_next_batch_signature[*who] = true;
-                        let entropy = rng.random();
-                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
-                        local_uis[*who].game_accepted_ids.remove(gid);
-                        local_uis[*who].opponent_moved_in_game.remove(gid);
-                    }
-                    SimScriptAction::Cheat(who, gid, cheat_share) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "Cheat", gid, gid);
-                        }
-                        cradles[*who].cheat(allocator, gid, cheat_share.clone())?;
-                    }
-                    SimScriptAction::ForceDestroyCoin(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, gid);
-                        }
-                        if let Some(game_coin) = cradles[*who].get_game_coin(gid) {
-                            force_destroyed_coins.push(game_coin);
-                        } else {
-                            move_number -= 1;
-                            continue;
-                        }
-                    }
-                    SimScriptAction::NerfTransactions(who) => {
-                        nerf_transactions_for |= 1 << *who;
-                    }
-                    SimScriptAction::UnNerfTransactionsFor(who) => {
-                        nerf_transactions_for &= !(1 << *who);
-                    }
-                    SimScriptAction::UnNerfTransactions(replay) => {
-                        nerf_transactions_for = 0;
-                        if *replay {
-                            for tx in nerfed_tx_backlog.drain(..) {
-                                let any_stale = tx
-                                    .spends
-                                    .iter()
-                                    .any(|cs| !simulator.is_coin_spendable(&cs.coin));
-                                if any_stale {
-                                    continue;
-                                }
-                                simulator.push_transactions(allocator, &tx.spends)?;
-                            }
-                        } else {
-                            nerfed_tx_backlog.clear();
-                        }
-                    }
-                    SimScriptAction::BlockCoinReports(who) => {
-                        blocked_coin_reports_for |= 1 << *who;
-                    }
-                    SimScriptAction::UnblockCoinReports(replay) => {
-                        blocked_coin_reports_for = 0;
-                        if *replay {
-                            #[allow(clippy::needless_range_loop)]
-                            for i in 0..=1 {
-                                for (backlog_height, backlog_records) in report_backlogs[i].iter() {
-                                    cradles[i].report_coin_states(
-                                        allocator,
-                                        *backlog_height as u64,
-                                        backlog_records,
-                                    )?;
-                                }
-                                report_backlogs[i].clear();
-                            }
-                        } else {
-                            report_backlogs = [Vec::default(), Vec::default()];
-                        }
-                    }
-                    SimScriptAction::NerfMessages(who) => {
-                        nerf_messages_for |= 1 << *who;
-                    }
-                    SimScriptAction::UnNerfMessages => {
-                        nerf_messages_for = 0;
-                    }
-                    SimScriptAction::WaitBlocks(n, players) => {
-                        wait_blocks = Some((*n, *players));
-                    }
-                    SimScriptAction::AcceptSettlement(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptSettlement", gid, gid);
-                        }
-                        cradles[*who].accept_settlement(allocator, gid)?;
-                    }
-                    SimScriptAction::Timeout(_who) => {
-                        panic!("Timeout action is not supported in sim tests; use AcceptSettlement(player, game_id)");
-                    }
-                    SimScriptAction::CleanShutdown(who) => {
-                        assert!(
-                            !cradles[*who].is_on_chain(),
-                            "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
-                        );
-                        if !cradles[*who].handshake_finished() {
-                            move_number -= 1;
-                            continue;
-                        }
-                        cradles[*who].shut_down(allocator)?;
-                    }
-                    SimScriptAction::CorruptStateNumber(who, new_sn) => {
-                        cradles[*who].corrupt_state_for_testing(*new_sn)?;
-                    }
-                    SimScriptAction::ForceUnroll(who) => {
-                        let spend = cradles[*who].force_unroll_spend(allocator)?;
-                        simulator.push_transactions(allocator, &spend.spends)?;
-                    }
-                    SimScriptAction::SaveUnrollSnapshot(who) => {
-                        cradles[*who].save_unroll_snapshot();
-                    }
-                    SimScriptAction::ForceStaleUnroll(who) => {
-                        let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
-                        let _included_result =
-                            simulator.push_transactions(allocator, &spend.spends)?;
-                    }
-                    SimScriptAction::InjectRawMessage(who, data) => {
-                        cradles[*who].deliver_message(data)?;
-                    }
-                    SimScriptAction::SelfAcceptProposal(who, gid) => {
-                        cradles[*who].self_accept_proposal(allocator, gid)?;
-                    }
-                    SimScriptAction::WrongParityProposal(who) => {
-                        let parameters = if game_type == b"calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else {
-                            extras.clone()
-                        };
-                        cradles[*who].propose_games(
-                            allocator,
-                            &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
-                                timeout: Timeout::new(15),
-                                parameters,
-                            }],
-                        )?;
-                        cradles[*who].flush_pending(allocator)?;
-                        cradles[*who].replace_last_message(|msg_envelope| {
-                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
-                                let mut new_actions = actions.clone();
-                                for action in new_actions.iter_mut() {
-                                    if let BatchAction::ProposeGroup(ref mut wire) = action {
-                                        wire.members[0].game_id = GameID(wire.members[0].game_id.0 ^ 1);
-                                    }
-                                }
-                                Ok(PeerMessage::Batch {
-                                    actions: new_actions,
-                                    signatures: signatures.clone(),
-                                    clean_shutdown: clean_shutdown.clone(),
-                                })
-                            } else {
-                                Err(Error::StrErr(format!(
-                                    "WrongParityProposal expected PeerMessage::Batch, got {msg_envelope:?}"
-                                )))
-                            }
-                        })?;
-                    }
-                    SimScriptAction::InvalidProposalParameters(who) => {
-                        let parameters = if game_type == b"calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else {
-                            extras.clone()
-                        };
-                        cradles[*who].propose_games(
-                            allocator,
-                            &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
-                                timeout: Timeout::new(15),
-                                parameters,
-                            }],
-                        )?;
-                        cradles[*who].flush_pending(allocator)?;
-                        cradles[*who].replace_last_message(|msg_envelope| {
-                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
-                                let mut new_actions = actions.clone();
-                                for action in new_actions.iter_mut() {
-                                    if let BatchAction::ProposeGroup(ref mut wire) = action {
-                                        wire.start.parameters = Program::from_hex("80")?;
-                                    }
-                                }
-                                Ok(PeerMessage::Batch {
-                                    actions: new_actions,
-                                    signatures: signatures.clone(),
-                                    clean_shutdown: clean_shutdown.clone(),
-                                })
-                            } else {
-                                Err(Error::StrErr(format!(
-                                    "InvalidProposalParameters expected PeerMessage::Batch, got {msg_envelope:?}"
-                                )))
-                            }
-                        })?;
-                    }
-                    SimScriptAction::InvalidProposalTimeout(who) => {
-                        let parameters = if game_type == b"calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
-                        } else {
-                            extras.clone()
-                        };
-                        cradles[*who].propose_games(
-                            allocator,
-                            &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
-                                timeout: Timeout::new(15),
-                                parameters,
-                            }],
-                        )?;
-                        cradles[*who].flush_pending(allocator)?;
-                        cradles[*who].replace_last_message(|msg_envelope| {
-                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
-                                let mut new_actions = actions.clone();
-                                for action in new_actions.iter_mut() {
-                                    if let BatchAction::ProposeGroup(ref mut wire) = action {
-                                        wire.start.timeout = Timeout::new(0);
-                                    }
-                                }
-                                Ok(PeerMessage::Batch {
-                                    actions: new_actions,
-                                    signatures: signatures.clone(),
-                                    clean_shutdown: clean_shutdown.clone(),
-                                })
-                            } else {
-                                Err(Error::StrErr(format!(
-                                    "InvalidProposalTimeout expected PeerMessage::Batch, got {msg_envelope:?}"
-                                )))
-                            }
-                        })?;
-                    }
-                }
-            }
-        }
+    let harness = SimulationHarness::new(cradles, simulator, local_uis);
+    let (harness, early_success) = script_runner::run_script(
+        allocator,
+        rng,
+        identities,
+        game_type,
+        extras,
+        moves_input,
+        pred,
+        &neutral_identity,
+        &launcher_coin,
+        harness,
+    )?;
+    if early_success {
+        return Ok(harness.into_outcome(identities));
     }
+
+    let local_uis = harness.local_uis();
 
     for (i, lui) in local_uis.iter().enumerate() {
         let channel_failed = lui.notifications.iter().any(|n| {
@@ -2115,13 +1304,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
     }
 
-    Ok(GameRunOutcome {
-        identities: [identities[0].clone(), identities[1].clone()],
-        cradles,
-        local_uis,
-        simulator,
-        logs,
-    })
+    Ok(harness.into_outcome(identities))
 }
 
 pub fn run_calpoker_container_with_action_list_with_success_predicate(
@@ -2165,7 +1348,22 @@ pub fn run_spacepoker_container_with_action_list_with_success_predicate(
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
-    let seed_data: [u8; 32] = [1; 32];
+    run_spacepoker_container_with_action_list_with_seed(
+        allocator,
+        moves,
+        predicate,
+        per_player_balance,
+        [1; 32],
+    )
+}
+
+pub fn run_spacepoker_container_with_action_list_with_seed(
+    allocator: &mut AllocEncoder,
+    moves: &[SimScriptAction],
+    predicate: GameRunEarlySuccessPredicate,
+    per_player_balance: Option<u64>,
+    seed_data: [u8; 32],
+) -> Result<GameRunOutcome, Error> {
     let mut rng = ChaCha8Rng::from_seed(seed_data);
     let pk1: PrivateKey = rng.random();
     let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
@@ -3352,10 +2550,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ChannelStatus::Unrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusPlayingMove),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSlashedUs),
             ],
@@ -3861,6 +3060,40 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_player_one_on_chain_settlement_drains_owner", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+        let moves = [DebugGameTestMove::new(100, 0)];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+        sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(6, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+        sim_setup.game_actions.push(SimScriptAction::Assert(
+            SimAssertion::GameCoinTimeoutRegistered(1, GameID(1)),
+        ));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(30, 0));
+
+        run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys,
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+            None,
+        )
+        .expect("player 1 settlement should register its timeout claim immediately");
+    }));
+
     res.push(("test_calpoker_shutdown_nerf_alice", &|| {
         let mut allocator = AllocEncoder::new();
 
@@ -4321,6 +3554,29 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     .any(|n| matches!(n, GameNotification::GameSettled { outcome, .. } if is_opponent_side_settlement(*outcome))),
                 "player 1 (bob) should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
             );
+            let resolved_index = outcome.local_uis[0]
+                .events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event,
+                        TestEvent::Notification(GameNotification::ChannelStatus {
+                            state: ChannelStatus::ResolvedUnrolled,
+                            ..
+                        })
+                    )
+                })
+                .expect("alice should observe the unroll resolution");
+            let observed_on_chain_moves = outcome.local_uis[0]
+                .events
+                .iter()
+                .skip(resolved_index + 1)
+                .filter(|event| matches!(event, TestEvent::OpponentMoved { .. }))
+                .count();
+            assert_eq!(
+                observed_on_chain_moves, 1,
+                "the observed on-chain opponent move must emit exactly one readable event"
+            );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
@@ -4349,6 +3605,48 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ], "bob_redo_alice_timeout p1");
+        },
+    ));
+
+    res.push((
+        "test_internal_redo_then_queued_user_move_completes",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+            ];
+            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+            moves.extend(game_moves[..3].iter().cloned());
+            moves.push(SimScriptAction::NerfMessages(1));
+            moves.push(game_moves[3].clone());
+            moves.push(SimScriptAction::GoOnChain(1));
+            // This is a new semantic action, queued once. The simulator does not
+            // replay Bob's dropped move; Rust redoes it internally, emits Alice's
+            // fresh opponent-move event, and only then dispatches this final move.
+            moves.push(game_moves[4].clone());
+            moves.push(SimScriptAction::WaitBlocks(20, 0));
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("internal redo and queued move should complete");
+
+            for (player, cradle) in outcome.cradles.iter().enumerate() {
+                assert!(
+                    !cradle.is_failed(),
+                    "player {player} must not fail after internal redo plus queued move"
+                );
+            }
+            assert!(
+            outcome.local_uis[0].notifications.iter().any(|notification| {
+                matches!(notification, GameNotification::GameSettled { id, .. } if *id == GameID(1))
+            }),
+            "Alice should observe the game settle after her queued final move"
+        );
         },
     ));
 
@@ -4523,10 +3821,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ChannelStatus::Unrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusPlayingMove),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSlashedUs),
             ],
@@ -4585,7 +3884,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusPlayingMove),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSlashedUs),
             ],
@@ -4717,10 +4017,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ChannelStatus::Unrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusPlayingMove),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSlashedUs),
             ],
@@ -4812,14 +4113,118 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusPlayingMove),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(
                     ExpectedNotification::GameStatusSubmittingTimeoutClaim,
                 ),
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
             ], "nerfed_cheat p1");
+        },
+    ));
+
+    res.push((
+        "test_calpoker_on_chain_move_status_and_publication",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Take 3 moves so after the unroll/redo it is Bob's turn.
+            let mut moves = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+            ];
+            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+            moves.extend(game_moves.iter().take(3).cloned());
+            moves.push(SimScriptAction::GoOnChain(0));
+            moves.push(SimScriptAction::WaitBlocks(6, 0));
+            // Bob's on-chain reveal move.
+            moves.push(game_moves[3].clone());
+            // The post-action drain should publish the move immediately, and
+            // the assertion resumes at the next block to validate its child.
+            moves.push(SimScriptAction::Assert(SimAssertion::GameCoinPublished(
+                1,
+                GameID(1),
+            )));
+            // These contiguous assertions must observe the same tip as the
+            // successful next-block assertion above.
+            moves.push(SimScriptAction::Assert(
+                SimAssertion::GameCoinTimeoutRegistered(1, GameID(1)),
+            ));
+            moves.push(SimScriptAction::Assert(
+                SimAssertion::GameCoinTimeoutRegistered(1, GameID(1)),
+            ));
+            // Let the game resolve after the move.
+            moves.push(SimScriptAction::WaitBlocks(30, 0));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let host_events = &outcome.host_events[1];
+            let (playing_index, spent_coin, notification_coin_in_mempool) = host_events
+                .iter()
+                .enumerate()
+                .find_map(|(index, event)| match event {
+                    HostBoundaryEvent::Notification {
+                        notification:
+                            GameNotification::GameStatus {
+                                id,
+                                status: GameStatusKind::PlayingMove,
+                                coin_id: Some(coin),
+                                ..
+                            },
+                        notification_coin_in_mempool,
+                    } if *id == GameID(1) => {
+                        Some((index, coin.clone(), *notification_coin_in_mempool))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    panic!("player 1 should get PlayingMove at host boundary, got: {host_events:?}")
+                });
+            assert!(
+                notification_coin_in_mempool,
+                "PlayingMove became observable before its spend reached the mempool: {host_events:?}"
+            );
+            assert!(
+                host_events[..playing_index].iter().any(|event| {
+                    matches!(
+                        event,
+                        HostBoundaryEvent::TransactionSubmitted(spends)
+                            if spends.contains(&spent_coin.to_coin_id())
+                    )
+                }),
+                "the game-coin transaction must cross the host boundary before PlayingMove: {host_events:?}"
+            );
+            assert!(
+                host_events[..playing_index].iter().any(|event| {
+                    matches!(event, HostBoundaryEvent::WatchCoin(coin) if coin == &spent_coin)
+                }),
+                "the spent game coin must be watched before PlayingMove: {host_events:?}"
+            );
+
+            let events = &outcome.local_uis[1].events;
+            let child_coin = events
+                .iter()
+                .find_map(|event| match event {
+                    TestEvent::Notification(GameNotification::GameStatus {
+                        id,
+                        status: GameStatusKind::OnChainTheirTurn,
+                        coin_id: Some(coin),
+                        other_params: Some(params),
+                        ..
+                    }) if *id == GameID(1) && params.moved_by_us == Some(true) => {
+                        Some(coin.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    panic!("player 1 should confirm its on-chain move, got: {events:?}")
+                });
+
+            let (child_parent, _, _) = child_coin.to_parts().expect("child coin should have parts");
+            assert_eq!(child_parent, spent_coin.to_coin_id());
         },
     ));
 
@@ -4868,6 +4273,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::Unrolling,
                 )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
@@ -5181,6 +4587,65 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_coin_solution_callback_is_requester_only", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+            SimScriptAction::GoOnChain(1),
+            SimScriptAction::WaitBlocks(20, 1),
+        ];
+
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for player in 0..=1 {
+            let events = &outcome.host_events[player];
+            let requests: Vec<&CoinString> = events
+                .iter()
+                .filter_map(|event| match event {
+                    HostBoundaryEvent::CoinSolutionRequested(coin) => Some(coin),
+                    _ => None,
+                })
+                .collect();
+            let callbacks: Vec<&CoinString> = events
+                .iter()
+                .filter_map(|event| match event {
+                    HostBoundaryEvent::CoinSolutionCallback(coin) => Some(coin),
+                    _ => None,
+                })
+                .collect();
+
+            assert!(
+                !requests.is_empty(),
+                "player {player} must emit its own puzzle/solution request: {events:?}"
+            );
+            assert_eq!(
+                callbacks, requests,
+                "player {player} must receive exactly one callback for each request, in FIFO order: {events:?}"
+            );
+        }
+
+        let player_zero_requests: HashSet<&CoinString> = outcome.host_events[0]
+            .iter()
+            .filter_map(|event| match event {
+                HostBoundaryEvent::CoinSolutionRequested(coin) => Some(coin),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            outcome.host_events[1].iter().any(|event| {
+                matches!(
+                    event,
+                    HostBoundaryEvent::CoinSolutionRequested(coin)
+                        if player_zero_requests.contains(coin)
+                )
+            }),
+            "the opponent must emit its own request for a shared observed spend: {:?}",
+            outcome.host_events
+        );
+    }));
+
     res.push((
         "test_notification_opponent_successfully_cheated",
         &|| {
@@ -5246,8 +4711,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::Unrolling)),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusPlayingMove),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(ChannelStatus::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
                 ExpectedEvent::Notification(
                     ExpectedNotification::GameStatusSubmittingTimeoutClaim,
@@ -5622,7 +5088,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )
             })
             .unwrap();
-        for n in &p1_notifs[channel_error_idx + 1..] {
+        if let Some(n) = p1_notifs[channel_error_idx + 1..].first() {
             panic!("no notifications should arrive after ChannelError, but got {n:?}");
         }
 
@@ -5716,7 +5182,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 )
             })
             .unwrap();
-        for n in &p1_notifs[channel_error_idx + 1..] {
+        if let Some(n) = p1_notifs[channel_error_idx + 1..].first() {
             panic!("no notifications should arrive after ChannelError, but got {n:?}");
         }
 
@@ -6296,7 +5762,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ProposalAccepted { id, amount }
+                GameNotification::ProposalAccepted { id, amount, .. }
                     if *id == GameID(3) && amount.to_u64() == 200
             )),
             "Bob should get ProposalAccepted with game 3's 200-mojo total, got: {p1_notifs:?}"
@@ -6939,17 +6405,41 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
+        let final_readable_index = p0_notifs
+            .iter()
+            .rposition(|n| {
+                matches!(
+                    n,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::MyTurn,
+                        other_params: Some(params),
+                        ..
+                    } if params.readable.is_some()
+                        && params.mover_share == Some(Amount::default())
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!("Alice should receive Bob's final result readable, got: {p0_notifs:?}")
+            });
+        let skipped_reveal_index = p0_notifs
+            .iter()
+            .position(|n| {
+                matches!(
+                    n,
+                    GameNotification::GameSettled {
+                        outcome: SettlementOutcome::ForfeitedSkippedReveal,
+                        our_share,
+                        coin_id: None,
+                        ..
+                    } if *our_share == Amount::default()
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!("Alice should get skipped-reveal settlement, got: {p0_notifs:?}")
+            });
         assert!(
-            p0_notifs.iter().any(|n| matches!(
-                n,
-                GameNotification::GameSettled {
-                    outcome: SettlementOutcome::ForfeitedSkippedReveal,
-                    our_share,
-                    coin_id: None,
-                    ..
-                } if *our_share == Amount::default()
-            )),
-            "Alice should get WeTimedOut with zero reward as forfeit, got: {p0_notifs:?}"
+            final_readable_index < skipped_reveal_index,
+            "Alice's final readable must precede skipped-reveal settlement, got: {p0_notifs:?}"
         );
     }));
 
@@ -7089,8 +6579,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Bob (loser) must receive Alice's terminal move readable + mover_share
         // so the UI can display the final hand result.
-        assert!(
-            p1_notifs.iter().any(|n| matches!(
+        let final_readable_index = p1_notifs
+            .iter()
+            .position(|n| matches!(
                 n,
                 GameNotification::GameStatus {
                     status: GameStatusKind::MyTurn,
@@ -7098,21 +6589,30 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ..
                 } if params.readable.is_some()
                     && params.mover_share == Some(Amount::default())
-            )),
-            "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
-        );
+            ))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Bob should receive Alice's terminal move readable and mover_share, got: {p1_notifs:?}"
+                )
+            });
 
-        // Bob must receive a forfeit terminal, not be stuck on a phantom turn.
-        assert!(
-            p1_notifs.iter().any(|n| matches!(
+        // Bob must receive a loss terminal, not be stuck on a phantom turn.
+        let loss_index = p1_notifs
+            .iter()
+            .position(|n| matches!(
                 n,
                 GameNotification::GameSettled {
-                    outcome: SettlementOutcome::ForfeitedOpponentWon,
+                    outcome: SettlementOutcome::Lost,
                     our_share,
                     ..
                 } if *our_share == Amount::default()
-            )),
-            "Bob should receive ForfeitedOpponentWon settlement, got: {p1_notifs:?}"
+            ))
+            .unwrap_or_else(|| {
+                panic!("Bob should receive Lost settlement, got: {p1_notifs:?}")
+            });
+        assert!(
+            final_readable_index < loss_index,
+            "Bob's final readable must precede loss settlement, got: {p1_notifs:?}"
         );
 
         assert_eq!(

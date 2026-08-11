@@ -47,6 +47,10 @@ impl LiveGame {
         self.referee_maker.is_game_over()
     }
 
+    pub fn state_number(&self) -> usize {
+        self.referee_maker.state_number()
+    }
+
     pub fn get_max_move_size(&self) -> usize {
         self.referee_maker.get_max_move_size()
     }

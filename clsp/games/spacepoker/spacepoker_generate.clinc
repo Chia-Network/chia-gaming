@@ -367,11 +367,13 @@
         (bob_hand bob_bitfield) (space_hand_calc bob_cards bob_boost)
         move_bytes (concat pre alice_bitfield)
         result (deep_compare alice_hand bob_hand)
+        ; The move creates a coin with roles swapped, so this field is the
+        ; opponent/new mover's share, not Alice's share.
         final_mover_share (if (not result)
             (/ amount 2)
             (= result 1)
-            (+ (/ amount 2) half_pot)
             (- (/ amount 2) half_pot)
+            (+ (/ amount 2) half_pot)
         )
         (list
             "spacepoker_alice_end"
@@ -707,11 +709,13 @@
         (waiter_hand waiter_bitfield) (space_hand_calc waiter_cards waiter_boost)
         move_bytes (concat pre mover_bitfield)
         result (deep_compare mover_hand waiter_hand)
+        ; The move creates a coin with roles swapped, so this field is the
+        ; opponent/new mover's share, not Bob's share.
         final_mover_share (if (not result)
             (/ amount 2)
             (= result 1)
-            (+ (/ amount 2) half_pot)
             (- (/ amount 2) half_pot)
+            (+ (/ amount 2) half_pot)
         )
         (list
             "spacepoker_bob_end"

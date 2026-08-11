@@ -27,8 +27,8 @@
     "clvm-lib": "1.0.1",
     "framer-motion": "12.43.0",
     "qrcode": "1.5.4",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "rxjs": "7.8.2",
     "tailwind-merge": "3.4.0"
   },
@@ -39,15 +39,20 @@
     "@types/qrcode": "1.5.6",
     "@types/react": "19.2.0",
     "@types/react-dom": "19.2.0",
+    "@types/react-test-renderer": "19.1.0",
     "esbuild": "0.28.1",
     "fake-indexeddb": "^6.2.5",
     "jest": "30.4.2",
+    "react-test-renderer": "19.2.8",
     "tailwindcss": "4.1.17",
     "ts-jest": "29.4.12",
     "typescript": "5.9.3"
   },
   "jest": {
     "preset": "ts-jest",
+    "setupFilesAfterEnv": [
+      "<rootDir>/scripts/testSetup.ts"
+    ],
     "testMatch": [
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
     ],

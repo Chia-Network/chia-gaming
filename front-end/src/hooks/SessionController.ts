@@ -20,6 +20,8 @@ import { log, diagStack } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
+import type { RegisteredGameType } from '../lib/session/types';
+import type { LocalGameActionRequest } from '../lib/session/sessionMachineTypes';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -27,6 +29,8 @@ import {
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
+import { decodeChannelStatusPayload } from '../lib/session/persistence';
+import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 
 export interface WasmFields {
   serializedGameSession: Uint8Array;
@@ -44,7 +48,6 @@ export interface WasmFields {
   diagnosticLog: string[];
   durabilityWarning: string | undefined;
   activeGameIds: string[];
-  handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
@@ -183,21 +186,24 @@ export class SessionController implements PollingGameSession {
     acknowledged: boolean;
   } | null = null;
   activeGameIds: string[] = [];
-  private _handState!: PersistedGameState | null;
+  private handStateProjection: (() => PersistedGameState | null) | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
+  onFeatureStateTransition:
+    | ((gameType: RegisteredGameType, gameId: string, state: unknown) => boolean)
+    | null = null;
+  onFeatureStateWithLocalTurnTransition:
+    | ((gameType: RegisteredGameType, gameId: string, state: unknown, isMyTurn: boolean) => boolean)
+    | null = null;
+  onLocalGameAction: ((request: LocalGameActionRequest) => void) | null = null;
   getFee: () => bigint = () => 0n;
 
   get handState(): PersistedGameState | null {
-    return this._handState;
-  }
-
-  set handState(state: PersistedGameState | null) {
-    this._handState = state;
+    return this.handStateProjection?.() ?? null;
   }
 
   constructor(
@@ -207,12 +213,6 @@ export class SessionController implements PollingGameSession {
     theirContribution: bigint,
     peer_conn: PeerConnectionResult,
   ) {
-    Object.defineProperty(this, '_handState', {
-      value: null,
-      enumerable: false,
-      configurable: true,
-      writable: true,
-    });
     const { sendMessage, sendAck } = peer_conn;
     this.uniqueId = uniqueId;
     this.pairingToken = '';
@@ -240,7 +240,7 @@ export class SessionController implements PollingGameSession {
       },
     };
     this.beforeUnloadHandler = () => {
-      void this.flushPendingSave();
+      void this.flushPendingSave().catch((error) => this.reportBackgroundSaveError(error));
     };
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
@@ -282,6 +282,19 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
+    this.cleanupInternal(true);
+  }
+
+  /**
+   * Release a terminal controller after its durability boundary was awaited.
+   * Unlike ordinary abandonment/navigation cleanup, this cannot start another
+   * unawaited durability operation.
+   */
+  cleanupAfterTerminalFlush() {
+    this.cleanupInternal(false);
+  }
+
+  private cleanupInternal(flushDurability: boolean) {
     this.retired = true;
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
@@ -301,6 +314,7 @@ export class SessionController implements PollingGameSession {
     this.blockchainAttached = false;
     this.blockchain = null;
     this.onSaveNeeded = null;
+    this.handStateProjection = null;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -313,13 +327,28 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
     }
-    void this.flushDurabilityAndSend();
+    if (flushDurability) {
+      void this.flushDurabilityAndSend();
+    }
     this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       this.beforeUnloadHandler = null;
     }
+  }
+
+  reportDurabilityError(error: unknown): void {
+    const detail = extractErrorMessage(error);
+    const warning = `Session storage failed: ${detail}. Terminal session remains live so saving can be retried.`;
+    this.durabilityWarning = warning;
+    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+  }
+
+  private reportBackgroundSaveError(error: unknown): void {
+    const warning = `Session storage failed: ${extractErrorMessage(error)}.`;
+    this.durabilityWarning = warning;
+    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
   }
 
   notePeerActivity() {
@@ -740,8 +769,43 @@ export class SessionController implements PollingGameSession {
     this.scheduleDrain();
   }
 
+  private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
+    if (result?.actionSucceeded !== false) return;
+    const failed = result.events?.find(
+      (event) =>
+        'Notification' in event &&
+        event.Notification.ActionFailed &&
+        typeof event.Notification.ActionFailed.reason === 'string',
+    );
+    const reason =
+      failed && 'Notification' in failed ? failed.Notification.ActionFailed?.reason : undefined;
+    throw new Error(reason ? `${action} failed: ${reason}` : `${action} failed`);
+  }
+
+  private processCommandResult(result: WasmResult | undefined, action: string): void {
+    const processed =
+      result?.actionSucceeded === false
+        ? {
+            ...result,
+            events: result.events?.filter(
+              (event) => !('Notification' in event && event.Notification.ActionFailed),
+            ),
+          }
+        : result;
+    this.processResult(processed);
+    this.assertActionSucceeded(result, action);
+  }
+
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
     return 'Notification' in event || 'Log' in event || 'ReceiveError' in event;
+  }
+
+  private isQueuedGameTerminalEvent(event: GameSessionEvent): boolean {
+    if (!('Notification' in event)) return false;
+    const notification = event.Notification;
+    if (notification.GameSettled || notification.InsufficientBalance) return true;
+    const status = notification.GameStatus;
+    return typeof status?.status === 'string' && status.status.startsWith('ended-');
   }
 
   private stopProtocolWork(): void {
@@ -750,8 +814,10 @@ export class SessionController implements PollingGameSession {
     this.stopKeepaliveTimer();
     this.terminalHandoff = null;
     // A terminal drain is a replacement boundary, not an append-only update:
-    // an older queued status must never render after the terminal result.
-    this.eventQueue = [];
+    // stale status/protocol work must not render after it. Per-game terminal
+    // facts from an earlier manager drain remain authoritative, however, and
+    // may be the only terminal notification emitted for that accepted game.
+    this.eventQueue = this.eventQueue.filter((event) => this.isQueuedGameTerminalEvent(event));
     this.pendingOutboundSends = [];
     this.pendingAcks = [];
     this.unackedMessages = [];
@@ -889,19 +955,21 @@ export class SessionController implements PollingGameSession {
       this.markNeedsImmediateDurability();
     } else if ('Notification' in event) {
       const n = event.Notification;
+      let notification = n;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
       if (tag === 'ChannelStatus') {
         const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
         if (cs) {
-          // The `coin` field is a serialized CoinString (a byte blob). Normalize
-          // it to a Uint8Array so the persisted SessionSave carries a typed
-          // array (exempt from the save-time number check, stored losslessly as
-          // $bytes) rather than a degraded plain array/object of numbers.
-          this.lastChannelStatus = {
+          const channelStatus = decodeChannelStatusPayload({
             ...cs,
             coin: coerceToBytes(cs.coin),
-          } as unknown as ChannelStatusPayload;
-          if (cs.state === 'Active') {
+          });
+          if (channelStatus === null) {
+            throw new Error('ChannelStatus notification payload is null');
+          }
+          this.lastChannelStatus = channelStatus;
+          notification = { ...n, ChannelStatus: channelStatus };
+          if (channelStatus.state === 'Active') {
             this.channelReady = true;
           }
         }
@@ -925,10 +993,10 @@ export class SessionController implements PollingGameSession {
       }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
-        jsonStringify(n),
+        jsonStringify(notification),
         WASM_NOTIFICATION_HISTORY_LIMIT,
       );
-      this.rxjsEmitter?.next({ type: 'notification', data: n });
+      this.rxjsEmitter?.next({ type: 'notification', data: notification });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
@@ -1166,7 +1234,13 @@ export class SessionController implements PollingGameSession {
     if (this.saveTimer) return;
     const timer = setTimeout(() => {
       this.saveTimer = null;
-      this.onSaveNeeded?.();
+      try {
+        void Promise.resolve(this.onSaveNeeded?.()).catch((error) =>
+          this.reportBackgroundSaveError(error),
+        );
+      } catch (error) {
+        this.reportBackgroundSaveError(error);
+      }
     }, SAVE_DEBOUNCE_MS);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.saveTimer = timer;
@@ -1380,7 +1454,6 @@ export class SessionController implements PollingGameSession {
       diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
       durabilityWarning: this.durabilityWarning,
       activeGameIds: [...this.activeGameIds],
-      handState: this.handState,
       channelStatus: this.lastChannelStatus,
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
@@ -1408,9 +1481,72 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  setHandState(state: PersistedGameState | null) {
-    this.handState = state;
-    this.scheduleSave();
+  projectHandState(read: () => PersistedGameState | null): () => void {
+    this.handStateProjection = read;
+    return () => {
+      if (this.handStateProjection === read) this.handStateProjection = null;
+    };
+  }
+
+  transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): boolean {
+    try {
+      if (!this.onFeatureStateTransition) {
+        throw new Error('Feature state transition callback is unavailable');
+      }
+      return this.onFeatureStateTransition(gameType, gameId, state);
+    } catch (error) {
+      const message = extractErrorMessage(error);
+      console.error('[session] feature state transition failed:', message);
+      this.rxjsEmitter?.next({
+        type: 'game-action-error',
+        gameId,
+        action: 'feature-state',
+        error: message,
+      });
+      return false;
+    }
+  }
+
+  commitLocalGameAction(request: LocalGameActionRequest): void {
+    if (!this.onLocalGameAction) {
+      throw new Error('Local game action callback is unavailable');
+    }
+    try {
+      this.onLocalGameAction(request);
+    } catch (error) {
+      if (!wasClientErrorReported(error)) {
+        markClientErrorReported(error);
+        const message = extractErrorMessage(error);
+        if (request.command.type === 'cheat') {
+          this.rxjsEmitter?.next({ type: 'error', error: message });
+        } else {
+          this.rxjsEmitter?.next({
+            type: 'game-action-error',
+            gameId: request.id,
+            action: request.command.type,
+            error: message,
+          });
+        }
+      }
+      throw error;
+    }
+  }
+
+  reportRuntimeError(error: unknown): void {
+    markClientErrorReported(error);
+    this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
+  }
+
+  transitionFeatureStateWithLocalTurn(
+    gameType: RegisteredGameType,
+    gameId: string,
+    state: unknown,
+    isMyTurn: boolean,
+  ): boolean {
+    if (!this.onFeatureStateWithLocalTurnTransition) {
+      throw new Error('Feature state with local turn transition callback is unavailable');
+    }
+    return this.onFeatureStateWithLocalTurnTransition(gameType, gameId, state, isMyTurn);
   }
 
   /**
@@ -1419,7 +1555,6 @@ export class SessionController implements PollingGameSession {
    */
   clearDerivedGamePresentation(): void {
     this.activeGameIds = [];
-    this.handState = null;
     this.scheduleSave();
   }
 
@@ -1441,7 +1576,7 @@ export class SessionController implements PollingGameSession {
     const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
     const parametersList = paramsList.map(({ parameters }) => clvmToBytes(parameters));
     const result = this.cradle.propose_games(games, parametersList);
-    this.processResult(result);
+    this.processCommandResult(result, 'propose game');
     if (!result?.ids) {
       throw new Error('proposeGames returned no ids');
     }
@@ -1452,11 +1587,12 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.accept_proposal(gameId);
-      this.processResult(result);
+      this.processCommandResult(result, 'accept proposal');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptProposal failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
@@ -1464,11 +1600,12 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cancel_proposal(gameId);
-      this.processResult(result);
+      this.processCommandResult(result, 'cancel proposal');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cancel_proposal failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
@@ -1477,16 +1614,18 @@ export class SessionController implements PollingGameSession {
     try {
       const bytes = clvmToBytes(readable);
       const result = this.cradle.make_move(gameId, bytes);
-      this.processResult(result);
+      this.processCommandResult(result, 'make move');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
+      markClientErrorReported(e);
       this.rxjsEmitter?.next({
         type: 'game-action-error',
         gameId,
         action: 'make-move',
         error: msg,
       });
+      throw e;
     }
   }
 
@@ -1494,16 +1633,18 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.acceptSettlement(gameId);
-      this.processResult(result);
+      this.processCommandResult(result, 'accept settlement');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
+      markClientErrorReported(e);
       this.rxjsEmitter?.next({
         type: 'game-action-error',
         gameId,
         action: 'accept-settlement',
         error: msg,
       });
+      throw e;
     }
   }
 
@@ -1511,20 +1652,22 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cheat(gameId, moverShare);
-      this.processResult(result);
+      this.processCommandResult(result, 'cheat');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);
+      markClientErrorReported(e);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
   cleanShutdown(): void {
-    if (!this.cradle) return;
-    this.cleanShutdownCalled = true;
+    if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.shut_down();
-      this.processResult(result);
+      this.processCommandResult(result, 'clean shutdown');
+      this.cleanShutdownCalled = true;
     } catch (e) {
       const msg =
         e instanceof Error
@@ -1534,6 +1677,7 @@ export class SessionController implements PollingGameSession {
             : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
+      throw e;
     }
   }
 
@@ -1560,7 +1704,7 @@ export class SessionController implements PollingGameSession {
       const startedOnChain =
         result?.actionSucceeded === true && result.disposition?.kind === 'active';
       this.onChain = startedOnChain;
-      this.processResult(result);
+      this.processCommandResult(result, 'go on chain');
       return startedOnChain;
     } catch (e) {
       this.onChain = false;

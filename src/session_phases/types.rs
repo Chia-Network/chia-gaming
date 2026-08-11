@@ -161,6 +161,30 @@ pub enum GameAction {
     ForcedSelfAccept(GameID),
 }
 
+pub(crate) fn validate_new_move_action<'a>(
+    game_id: &GameID,
+    authority: Option<bool>,
+    queued_actions: impl IntoIterator<Item = &'a GameAction>,
+    pending: bool,
+) -> Result<(), Error> {
+    let has_queued_move = queued_actions
+        .into_iter()
+        .any(|action| matches!(action, GameAction::Move(queued_id, ..) if queued_id == game_id));
+    game_assert!(
+        authority == Some(true),
+        "make_move called when game authority does not give us the turn"
+    );
+    game_assert!(
+        !has_queued_move,
+        "make_move called while a move for this game is already queued"
+    );
+    game_assert!(
+        !pending,
+        "make_move called while a move for this game is pending"
+    );
+    Ok(())
+}
+
 impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
@@ -182,6 +206,39 @@ impl std::fmt::Debug for GameAction {
             #[cfg(test)]
             GameAction::ForcedSelfAccept(gi) => write!(formatter, "ForcedSelfAccept({gi:?})"),
         }
+    }
+}
+
+#[cfg(test)]
+mod move_authority_tests {
+    use super::*;
+
+    fn queued_move(game_id: GameID) -> GameAction {
+        GameAction::Move(
+            game_id,
+            ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80]))),
+            Hash::default(),
+        )
+    }
+
+    #[test]
+    #[should_panic(expected = "already queued")]
+    fn second_move_for_same_game_while_queued_fails_loudly() {
+        let game_id = GameID(7);
+        let queue = [queued_move(game_id)];
+        let _ = validate_new_move_action(&game_id, Some(true), &queue, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "pending")]
+    fn second_move_for_same_game_while_pending_fails_loudly() {
+        let _ = validate_new_move_action(&GameID(7), Some(true), &[], true);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not give us the turn")]
+    fn move_when_game_authority_says_their_turn_fails_loudly() {
+        let _ = validate_new_move_action(&GameID(7), Some(false), &[], false);
     }
 }
 

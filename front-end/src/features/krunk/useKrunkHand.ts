@@ -1,47 +1,23 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
-import { SessionController } from '../../hooks/SessionController';
 import { GameplayEvent } from '../../hooks/useGameSession';
-import { krunkSettlementStatus, type SettlementOutcome } from '../../lib/settlement';
+import { requireLiveGameHandSource, type GameHandSource } from '../../lib/gameMount';
+import { krunkSettlementStatus } from '../../lib/settlement';
+import type { GameTerminalModel } from '../../lib/session/types';
+import { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './adapter';
+import {
+  krunkGameStateFromPersisted,
+  KrunkHandler,
+  type KrunkGameState,
+  type KrunkGuess,
+  type KrunkRole,
+} from './stateCodec';
+import type { PersistedGameState } from '../../lib/session/gameStateCodec';
+import type { LocalGameCommand } from '../../lib/session/sessionMachineTypes';
 
-// Phase of the krunk state machine. Both roles share the enum -- which
-// transitions fire depends on whether the local player is alice (picks
-// the secret word) or bob (guesses).
-export enum KrunkHandler {
-  WaitingCommit, // alice: hasn't picked word yet (initial my-turn)
-  AliceWaiting, // alice: handed off, waiting for bob's guess
-  AliceClue, // alice: my-turn, auto-plays nil so the handler can
-  // pick clue or reveal internally
-  BobWaiting, // bob: their-turn, waiting for alice's commit/clue/reveal
-  BobGuess, // bob: my-turn, user types a guess
-  Terminal, // game over
-}
-
-export type KrunkRole = 'alice' | 'bob';
-
-export interface KrunkGuess {
-  word: string; // 5 uppercase letters
-  // Clue values per letter: 0 = absent, 1 = wrong position, 2 = correct.
-  clue: [number, number, number, number, number];
-}
-
-export interface KrunkGameState {
-  handler: KrunkHandler;
-  myTurn: boolean;
-  role: KrunkRole;
-  // Bob: guesses he has typed; alice: guesses bob has made.
-  guesses: KrunkGuess[];
-  // Alice only: her chosen secret word.
-  secretWord: string | null;
-  // Set at game end: the alice-side word that was being guessed.
-  revealedWord: string | null;
-  outcome: 'win' | 'lose' | null;
-  // From OpponentMoved.moverShare when the hand ends on a received reveal.
-  moverShare: string | null;
-  settlementOutcome: SettlementOutcome | null;
-  error: string | null;
-}
+export { KrunkHandler };
+export type { KrunkGameState, KrunkGuess, KrunkRole };
 
 export interface UseKrunkHandResult {
   gameState: KrunkGameState;
@@ -83,7 +59,7 @@ export function krunkGuessSubmissionMode(
   return null;
 }
 
-const PENDING_CLUE: KrunkGuess['clue'] = [-1, -1, -1, -1, -1];
+const PENDING_CLUE: KrunkGuess['clue'] = [-1n, -1n, -1n, -1n, -1n];
 
 export function krunkGuessesWithQueued(
   guesses: KrunkGuess[],
@@ -125,7 +101,7 @@ export function applyKrunkMoveRejected(
     state.role === 'bob' &&
     state.handler === KrunkHandler.BobWaiting &&
     lastGuess?.word === word &&
-    lastGuess.clue.every((value) => value === -1)
+    lastGuess.clue.every((value) => value === -1n)
   ) {
     return {
       ...state,
@@ -139,119 +115,130 @@ export function applyKrunkMoveRejected(
   return state;
 }
 
-export function krunkTerminalStatus(state: KrunkGameState, opponentLabel: string): string | null {
+export interface KrunkBoardNotice {
+  text: string;
+  kind: 'error' | 'win' | 'info';
+}
+
+function krunkTerminalNotice(
+  state: KrunkGameState,
+  opponentLabel: string,
+  terminal: GameTerminalModel,
+  gameAmount: string | null,
+): KrunkBoardNotice | null {
   if (state.handler !== KrunkHandler.Terminal) return null;
-  if (state.settlementOutcome != null) {
-    return krunkSettlementStatus(state.settlementOutcome, opponentLabel);
+  if (terminal.outcome != null) {
+    if (
+      terminal.outcome === 'opponent_timed_out' ||
+      terminal.outcome === 'timed_out_waiting_for_our_move'
+    ) {
+      const weTimedOut = terminal.outcome === 'timed_out_waiting_for_our_move';
+      const guesserLabel = state.role === 'bob' ? 'You' : opponentLabel;
+      const guesserTimedOut = state.role === 'bob' ? weTimedOut : !weTimedOut;
+      if (!guesserTimedOut && gameAmount === null) {
+        throw new Error('Krunk timeout winner is missing the game amount');
+      }
+      return {
+        text: `${guesserLabel} got ${
+          guesserTimedOut ? 'nothing' : krunkAmountLabel(gameAmount!)
+        } due to timeout.`,
+        kind: 'info',
+      };
+    }
+    const clean =
+      terminal.outcome === 'accept_settlement' ||
+      terminal.outcome === 'we_accepted' ||
+      terminal.outcome === 'settled_cleanly';
+    if (!clean) {
+      return { text: krunkSettlementStatus(terminal.outcome, opponentLabel), kind: 'info' };
+    }
+    const outcome = state.outcome ?? krunkOutcomeFromPlay(state);
+    const ourShare = terminal.myReward === null ? null : BigInt(terminal.myReward);
+    const amount = gameAmount === null ? null : BigInt(gameAmount);
+    const winnerAmount =
+      outcome === 'win'
+        ? ourShare
+        : outcome === 'lose' && ourShare !== null && amount !== null && amount >= ourShare
+          ? amount - ourShare
+          : null;
+    if (outcome === 'win') {
+      if (state.role === 'alice') {
+        return { text: `${opponentLabel} didn't win anything.`, kind: 'info' };
+      }
+      return {
+        text: winnerAmount === null ? 'You won!' : krunkWinMessage(winnerAmount.toString()),
+        kind: 'win',
+      };
+    }
+    if (outcome === 'lose') {
+      if (state.role === 'bob') {
+        return { text: "You didn't win anything.", kind: 'info' };
+      }
+      return {
+        text:
+          winnerAmount === null
+            ? `${opponentLabel} won.`
+            : krunkWinnerMessage(opponentLabel, winnerAmount.toString()),
+        kind: 'info',
+      };
+    }
+    return { text: 'Result unavailable.', kind: 'info' };
+  }
+  if (state.outcome === 'win' && state.moverShare !== null && BigInt(state.moverShare) > 0n) {
+    return { text: krunkWinMessage(state.moverShare), kind: 'win' };
   }
   if (state.role === 'bob') {
-    // Bob win amount is shown from moverShare in the UI (large font).
-    if (state.outcome === 'win') return null;
-    return 'Out of guesses.';
+    return { text: 'Out of guesses.', kind: 'info' };
   }
-  return state.outcome === 'win'
-    ? `${opponentLabel} couldn't guess it!`
-    : `${opponentLabel} guessed your word.`;
+  return {
+    text:
+      state.outcome === 'win'
+        ? `${opponentLabel} couldn't guess it!`
+        : `${opponentLabel} guessed your word.`,
+    kind: 'info',
+  };
+}
+
+export function krunkTerminalStatus(
+  state: KrunkGameState,
+  opponentLabel: string,
+  terminal: GameTerminalModel,
+  gameAmount: string | null = null,
+): string | null {
+  return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount)?.text ?? null;
+}
+
+export function krunkBoardNotice(
+  state: KrunkGameState,
+  opponentLabel: string,
+  terminal: GameTerminalModel,
+  gameAmount: string | null = null,
+): KrunkBoardNotice | null {
+  if (state.error) return { text: state.error, kind: 'error' };
+  return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount);
 }
 
 /** Win banner copy: mojo below 1e6, chia at/above (same crossover as formatAmount). */
 export function krunkWinMessage(moverShare: string): string {
-  const mojos = BigInt(moverShare);
-  if (mojos < 1_000_000n) {
-    return `You won ${mojos} mojo!`;
-  }
+  return krunkWinnerMessage('You', moverShare);
+}
+
+function krunkAmountLabel(amount: string): string {
+  const mojos = BigInt(amount);
+  if (mojos < 1_000_000n) return `${mojos} mojo`;
   const TRILLION = 1_000_000_000_000n;
   const whole = mojos / TRILLION;
   const frac = mojos % TRILLION;
-  if (frac === 0n) return `You won ${whole} chia!`;
+  if (frac === 0n) return `${whole} chia`;
   const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `You won ${whole}.${fracStr} chia!`;
+  return `${whole}.${fracStr} chia`;
+}
+
+export function krunkWinnerMessage(winner: string, amount: string): string {
+  return `${winner} won ${krunkAmountLabel(amount)}!`;
 }
 
 const MAX_GUESSES = 5;
-
-function readableToProgram(raw: number[] | Uint8Array): Program | null {
-  try {
-    return Program.deserialize(Uint8Array.from(raw));
-  } catch {
-    return null;
-  }
-}
-
-function programIsNil(prog: Program | null): boolean {
-  if (!prog) return true;
-  try {
-    const atom = prog.atom;
-    return atom.length === 0;
-  } catch {
-    return false;
-  }
-}
-
-function atomToWord(prog: Program): string | null {
-  const atom = prog.atom;
-  if (!atom || atom.length === 0) return null;
-  return new TextDecoder().decode(atom);
-}
-
-function programToClue(prog: Program): KrunkGuess['clue'] | null {
-  let items: Program[];
-  try {
-    items = prog.toList();
-  } catch {
-    return null;
-  }
-  if (items.length !== 5) return null;
-  const vals = items.map((p) => {
-    try {
-      return p.toInt();
-    } catch {
-      return -1;
-    }
-  });
-  if (vals.some((v) => v < 0 || v > 2)) return null;
-  return vals as KrunkGuess['clue'];
-}
-
-// Readables from Krunk handlers:
-//   nil                      — no info (commit)
-//   [c0..c4]                 — expanded clue list (non-terminal clue)
-//   (word, clue)             — word + expanded clue list
-type KrunkReadable =
-  | { kind: 'nil' }
-  | { kind: 'clue'; clue: KrunkGuess['clue'] }
-  | { kind: 'guess'; word: string; clue: KrunkGuess['clue'] }
-  | { kind: 'unknown' };
-
-function parseKrunkReadable(prog: Program | null): KrunkReadable {
-  try {
-    if (programIsNil(prog)) return { kind: 'nil' };
-    if (!prog) return { kind: 'unknown' };
-
-    // First try as a pure 5-int clue list.
-    const asClue = programToClue(prog);
-    if (asClue) return { kind: 'clue', clue: asClue };
-
-    // Otherwise expect (word, clue_list).
-    let items: Program[];
-    try {
-      items = prog.toList();
-    } catch {
-      return { kind: 'unknown' };
-    }
-    if (items.length === 2) {
-      const word = atomToWord(items[0]);
-      const clue = programToClue(items[1]);
-      if (word && clue) {
-        return { kind: 'guess', word: word.toUpperCase(), clue };
-      }
-    }
-    return { kind: 'unknown' };
-  } catch (e) {
-    console.error('parseKrunkReadable failed:', e);
-    return { kind: 'unknown' };
-  }
-}
 
 function wordToProgram(word: string): Program {
   // Krunk handlers receive `local_move` as a single CLVM atom: the
@@ -259,46 +246,64 @@ function wordToProgram(word: string): Program {
   return Program.fromBytes(new TextEncoder().encode(word.toUpperCase()));
 }
 
+function finishedKrunkState(
+  current: KrunkGameState,
+  revealedWord: string | null,
+  lastClue: KrunkGuess['clue'] | null,
+  moverShare: string | null = null,
+): KrunkGameState {
+  const correct = (clue: KrunkGuess['clue']) => clue.every((value) => value === 2n);
+  const bobGuessedCorrectly =
+    current.guesses.some((guess) => correct(guess.clue)) ||
+    (lastClue !== null && correct(lastClue));
+  const aliceWon = !bobGuessedCorrectly;
+  return {
+    ...current,
+    handler: KrunkHandler.Terminal,
+    myTurn: false,
+    revealedWord,
+    moverShare,
+    outcome:
+      (current.role === 'alice' && aliceWon) || (current.role === 'bob' && !aliceWon)
+        ? 'win'
+        : 'lose',
+  };
+}
+
 export function useKrunkHand(
-  _gameObject: SessionController,
+  handSource: GameHandSource,
   _gameId: string,
   iStarted: boolean,
   gameplayEvent$: Observable<GameplayEvent>,
   onTurnChanged: (isMyTurn: boolean) => void,
   active = true,
+  initialPersistedState?: Readonly<PersistedGameState>,
 ): UseKrunkHandResult {
+  const interactive = handSource.interactionMode === 'live' && active;
   // Channel-level convention: iStarted=true → I'm second mover in
   // every game. Krunk's first mover is alice (the committer), so the
   // channel initiator plays bob and the receiver plays alice.
   const role: KrunkRole = iStarted ? 'bob' : 'alice';
 
-  const [gs, setGs] = useState<KrunkGameState>({
-    handler: role === 'alice' ? KrunkHandler.WaitingCommit : KrunkHandler.BobWaiting,
-    myTurn: role === 'alice',
-    role,
-    guesses: [],
-    secretWord: null,
-    revealedWord: null,
-    outcome: null,
-    moverShare: null,
-    settlementOutcome: null,
-    error: null,
-  });
+  const [initialState] = useState(() =>
+    krunkGameStateFromPersisted(initialPersistedState, _gameId, role),
+  );
+  const [gs, setGs] = useState<KrunkGameState>(initialState);
 
   const gsRef = useRef(gs);
-  const gameObjectRef = useRef(_gameObject);
+  const handSourceRef = useRef(handSource);
   const gameIdRef = useRef(_gameId);
   const handFinishedRef = useRef(false);
-  const activeRef = useRef(active);
+  const activeRef = useRef(interactive);
 
   gsRef.current = gs;
-  gameObjectRef.current = _gameObject;
+  handSourceRef.current = handSource;
   gameIdRef.current = _gameId;
-  activeRef.current = active;
+  activeRef.current = interactive;
 
   useEffect(() => {
     if (!_gameId) return;
-    if (!active) {
+    if (!interactive) {
       handFinishedRef.current = true;
       return;
     }
@@ -307,9 +312,9 @@ export function useKrunkHand(
     if (gsRef.current.handler !== KrunkHandler.Terminal) {
       handFinishedRef.current = false;
     }
-  }, [_gameId, active]);
+  }, [_gameId, interactive]);
 
-  const transition = useCallback(
+  const projectState = useCallback(
     (next: KrunkGameState) => {
       gsRef.current = next;
       setGs(next);
@@ -318,134 +323,75 @@ export function useKrunkHand(
     [onTurnChanged],
   );
 
+  const transition = useCallback(
+    (next: KrunkGameState) => {
+      const controller = requireLiveGameHandSource(handSourceRef.current);
+      if (gameIdRef.current) {
+        if (!controller.transitionFeatureState('krunk', gameIdRef.current, next)) {
+          return false;
+        }
+      }
+      projectState(next);
+      return true;
+    },
+    [projectState],
+  );
+
+  const commitLocalAction = useCallback(
+    (next: KrunkGameState, command: LocalGameCommand): void => {
+      requireLiveGameHandSource(handSourceRef.current).commitLocalGameAction({
+        gameType: 'krunk',
+        id: gameIdRef.current,
+        state: next,
+        command,
+      });
+      projectState(next);
+    },
+    [projectState],
+  );
+
   const finishGame = useCallback(
     (
       revealedWord: string | null,
       lastClue: KrunkGuess['clue'] | null,
       moverShare: string | null = null,
     ) => {
-      const cur = gsRef.current;
-      handFinishedRef.current = true;
-      // Outcome from local POV: alice wins if bob never guessed correctly
-      // (all clues != all-2s), bob wins if he guessed correctly.
-      const correct = (c: KrunkGuess['clue']) => c.every((v) => v === 2);
-      const bobGuessedCorrectly =
-        cur.guesses.some((g) => correct(g.clue)) || (lastClue !== null && correct(lastClue));
-      const aliceWon = !bobGuessedCorrectly;
-      transition({
-        ...cur,
-        handler: KrunkHandler.Terminal,
-        myTurn: false,
-        revealedWord,
-        moverShare,
-        outcome:
-          (cur.role === 'alice' && aliceWon) || (cur.role === 'bob' && !aliceWon) ? 'win' : 'lose',
-      });
+      const committed = transition(
+        finishedKrunkState(gsRef.current, revealedWord, lastClue, moverShare),
+      );
+      if (committed) handFinishedRef.current = true;
+      return committed;
     },
     [transition],
   );
 
   // ── OpponentMoved handling ──
   useEffect(() => {
+    if (!interactive) return;
     const sub = gameplayEvent$.subscribe({
       next: (evt: GameplayEvent) => {
-        if (handFinishedRef.current) return;
-
         if ('OpponentMoved' in evt) {
           const evtGameId = evt.OpponentMoved.gameId;
           if (evtGameId && evtGameId !== gameIdRef.current) return;
-          const prog = readableToProgram(evt.OpponentMoved.readable);
-          const parsed = parseKrunkReadable(prog);
-          const cur = gsRef.current;
-
-          if (cur.role === 'alice') {
-            // Alice was waiting for bob's guess. The framework runs
-            // alice's their-turn handler which produces readable
-            // `(word, clue)` for the just-played guess.
-            if (parsed.kind === 'guess') {
-              const newGuess: KrunkGuess = { word: parsed.word, clue: parsed.clue };
-              transition({
-                ...cur,
-                handler: KrunkHandler.AliceClue,
-                myTurn: true,
-                guesses: [...cur.guesses, newGuess],
-                error: null,
-              });
-            }
-            return;
-          }
-
-          // Bob's side.
-          if (parsed.kind === 'nil') {
-            // Alice committed; first guess incoming.
-            transition({
-              ...cur,
-              handler: KrunkHandler.BobGuess,
-              myTurn: true,
-              error: null,
-            });
-            return;
-          }
-          if (parsed.kind === 'clue') {
-            // Alice sent a clue for bob's most recent guess. Attach
-            // it to the last unresolved guess.
-            const next = [...cur.guesses];
-            const idx = next.length - 1;
-            if (idx >= 0 && next[idx].clue.every((v) => v === -1)) {
-              next[idx] = { ...next[idx], clue: parsed.clue };
-            }
-            const correct = parsed.clue.every((v) => v === 2);
-            if (correct || next.length >= MAX_GUESSES) {
-              // Game should be ending soon when alice plays her clue
-              // handler -- but bob doesn't auto-terminate on clue
-              // alone; we wait for the reveal readable to confirm.
-              transition({
-                ...cur,
-                handler: KrunkHandler.BobWaiting,
-                myTurn: false,
-                guesses: next,
-                error: null,
-              });
-              return;
-            }
-            transition({
-              ...cur,
-              handler: KrunkHandler.BobGuess,
-              myTurn: true,
-              guesses: next,
-              error: null,
-            });
-            return;
-          }
-          if (parsed.kind === 'guess') {
-            // Reveal case: (word, clue_for_last_guess).
-            const next = [...cur.guesses];
-            const idx = next.length - 1;
-            if (idx >= 0 && next[idx].clue.every((v) => v === -1)) {
-              next[idx] = { ...next[idx], clue: parsed.clue };
-            }
-            gsRef.current = { ...cur, guesses: next };
-            finishGame(parsed.word, parsed.clue, evt.OpponentMoved.moverShare);
-            return;
-          }
+          if (handFinishedRef.current) return;
+          const next = reduceKrunkFeatureState(gsRef.current, {
+            type: 'opponent-moved',
+            readable: Uint8Array.from(evt.OpponentMoved.readable),
+            moverShare: evt.OpponentMoved.moverShare,
+          });
+          if (next.handler === KrunkHandler.Terminal) handFinishedRef.current = true;
+          projectState(next);
         } else if ('MoveRejected' in evt) {
           if (evt.MoveRejected.gameId !== gameIdRef.current) return;
+          if (handFinishedRef.current) return;
           const next = applyKrunkMoveRejected(gsRef.current, evt.MoveRejected);
           if (next !== gsRef.current) {
             transition(next);
           }
         } else if ('Settled' in evt) {
           if (evt.Settled.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            handFinishedRef.current = true;
-            transition({
-              ...gsRef.current,
-              handler: KrunkHandler.Terminal,
-              myTurn: false,
-              settlementOutcome: evt.Settled.outcome,
-              moverShare: evt.Settled.ourShare,
-            });
-          }
+          handFinishedRef.current = true;
+          projectState(reduceKrunkFeatureState(gsRef.current, { type: 'settled' }));
         } else if ('GameError' in evt) {
           if (evt.GameError.gameId !== gameIdRef.current) return;
           if (!handFinishedRef.current) {
@@ -455,13 +401,14 @@ export function useKrunkHand(
       },
     });
     return () => sub.unsubscribe();
-  }, [gameplayEvent$, transition, finishGame]);
+  }, [gameplayEvent$, interactive, transition, finishGame, projectState]);
 
   // ── Auto-play ──
   // Alice's `krunk_alice_handler_clue` decides internally whether to
   // send a clue or the final reveal. The user has nothing to choose;
   // we just feed it nil.
   useEffect(() => {
+    if (!interactive) return;
     if (
       !activeRef.current ||
       gs.role !== 'alice' ||
@@ -469,101 +416,75 @@ export function useKrunkHand(
       !gs.myTurn
     )
       return;
-    const go = gameObjectRef.current;
     const gid = gameIdRef.current;
-    if (!activeRef.current || !go || !gid) return;
-    try {
-      go.makeMove(gid, null);
-      const latest = gs.guesses[gs.guesses.length - 1];
-      const isReveal =
-        !!latest && (latest.clue.every((v) => v === 2) || gs.guesses.length >= MAX_GUESSES);
-      if (isReveal) {
-        finishGame(gs.secretWord, latest.clue);
-        return;
-      }
-      transition({ ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false });
-    } catch (e) {
-      console.error('[krunk] alice auto-clue failed', e);
-      transition({
-        ...gs,
-        error: e instanceof Error ? e.message : String(e),
-        myTurn: false,
-      });
-    }
-  }, [gs, transition, finishGame]);
+    if (!activeRef.current || !gid) return;
+    const latest = gs.guesses[gs.guesses.length - 1];
+    const isReveal =
+      !!latest && (latest.clue.every((v) => v === 2n) || gs.guesses.length >= MAX_GUESSES);
+    const next = isReveal
+      ? finishedKrunkState(gs, gs.secretWord, latest.clue)
+      : { ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false };
+    commitLocalAction(next, { type: 'make-move', readable: null });
+    if (isReveal) handFinishedRef.current = true;
+  }, [gs, interactive, commitLocalAction]);
 
   const setSecretWord = useCallback(
     (word: string) => {
-      const go = gameObjectRef.current;
+      requireLiveGameHandSource(handSourceRef.current);
       const gid = gameIdRef.current;
       const cur = gsRef.current;
-      if (!activeRef.current || !go || !gid) return;
+      if (!activeRef.current || !gid) return;
       if (cur.role !== 'alice' || cur.handler !== KrunkHandler.WaitingCommit) return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] secret word must be 5 letters');
         return;
       }
-      try {
-        transition({
-          ...cur,
-          secretWord: normalised,
-          handler: KrunkHandler.AliceWaiting,
-          myTurn: false,
-          error: null,
-        });
-        go.makeMove(gid, wordToProgram(normalised));
-      } catch (e) {
-        console.error('[krunk] commit failed', e);
-        transition({
-          ...cur,
-          handler: KrunkHandler.WaitingCommit,
-          myTurn: true,
-          secretWord: null,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
+      const next = {
+        ...cur,
+        secretWord: normalised,
+        handler: KrunkHandler.AliceWaiting,
+        myTurn: false,
+        error: null,
+      } satisfies KrunkGameState;
+      commitLocalAction(next, {
+        type: 'make-move',
+        readable: wordToProgram(normalised),
+      });
     },
-    [transition],
+    [commitLocalAction],
   );
 
   const submitGuess = useCallback(
     (word: string) => {
-      const go = gameObjectRef.current;
+      requireLiveGameHandSource(handSourceRef.current);
       const gid = gameIdRef.current;
       const cur = gsRef.current;
-      if (!activeRef.current || !go || !gid) return;
+      if (!activeRef.current || !gid) return;
       if (cur.role !== 'bob' || cur.handler !== KrunkHandler.BobGuess) return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] guess must be 5 letters');
         return;
       }
-      try {
-        transition({
-          ...cur,
-          guesses: [
-            ...cur.guesses,
-            // Use -1 as a "pending" sentinel; replaced when alice's
-            // clue readable arrives.
-            { word: normalised, clue: PENDING_CLUE },
-          ],
-          handler: KrunkHandler.BobWaiting,
-          myTurn: false,
-          error: null,
-        });
-        go.makeMove(gid, wordToProgram(normalised));
-      } catch (e) {
-        console.error('[krunk] guess failed', e);
-        transition({
-          ...cur,
-          handler: KrunkHandler.BobGuess,
-          myTurn: true,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
+      const next = {
+        ...cur,
+        guesses: [
+          ...cur.guesses,
+          // Use -1 as a "pending" sentinel; replaced when alice's
+          // clue readable arrives.
+          { word: normalised, clue: PENDING_CLUE },
+        ],
+        handler: KrunkHandler.BobWaiting,
+        myTurn: false,
+        error: null,
+      } satisfies KrunkGameState;
+      commitLocalAction(next, {
+        type: 'make-move',
+        readable: wordToProgram(normalised),
+      });
     },
-    [transition],
+    [commitLocalAction],
   );
 
   return {

@@ -776,10 +776,12 @@ fn test_spacepoker_happy_path_all_calls() {
     }
 
     // End: Alice reveals preimage, auto-selects best hand
+    // For these deterministic preimages, Alice wins; after the terminal move
+    // Bob is the new mover and receives the losing share.
     moves.push(HandlerMove {
         input_move: NodePtr::NIL,
         entropy: entropy_alice,
-        expected_mover_share: None,
+        expected_mover_share: Some(AMOUNT / 2 - bet_unit),
         test_type: TestType::Normal,
     });
 
@@ -846,7 +848,7 @@ fn test_spacepoker_happy_path_alice_pongs() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator);
     let (entropy_alice, entropy_bob) =
-        find_bob_seed_for_outcome(&mut allocator, "alice_pongs_seed", false);
+        find_bob_seed_for_outcome(&mut allocator, "alice_pongs_bob_wins_seed_2", false);
 
     let bet_unit = BET_UNIT;
     let mover_share_betting = AMOUNT / 2 - bet_unit;
@@ -890,11 +892,12 @@ fn test_spacepoker_happy_path_alice_pongs() {
             test_type: TestType::Normal,
         });
     }
-    // End: Bob makes the terminal move
+    // End: Bob makes the terminal move. For these deterministic preimages,
+    // Bob wins, so the role-swapped coin gives Alice the losing share.
     moves.push(HandlerMove {
         input_move: NodePtr::NIL,
         entropy: entropy_bob,
-        expected_mover_share: None,
+        expected_mover_share: Some(AMOUNT / 2 - bet_unit),
         test_type: TestType::Normal,
     });
 
@@ -1228,7 +1231,7 @@ fn run_end_validator_with_evidence(
 }
 
 #[test]
-fn test_generous_mover_share_allowed() {
+fn test_end_validator_allows_extra_for_new_mover() {
     let mut allocator = AllocEncoder::new();
 
     let alice_pre = &sha256_bytes(b"alice_entropy_1027")[..16];
@@ -1251,18 +1254,19 @@ fn test_generous_mover_share_allowed() {
 
     let evidence = [0x1F_u8]; // waiter also selects first 5
 
-    // mover_share = 0 is maximally generous (mover gives everything away), always valid
-    let generous_code =
-        run_end_validator_with_evidence(&mut allocator, &move_bytes, 0, state, &evidence);
+    // MOVER_SHARE belongs to the role-swapped coin's new mover (the previous
+    // waiter). Allocating that player the entire amount is always permissible.
+    let extra_code =
+        run_end_validator_with_evidence(&mut allocator, &move_bytes, AMOUNT, state, &evidence);
     assert_eq!(
-        generous_code,
+        extra_code,
         MoveCode::MakeMove,
-        "generous mover_share=0 should be accepted (mover gives everything away)"
+        "giving the new mover the entire amount should be accepted"
     );
 }
 
 #[test]
-fn test_greedy_mover_share_slashed() {
+fn test_end_validator_slashes_underpayment_to_new_mover() {
     let mut allocator = AllocEncoder::new();
 
     let alice_pre = &sha256_bytes(b"alice_entropy_1027")[..16];
@@ -1285,13 +1289,14 @@ fn test_greedy_mover_share_slashed() {
 
     let evidence = [0x1F_u8];
 
-    // Claim the entire amount — this is greedy (mover takes everything)
-    let greedy_code =
-        run_end_validator_with_evidence(&mut allocator, &move_bytes, AMOUNT, state, &evidence);
+    // With a nonzero losing share, allocating the new mover nothing is always
+    // an underpayment, regardless of which selected hand wins.
+    let underpaid_code =
+        run_end_validator_with_evidence(&mut allocator, &move_bytes, 0, state, &evidence);
     assert_eq!(
-        greedy_code,
+        underpaid_code,
         MoveCode::Slash,
-        "greedy mover_share=AMOUNT should be slashed"
+        "underpaying the role-swapped coin's new mover should be slashed"
     );
 }
 
@@ -1963,12 +1968,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_evil_path_wrong_mover_share,
         ),
         (
-            "test_generous_mover_share_allowed",
-            &test_generous_mover_share_allowed,
+            "test_end_validator_allows_extra_for_new_mover",
+            &test_end_validator_allows_extra_for_new_mover,
         ),
         (
-            "test_greedy_mover_share_slashed",
-            &test_greedy_mover_share_slashed,
+            "test_end_validator_slashes_underpayment_to_new_mover",
+            &test_end_validator_slashes_underpayment_to_new_mover,
         ),
         (
             "test_spacepoker_open_readable_has_cards_and_message_parser",

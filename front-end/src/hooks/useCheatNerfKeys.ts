@@ -5,10 +5,15 @@ import { useEffect, useRef } from 'react';
 // publishing. Keeping the sequence matcher in one place ensures every game
 // behaves identically. Modified keystrokes and typing into text inputs are
 // ignored so the eggs never fire while the user is editing a field.
-export function useCheatNerfKeys(handleCheat: () => void, handleNerf: () => void): void {
+export function useCheatNerfKeys(
+  handleCheat: () => void,
+  handleNerf: () => void,
+  enabled = true,
+): void {
   const cheatBufRef = useRef('');
   const nerfBufRef = useRef('');
   useEffect(() => {
+    if (!enabled) return;
     const CHEAT_SEQ = 'cheat^';
     const NERF_SEQ = 'nerf^';
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -40,5 +45,5 @@ export function useCheatNerfKeys(handleCheat: () => void, handleNerf: () => void
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCheat, handleNerf]);
+  }, [enabled, handleCheat, handleNerf]);
 }

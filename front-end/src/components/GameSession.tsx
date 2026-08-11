@@ -1,6 +1,5 @@
 import {
   Component,
-  lazy,
   Suspense,
   useCallback,
   useEffect,
@@ -10,27 +9,18 @@ import {
   type ReactNode,
   type ErrorInfo,
 } from 'react';
-import { Observable } from 'rxjs';
 import {
   useGameSession,
-  isValidKrunkStake,
+  useSessionControllerAfterCommit,
   GameTerminalAttentionInfo,
-  GameplayEvent,
   QueuedNotification,
 } from '../hooks/useGameSession';
-import { useCalpokerHand } from '../features/calPoker/useCalpokerHand';
-import { CalpokerDisplaySnapshot } from '../hooks/save';
-import { formatMojos, formatAmount } from '../util';
-import { getPlayerId } from '../hooks/save';
+import { formatMojos } from '../util';
 import { SessionPhase } from '../types/ChiaGaming';
-import { CalpokerOutcome } from '../features/calPoker/outcome';
-import { SessionController, RestoreStatus } from '../hooks/SessionController';
+import { RestoreStatus, type SessionController } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import {
-  CalpokerDisplaySnapshotView,
-  CalpokerOutcomeView,
-} from '../features/calPoker/types/CaliforniapokerProps';
-import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
+import { requireLiveGameHandSource } from '../lib/gameMount';
+import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
   channelStateNeedsGameTabAttention,
@@ -39,25 +29,26 @@ import {
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import {
-  DEFAULT_GAME_TIMEOUT_BLOCKS,
   PRE_ACTIVE_CHANNEL_STATES,
-  selectComposeAmountAfterGameTypeChoice,
   selectInertGameInterfaceForBetweenHandDialog,
   type ChannelStatusModel,
   type SessionModel,
 } from '../lib/session/model';
+import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
-import { AmountInput } from './AmountInput';
+import {
+  clientErrorText,
+  markClientErrorReported,
+  wasClientErrorReported,
+} from '../lib/clientError';
+import { ComposeProposalDialog, ReviewProposalDialog } from './GameProposalDialogs';
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-const Calpoker = lazy(() => import('../features/calPoker'));
-const SpacePoker = lazy(() => import('../features/spacePoker/SpacePoker'));
-const Krunk = lazy(() => import('../features/krunk/Krunk'));
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -68,16 +59,18 @@ interface ErrorBoundaryState {
   dialogDismissed: boolean;
 }
 
-function RenderErrorDialog({
+export function RenderErrorDialog({
   title,
   error,
   componentStack,
+  description = 'The game UI hit a render error. The session shell is still running; details are shown below.',
   onDismiss,
   onReload,
 }: {
   title: string;
   error: string;
   componentStack: string | null;
+  description?: string;
   onDismiss?: () => void;
   onReload?: () => void;
 }) {
@@ -93,10 +86,7 @@ function RenderErrorDialog({
           <h2 id="render-error-title" className="text-lg font-semibold text-alert-text">
             {title}
           </h2>
-          <p className="mt-1 text-sm text-canvas-text">
-            The game UI hit a render error. The session shell is still running; details are shown
-            below.
-          </p>
+          <p className="mt-1 text-sm text-canvas-text">{description}</p>
         </div>
         <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text">
           {error}
@@ -121,6 +111,39 @@ function RenderErrorDialog({
       </div>
     </div>
   );
+}
+
+export function UncaughtClientErrorReporter() {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const report = (reason: unknown) => {
+      if (wasClientErrorReported(reason)) return;
+      markClientErrorReported(reason);
+      const detail = clientErrorText(reason);
+      queueMicrotask(() => {
+        setError((current) => current ?? detail);
+      });
+    };
+    const handleError = (event: ErrorEvent) => report(event.error ?? event.message);
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => report(event.reason);
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
+
+  return error ? (
+    <RenderErrorDialog
+      title="Unexpected client error"
+      description="An uncaught error reached the browser. The active game remains visible behind this dialog."
+      error={error}
+      componentStack={null}
+      onDismiss={() => setError(null)}
+      onReload={() => window.location.reload()}
+    />
+  ) : null;
 }
 
 export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -438,526 +461,6 @@ function NotificationOverlay({
   );
 }
 
-interface CalpokerHandProps {
-  gameObject: SessionController;
-  gameId: string;
-  iStarted: boolean;
-  playerNumber: number;
-  gameplayEvent$: Observable<GameplayEvent>;
-  onOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
-  perGameAmount: bigint;
-  myName?: string;
-  opponentName?: string;
-}
-
-function stringifyCalpokerSnapshot(
-  snapshot: CalpokerDisplaySnapshot | undefined,
-): CalpokerDisplaySnapshotView | undefined {
-  if (!snapshot) return undefined;
-  return {
-    ...snapshot,
-    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(String),
-    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(String),
-    playerHaloCardIds: snapshot.playerHaloCardIds.map(String),
-    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(String),
-  };
-}
-
-function parseCalpokerSnapshotView(snapshot: CalpokerDisplaySnapshotView): CalpokerDisplaySnapshot {
-  return {
-    ...snapshot,
-    playerBestHandCardIds: snapshot.playerBestHandCardIds.map(BigInt),
-    opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(BigInt),
-    playerHaloCardIds: snapshot.playerHaloCardIds.map(BigInt),
-    opponentHaloCardIds: snapshot.opponentHaloCardIds.map(BigInt),
-  };
-}
-
-function stringifyCalpokerOutcome(
-  outcome: CalpokerOutcome | undefined,
-): CalpokerOutcomeView | undefined {
-  if (!outcome) return undefined;
-  return {
-    my_win_outcome: outcome.my_win_outcome,
-    my_cards: outcome.my_cards.map(String),
-    their_cards: outcome.their_cards.map(String),
-    my_final_hand: outcome.my_final_hand.map(String),
-    their_final_hand: outcome.their_final_hand.map(String),
-    my_used_cards: outcome.my_used_cards.map(String),
-    their_used_cards: outcome.their_used_cards.map(String),
-    my_hand_value: outcome.my_hand_value.map(String),
-    their_hand_value: outcome.their_hand_value.map(String),
-  };
-}
-
-export function CalpokerHand({
-  gameObject,
-  gameId,
-  iStarted,
-  playerNumber,
-  gameplayEvent$,
-  onOutcome,
-  onTurnChanged,
-  appendGameLog,
-  perGameAmount,
-  myName,
-  opponentName,
-}: CalpokerHandProps) {
-  const handleTurnChanged = useCallback(
-    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
-    [gameId, onTurnChanged],
-  );
-  const {
-    playerHand,
-    opponentHand,
-    cardSelections,
-    setCardSelections,
-    setHandOrder,
-    moveNumber,
-    outcome,
-    settlementOutcome,
-    handleMakeMove,
-    handleCheat,
-    handleNerf,
-    saveDisplaySnapshot,
-    initialDisplaySnapshot,
-  } = useCalpokerHand(
-    gameObject,
-    gameId,
-    iStarted,
-    gameplayEvent$,
-    onOutcome,
-    handleTurnChanged,
-    gameObject.handState ?? undefined,
-  );
-
-  const handleGameLog = useCallback(
-    (lines: string[]) => {
-      appendGameLog(`California Poker ${formatAmount(perGameAmount)}`);
-      lines.forEach((l) => appendGameLog(l));
-      appendGameLog('');
-    },
-    [appendGameLog, perGameAmount],
-  );
-
-  const setUiCardSelections = useCallback(
-    (next: string[] | ((prev: string[]) => string[])) => {
-      setCardSelections((prev) => {
-        const prevView = prev.map(String);
-        const nextView = typeof next === 'function' ? next(prevView) : next;
-        return nextView.map(BigInt);
-      });
-    },
-    [setCardSelections],
-  );
-
-  const handleSnapshotChange = useCallback(
-    (snapshot: CalpokerDisplaySnapshotView) => {
-      saveDisplaySnapshot(parseCalpokerSnapshotView(snapshot));
-    },
-    [saveDisplaySnapshot],
-  );
-
-  const setUiHandOrder = useCallback(
-    (nextPlayerHand: string[], nextOpponentHand?: string[]) => {
-      setHandOrder(nextPlayerHand.map(BigInt), nextOpponentHand?.map(BigInt));
-    },
-    [setHandOrder],
-  );
-
-  return (
-    <Calpoker
-      outcome={stringifyCalpokerOutcome(outcome)}
-      moveNumber={String(moveNumber)}
-      playerNumber={playerNumber}
-      playerHand={playerHand.map(String)}
-      opponentHand={opponentHand.map(String)}
-      cardSelections={cardSelections.map(String)}
-      setCardSelections={setUiCardSelections}
-      setHandOrder={setUiHandOrder}
-      handleMakeMove={handleMakeMove}
-      handleCheat={handleCheat}
-      handleNerf={handleNerf}
-      onGameLog={handleGameLog}
-      onSnapshotChange={handleSnapshotChange}
-      initialSnapshot={stringifyCalpokerSnapshot(initialDisplaySnapshot)}
-      myName={myName}
-      opponentName={opponentName}
-      settlementOutcome={settlementOutcome}
-    />
-  );
-}
-
-interface SpacePokerHandProps {
-  gameObject: SessionController;
-  gameId: string;
-  iStarted: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
-  betSize: string;
-  unitSizeMojos?: string;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
-  perGameAmount: bigint;
-  myName?: string;
-  opponentName?: string;
-}
-
-export function SpacePokerHand({
-  gameObject,
-  gameId,
-  iStarted,
-  gameplayEvent$,
-  betSize,
-  unitSizeMojos,
-  onTurnChanged,
-  appendGameLog,
-  perGameAmount,
-  myName,
-  opponentName,
-}: SpacePokerHandProps) {
-  const unitMojos = unitSizeMojos ? BigInt(unitSizeMojos) : 1n;
-  const stackSize = unitMojos > 0n ? perGameAmount / unitMojos : 0n;
-  const handleTurnChanged = useCallback(
-    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
-    [gameId, onTurnChanged],
-  );
-
-  const handleGameLog = useCallback(
-    (lines: string[]) => {
-      appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitMojos)})`);
-      lines.forEach((l) => appendGameLog(l));
-      appendGameLog('');
-    },
-    [appendGameLog, unitMojos, stackSize],
-  );
-
-  return (
-    <SpacePoker
-      gameObject={gameObject}
-      gameId={gameId}
-      iStarted={iStarted}
-      gameplayEvent$={gameplayEvent$}
-      betSize={betSize}
-      unitSizeMojos={unitSizeMojos}
-      onTurnChanged={handleTurnChanged}
-      onGameLog={handleGameLog}
-      myName={myName}
-      opponentName={opponentName}
-    />
-  );
-}
-
-interface KrunkHandProps {
-  gameObject: SessionController;
-  currentHandGameIds: string[];
-  activeGameIds: string[];
-  iProposedHand: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
-  betSize: bigint;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
-  myName?: string;
-  opponentName?: string;
-}
-
-export function KrunkHand({
-  gameObject,
-  currentHandGameIds,
-  activeGameIds,
-  iProposedHand,
-  gameplayEvent$,
-  betSize,
-  onTurnChanged,
-  appendGameLog,
-  myName,
-  opponentName,
-}: KrunkHandProps) {
-  // Header (role + stake) is included in each block from formatKrunkHandLog.
-  const handleGameLog = useCallback(
-    (lines: string[]) => {
-      lines.forEach((l) => appendGameLog(l));
-      appendGameLog('');
-    },
-    [appendGameLog],
-  );
-
-  return (
-    <Krunk
-      gameObject={gameObject}
-      currentHandGameIds={currentHandGameIds}
-      activeGameIds={activeGameIds}
-      iProposedHand={iProposedHand}
-      gameplayEvent$={gameplayEvent$}
-      betSize={betSize}
-      onTurnChanged={onTurnChanged}
-      onGameLog={handleGameLog}
-      myName={myName}
-      opponentName={opponentName}
-    />
-  );
-}
-
-function ComposeProposalDialog({
-  session,
-  maxPerHandMojos,
-}: {
-  session: import('../hooks/useGameSession').UseGameSessionResult;
-  maxPerHandMojos: bigint | null;
-}) {
-  const defaultSpacePokerStackSize = 10;
-  const isSpacepoker = session.composeGameType === 'spacepoker';
-  const isKrunk = session.composeGameType === 'krunk';
-  const [spUnitSize, setSpUnitSize] = useState(() => {
-    const remembered =
-      session.lastHandTerms.gameType === 'spacepoker'
-        ? session.lastHandTerms.spacepokerUnitSize
-        : undefined;
-    if (remembered && remembered > 0n) return remembered;
-    const stake = session.composePerHandAmount;
-    if (stake <= 0n) return 1n;
-    return (stake + BigInt(defaultSpacePokerStackSize - 1)) / BigInt(defaultSpacePokerStackSize);
-  });
-  const [spStackSizeStr, setSpStackSizeStr] = useState(() => {
-    const remembered =
-      session.lastHandTerms.gameType === 'spacepoker'
-        ? session.lastHandTerms.spacepokerUnitSize
-        : undefined;
-    if (remembered && remembered > 0n && session.composePerHandAmount > 0n) {
-      return String(session.composePerHandAmount / remembered);
-    }
-    return String(defaultSpacePokerStackSize);
-  });
-  const spStackSize = parseInt(spStackSizeStr) || 0;
-  const [timeoutStr, setTimeoutStr] = useState(() =>
-    String(
-      session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS,
-    ),
-  );
-  useEffect(() => {
-    setTimeoutStr(
-      String(
-        session.composeGameTimeout > 0n ? session.composeGameTimeout : DEFAULT_GAME_TIMEOUT_BLOCKS,
-      ),
-    );
-  }, [session.composeGameTimeout]);
-  const gameTimeout = BigInt(timeoutStr || '0');
-  const timeoutValid = gameTimeout > 0n;
-
-  const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
-  const spTotalGame = spBetSize * 2n;
-  const spExceedsBalance = maxPerHandMojos != null && spBetSize > maxPerHandMojos;
-  const spValid = isSpacepoker && spUnitSize > 0n && spStackSize > 0 && !spExceedsBalance;
-  const spMaxUnitSize =
-    maxPerHandMojos != null && spStackSize > 0 ? maxPerHandMojos / BigInt(spStackSize) : null;
-
-  const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
-  const krunkStakeValid = !isKrunk || isValidKrunkStake(perHandAmount);
-  const standardMaxMojos =
-    isKrunk && maxPerHandMojos != null
-      ? maxPerHandMojos - (maxPerHandMojos % 100n)
-      : maxPerHandMojos;
-
-  const submit = () => {
-    if (perHandAmount <= 0n || !timeoutValid || !krunkStakeValid || session.composeProposalSent)
-      return;
-    session.submitComposedProposal(
-      perHandAmount,
-      session.composeGameType,
-      gameTimeout,
-      isSpacepoker ? spUnitSize : undefined,
-    );
-  };
-  const selectGameType = (gameType: string) => {
-    session.setComposePerHandAmount(
-      selectComposeAmountAfterGameTypeChoice(
-        session.composeGameType,
-        gameType,
-        session.composePerHandAmount,
-      ),
-    );
-    session.setComposeGameType(gameType);
-  };
-
-  return (
-    <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4 text-center">
-      <div className="flex flex-col items-center gap-3">
-        <p className="text-sm text-canvas-text-contrast">Propose terms for the next hand.</p>
-        <div className="flex w-full flex-col items-center gap-1">
-          <div className="flex flex-wrap justify-center gap-2">
-            {GAME_REGISTRY.map(({ gameType, displayName }) => (
-              <Button
-                key={gameType}
-                variant={session.composeGameType === gameType ? 'solid' : 'outline'}
-                color={session.composeGameType === gameType ? 'primary' : 'neutral'}
-                size="sm"
-                disabled={session.composeProposalSent}
-                onClick={() => selectGameType(gameType)}
-              >
-                {displayName}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {isSpacepoker ? (
-          <>
-            <AmountInput
-              valueMojos={spUnitSize}
-              onChange={setSpUnitSize}
-              maxMojos={spMaxUnitSize}
-              onUseMax={
-                spMaxUnitSize != null && spMaxUnitSize > 0n
-                  ? () => setSpUnitSize(spMaxUnitSize)
-                  : undefined
-              }
-              disabled={session.composeProposalSent}
-              label="Unit size"
-              exceedsLabel="Exceeds available reserve."
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && spValid && timeoutValid) submit();
-              }}
-            />
-            <div className="flex w-full flex-col items-center gap-1">
-              <label className="text-xs font-medium text-canvas-text">
-                Stack size (units per player)
-              </label>
-              <input
-                type="number"
-                min={1}
-                className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
-                value={spStackSizeStr}
-                disabled={session.composeProposalSent}
-                onChange={(e) => setSpStackSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && spValid && timeoutValid) submit();
-                }}
-              />
-            </div>
-            <div className="text-xs text-canvas-text">
-              Per-player stake: {formatMojos(spBetSize)} · Total game size:{' '}
-              {formatMojos(spTotalGame)}
-            </div>
-          </>
-        ) : (
-          <AmountInput
-            valueMojos={session.composePerHandAmount}
-            onChange={session.setComposePerHandAmount}
-            maxMojos={standardMaxMojos}
-            onUseMax={
-              standardMaxMojos != null && standardMaxMojos > 0n
-                ? () => session.setComposePerHandAmount(standardMaxMojos)
-                : undefined
-            }
-            disabled={session.composeProposalSent}
-            label="Per-player stake"
-            exceedsLabel="Exceeds available reserve."
-            onKeyDown={(e) => {
-              if (
-                e.key === 'Enter' &&
-                !session.composeProposalSent &&
-                session.composePerHandAmount > 0n &&
-                timeoutValid &&
-                krunkStakeValid
-              )
-                submit();
-            }}
-          />
-        )}
-        {isKrunk && perHandAmount > 0n && !krunkStakeValid && (
-          <p className="text-xs text-alert-text">Krunk stakes must be multiples of 100 mojos.</p>
-        )}
-
-        <div className="flex w-full flex-col items-center gap-1">
-          <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
-          <input
-            type="number"
-            min={1}
-            className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
-            value={timeoutStr}
-            disabled={session.composeProposalSent}
-            onChange={(e) => {
-              const next = e.target.value.replace(/[^0-9]/g, '');
-              setTimeoutStr(next);
-              if (next) {
-                session.setComposeGameTimeout(BigInt(next));
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
-            }}
-          />
-        </div>
-
-        <Button
-          variant="solid"
-          color="primary"
-          size="sm"
-          className="self-center"
-          disabled={
-            session.composeProposalSent ||
-            perHandAmount <= 0n ||
-            !timeoutValid ||
-            !krunkStakeValid ||
-            (isSpacepoker && !spValid)
-          }
-          onClick={submit}
-        >
-          {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ReviewProposalDialog({
-  session,
-}: {
-  session: import('../hooks/useGameSession').UseGameSessionResult;
-}) {
-  const review = session.reviewPeerProposal;
-  if (!review) return null;
-
-  return (
-    <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">
-      <div className="flex flex-col gap-3">
-        <p className="text-sm text-canvas-text-contrast">Do you want to accept this hand?</p>
-        <p className="text-xs text-canvas-text">Game: {gameDisplayName(review.terms.gameType)}</p>
-        <p className="text-xs text-canvas-text">
-          Per-player stake: {formatMojos(review.terms.myContribution)}
-        </p>
-        <p className="text-xs text-canvas-text">
-          Timeout: {String(review.terms.gameTimeout)} blocks
-        </p>
-        {review.terms.gameType === 'spacepoker' &&
-          (() => {
-            const betSize = review.terms.myContribution;
-            const betUnit = review.terms.spacepokerUnitSize;
-            return betUnit && betUnit > 0n ? (
-              <p className="text-xs text-canvas-text">
-                Unit size: {formatMojos(betUnit)} · Stack: {String(betSize / betUnit)} units
-              </p>
-            ) : null;
-          })()}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="solid"
-            color="primary"
-            size="sm"
-            onClick={session.acceptReviewedProposal}
-          >
-            Yes
-          </Button>
-          <Button variant="solid" size="sm" onClick={session.rejectReviewedProposal}>
-            No
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function BetweenHandOverlay({
   children,
   restoreFocus,
@@ -1060,12 +563,11 @@ export interface GameSessionProps {
   ) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
+  terminalPresentation?: TerminalSessionPresentation | null;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({
+const MountedGameSession: React.FC<GameSessionProps & { sessionController: SessionController }> = ({
   params,
-  peerConn,
-  registerMessageHandler,
   appendGameLog,
   sessionSave,
   onGameActivity,
@@ -1076,18 +578,18 @@ const GameSession: React.FC<GameSessionProps> = ({
   onCoinsProviderChange,
   suppressPhaseReporting,
   blockchain,
+  sessionController,
+  terminalPresentation,
 }) => {
-  const uniqueId = getPlayerId();
-
   const session = useGameSession(
     params,
-    uniqueId,
-    peerConn,
-    registerMessageHandler,
+    sessionController,
     appendGameLog,
     sessionSave,
     blockchain,
+    terminalPresentation,
   );
+  const terminalMode = session.handSource.interactionMode === 'terminal';
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -1099,17 +601,25 @@ const GameSession: React.FC<GameSessionProps> = ({
 
   useEffect(() => {
     if (!onProtocolStateProviderChange) return;
-    const gameObject = session.sessionController;
+    if (terminalMode) {
+      onProtocolStateProviderChange(null);
+      return;
+    }
+    const gameObject = requireLiveGameHandSource(session.handSource);
     onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
-  }, [session.sessionController, onProtocolStateProviderChange]);
+  }, [session.handSource, onProtocolStateProviderChange, terminalMode]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;
-    const gameObject = session.sessionController;
+    if (terminalMode) {
+      onCoinsProviderChange(null);
+      return;
+    }
+    const gameObject = requireLiveGameHandSource(session.handSource);
     onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
     return () => onCoinsProviderChange(null);
-  }, [session.sessionController, onCoinsProviderChange]);
+  }, [session.handSource, onCoinsProviderChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {
@@ -1177,8 +687,7 @@ const GameSession: React.FC<GameSessionProps> = ({
 
   // Rising edge: proposal cached in decision mode, or replaced while reviewing.
   // Combined id so promoting cache → review does not double-fire.
-  const attentionProposalId =
-    session.reviewPeerProposal?.id ?? session.cachedPeerProposal?.id ?? null;
+  const attentionProposalId = session.incomingProposalGroup?.primaryId ?? null;
   const prevAttentionProposalId = useRef(attentionProposalId);
   useEffect(() => {
     const prev = prevAttentionProposalId.current;
@@ -1221,7 +730,7 @@ const GameSession: React.FC<GameSessionProps> = ({
 
   const handEverStarted = session.handKey > 0;
   const hasPersistedGameState = !!session.gameSpecificView.handState;
-  const hasReviewPeerProposal = session.reviewPeerProposal != null;
+  const hasReviewPeerProposal = session.incomingProposalGroup?.disposition === 'incoming-review';
   const showBetweenHandOverlay =
     session.betweenHands &&
     session.channelStatus.state === 'Active' &&
@@ -1265,6 +774,8 @@ const GameSession: React.FC<GameSessionProps> = ({
           ref={gameAreaRef}
           tabIndex={-1}
           inert={gameInterfaceIsInertForBetweenHandDialog}
+          data-game-interaction-mode={session.handSource.interactionMode}
+          aria-disabled={gameInterfaceIsInertForBetweenHandDialog || undefined}
           className="relative overflow-hidden z-0 focus:outline-none"
         >
           {showGameInterface && (
@@ -1278,62 +789,10 @@ const GameSession: React.FC<GameSessionProps> = ({
                   </div>
                 }
               >
-                {gameSpecificView.gameType === 'calpoker' ? (
-                  <CalpokerHand
-                    key={session.handKey}
-                    gameObject={session.sessionController}
-                    gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                    iStarted={session.iStarted}
-                    playerNumber={session.playerNumber}
-                    gameplayEvent$={session.gameplayEvent$}
-                    onOutcome={session.onHandOutcome}
-                    onTurnChanged={session.onTurnChanged}
-                    appendGameLog={session.appendGameLog}
-                    perGameAmount={session.currentHandAmount}
-                    myName={params.myAlias}
-                    opponentName={params.opponentAlias}
-                  />
-                ) : gameSpecificView.gameType === 'spacepoker' ? (
-                  <SpacePokerHand
-                    key={session.handKey}
-                    gameObject={session.sessionController}
-                    gameId={session.activeGameId ?? gameSpecificView.displayGameId ?? ''}
-                    iStarted={session.iStarted}
-                    gameplayEvent$={session.gameplayEvent$}
-                    betSize={String(session.currentHandAmount)}
-                    unitSizeMojos={
-                      session.lastHandTerms.gameType === 'spacepoker' &&
-                      session.lastHandTerms.spacepokerUnitSize
-                        ? String(session.lastHandTerms.spacepokerUnitSize)
-                        : undefined
-                    }
-                    onTurnChanged={session.onTurnChanged}
-                    appendGameLog={session.appendGameLog}
-                    perGameAmount={session.currentHandAmount}
-                    myName={params.myAlias}
-                    opponentName={params.opponentAlias}
-                  />
-                ) : gameSpecificView.gameType === 'krunk' ? (
-                  <KrunkHand
-                    key={session.handKey}
-                    gameObject={session.sessionController}
-                    currentHandGameIds={session.currentHandGameIds}
-                    activeGameIds={session.activeGameIds}
-                    iProposedHand={session.iProposedHand}
-                    gameplayEvent$={session.gameplayEvent$}
-                    betSize={session.currentHandAmount}
-                    onTurnChanged={session.onTurnChanged}
-                    appendGameLog={session.appendGameLog}
-                    myName={params.myAlias}
-                    opponentName={params.opponentAlias}
-                  />
-                ) : (
-                  <div className="flex items-center justify-center py-20">
-                    <p className="text-canvas-text">
-                      Game not supported: {gameDisplayName(gameSpecificView.gameType)}
-                    </p>
-                  </div>
-                )}
+                {renderLiveGameMount(session, {
+                  myName: terminalPresentation?.myName ?? params.myAlias,
+                  opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
+                })}
               </Suspense>
             </GameAreaErrorBoundary>
           )}
@@ -1391,9 +850,10 @@ const GameSession: React.FC<GameSessionProps> = ({
           {session.betweenHandMode === 'compose-proposal' && (
             <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}
-          {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-            <ReviewProposalDialog session={session} />
-          )}
+          {session.betweenHandMode === 'review-incoming-proposal' &&
+            session.incomingProposalGroup?.disposition === 'incoming-review' && (
+              <ReviewProposalDialog session={session} />
+            )}
         </BetweenHandOverlay>
       )}
 
@@ -1408,6 +868,19 @@ const GameSession: React.FC<GameSessionProps> = ({
       )}
     </div>
   );
+};
+
+const GameSession: React.FC<GameSessionProps> = (props) => {
+  const sessionController = useSessionControllerAfterCommit(
+    props.params,
+    props.peerConn,
+    props.registerMessageHandler,
+    props.sessionSave,
+    props.blockchain,
+    props.terminalPresentation != null,
+  );
+  if (!sessionController) return null;
+  return <MountedGameSession {...props} sessionController={sessionController} />;
 };
 
 export default GameSession;

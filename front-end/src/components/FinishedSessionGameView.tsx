@@ -1,105 +1,149 @@
-import React, { useCallback, useMemo } from 'react';
-import { EMPTY } from 'rxjs';
+import React, { Component, Suspense } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 
-import { CalpokerHand, KrunkHand, SpacePokerHand } from './GameSession';
-import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
-import type { CalpokerOutcome } from '../features/calPoker/outcome';
+import type { FrozenGameMountOptions } from '../lib/gameMount';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
+import { renderFrozenGameMount } from '../lib/gameMountRegistry';
 
 export interface FinishedSessionGameViewProps {
   model: SessionModel;
   myName?: string;
   opponentName?: string;
   iStarted?: boolean;
-  iProposedHand?: boolean;
+}
+
+function FinishedSessionFallback({
+  label,
+  reason,
+  detail,
+}: {
+  label: string | null;
+  reason: 'unavailable' | 'render-error';
+  detail?: string | null;
+}) {
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center text-canvas-solid"
+      data-testid="finished-session-fallback"
+    >
+      {label && <p>{label}</p>}
+      <p>
+        {reason === 'render-error' ? 'Game details failed to render.' : 'Game details unavailable.'}
+      </p>
+      {detail && (
+        <pre className="max-w-full overflow-auto whitespace-pre-wrap text-left text-xs">
+          {detail}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+interface FinishedSessionErrorBoundaryProps {
+  children: ReactNode;
+  fallbackLabel: string | null;
+  resetKey: string;
+}
+
+interface FinishedSessionErrorBoundaryState {
+  error: Error | null;
+  componentStack: string | null;
+}
+
+export class FinishedSessionErrorBoundary extends Component<
+  FinishedSessionErrorBoundaryProps,
+  FinishedSessionErrorBoundaryState
+> {
+  state: FinishedSessionErrorBoundaryState = { error: null, componentStack: null };
+
+  static getDerivedStateFromError(error: Error): FinishedSessionErrorBoundaryState {
+    return { error, componentStack: null };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(
+      '[FinishedSessionGameView] frozen game render crash:',
+      error,
+      info.componentStack,
+    );
+    this.setState({ componentStack: info.componentStack ?? null });
+  }
+
+  componentDidUpdate(previous: FinishedSessionErrorBoundaryProps) {
+    if (previous.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null, componentStack: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <FinishedSessionFallback
+          label={this.props.fallbackLabel}
+          reason="render-error"
+          detail={[this.state.error.stack ?? this.state.error.message, this.state.componentStack]
+            .filter(Boolean)
+            .join('\n')}
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function FrozenGameMount({
+  model,
+  options,
+}: {
+  model: SessionModel;
+  options: FrozenGameMountOptions;
+}) {
+  return renderFrozenGameMount(model, options);
 }
 
 /**
  * Rehydrates a terminal hand only for display. Protocol lifecycle remains
- * absent: feature actions receive a frozen controller and no notifications.
+ * absent: feature actions receive terminal persisted state and no notifications.
  */
 const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   model,
   myName,
   opponentName,
   iStarted = false,
-  iProposedHand = false,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
-  const gameType = handState?.gameType ?? model.game.activeGameType;
-  const gameId =
-    model.game.lastDisplayedId ??
-    model.game.currentHandIds[0] ??
-    model.game.activeIds[0] ??
-    'finished';
-  const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
-  const noopTurnChanged = useCallback((_gameId: string, _isMyTurn: boolean) => {}, []);
-  const noopLog = useCallback((_line: string) => {}, []);
-  const noopOutcome = useCallback((_outcome: CalpokerOutcome) => {}, []);
 
   if (!display.canRemountHand || !handState) {
-    return (
-      <div
-        className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
-        data-testid="finished-session-fallback"
-      >
-        {display.terminalLabel ?? 'No hand details available'}
-      </div>
-    );
+    return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;
   }
 
-  const commonProps = {
-    gameObject: frozenBridge,
-    iStarted,
-    gameplayEvent$: EMPTY,
-    onTurnChanged: noopTurnChanged,
-    appendGameLog: noopLog,
-    myName,
-    opponentName,
-  };
+  const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;
 
   return (
-    <div
-      className="relative h-full w-full min-h-0 pointer-events-none"
-      data-testid="finished-session-game-view"
-      aria-disabled
-      inert
-    >
-      {gameType === 'calpoker' ? (
-        <CalpokerHand
-          {...commonProps}
-          gameId={gameId}
-          playerNumber={iStarted ? 1 : 2}
-          onOutcome={noopOutcome}
-          perGameAmount={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : gameType === 'spacepoker' ? (
-        <SpacePokerHand
-          {...commonProps}
-          gameId={gameId}
-          betSize={String(model.betweenHand.lastTerms.myContribution)}
-          unitSizeMojos={
-            model.betweenHand.lastTerms.gameType === 'spacepoker'
-              ? String(model.betweenHand.lastTerms.spacepokerUnitSize ?? 0n)
-              : undefined
+    <div className="relative h-full w-full min-h-0" data-testid="finished-session-game-view">
+      <FinishedSessionErrorBoundary fallbackLabel={display.terminalLabel} resetKey={resetKey}>
+        <Suspense
+          fallback={
+            <div
+              className="flex h-full w-full items-center justify-center px-4 text-center text-canvas-solid"
+              data-testid="finished-session-loading"
+            >
+              Loading hand…
+            </div>
           }
-          perGameAmount={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : gameType === 'krunk' ? (
-        <KrunkHand
-          {...commonProps}
-          currentHandGameIds={model.game.currentHandIds}
-          activeGameIds={model.game.activeIds}
-          iProposedHand={iProposedHand}
-          betSize={model.betweenHand.lastTerms.myContribution}
-        />
-      ) : (
-        <div className="flex items-center justify-center py-20 text-canvas-text">
-          Game details unavailable
-        </div>
-      )}
+        >
+          <FrozenGameMount
+            model={model}
+            options={{
+              myName,
+              opponentName,
+              iStarted,
+            }}
+          />
+        </Suspense>
+      </FinishedSessionErrorBoundary>
     </div>
   );
 };

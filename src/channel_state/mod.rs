@@ -1300,8 +1300,8 @@ impl ChannelState {
             match_puzzle_hash,
             puzzle_hash,
             amount,
-            saved_post_move_referee: Some(saved_referee),
-            saved_post_move_last_ph: Some(saved_ph),
+            saved_post_move_referee: saved_referee,
+            saved_post_move_last_ph: saved_ph,
         })));
 
         Ok(MoveResult {
@@ -2105,15 +2105,12 @@ impl ChannelState {
             return Ok(false);
         }
         // After the redo, our share is determined by the saved post-move
-        // referee.  If the referee is not cached (serialization round-trip),
-        // we can't check — be conservative and return false.
+        // referee.
         for entry in &self.cached_redo_actions {
             if let CachedRedoActions::CachedSendMove(move_data) = entry {
                 if move_data.game_id == *game_id {
-                    if let Some(ref saved_ref) = move_data.saved_post_move_referee {
-                        let share = saved_ref.get_our_current_share()?;
-                        return Ok(share == Amount::default());
-                    }
+                    let share = move_data.saved_post_move_referee.get_our_current_share()?;
+                    return Ok(share == Amount::default());
                 }
             }
         }

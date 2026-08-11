@@ -228,8 +228,11 @@ test('public hub updates never include the secret nonce', async () => {
   const hub = await startHub();
   try {
     const secret = 'secret-nonce-public-update-test';
-    const { ws, id } = await joinHub(hub.origin, secret, 'Alice');
-    const update = await nextJson(ws, (msg) => msg.type === 'hub_update');
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const joinedPromise = nextJson(ws, (msg) => msg.type === 'joined');
+    const updatePromise = nextJson(ws, (msg) => msg.type === 'hub_update');
+    sendJson(ws, { type: 'join', session_id: secret, alias: 'Alice' });
+    const [{ id }, update] = await Promise.all([joinedPromise, updatePromise]);
     assert.equal(JSON.stringify(update).includes(secret), false);
     assert.equal(
       update.players.some((player) => player.id === id),

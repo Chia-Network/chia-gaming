@@ -3,6 +3,7 @@ import React from 'react';
 import { CaliforniaPoker } from './components';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
+import type { GameInteractionMode } from '../../lib/gameMount';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcomeView | undefined;
@@ -21,7 +22,8 @@ export interface CalpokerProps {
   initialSnapshot?: CalpokerDisplaySnapshotView;
   myName?: string;
   opponentName?: string;
-  settlementOutcome?: import('../../lib/settlement').SettlementOutcome | null;
+  terminalOutcome?: import('../../lib/settlement').SettlementOutcome | null;
+  interactionMode?: GameInteractionMode;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -41,9 +43,10 @@ const Calpoker: React.FC<CalpokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
-  settlementOutcome,
+  terminalOutcome,
+  interactionMode = 'live',
 }) => {
-  useCheatNerfKeys(handleCheat, handleNerf);
+  useCheatNerfKeys(handleCheat, handleNerf, interactionMode === 'live');
 
   return (
     <div className="relative flex h-full w-full min-h-0 flex-col">
@@ -64,7 +67,8 @@ const Calpoker: React.FC<CalpokerProps> = ({
           initialSnapshot={initialSnapshot}
           myName={myName}
           opponentName={opponentName}
-          settlementOutcome={settlementOutcome}
+          terminalOutcome={terminalOutcome}
+          interactionMode={interactionMode}
         />
       </div>
     </div>

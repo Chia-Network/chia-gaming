@@ -36,8 +36,8 @@ pub struct CachedSendMove {
     pub puzzle_hash: PuzzleHash,
     pub match_puzzle_hash: PuzzleHash,
     pub amount: Amount,
-    pub saved_post_move_referee: Option<Rc<Referee>>,
-    pub saved_post_move_last_ph: Option<PuzzleHash>,
+    pub saved_post_move_referee: Rc<Referee>,
+    pub saved_post_move_last_ph: PuzzleHash,
 }
 
 impl std::fmt::Debug for CachedSendMove {
@@ -48,10 +48,7 @@ impl std::fmt::Debug for CachedSendMove {
             .field("puzzle_hash", &self.puzzle_hash)
             .field("match_puzzle_hash", &self.match_puzzle_hash)
             .field("amount", &self.amount)
-            .field(
-                "saved_post_move_referee",
-                &self.saved_post_move_referee.is_some(),
-            )
+            .field("saved_post_move_referee", &"<saved>")
             .field("saved_post_move_last_ph", &self.saved_post_move_last_ph)
             .finish()
     }

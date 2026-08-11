@@ -4,7 +4,7 @@ export type SettlementOutcome =
   | 'settled_cleanly'
   | 'opponent_timed_out'
   | 'forfeited_skipped_reveal'
-  | 'forfeited_opponent_won'
+  | 'lost'
   | 'forfeited_we_accepted'
   | 'we_accepted'
   | 'attempt_to_move_failed'
@@ -18,7 +18,7 @@ const ALL_OUTCOMES: ReadonlySet<string> = new Set<SettlementOutcome>([
   'settled_cleanly',
   'opponent_timed_out',
   'forfeited_skipped_reveal',
-  'forfeited_opponent_won',
+  'lost',
   'forfeited_we_accepted',
   'we_accepted',
   'attempt_to_move_failed',
@@ -34,7 +34,7 @@ export const SETTLEMENT_OUTCOME_LABELS: Record<SettlementOutcome, string> = {
   settled_cleanly: 'Settled cleanly',
   opponent_timed_out: 'Opponent timed out',
   forfeited_skipped_reveal: 'Forfeited',
-  forfeited_opponent_won: 'Forfeited',
+  lost: 'Lost',
   forfeited_we_accepted: 'Forfeited',
   we_accepted: 'Accepted',
   attempt_to_move_failed: 'Attempt to move failed',
@@ -53,11 +53,7 @@ export function settlementLabel(outcome: SettlementOutcome): string {
 }
 
 export function isForfeitOutcome(outcome: SettlementOutcome): boolean {
-  return (
-    outcome === 'forfeited_skipped_reveal' ||
-    outcome === 'forfeited_opponent_won' ||
-    outcome === 'forfeited_we_accepted'
-  );
+  return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
 }
 
 /** Outcomes that should surface as session-level error attention. */
@@ -80,8 +76,8 @@ export function settlementByUs(outcome: SettlementOutcome): boolean | null {
     case 'accept_settlement':
     case 'we_accepted':
     case 'forfeited_skipped_reveal':
-    case 'forfeited_opponent_won':
     case 'forfeited_we_accepted':
+    case 'lost':
     case 'timed_out_waiting_for_our_move':
     case 'attempt_to_move_failed':
     case 'slashed_opponent':
@@ -107,7 +103,8 @@ export function calpokerTimeoutBadge(
   if (
     outcome === 'accept_settlement' ||
     outcome === 'we_accepted' ||
-    outcome === 'settled_cleanly'
+    outcome === 'settled_cleanly' ||
+    outcome === 'lost'
   ) {
     return null;
   }
@@ -124,6 +121,7 @@ export function calpokerTimeoutBadge(
 /** Short verb for Calpoker hand headers when a settlement ends the hand. */
 export function calpokerSettlementVerb(outcome: SettlementOutcome): string {
   if (isForfeitOutcome(outcome)) return 'forfeited';
+  if (outcome === 'lost') return 'loses';
   if (outcome === 'attempt_to_move_failed') return 'moved too late';
   if (
     outcome === 'accept_settlement' ||
@@ -149,8 +147,9 @@ export function krunkSettlementStatus(outcome: SettlementOutcome, opponentLabel:
       return `${opponentLabel} timed out.`;
     case 'forfeited_skipped_reveal':
     case 'forfeited_we_accepted':
-    case 'forfeited_opponent_won':
       return 'We forfeited.';
+    case 'lost':
+      return 'We lost.';
     case 'attempt_to_move_failed':
       return 'Attempt to move failed.';
     case 'timed_out_waiting_for_our_move':

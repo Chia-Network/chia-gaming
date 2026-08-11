@@ -6,7 +6,6 @@ import {
   CardValueSuit,
   MovingCardData,
   cardIdToRankSuit,
-  handValueToDescription,
 } from '../types';
 // Constants
 import {
@@ -16,12 +15,7 @@ import {
 } from './constants/constants';
 
 // Utils
-import {
-  makeDescription,
-  formatCardsForLog,
-  formatOrderedCardsForLog,
-  orderUsedCardsForLog,
-} from './utils';
+import { formatCardsForLog, formatOrderedCardsForLog, orderUsedCardsForLog } from './utils';
 import { HandDisplay, MovingCard } from './components';
 import { SuitName } from '../types/CardValueSuit';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from '../types/CaliforniapokerProps';
@@ -32,6 +26,7 @@ import {
   settlementByUs,
 } from '../../../lib/settlement';
 import { shouldRestoreCalpokerSelection } from '../useCalpokerHand';
+import { projectCalpokerFinalDisplay } from '../outcome';
 
 const SUIT_MAP: Record<number, SuitName> = {
   0: 'Q',
@@ -47,12 +42,6 @@ function cvsFromCard(cardId: string): CardValueSuit {
 }
 
 const cardsToBigints = (cardIds: string[]): bigint[] => cardIds.map((cardId) => BigInt(cardId));
-
-function translateTopline(topline: string | undefined): string | null {
-  if (!topline) return null;
-  const res = { win: 'player', lose: 'ai' }[topline];
-  return res ? res : 'tie';
-}
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
@@ -70,12 +59,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   initialSnapshot,
   myName,
   opponentName,
-  settlementOutcome,
+  terminalOutcome,
+  interactionMode = 'live',
 }) => {
-  const settlementByUsFlag = settlementOutcome == null ? null : settlementByUs(settlementOutcome);
-  const settlementVerb = settlementOutcome
-    ? calpokerSettlementVerb(settlementOutcome)
-    : 'timed out';
+  const interactive = interactionMode === 'live';
+  const settlementByUsFlag = terminalOutcome == null ? null : settlementByUs(terminalOutcome);
+  const settlementVerb = terminalOutcome ? calpokerSettlementVerb(terminalOutcome) : 'timed out';
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -94,6 +83,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setRememberedOutcome(outcome);
     }
     const inAnimation =
+      !!outcome ||
+      !!rememberedOutcome ||
       gameState === GAME_STATES.AWAITING_SWAP ||
       gameState === GAME_STATES.REVEALING_SWAP ||
       gameState === GAME_STATES.SWAPPING ||
@@ -107,7 +98,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         rememberedCardsRef.current = [mappedPlayer, mappedOpponent];
       }
     }
-  }, [playerHand, opponentHand, outcome, gameState]);
+  }, [playerHand, opponentHand, outcome, rememberedOutcome, gameState]);
 
   // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
   const [winner, setWinner] = useState<string | null>(null);
@@ -131,6 +122,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       pText: string,
       oText: string,
     ) => {
+      if (!interactive) return;
       const snap: CalpokerDisplaySnapshotView = {
         gameState: gs,
         winner: w,
@@ -143,18 +135,19 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       };
       onSnapshotChange(snap);
     },
-    [onSnapshotChange],
+    [interactive, onSnapshotChange],
   );
 
   const dealCards = useCallback(() => {
+    if (!interactive) return;
     setGameState(GAME_STATES.SELECTING);
     setCardSelections([]);
     setWinner(null);
     saveSnapshot(GAME_STATES.SELECTING, null, undefined, undefined, [], [], '', '');
-  }, [saveSnapshot, setCardSelections]);
+  }, [interactive, saveSnapshot, setCardSelections]);
 
   const toggleCardSelection = (cardId: string) => {
-    if (gameState !== GAME_STATES.SELECTING) return;
+    if (!interactive || gameState !== GAME_STATES.SELECTING) return;
 
     setCardSelections((prev: string[]) => {
       if (prev.includes(cardId)) {
@@ -166,6 +159,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const handleReorder = useCallback(
     (reordered: CardValueSuit[]) => {
+      if (!interactive) return;
       setPlayerCards(reordered);
       rememberedCardsRef.current = [reordered, rememberedCardsRef.current[1]];
       setHandOrder(reordered.map((c) => c.cardId!));
@@ -187,6 +181,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       aiBestHand,
       cardSelections,
       gameState,
+      interactive,
       onSnapshotChange,
       opponentDisplayText,
       opponentHaloCardIds,
@@ -203,6 +198,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   playerCardsRef.current = playerCards;
 
   useEffect(() => {
+    if (!interactive) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (gameState !== GAME_STATES.SELECTING) return;
       if (e.altKey || e.ctrlKey || e.metaKey) return;
@@ -223,9 +219,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, setCardSelections]);
+  }, [gameState, interactive, setCardSelections]);
 
-  const isDisabled = cardSelections.length !== 4;
+  const isDisabled = !interactive || cardSelections.length !== 4;
 
   const playerHalos = gameState === GAME_STATES.SELECTING ? cardSelections : playerHaloCardIds;
   const opponentHalos = opponentHaloCardIds;
@@ -249,6 +245,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const possessive = (label: string) => (label === 'You' ? 'Your' : `${label}'s`);
 
   const doHandleMakeMove = () => {
+    if (!interactive) return;
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
       const halos = [...cardSelections];
       setPlayerHaloCardIds(halos);
@@ -416,22 +413,18 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const swapCards = useCallback(
     (rememberedOutcome: CalpokerOutcomeView) => {
-      const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
+      const finalDisplay = projectCalpokerFinalDisplay(rememberedOutcome);
+      const liveWinner = finalDisplay.winner;
       setWinner(liveWinner);
       setGameState(GAME_STATES.REVEALING_SWAP);
 
       const playerOriginal = rememberedOutcome.my_cards;
       const opponentOriginal = rememberedOutcome.their_cards;
-      const playerFinal = rememberedOutcome.my_final_hand;
-      const opponentFinal = rememberedOutcome.their_final_hand;
+      const playerDiscardIds = finalDisplay.playerDiscardIds;
+      const opponentDiscardIds = finalDisplay.opponentDiscardIds;
 
-      const playerFinalSet = new Set(playerFinal);
-      const opponentFinalSet = new Set(opponentFinal);
-      const playerDiscardIds = playerOriginal.filter((id) => !playerFinalSet.has(id));
-      const opponentDiscardIds = opponentOriginal.filter((id) => !opponentFinalSet.has(id));
-
-      const playerKeptIds = playerOriginal.filter((id) => playerFinalSet.has(id));
-      const opponentKeptIds = opponentOriginal.filter((id) => opponentFinalSet.has(id));
+      const playerKeptIds = playerOriginal.filter((id) => !playerDiscardIds.includes(id));
+      const opponentKeptIds = opponentOriginal.filter((id) => !opponentDiscardIds.includes(id));
       const resultWord =
         rememberedOutcome.my_win_outcome === 'win'
           ? 'Win'
@@ -459,8 +452,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
       const myUsedCards = rememberedOutcome.my_used_cards;
       const oppUsedCards = rememberedOutcome.their_used_cards;
-      const myHandValue = rememberedOutcome.my_hand_value;
-      const oppHandValue = rememberedOutcome.their_hand_value;
 
       const playerBestCards: CardValueSuit[] = myUsedCards.map(cvsFromCard);
       const opponentBestCards: CardValueSuit[] = oppUsedCards.map(cvsFromCard);
@@ -472,17 +463,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         cards: opponentBestCards,
         rank: { name: '', score: 0, tiebreakers: [] },
       };
-
-      saveSnapshot(
-        GAME_STATES.REVEALING_SWAP,
-        liveWinner,
-        undefined,
-        undefined,
-        playerDiscardIds,
-        opponentDiscardIds,
-        playerDisplayText,
-        opponentDisplayText,
-      );
 
       const playerSwapCardIds = playerDiscardIds;
       const aiSwapCardIds = opponentDiscardIds;
@@ -500,32 +480,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         setShowSwapAnimation(true);
 
         setTimeout(() => {
-          const playerDiscardToIncoming = new Map<string, string>();
-          for (let i = 0; i < playerSwapCardIds.length; i++) {
-            playerDiscardToIncoming.set(playerSwapCardIds[i], aiSwapCardIds[i]);
-          }
-          const opponentDiscardToIncoming = new Map<string, string>();
-          for (let i = 0; i < aiSwapCardIds.length; i++) {
-            opponentDiscardToIncoming.set(aiSwapCardIds[i], playerSwapCardIds[i]);
-          }
-
-          const ref = rememberedCardsRef.current;
-          const newPlayer = ref[0].map((c) => {
-            const incoming = playerDiscardToIncoming.get(c.cardId!);
-            return incoming !== undefined ? cvsFromCard(incoming) : c;
-          });
-          const newOpponent = ref[1].map((c) => {
-            const incoming = opponentDiscardToIncoming.get(c.cardId!);
-            return incoming !== undefined ? cvsFromCard(incoming) : c;
-          });
+          const newPlayer = finalDisplay.playerCards.map(cvsFromCard);
+          const newOpponent = finalDisplay.opponentCards.map(cvsFromCard);
 
           setPlayerCards(newPlayer);
           setOpponentCards(newOpponent);
           rememberedCardsRef.current = [newPlayer, newOpponent];
-          setHandOrder(
-            newPlayer.map((c) => c.cardId!),
-            newOpponent.map((c) => c.cardId!),
-          );
 
           setPlayerHaloCardIds(aiSwapCardIds);
           setOpponentHaloCardIds(playerSwapCardIds);
@@ -537,40 +497,25 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           setMovingCards([]);
           setShowSwapAnimation(false);
           setGameState(GAME_STATES.FINAL);
-          const pText = makeDescription(
-            handValueToDescription(cardsToBigints(myHandValue), cardsToBigints(myUsedCards)),
-          );
-          const oText = makeDescription(
-            handValueToDescription(cardsToBigints(oppHandValue), cardsToBigints(oppUsedCards)),
-          );
+          const pText = finalDisplay.playerDisplayText;
+          const oText = finalDisplay.opponentDisplayText;
           setPlayerDisplayText(pText);
           setOpponentDisplayText(oText);
-          saveSnapshot(
-            GAME_STATES.FINAL,
-            liveWinner,
-            pBest,
-            oBest,
-            aiSwapCardIds,
-            playerSwapCardIds,
-            pText,
-            oText,
-          );
         }, SWAP_ANIMATION_DURATION);
       }, PRE_SWAP_REVEAL_DURATION);
     },
-    [
-      calculateMovingCards,
-      onGameLog,
-      opponentDisplayText,
-      playerDisplayText,
-      saveSnapshot,
-      setHandOrder,
-    ],
+    [calculateMovingCards, onGameLog],
   );
 
   useEffect(() => {
     const haveOutcome = outcome ? outcome : rememberedOutcome;
-    if (haveOutcome && gameState === GAME_STATES.AWAITING_SWAP) {
+    const animationAlreadyStarted =
+      gameState === GAME_STATES.REVEALING_SWAP ||
+      gameState === GAME_STATES.SWAPPING ||
+      gameState === GAME_STATES.FINAL;
+    const hasAnimationSources =
+      rememberedCardsRef.current[0].length > 0 && rememberedCardsRef.current[1].length > 0;
+    if (haveOutcome && !animationAlreadyStarted && hasAnimationSources) {
       swapCards(haveOutcome);
     }
   }, [outcome, gameState, rememberedOutcome, swapCards]);
@@ -579,8 +524,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     initialSnapshot,
     moveNumber,
     outcome,
-    settlementOutcome,
+    terminalOutcome,
     dealCards,
+    interactive,
   });
 
   useEffect(() => {
@@ -590,7 +536,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       const restoredGameState = shouldRestoreCalpokerSelection(
         initial.moveNumber,
         !!initial.outcome,
-        initial.settlementOutcome != null,
+        initial.terminalOutcome != null,
       )
         ? GAME_STATES.SELECTING
         : snap.gameState;
@@ -612,7 +558,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           rank: { name: '', score: 0, tiebreakers: [] },
         });
       }
-    } else {
+    } else if (initial.interactive) {
       initial.dealCards();
     }
   }, []);
@@ -643,7 +589,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   }, [moveNumber, showSwapAnimation, gameState]);
   return (
-    <div ref={wrapperRef} className="relative flex flex-col w-full text-canvas-text">
+    <div
+      ref={wrapperRef}
+      data-calpoker-game-state={gameState}
+      data-calpoker-interaction-mode={interactionMode}
+      className="relative flex flex-col w-full text-canvas-text"
+    >
       <div className="flex flex-col gap-2">
         {/* Hands region */}
         <div className="flex flex-col gap-2">
@@ -672,8 +623,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 haloCardIds={opponentHalos}
                 swapHiddenCardIds={opponentSwapHiddenIds}
                 timeoutBadge={
-                  settlementOutcome
-                    ? calpokerTimeoutBadge(settlementOutcome, 'theirs', handCompleted)
+                  terminalOutcome
+                    ? calpokerTimeoutBadge(terminalOutcome, 'theirs', handCompleted)
                     : null
                 }
               />
@@ -700,15 +651,17 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 winner={winner}
                 winnerType="player"
                 bestHand={playerBestHand}
-                onCardClick={toggleCardSelection}
+                onCardClick={interactive ? toggleCardSelection : undefined}
                 showSwapAnimation={showSwapAnimation}
                 gameState={gameState}
                 haloCardIds={playerHalos}
                 swapHiddenCardIds={playerSwapHiddenIds}
-                onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
+                onReorder={
+                  interactive && gameState === GAME_STATES.SELECTING ? handleReorder : undefined
+                }
                 timeoutBadge={
-                  settlementOutcome
-                    ? calpokerTimeoutBadge(settlementOutcome, 'ours', handCompleted)
+                  terminalOutcome
+                    ? calpokerTimeoutBadge(terminalOutcome, 'ours', handCompleted)
                     : null
                 }
               />
@@ -719,7 +672,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         {/* Action bar — only during active gameplay */}
         {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP) &&
           !outcome &&
-          settlementOutcome == null && (
+          terminalOutcome == null && (
             <div className="flex-shrink-0 w-full h-12 relative flex items-center justify-center">
               {gameState === GAME_STATES.SELECTING && moveNumber === '1' && (
                 <GameBottomBar

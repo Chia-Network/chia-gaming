@@ -31,7 +31,9 @@
             (if (!= (popcount mover_bitfield) 5)
                 0
                 ; evidence is waiter's card selection bitfield (provided by slasher).
-                ; Slash succeeds only if mover takes MORE than deserved.
+                ; The move creates a coin with roles swapped, so MOVER_SHARE
+                ; is the previous waiter's share. Slash succeeds only if the
+                ; previous mover allocated that player LESS than deserved.
                 (assert (= (popcount evidence) 5)
                     (assign
                         waiter_selected (pull_from_bitfield waiter_cards evidence)
@@ -41,11 +43,11 @@
                             (if (not result)
                                 (/ AMOUNT 2)
                                 (= result 1)
-                                (+ (/ AMOUNT 2) half_pot)
                                 (- (/ AMOUNT 2) half_pot)
+                                (+ (/ AMOUNT 2) half_pot)
                             )
                         )
-                        (if (> MOVER_SHARE fair_share)
+                        (if (< MOVER_SHARE fair_share)
                             0
                             (list 0)
                         )

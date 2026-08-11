@@ -131,6 +131,7 @@ export type GameStatusState =
   | 'on-chain-my-turn'
   | 'on-chain-their-turn'
   | 'replaying'
+  | 'playing-move'
   | 'illegal-move-detected'
   | 'ended-cancelled'
   | 'ended-error';
@@ -205,6 +206,7 @@ export type ChannelSemanticPhase =
 export interface ProposalAcceptedPayload {
   id: bigint | number | string;
   amount: bigint | number | string | { amt?: unknown; Amount?: unknown };
+  our_turn: boolean;
 }
 
 export interface MoveRejectedPayload {
@@ -222,9 +224,10 @@ export interface ActionFailedPayload {
 export type WasmNotification = {
   [K in Exclude<
     WasmNotificationTag,
-    'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'
+    'ChannelStatus' | 'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'
   >]?: Record<string, unknown>;
 } & {
+  ChannelStatus?: ChannelStatusPayload;
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
   ActionFailed?: ActionFailedPayload;
@@ -236,7 +239,7 @@ export type WasmEvent =
   | {
       type: 'game-action-error';
       gameId: string;
-      action: 'make-move' | 'accept-settlement';
+      action: 'make-move' | 'accept-settlement' | 'feature-state';
       error: string;
     }
   | { type: 'durability-error'; error: string }
