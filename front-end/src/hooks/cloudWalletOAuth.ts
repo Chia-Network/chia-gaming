@@ -1,10 +1,9 @@
+import { CLOUD_WALLET_OAUTH_CALLBACK_PATH, CLOUD_WALLET_OAUTH_SCOPES } from '../constants/env';
 import {
-  CLOUD_WALLET_API_URL,
-  CLOUD_WALLET_CLIENT_ID,
-  CLOUD_WALLET_OAUTH_CALLBACK_PATH,
-  CLOUD_WALLET_OAUTH_SCOPES,
-  CLOUD_WALLET_UI_URL,
-} from '../constants/env';
+  getCloudWalletApiUrl,
+  getCloudWalletClientId,
+  getCloudWalletUiUrl,
+} from './cloudWalletConfig';
 import {
   clearOAuthPending,
   loadOAuthPending,
@@ -53,7 +52,7 @@ export function buildAuthorizeUrl(opts: {
   codeChallenge: string;
   apiBase?: string;
 }): string {
-  const apiBase = (opts.apiBase ?? CLOUD_WALLET_API_URL).replace(/\/$/, '');
+  const apiBase = (opts.apiBase ?? getCloudWalletApiUrl()).replace(/\/$/, '');
   const url = new URL(`${apiBase}/authorize`);
   url.searchParams.set('client_id', opts.clientId);
   url.searchParams.set('scope', opts.scope);
@@ -69,7 +68,7 @@ export function buildAuthorizeUrl(opts: {
 
 export function signatureRequestApproveUrl(
   signatureRequestId: string,
-  uiBase = CLOUD_WALLET_UI_URL,
+  uiBase = getCloudWalletUiUrl(),
 ): string {
   const base = uiBase.replace(/\/$/, '');
   const id = signatureRequestId.startsWith('SignatureRequest_')
@@ -89,7 +88,7 @@ interface TokenResponse {
 }
 
 async function postToken(body: Record<string, string>): Promise<TokenResponse> {
-  const apiBase = CLOUD_WALLET_API_URL.replace(/\/$/, '');
+  const apiBase = getCloudWalletApiUrl().replace(/\/$/, '');
   const res = await fetch(`${apiBase}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -119,7 +118,7 @@ export async function exchangeAuthorizationCode(opts: {
   redirectUri: string;
   clientId?: string;
 }): Promise<{ accessToken: string; refreshToken: string; expiresAt: number }> {
-  const clientId = opts.clientId || CLOUD_WALLET_CLIENT_ID;
+  const clientId = opts.clientId || getCloudWalletClientId();
   if (!clientId) {
     throw new Error('CLOUD_WALLET_CLIENT_ID is not configured');
   }
@@ -143,7 +142,7 @@ export async function exchangeAuthorizationCode(opts: {
 
 export async function refreshAccessToken(
   refreshToken: string,
-  clientId = CLOUD_WALLET_CLIENT_ID,
+  clientId = getCloudWalletClientId(),
 ): Promise<{
   accessToken: string;
   refreshToken: string;
@@ -197,7 +196,7 @@ export function waitForGamingConsentWalletId(
       finish(() => resolve(undefined));
     }, timeoutMs);
 
-    const uiOrigin = new URL(CLOUD_WALLET_UI_URL).origin;
+    const uiOrigin = new URL(getCloudWalletUiUrl()).origin;
 
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== uiOrigin) return;
@@ -270,7 +269,8 @@ export async function beginOAuthPopupLogin(): Promise<{
   expiresAt: number;
   walletId: string;
 }> {
-  if (!CLOUD_WALLET_CLIENT_ID) {
+  const clientId = getCloudWalletClientId();
+  if (!clientId) {
     throw new Error('CLOUD_WALLET_CLIENT_ID is not configured');
   }
   const state = randomUrlSafe(16);
@@ -280,7 +280,7 @@ export async function beginOAuthPopupLogin(): Promise<{
   saveOAuthPending({ state, codeVerifier, createdAtMs: Date.now() });
 
   const authorizeUrl = buildAuthorizeUrl({
-    clientId: CLOUD_WALLET_CLIENT_ID,
+    clientId,
     redirectUri,
     scope: CLOUD_WALLET_OAUTH_SCOPES,
     state,
@@ -434,7 +434,7 @@ export async function graphqlRequest<T>(
   query: string,
   variables: Record<string, unknown> | undefined,
   tokenProvider: TokenProvider,
-  apiBase = CLOUD_WALLET_API_URL,
+  apiBase = getCloudWalletApiUrl(),
 ): Promise<T> {
   const run = async (accessToken: string) => {
     const res = await fetch(`${apiBase.replace(/\/$/, '')}/graphql`, {
@@ -517,4 +517,8 @@ export function with0x(hex: string): string {
   return n ? `0x${n}` : '0x';
 }
 
-export { CLOUD_WALLET_UI_URL, CLOUD_WALLET_API_URL, CLOUD_WALLET_CLIENT_ID };
+export {
+  getCloudWalletApiUrl,
+  getCloudWalletClientId,
+  getCloudWalletUiUrl,
+} from './cloudWalletConfig';
