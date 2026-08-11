@@ -363,13 +363,15 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   async beginConnect(uniqueId: string, _fresh = false): Promise<ConnectionSetup> {
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
+      title: 'Simulator',
+      description: 'Connect to the simulated blockchain',
       fields: {
-        balance: { label: 'Starting balance (mojos)', default: 1_000_000n },
+        balance: { type: 'bigint', label: 'Starting balance (mojos)', default: 1_000_000n },
       },
-      finalize: async (values?: { balance?: bigint }) => {
+      finalize: async (values?: Record<string, string | bigint>) => {
         log('[sim-blockchain] finalize: start');
         this.uniqueId = uniqueId;
-        this.initialBalance = values?.balance;
+        this.initialBalance = values?.balance === undefined ? undefined : BigInt(values.balance);
         this.deleted = false;
         this.autoReconnect = true;
         this.reconnectAttempt = 0;

@@ -968,11 +968,17 @@ Shell manages wallet connections through two abstractions defined in
   the simulator, `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
   exposes `beginConnect()`, `disconnect()`, `isConnected()`, `spend()`, etc.
 - **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
-  the QR code and a `finalize()` promise that resolves when the wallet is
-  paired. Optionally contains `fields` (a map of input descriptors) indicating
-  the backend needs extra user input before connecting (e.g. the simulator's
-  initial balance). Cloud Wallet returns `skipQr: true` and completes OAuth
-  inside `finalize()`.
+  the QR code and a `finalize(values?)` promise that resolves when the wallet is
+  paired. Optionally contains `fields` (a `Record` of typed input descriptors,
+  each `{ type: 'string' | 'bigint', label, default }`) indicating the backend
+  needs extra user input before connecting, plus an optional `title`/
+  `description` for the setup modal. Examples: the simulator's initial balance
+  (`bigint`), and Cloud Wallet's OAuth `clientId` / API URL / UI URL (`string`).
+  Cloud Wallet sets `skipQr: true` and completes OAuth inside `finalize()` after
+  persisting the entered config via `cloudWalletConfig.ts` (kept separate from
+  the OAuth tokens in `cloudWalletAuth.ts`). All OAuth/GraphQL calls resolve the
+  client id and endpoints at call time through `getCloudWallet*` getters, so
+  UI-entered config takes effect without a rebuild.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
@@ -985,16 +991,19 @@ and poll interval; the rest of the flow is generic.
    `handleConnect(bcType)`.
 2. `handleConnect` calls `iface.beginConnect(uniqueId)`, which returns a
    `ConnectionSetup`.
-3. If `setup.fields` is present, Shell shows the `SimulatorSetupModal` overlay
-   so the user can provide the required values, then `handleFinalize()` calls
-   `setup.finalize()`.
-4. If `setup.skipQr` is set (Cloud Wallet, or a restored WC session), Shell
-   awaits `setup.finalize()` without showing a QR panel.
+3. If `setup.fields` is present, Shell shows the generic `ConnectionSetupModal`
+   overlay so the user can provide the required values, then `handleFinalize(values)`
+   calls `setup.finalize(values)`. This path is used by both the simulator and
+   Cloud Wallet (the latter is `skipQr` yet still collects OAuth config first).
+4. If `setup.skipQr` is set with no fields (a restored WC/Cloud session), Shell
+   awaits `setup.finalize()` without showing a QR panel or modal.
 5. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
    renders the QR code and awaits `setup.finalize()`, which resolves when the
    wallet scans.
 6. After finalize resolves, `completeConnection()` activates polling and
-   switches to the Hub tab.
+   switches to the Hub tab. Connect/finalize failures are surfaced on the Choose
+   Connection screen and inside the setup modal via `connectError`, rather than
+   silently resetting the chooser.
 
 **Auto-reconnect:** Both backends implement their own WebSocket reconnect
 following the shared connection discipline described in
