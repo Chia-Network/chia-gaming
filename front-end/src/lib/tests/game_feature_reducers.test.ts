@@ -136,7 +136,101 @@ describe('canonical feature gameplay reducers', () => {
     ]);
   });
 
-  it('durably preserves Space Poker showdown call and final reveal across immediate restore', () => {
+  it('accepts legal repeated Space Poker ranks through the flop and turn', () => {
+    let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    state = applyReadable(state, readable());
+    state = applyReadable(
+      state,
+      readable(text('deal'), ...[8n, 8n, 0n, 1n].map(Program.fromBigInt)),
+    );
+    state = applyReadable(
+      state,
+      readable(text('open'), Program.fromBigInt(0n), Program.fromBigInt(10n)),
+    );
+    state = applyReadable(
+      state,
+      readable(
+        text('call'),
+        Program.fromBigInt(10n),
+        Program.fromBigInt(4n),
+        ...[8n, 5n, 5n].map(Program.fromBigInt),
+      ),
+    );
+    expect(state.communityCards).toEqual([8n, 5n, 5n, null, null]);
+
+    state = applyReadable(
+      state,
+      readable(text('open'), Program.fromBigInt(0n), Program.fromBigInt(10n)),
+    );
+    state = applyReadable(
+      state,
+      readable(
+        text('call'),
+        Program.fromBigInt(10n),
+        Program.fromBigInt(3n),
+        Program.fromBigInt(5n),
+      ),
+    );
+    expect(state.communityCards).toEqual([8n, 5n, 5n, 5n, null]);
+  });
+
+  it('accepts a turn advisory whose rank matches a visible hole card', () => {
+    let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    state = applyReadable(state, readable());
+    state = applyReadable(
+      state,
+      readable(text('deal'), ...[8n, 9n, 0n, 1n].map(Program.fromBigInt)),
+    );
+    state = applyReadable(
+      state,
+      readable(text('open'), Program.fromBigInt(0n), Program.fromBigInt(10n)),
+    );
+    state = applyReadable(
+      state,
+      readable(
+        text('call'),
+        Program.fromBigInt(10n),
+        Program.fromBigInt(4n),
+        ...[2n, 3n, 4n].map(Program.fromBigInt),
+      ),
+    );
+    state = applyReadable(
+      state,
+      readable(text('open'), Program.fromBigInt(0n), Program.fromBigInt(10n)),
+    );
+    state = assertCodecValid({
+      ...state,
+      gameState: { handler: 2n, myTurn: false, N: 2n },
+      handHistory: [...state.handHistory, { player: 'you', action: 'check', endsStreet: true }],
+    });
+
+    const next = reduceSpacepokerDurableState(
+      state,
+      status(readable(text('cards'), Program.fromBigInt(8n)), null),
+    );
+
+    expect(assertCodecValid(next).communityCards).toEqual([2n, 3n, 4n, 8n, null]);
+  });
+
+  it('places delayed Space Poker card advisories by street instead of duplicating a board card', () => {
+    const current = assertCodecValid({
+      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      gameState: { handler: 2n, myTurn: true, N: 2n },
+      playerHoleCards: [0n, 1n],
+      communityCards: [2n, 3n, 4n, 5n, null],
+      coinTossIOpen: true,
+    });
+    const delayedTurnAdvisory = readable(text('cards'), Program.fromBigInt(5n));
+
+    const next = reduceSpacepokerFeatureState(current, {
+      type: 'game-message',
+      readable: delayedTurnAdvisory,
+    });
+
+    expect(assertCodecValid(next)).toEqual(current);
+  });
+
+  it('keeps Bob-local winning call and end readables positively oriented', () => {
     let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
     state = applyReadable(
       state,
@@ -146,29 +240,31 @@ describe('canonical feature gameplay reducers', () => {
       text('call'),
       Program.fromBigInt(80n),
       Program.fromBigInt(1n),
-      ints([0n, 1n, 2n, 3n, 4n, 5n, 6n]),
-      Program.fromBigInt(1n),
-      ints([7n, 8n, 2n, 3n, 4n, 5n, 6n]),
+      // Bob: J,Q with board 9,3,J,4,Q — two pair, Queens and Jacks.
+      ints([11n, 12n, 9n, 3n, 11n, 4n, 12n]),
       Program.fromBigInt(0n),
-      ints([0n, 2n, 3n, 4n, 5n]),
-      ints([6n, 14n]),
-      ints([2n, 3n, 4n, 5n, 6n]),
-      ints([5n, 13n]),
+      // Alice: 7,T with the same board — Queen high.
+      ints([7n, 10n, 9n, 3n, 11n, 4n, 12n]),
+      Program.fromBigInt(0n),
+      ints([11n, 12n, 9n, 11n, 12n]),
+      ints([2n, 2n, 1n, 0n, 12n, 11n, 9n]),
+      ints([7n, 10n, 9n, 11n, 12n]),
+      ints([1n, 1n, 1n, 1n, 1n, 0n, 12n, 11n, 10n, 9n, 7n]),
       Program.fromBigInt(1n),
     );
     state = applyReadable(state, call);
     expect(state).toMatchObject({
       gameState: { handler: 4n, myTurn: true, N: 1n },
-      opponentHoleCards: [7n, 8n],
+      opponentHoleCards: [7n, 10n],
       opponentBoost: false,
-      communityCards: [2n, 3n, 4n, 5n, 6n],
+      communityCards: [9n, 3n, 11n, 4n, 12n],
       halfPot: 8n,
       outcome: {
         result: 1n,
-        playerHandCards: [0n, 2n, 3n, 4n, 5n],
-        playerHandEval: [6n, 14n],
-        opponentHandCards: [2n, 3n, 4n, 5n, 6n],
-        opponentHandEval: [5n, 13n],
+        playerHandCards: [11n, 12n, 9n, 11n, 12n],
+        playerHandEval: [2n, 2n, 1n, 0n, 12n, 11n, 9n],
+        opponentHandCards: [7n, 10n, 9n, 11n, 12n],
+        opponentHandEval: [1n, 1n, 1n, 1n, 1n, 0n, 12n, 11n, 10n, 9n, 7n],
       },
     });
 
@@ -177,30 +273,33 @@ describe('canonical feature gameplay reducers', () => {
 
     const end = readable(
       text('end'),
-      ints([0n, 2n, 3n, 4n, 5n]),
-      ints([6n, 14n]),
-      ints([2n, 3n, 4n, 5n, 6n]),
-      ints([5n, 13n]),
+      ints([11n, 12n, 9n, 11n, 12n]),
+      ints([2n, 2n, 1n, 0n, 12n, 11n, 9n]),
+      ints([7n, 10n, 9n, 11n, 12n]),
+      ints([1n, 1n, 1n, 1n, 1n, 0n, 12n, 11n, 10n, 9n, 7n]),
       Program.fromBigInt(1n),
       Program.fromBigInt(7n),
-      Program.fromBigInt(8n),
+      Program.fromBigInt(10n),
       Program.fromBigInt(0n),
     );
     state = applyReadable(state, end);
     expect(state).toMatchObject({
       gameState: { handler: 5n, myTurn: false, N: 0n },
-      opponentHoleCards: [7n, 8n],
+      opponentHoleCards: [7n, 10n],
       opponentBoost: false,
       terminalState: 'revealed',
       outcome: {
         result: 1n,
-        playerHandCards: [0n, 2n, 3n, 4n, 5n],
-        opponentHandCards: [2n, 3n, 4n, 5n, 6n],
+        playerHandCards: [11n, 12n, 9n, 11n, 12n],
+        opponentHandCards: [7n, 10n, 9n, 11n, 12n],
       },
     });
 
-    const persisted = spacepokerRegistration.stateCodec.encode(state);
-    expect(spacepokerRegistration.stateCodec.decode(persisted)).toEqual(state);
+    const settled = reduceSpacepokerSettlementState(state, 'settled_cleanly');
+    expect(settled).toEqual(state);
+
+    const persisted = spacepokerRegistration.stateCodec.encode(settled);
+    expect(spacepokerRegistration.stateCodec.decode(persisted)).toEqual(settled);
   });
 
   it('preserves fold and concede terminal presentation through immediate settlement restore', () => {
@@ -230,6 +329,136 @@ describe('canonical feature gameplay reducers', () => {
     const endState = { ...state, gameState: { handler: 4n as const, myTurn: true, N: 1n } };
     const conceded = reduceSpacepokerSettlementState(endState, 'we_accepted');
     expect(assertCodecValid(conceded).terminalState).toBe('conceded-by-you');
+  });
+
+  it('projects an on-chain Space Poker opponent timeout as a preserved-board action failure', () => {
+    const state = assertCodecValid({
+      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      gameState: { handler: 3n, myTurn: false, N: 2n },
+      playerHoleCards: [1n, 2n],
+      communityCards: [3n, 4n, 5n, 6n, null],
+      handHistory: [{ player: 'you', action: 'check' }],
+      coinTossIOpen: true,
+    });
+
+    const settled = assertCodecValid(reduceSpacepokerSettlementState(state, 'opponent_timed_out'));
+
+    expect(settled).toMatchObject({
+      gameState: { handler: 6n, myTurn: false, N: 2n },
+      terminalState: 'won-by-opponent-failure',
+      playerHoleCards: [1n, 2n],
+      communityCards: [3n, 4n, 5n, 6n, null],
+      handHistory: [
+        { player: 'you', action: 'check' },
+        { player: 'opponent', action: 'failed' },
+      ],
+    });
+  });
+
+  it('projects an on-chain Space Poker flag after final hands as an opponent concession', () => {
+    const outcome = {
+      result: 1n,
+      playerHandCards: [2n, 3n, 4n, 5n, 6n],
+      playerHandEval: [6n, 14n],
+      opponentHandCards: [2n, 3n, 4n, 5n, 6n],
+      opponentHandEval: [5n, 13n],
+    };
+    const state = assertCodecValid({
+      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      gameState: { handler: 4n, myTurn: false, N: 1n },
+      playerHoleCards: [8n, 9n],
+      opponentHoleCards: [10n, 11n],
+      opponentBoost: false,
+      communityCards: [2n, 3n, 4n, 5n, 6n],
+      handHistory: [{ player: 'you', action: 'check', endsStreet: true }],
+      outcome,
+      coinTossIOpen: true,
+    });
+
+    const settled = assertCodecValid(reduceSpacepokerSettlementState(state, 'opponent_timed_out'));
+
+    expect(settled).toMatchObject({
+      gameState: { handler: 5n, myTurn: false, N: 1n },
+      terminalState: 'conceded-by-opponent',
+      playerHoleCards: [8n, 9n],
+      opponentHoleCards: [10n, 11n],
+      communityCards: [2n, 3n, 4n, 5n, 6n],
+      outcome,
+      handHistory: [
+        { player: 'you', action: 'check', endsStreet: true },
+        { player: 'opponent', action: 'concede' },
+      ],
+    });
+  });
+
+  it('changes failed opponent eyes to a red X after an on-chain reveal timeout', () => {
+    const outcome = {
+      result: -1n,
+      playerHandCards: [2n, 3n, 4n, 5n, 6n],
+      playerHandEval: [5n, 13n],
+      opponentHandCards: [2n, 3n, 4n, 5n, 6n],
+      opponentHandEval: [6n, 14n],
+    };
+    const state = assertCodecValid({
+      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      gameState: { handler: 4n, myTurn: false, N: 1n },
+      playerHoleCards: [8n, 9n],
+      opponentHoleCards: [10n, 11n],
+      opponentBoost: false,
+      communityCards: [2n, 3n, 4n, 5n, 6n],
+      handHistory: [{ player: 'you', action: 'check', endsStreet: true }],
+      outcome,
+      coinTossIOpen: true,
+    });
+
+    const settled = assertCodecValid(reduceSpacepokerSettlementState(state, 'opponent_timed_out'));
+
+    expect(settled).toMatchObject({
+      terminalState: 'won-by-opponent-failure',
+      outcome,
+      handHistory: [
+        { player: 'you', action: 'check', endsStreet: true },
+        { player: 'opponent', action: 'failed' },
+      ],
+    });
+  });
+
+  it('preserves an opponent on-chain reveal and appends a local flag on all-in forfeit', () => {
+    const outcome = {
+      result: 1n,
+      playerHandCards: [2n, 3n, 4n, 5n, 6n],
+      playerHandEval: [6n, 14n],
+      opponentHandCards: [2n, 3n, 4n, 5n, 6n],
+      opponentHandEval: [5n, 13n],
+    };
+    const state = assertCodecValid({
+      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      gameState: { handler: 5n, myTurn: false, N: 1n },
+      playerHoleCards: [8n, 9n],
+      opponentHoleCards: [10n, 11n],
+      opponentBoost: false,
+      communityCards: [2n, 3n, 4n, 5n, 6n],
+      handHistory: [{ player: 'opponent', action: 'reveal' }],
+      outcome,
+      terminalState: 'revealed',
+      coinTossIOpen: true,
+    });
+
+    const settled = assertCodecValid(
+      reduceSpacepokerSettlementState(state, 'forfeited_skipped_reveal'),
+    );
+
+    expect(settled).toMatchObject({
+      terminalState: 'conceded-by-you',
+      playerHoleCards: [8n, 9n],
+      opponentHoleCards: [10n, 11n],
+      communityCards: [2n, 3n, 4n, 5n, 6n],
+      outcome,
+      handHistory: [
+        { player: 'opponent', action: 'reveal' },
+        { player: 'you', action: 'concede' },
+      ],
+    });
   });
 
   it('uses the same Calpoker reducer for durable and mounted readable projection', () => {

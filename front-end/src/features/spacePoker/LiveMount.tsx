@@ -3,7 +3,6 @@ import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
 import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
-import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { HandTermsModel } from '../../lib/session/types';
 import type { GameTerminalModel } from '../../lib/session/types';
 import { formatAmount } from '../../util';
@@ -17,7 +16,6 @@ export interface SpacepokerLiveMountProps {
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
   terms: Extract<HandTermsModel, { gameType: 'spacepoker' }>;
-  initialPersistedState?: PersistedGameState;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   myName?: string;
@@ -33,7 +31,6 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     iStarted,
     gameplayEvent$,
     terms,
-    initialPersistedState,
     onTurnChanged,
     appendGameLog,
     myName,
@@ -43,7 +40,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
   } = props;
   const unitSizeMojos = resolveSpacepokerUnitSize({
     terms,
-    persistedState: initialPersistedState,
+    persistedState: gameObject.handState ?? undefined,
   });
   if (!unitSizeMojos) {
     throw new Error('Space Poker mount requires one canonical positive unit size');
@@ -94,7 +91,6 @@ export const spacepokerMountRegistration: GameMountRegistration = {
         iStarted={session.iStarted}
         gameplayEvent$={session.gameplayEvent$}
         terms={terms}
-        initialPersistedState={session.gameSpecificView.handState ?? undefined}
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
         terminal={session.gameSpecificView.terminal}
@@ -120,7 +116,6 @@ export const spacepokerMountRegistration: GameMountRegistration = {
         iStarted={options.iStarted}
         gameplayEvent$={EMPTY}
         terms={terms}
-        initialPersistedState={model.game.handState ?? undefined}
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
         terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}

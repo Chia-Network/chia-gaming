@@ -1687,8 +1687,22 @@ impl OnChainPhase {
                 }
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
                     def.timeout_claim_armed = true;
-                    def.game_finished = true;
                 }
+                effects.push(Effect::Notify(GameNotification::GameStatus {
+                    id: game_id,
+                    status: if my_turn == Some(true) {
+                        GameStatusKind::OnChainMyTurn
+                    } else {
+                        GameStatusKind::OnChainTheirTurn
+                    },
+                    my_reward: None,
+                    coin_id: Some(current_coin),
+                    reason: None,
+                    other_params: Some(GameStatusOtherParams {
+                        game_finished: Some(true),
+                        ..Default::default()
+                    }),
+                }));
                 Ok(effects)
             }
             GameAction::CleanShutdown => Ok(Vec::new()),

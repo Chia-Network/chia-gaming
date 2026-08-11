@@ -176,7 +176,11 @@ export function reduceRegisteredGameState(
     throw new Error(`Feature-state current ${gameType} payload is invalid`);
   }
   const next = registration.durableState.reduceEvent(decoded, event);
-  return next === null ? null : registration.stateCodec.encode(next);
+  if (next === null) return null;
+  if (!registration.stateCodec.isState(next)) {
+    throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
+  }
+  return registration.stateCodec.encode(next);
 }
 
 export function defaultGameComposeDraft<T extends RegisteredGameType>(

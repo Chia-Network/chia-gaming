@@ -14,7 +14,7 @@ import {
 import { GameplayEvent } from '../../hooks/useGameSession';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import { formatAmount } from '../../util';
-import { settlementLabel } from '../../lib/settlement';
+import { settlementLabel, type SettlementOutcome } from '../../lib/settlement';
 import type { GameTerminalModel } from '../../lib/session/types';
 import type { GameInteractionMode } from '../../lib/gameMount';
 
@@ -27,7 +27,7 @@ const RANK_LABELS: Record<number, string> = {
   7: '7',
   8: '8',
   9: '9',
-  10: '10',
+  10: 'T',
   11: 'J',
   12: 'Q',
   13: 'K',
@@ -50,7 +50,7 @@ const FULL_RANKS: Record<number, string> = {
   14: 'Ace',
 };
 
-function rankLabel(rank: bigint): string {
+export function spacePokerRankLabel(rank: bigint): string {
   return RANK_LABELS[Number(rank)] ?? String(rank);
 }
 
@@ -199,6 +199,10 @@ function formatSpacepokerHandLog(
       items.push('\u274C');
       continue;
     }
+    if (entry.action === 'failed') {
+      items.push('\u274C');
+      continue;
+    }
     if (entry.action === 'concede') {
       items.push('\u{1F3F3}\uFE0F');
       continue;
@@ -309,7 +313,10 @@ function formatSpacepokerHandLog(
     const lost = ourTotal;
     const lostMojos = lost * betUnit;
     resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
-  } else if (terminalState === 'folded-by-opponent') {
+  } else if (
+    terminalState === 'folded-by-opponent' ||
+    terminalState === 'won-by-opponent-failure'
+  ) {
     // They folded: compute how much we won
     const won = theirTotal;
     const wonMojos = won * betUnit;
@@ -356,19 +363,43 @@ const SEL_VIS = `${SEL_BAR} bg-canvas-text-contrast`;
 const SEL_HIDDEN = `${SEL_BAR} bg-transparent`;
 
 function SpCard({ rankLabelText, faceDown }: { rankLabelText?: string; faceDown?: boolean }) {
-  const base =
-    'inline-flex items-center justify-center rounded border text-lg font-bold select-none';
+  const base = 'inline-flex items-center justify-center rounded border font-bold select-none';
   const size = 'w-10 h-14 sm:w-12 sm:h-16';
   if (faceDown) {
     return (
-      <div className={`${base} ${size} bg-canvas-solid border-canvas-line text-canvas-bg`}>?</div>
+      <div
+        className={`${base} ${size} bg-canvas-solid border-canvas-line text-canvas-bg text-4xl leading-none`}
+      >
+        ?
+      </div>
     );
   }
   return (
     <div
       className={`${base} ${size} bg-canvas-bg border-2 border-canvas-text-contrast text-canvas-text-contrast`}
     >
-      {rankLabelText ?? ''}
+      <svg
+        aria-label={rankLabelText ?? ''}
+        className="h-[90%] w-[90%] overflow-visible"
+        role="img"
+        viewBox="0 0 100 100"
+      >
+        <text
+          className="fill-current"
+          dominantBaseline="central"
+          fontSize="108"
+          fontWeight="700"
+          style={{
+            fontFamily:
+              'Cheltenham, "ITC Cheltenham", "Cheltenham Std", "Times New Roman", Times, serif',
+          }}
+          textAnchor="middle"
+          x="50"
+          y="50"
+        >
+          {rankLabelText ?? ''}
+        </text>
+      </svg>
     </div>
   );
 }
@@ -398,6 +429,21 @@ function CardColumn({
 }
 
 type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | null;
+
+export function spacePokerTerminalBanners(
+  terminalState: SpTerminalState,
+  showdownResult: bigint | null,
+): { player: HoleCardsBannerKind; opponent: HoleCardsBannerKind } {
+  if (terminalState === 'conceded-by-you') return { player: null, opponent: 'win' };
+  if (terminalState === 'conceded-by-opponent') return { player: 'win', opponent: null };
+  if (terminalState === 'folded-by-you') return { player: 'fold', opponent: null };
+  if (terminalState === 'folded-by-opponent') return { player: null, opponent: 'fold' };
+  if (terminalState === 'won-by-opponent-failure') return { player: 'win', opponent: null };
+  if (showdownResult === null) return { player: null, opponent: null };
+  if (showdownResult > 0n) return { player: 'win', opponent: null };
+  if (showdownResult < 0n) return { player: null, opponent: 'win' };
+  return { player: 'tie', opponent: 'tie' };
+}
 
 function HoleCardsGroup({
   boosted,
@@ -446,7 +492,7 @@ function AmountBadge({ children }: { children: ReactNode }) {
 function entrySymbol(entry: SpHandEntry, formatBet: (units: bigint) => string): string {
   if (entry.action === 'check') return entry.endsStreet ? '\u270B' : '\u2705';
   if (entry.action === 'call') return '\u270B';
-  if (entry.action === 'fold') return '\u274C';
+  if (entry.action === 'fold' || entry.action === 'failed') return '\u274C';
   if (entry.action === 'concede') return '\u{1F3F3}\uFE0F';
   if (entry.action === 'reveal') return '\u{1F440}';
   return formatBet(entry.units ?? 0n);
@@ -492,17 +538,42 @@ function HandHistoryPanel({ rows }: { rows: [string | null, string | null][] }) 
   );
 }
 
-export function spacePokerFooterPresentation(
-  handler: SpHandler,
-  turnLine: string,
-): {
-  showControls: boolean;
-  status: string;
-} {
-  if (isTerminalSpacepokerHandler(handler)) {
-    return { showControls: false, status: '' };
+export function spacePokerFooterStatus(handler: SpHandler, turnLine: string): string {
+  return isTerminalSpacepokerHandler(handler) ? '' : turnLine;
+}
+
+export function spacePokerTransitionCommentary(handler: SpHandler, myTurn: boolean): string {
+  if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) return 'Dealing cards…';
+  if (handler === SpHandler.End) {
+    return myTurn ? 'Finishing hand…' : 'Waiting for opponent to finish…';
   }
-  return { showControls: true, status: turnLine };
+  return '';
+}
+
+export function spacePokerTerminalCommentary(
+  terminalState: SpTerminalState,
+  showdownResult: bigint | null,
+  terminalOutcome: SettlementOutcome | null,
+): string {
+  if (terminalState === 'conceded-by-opponent') {
+    return 'You revealed first and the opponent conceded.';
+  }
+  if (terminalState === 'conceded-by-you') {
+    return 'The opponent revealed first and you conceded.';
+  }
+  if (terminalState === 'folded-by-opponent') return 'The opponent folded. You won the hand.';
+  if (terminalState === 'folded-by-you') return 'You folded. The opponent won the hand.';
+  if (terminalState === 'won-by-opponent-failure') {
+    return "The opponent's final action failed. You won the hand.";
+  }
+  if (terminalState === 'revealed' && showdownResult !== null) {
+    if (showdownResult > 0n) return 'You won at showdown.';
+    if (showdownResult < 0n) return 'The opponent won at showdown.';
+    return 'The showdown ended in a tie.';
+  }
+  if (terminalOutcome !== null) return `${settlementLabel(terminalOutcome)}.`;
+  if (terminalState !== 'none') return 'The hand ended.';
+  return '';
 }
 
 interface ActionBarProps {
@@ -740,6 +811,9 @@ export default function SpacePoker({
   } else if (sp.terminalState === 'folded-by-opponent') {
     playerIndicator = ' \u2705';
     oppIndicator = ' \u274C';
+  } else if (sp.terminalState === 'won-by-opponent-failure') {
+    playerIndicator = ' \u2705';
+    oppIndicator = ' \u274C';
   } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
     playerIndicator =
       showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
@@ -747,39 +821,12 @@ export default function SpacePoker({
       showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
   }
 
-  const settlementNote =
-    sp.terminalState === 'settled' && sp.terminalOutcome
-      ? settlementLabel(sp.terminalOutcome)
-      : hasShowdownOutcome
-        ? ''
-        : sp.terminalState === 'conceded-by-opponent'
-          ? 'You revealed first and the opponent conceded.'
-          : sp.terminalState === 'conceded-by-you'
-            ? 'The opponent revealed first and you conceded.'
-            : '';
-
   // Calpoker-style pill banners shown immediately to the right of each player's
   // hole cards.
-  let playerBanner: HoleCardsBannerKind = null;
-  let oppBanner: HoleCardsBannerKind = null;
-  if (sp.terminalState === 'conceded-by-you') {
-    oppBanner = 'win';
-  } else if (sp.terminalState === 'conceded-by-opponent') {
-    playerBanner = 'win';
-  } else if (sp.terminalState === 'folded-by-you') {
-    playerBanner = 'fold';
-  } else if (sp.terminalState === 'folded-by-opponent') {
-    oppBanner = 'fold';
-  } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
-    if (showdownOutcome.result > 0n) {
-      playerBanner = 'win';
-    } else if (showdownOutcome.result < 0n) {
-      oppBanner = 'win';
-    } else {
-      playerBanner = 'tie';
-      oppBanner = 'tie';
-    }
-  }
+  const { player: playerBanner, opponent: oppBanner } = spacePokerTerminalBanners(
+    sp.terminalState,
+    hasShowdownOutcome && (finished || handler === SpHandler.End) ? showdownOutcome.result : null,
+  );
 
   let turnLine = '';
   if (
@@ -796,7 +843,16 @@ export default function SpacePoker({
   } else if (!myTurn && inBetting) {
     turnLine = 'Waiting for opponent\u2026';
   }
-  const footer = spacePokerFooterPresentation(handler, turnLine);
+  if (!turnLine) {
+    turnLine = spacePokerTransitionCommentary(handler, myTurn);
+  }
+  const terminalCommentary = spacePokerTerminalCommentary(
+    sp.terminalState,
+    hasShowdownOutcome ? showdownOutcome.result : null,
+    sp.terminalOutcome,
+  );
+  const footerStatus =
+    terminalCommentary || spacePokerFooterStatus(handler, turnLine) || 'Updating hand…';
 
   return (
     <div className="relative flex flex-col items-center gap-1.5 py-0 w-full max-w-lg mx-auto text-canvas-text">
@@ -834,7 +890,7 @@ export default function SpacePoker({
                 key={i}
                 topSel={showPrivateShowdown && sp.outcome?.opponentHandCards?.includes(c)}
               >
-                <SpCard rankLabelText={rankLabel(c)} />
+                <SpCard rankLabelText={spacePokerRankLabel(c)} />
               </CardColumn>
             ))
           ) : (
@@ -868,7 +924,7 @@ export default function SpacePoker({
                   topSel={showPrivateShowdown && sp.outcome?.opponentHandCards?.includes(card)}
                   bottomSel={showPrivateShowdown && sp.outcome?.playerHandCards?.includes(card)}
                 >
-                  <SpCard rankLabelText={rankLabel(card)} />
+                  <SpCard rankLabelText={spacePokerRankLabel(card)} />
                 </CardColumn>
               );
             }
@@ -896,7 +952,7 @@ export default function SpacePoker({
                 key={i}
                 bottomSel={showPrivateShowdown && sp.outcome?.playerHandCards?.includes(c)}
               >
-                <SpCard rankLabelText={rankLabel(c)} />
+                <SpCard rankLabelText={spacePokerRankLabel(c)} />
               </CardColumn>
             ))
           ) : (
@@ -918,47 +974,38 @@ export default function SpacePoker({
         {playerIndicator}
       </AmountBadge>
 
-      {settlementNote && (
-        <p className="text-xs text-canvas-text-contrast text-center">{settlementNote}</p>
-      )}
-
       <div className="flex min-h-[4.5rem] flex-col justify-center gap-2">
-        {footer.showControls && (
-          <>
-            {sp.terminalRecovery && (
-              <div className="flex flex-col items-center gap-1">
-                <p className="text-sm text-alert-text">
-                  Final {sp.terminalRecovery} was not submitted.
-                </p>
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover"
-                  onClick={sp.retryTerminalAction}
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-            {/* Action bar */}
-            <ActionBar
-              interactive={interactive}
-              handler={handler}
-              myTurn={myTurn}
-              round={String(N)}
-              coinTossIOpen={sp.coinTossIOpen}
-              lastRaiseUnits={String(sp.lastRaise)}
-              maxRaiseUnits={String(maxRaise)}
-              forcedAuto={forcedAuto}
-              formatBet={sp.formatBet}
-              handleCheck={sp.handleCheck}
-              handleRaise={sp.handleRaise}
-              handleCall={sp.handleCall}
-              handleFold={sp.handleFold}
-            />
-          </>
+        {sp.terminalRecovery && (
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-sm text-alert-text">
+              Final {sp.terminalRecovery} was not submitted.
+            </p>
+            <button
+              type="button"
+              className="px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover"
+              onClick={sp.retryTerminalAction}
+            >
+              Retry
+            </button>
+          </div>
         )}
+        <ActionBar
+          interactive={interactive}
+          handler={handler}
+          myTurn={myTurn}
+          round={String(N)}
+          coinTossIOpen={sp.coinTossIOpen}
+          lastRaiseUnits={String(sp.lastRaise)}
+          maxRaiseUnits={String(maxRaise)}
+          forcedAuto={forcedAuto}
+          formatBet={sp.formatBet}
+          handleCheck={sp.handleCheck}
+          handleRaise={sp.handleRaise}
+          handleCall={sp.handleCall}
+          handleFold={sp.handleFold}
+        />
         <p className="text-sm text-canvas-text-contrast font-medium text-center min-h-5">
-          {footer.status}
+          {footerStatus}
         </p>
       </div>
 

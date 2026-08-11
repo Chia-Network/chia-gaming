@@ -586,7 +586,7 @@ describe('session model selectors', () => {
     });
   });
 
-  it('preserves a synchronous local playing-move transition during an immediate turn notification', () => {
+  it('preserves authoritative on-chain turn state during local turn callbacks', () => {
     const localMove = nextGamePresentationAfterLocalTurn(
       {
         coin: { coinHex: 'parent', turnState: 'my-turn', onChain: true },
@@ -596,8 +596,8 @@ describe('session model selectors', () => {
       'Unrolling',
     );
     expect(localMove).toEqual({
-      coin: { coinHex: 'parent', turnState: 'playing-on-chain', onChain: true },
-      handStatus: 'playing-move',
+      coin: { coinHex: 'parent', turnState: 'my-turn', onChain: true },
+      handStatus: 'our-turn',
     });
 
     expect(
@@ -643,7 +643,7 @@ describe('session model selectors', () => {
         instances: { '7': playingInstance },
       },
     });
-    expect(selectGameSessionView(playing).gameCoin.turnState).toBe('playing-on-chain');
+    expect(selectGameSessionView(playing).gameCoin.turnState).toBe('my-turn');
 
     const terminalInstance = {
       ...playingInstance,
@@ -1493,7 +1493,7 @@ describe('session model selectors', () => {
     ]);
   });
 
-  it('derives Playing move identically for one or many keyed games', () => {
+  it('waits for authoritative on-chain status after a local turn change', () => {
     const makeInstance = (id: string, handStatus: 'our-turn' | 'their-turn') => ({
       id,
       amount: '100',
@@ -1511,15 +1511,9 @@ describe('session model selectors', () => {
       '9': second,
     };
 
-    expect(updated['7']).toMatchObject({
-      coin: { turnState: 'playing-on-chain' },
-      handStatus: 'playing-move',
-    });
+    expect(updated['7']).toBe(first);
     expect(updated['9']).toBe(second);
-    expect(nextGameInstanceAfterLocalTurn(first, true, 'Active')).toMatchObject({
-      coin: { turnState: 'my-turn' },
-      handStatus: 'active',
-    });
+    expect(nextGameInstanceAfterLocalTurn(first, true, 'Active')).toBe(first);
 
     const singleton = selectGameDashboardView(
       createSessionModel({
@@ -1535,10 +1529,10 @@ describe('session model selectors', () => {
     );
     expect(singleton.lifecycleRows[0]).toMatchObject({
       label: 'Hand',
-      statusLabel: 'Playing move',
+      statusLabel: 'Your turn',
     });
     expect(multiple.lifecycleRows).toEqual([
-      { id: '7', label: 'Hand 1', statusLabel: 'Playing move', detail: null },
+      { id: '7', label: 'Hand 1', statusLabel: 'Your turn', detail: null },
       { id: '9', label: 'Hand 2', statusLabel: 'Their turn', detail: null },
     ]);
   });
@@ -2188,7 +2182,7 @@ describe('session model selectors', () => {
       'playing-on-chain',
     );
     expect(nextGameTurnAfterLocalTurn('replaying', true, 'ResolvedUnrolled')).toBe('replaying');
-    expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Unrolling')).toBe('playing-on-chain');
+    expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Unrolling')).toBe('my-turn');
     expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Active')).toBe('their-turn');
   });
 
@@ -2211,6 +2205,27 @@ describe('session model selectors', () => {
     expect(isFinishingGameStatus('my-turn', true)).toBe(true);
     expect(isFinishingGameStatus('their-turn', true)).toBe(true);
     expect(isFinishingGameStatus('on-chain-my-turn', false)).toBe(false);
+    expect(
+      projectGameStatus({
+        previous: {
+          id: '7',
+          amount: '100',
+          coin: { coinHex: 'coin', turnState: 'my-turn', onChain: true },
+          handStatus: 'our-turn',
+          terminal: INITIAL_GAME_TERMINAL_MODEL,
+        },
+        payload: {
+          id: '7',
+          status: 'on-chain-my-turn',
+          coin_id: 'coin',
+          other_params: { game_finished: true },
+        },
+        channelState: 'ResolvedUnrolled',
+      }),
+    ).toMatchObject({
+      coin: { turnState: 'finishing' },
+      handStatus: 'finishing',
+    });
   });
 
   it('orders readable gameplay events before the Settled marker', () => {

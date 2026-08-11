@@ -1,4 +1,5 @@
 import { SessionController } from '../../hooks/SessionController';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame, WasmResult } from '../../types/ChiaGaming';
 import {
   createSessionModel,
@@ -502,6 +503,7 @@ describe('session machine controller command failures', () => {
   });
 
   it('keeps review retryable when the actual controller receives actionSucceeded=false', async () => {
+    expectConsoleError('proposal no longer exists');
     const controller = new SessionController(null, 'actual-false-result', 100n, 100n, {
       sendMessage: () => true,
       sendAck: () => true,

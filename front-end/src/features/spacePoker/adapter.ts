@@ -6,7 +6,7 @@ import {
   type GameFeatureRegistration,
   type TermsFor,
 } from '../../lib/gameAdapter';
-import type { SettlementOutcome } from '../../lib/settlement';
+import { isForfeitOutcome, type SettlementOutcome } from '../../lib/settlement';
 import { spacepokerStateCodec, type SpacepokerHandState, type SpHandEntry } from './stateCodec';
 import { resolveSpacepokerUnitSize } from './unitSize';
 
@@ -52,6 +52,23 @@ function appendHistory(current: SpacepokerHandState, entry: SpHandEntry): Spacep
   return { ...current, handHistory: [...current.handHistory, entry] };
 }
 
+function withLocalConcession(current: SpacepokerHandState): SpacepokerHandState {
+  const last = current.handHistory[current.handHistory.length - 1];
+  const replacesTerminalAction =
+    last?.player === 'you' &&
+    (last.action === 'fold' ||
+      last.action === 'concede' ||
+      last.action === 'reveal' ||
+      last.action === 'failed');
+  if (last?.player === 'you' && last.action === 'concede') return current;
+  return {
+    ...current,
+    handHistory: replacesTerminalAction
+      ? [...current.handHistory.slice(0, -1), { player: 'you', action: 'concede' }]
+      : [...current.handHistory, { player: 'you', action: 'concede' }],
+  };
+}
+
 type SpacepokerReadableEvent =
   | { type: 'opponent-moved'; readable: Uint8Array }
   | { type: 'game-message'; readable: Uint8Array };
@@ -61,6 +78,47 @@ export function reduceSpacepokerSettlementState(
   outcome: SettlementOutcome,
 ): SpacepokerHandState {
   const voluntary = outcome === 'accept_settlement' || outcome === 'we_accepted';
+  if (isForfeitOutcome(outcome) && current.outcome !== null) {
+    return withLocalConcession({
+      ...current,
+      gameState: { handler: 5n, myTurn: false, N: 1n },
+      terminalState: 'conceded-by-you',
+      terminalRecovery: null,
+    });
+  }
+  if (outcome === 'opponent_timed_out' && current.terminalState === 'none') {
+    if (current.outcome !== null && current.outcome.result > 0n) {
+      return appendHistory(
+        {
+          ...current,
+          gameState: { handler: 5n, myTurn: false, N: 1n },
+          terminalState: 'conceded-by-opponent',
+          terminalRecovery: null,
+        },
+        { player: 'opponent', action: 'concede' },
+      );
+    }
+    return appendHistory(
+      {
+        ...current,
+        gameState: {
+          handler: 6n,
+          myTurn: false,
+          N: current.gameState.N >= 1n ? current.gameState.N : 1n,
+        },
+        terminalState: 'won-by-opponent-failure',
+        terminalRecovery: null,
+      },
+      { player: 'opponent', action: 'failed' },
+    );
+  }
+  if (current.terminalState === 'revealed' && current.outcome !== null) {
+    return {
+      ...current,
+      gameState: { ...current.gameState, myTurn: false },
+      terminalRecovery: null,
+    };
+  }
   if (voluntary && current.terminalState !== 'none') {
     return {
       ...current,
@@ -164,8 +222,7 @@ export function reduceSpacepokerFeatureState(
     }
     if (readableTag === 'cards' && items.length > 1) {
       const cards = items.slice(1).map((item) => item.toBigInt());
-      const position = cards.length === 3 ? 3n : current.communityCards[3] === null ? 2n : 1n;
-      return placeCards(current, position, cards);
+      return placeCards(current, current.gameState.N, cards);
     }
     if (readableTag === 'call' && items.length > 3) {
       const nextN = items[2].toBigInt();

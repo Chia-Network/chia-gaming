@@ -9,7 +9,7 @@ export interface SpGameState {
 }
 export interface SpHandEntry {
   player: 'you' | 'opponent';
-  action: 'check' | 'raise' | 'call' | 'fold' | 'concede' | 'reveal';
+  action: 'check' | 'raise' | 'call' | 'fold' | 'concede' | 'reveal' | 'failed';
   units?: bigint;
   endsStreet?: boolean;
 }
@@ -27,7 +27,8 @@ export type SpTerminalState =
   | 'conceded-by-you'
   | 'conceded-by-opponent'
   | 'folded-by-you'
-  | 'folded-by-opponent';
+  | 'folded-by-opponent'
+  | 'won-by-opponent-failure';
 
 export interface SpacepokerHandState {
   gameState: SpGameState;
@@ -57,16 +58,16 @@ const TERMINALS = new Set([
   'conceded-by-opponent',
   'folded-by-you',
   'folded-by-opponent',
+  'won-by-opponent-failure',
 ]);
 const DISPLAY_MODES = new Set(['xch', 'mojos', 'units']);
-const ACTIONS = new Set(['check', 'raise', 'call', 'fold', 'concede', 'reveal']);
+const ACTIONS = new Set(['check', 'raise', 'call', 'fold', 'concede', 'reveal', 'failed']);
 
 function isCardPair(value: unknown): value is [bigint, bigint] {
   return (
     Array.isArray(value) &&
     value.length === 2 &&
-    value.every((card) => typeof card === 'bigint' && card >= 0n && card < 52n) &&
-    value[0] !== value[1]
+    value.every((card) => typeof card === 'bigint' && card >= 0n && card < 52n)
   );
 }
 
@@ -120,8 +121,7 @@ function isOutcome(value: unknown): value is SpOutcome {
     Array.isArray(cards) && cards.every((card) => typeof card === 'bigint');
   const cards = (value: unknown) =>
     Array.isArray(value) &&
-    value.every((card) => typeof card === 'bigint' && card >= 0n && card < 52n) &&
-    new Set(value).size === value.length;
+    value.every((card) => typeof card === 'bigint' && card >= 0n && card < 52n);
   return (
     typeof outcome.result === 'bigint' &&
     cards(outcome.playerHandCards) &&
@@ -147,12 +147,6 @@ function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
   ) {
     return false;
   }
-  const visibleCards = [
-    ...(state.playerHoleCards ?? []),
-    ...(state.opponentHoleCards ?? []),
-    ...state.communityCards.filter((card): card is bigint => card !== null),
-  ];
-  if (new Set(visibleCards).size !== visibleCards.length) return false;
   if (typeof state.terminalState !== 'string' || !TERMINALS.has(state.terminalState)) return false;
   const terminalHandlerMatches =
     state.terminalState === 'none' ||
@@ -162,7 +156,8 @@ function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
       state.terminalState === 'conceded-by-opponent') &&
       state.gameState.handler === 5n) ||
     ((state.terminalState === 'folded-by-you' || state.terminalState === 'folded-by-opponent') &&
-      state.gameState.handler === 6n);
+      state.gameState.handler === 6n) ||
+    (state.terminalState === 'won-by-opponent-failure' && state.gameState.handler === 6n);
   if (!terminalHandlerMatches) return false;
   if (state.terminalState === 'revealed' && state.outcome === null) return false;
   if (

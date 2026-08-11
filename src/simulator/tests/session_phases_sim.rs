@@ -1348,7 +1348,22 @@ pub fn run_spacepoker_container_with_action_list_with_success_predicate(
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
-    let seed_data: [u8; 32] = [1; 32];
+    run_spacepoker_container_with_action_list_with_seed(
+        allocator,
+        moves,
+        predicate,
+        per_player_balance,
+        [1; 32],
+    )
+}
+
+pub fn run_spacepoker_container_with_action_list_with_seed(
+    allocator: &mut AllocEncoder,
+    moves: &[SimScriptAction],
+    predicate: GameRunEarlySuccessPredicate,
+    per_player_balance: Option<u64>,
+    seed_data: [u8; 32],
+) -> Result<GameRunOutcome, Error> {
     let mut rng = ChaCha8Rng::from_seed(seed_data);
     let pk1: PrivateKey = rng.random();
     let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
@@ -4258,6 +4273,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::Unrolling,
                 )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,

@@ -592,7 +592,7 @@ describe('session machine behavior sequences', () => {
         channelState: 'Unrolling',
       },
     });
-    expect(state.model.game.instances['7'].presentation).toBe('playing-move');
+    expect(state.model.game.instances['7'].presentation).toBe('on-chain-my-turn');
 
     state = send(state, {
       type: 'game',

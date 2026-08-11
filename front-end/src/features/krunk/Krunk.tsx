@@ -30,7 +30,6 @@ export interface KrunkProps {
   onGameLog: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
-  initialPersistedState?: PersistedGameState;
   terminalsById: Record<string, GameTerminalModel>;
   amountsById: Record<string, string>;
   interactionMode?: GameInteractionMode;
@@ -449,12 +448,12 @@ const Krunk: React.FC<KrunkProps> = ({
   onGameLog,
   myName: _myName,
   opponentName,
-  initialPersistedState,
   terminalsById,
   amountsById,
   interactionMode = 'live',
 }) => {
   const interactive = interactionMode === 'live';
+  const initialPersistedState = gameObject.handState ?? undefined;
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
   // roles are flipped: they're bob in game 0 and alice in game 1.

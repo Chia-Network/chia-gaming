@@ -1,6 +1,7 @@
 import { createElement, StrictMode, useCallback, useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { EMPTY } from 'rxjs';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import { destroySessionController } from '../../hooks/blobSingleton';
 import { createFrozenHandBridge } from '../../hooks/frozenHandBridge';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
@@ -44,6 +45,7 @@ describe('GameSession render boundary', () => {
   });
 
   it('does not publish buffered controller setup into Shell during render', () => {
+    expectConsoleError('Cannot start a new session without a blockchain connection');
     const reactErrors: string[] = [];
     let registrations = 0;
     let observedController: SessionController | null = null;

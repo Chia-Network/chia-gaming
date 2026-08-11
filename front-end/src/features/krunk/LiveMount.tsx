@@ -3,7 +3,6 @@ import { EMPTY, type Observable } from 'rxjs';
 import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
 import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
-import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
 
 const Krunk = lazy(() => import('./Krunk'));
@@ -19,7 +18,6 @@ export interface KrunkLiveMountProps {
   appendGameLog: (line: string) => void;
   myName?: string;
   opponentName?: string;
-  initialPersistedState?: PersistedGameState;
   terminalsById: Record<string, GameTerminalModel>;
   amountsById: Record<string, string>;
   interactionMode?: GameInteractionMode;
@@ -50,7 +48,6 @@ export const krunkMountRegistration: GameMountRegistration = {
         betSize={session.currentHandAmount}
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
-        initialPersistedState={session.gameSpecificView.handState ?? undefined}
         terminalsById={session.gameSpecificView.terminalsById}
         amountsById={session.gameSpecificView.amountsById}
         interactionMode={session.interactionMode}
@@ -69,7 +66,6 @@ export const krunkMountRegistration: GameMountRegistration = {
         betSize={model.betweenHand.lastTerms.myContribution}
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
-        initialPersistedState={model.game.handState ?? undefined}
         terminalsById={Object.fromEntries(
           Object.entries(model.game.instances).map(([id, instance]) => [id, instance.terminal]),
         )}

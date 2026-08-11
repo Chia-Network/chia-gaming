@@ -139,8 +139,9 @@ export function nextGameTurnAfterLocalTurn(
   channelState: ChannelStatus,
 ): GameTurnState {
   if (current !== 'my-turn' && current !== 'their-turn') return current;
+  if (ON_CHAIN_CHANNEL_STATES.has(channelState)) return current;
   if (isMyTurn) return 'my-turn';
-  return ON_CHAIN_CHANNEL_STATES.has(channelState) ? 'playing-on-chain' : 'their-turn';
+  return 'their-turn';
 }
 export function nextGamePresentationAfterLocalTurn(
   previous: GamePresentationModel,
@@ -151,11 +152,8 @@ export function nextGamePresentationAfterLocalTurn(
     return previous;
   }
   const turnState = nextGameTurnAfterLocalTurn(previous.coin.turnState, isMyTurn, channelState);
-  const handStatus = ON_CHAIN_CHANNEL_STATES.has(channelState)
-    ? isMyTurn
-      ? 'our-turn'
-      : 'playing-move'
-    : 'active';
+  if (turnState === previous.coin.turnState) return previous;
+  const handStatus = 'active';
   return turnState === previous.coin.turnState && handStatus === previous.handStatus
     ? previous
     : { coin: { ...previous.coin, turnState }, handStatus };

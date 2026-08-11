@@ -120,6 +120,7 @@ describe('Krunk draft continuity', () => {
     const renderPhases: string[] = [];
     const baseProps = {
       gameObject: {
+        handState: persisted,
         makeMove: jest.fn(),
         transitionFeatureState: jest.fn((_, __, state) => state),
       } as unknown as SessionController,
@@ -130,7 +131,6 @@ describe('Krunk draft continuity', () => {
       betSize: 100n,
       onTurnChanged: () => {},
       onGameLog: () => {},
-      initialPersistedState: persisted,
       terminalsById: {},
       amountsById: { picker: '100', guesser: '100' },
       interactionMode: 'live' as const,
@@ -252,7 +252,11 @@ describe('Krunk draft continuity', () => {
     act(() => {
       renderer = create(
         React.createElement(Krunk, {
-          gameObject: { makeMove, transitionFeatureState } as unknown as SessionController,
+          gameObject: {
+            handState: persisted,
+            makeMove,
+            transitionFeatureState,
+          } as unknown as SessionController,
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['picker', 'guesser'],
           iProposedHand: true,
@@ -260,7 +264,6 @@ describe('Krunk draft continuity', () => {
           betSize: 100n,
           onTurnChanged: () => {},
           onGameLog: () => {},
-          initialPersistedState: persisted,
           terminalsById: {},
           amountsById: { picker: '100', guesser: '100' },
         }),
@@ -307,7 +310,11 @@ describe('Krunk draft continuity', () => {
     act(() => {
       renderer = create(
         React.createElement(Krunk, {
-          gameObject: { makeMove, transitionFeatureState } as unknown as SessionController,
+          gameObject: {
+            handState: persisted,
+            makeMove,
+            transitionFeatureState,
+          } as unknown as SessionController,
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['guesser'],
           iProposedHand: true,
@@ -315,7 +322,6 @@ describe('Krunk draft continuity', () => {
           betSize: 100n,
           onTurnChanged: () => {},
           onGameLog: () => {},
-          initialPersistedState: persisted,
           terminalsById: {},
           amountsById: { picker: '100', guesser: '100' },
         }),

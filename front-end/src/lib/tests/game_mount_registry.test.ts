@@ -172,6 +172,8 @@ describe('game mount registry', () => {
       expect(terminalMount.key).toBe(liveMount.key);
       expect(terminalMount.key).toBe('7');
       expect(terminalMount.props.interactionMode).toBe('terminal');
+      expect(liveMount.props.initialPersistedState).toBeUndefined();
+      expect(terminalMount.props.initialPersistedState).toBeUndefined();
       if (gameType === 'calpoker') {
         expect(liveMount.props.handOrigin).toBe('restored');
         expect(terminalMount.props.handOrigin).toBe('terminal');

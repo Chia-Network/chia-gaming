@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import { isBenignTransactionSubmitError, SessionController } from '../../hooks/SessionController';
 import {
   ChiaGame,
@@ -434,6 +435,9 @@ describe('SessionController WASM action results', () => {
     ['acceptSettlement', (blob: SessionController) => blob.acceptSettlement('7')],
     ['cheat', (blob: SessionController) => blob.cheat('7', 0n)],
   ])('rejects actionSucceeded=false from %s', (name, invoke) => {
+    if (name !== 'proposeGame') {
+      expectConsoleError(`${name} domain error`);
+    }
     const { blob, cradle } = createReadyBlob();
     activeBlob = blob;
     Object.assign(cradle, {
@@ -451,6 +455,7 @@ describe('SessionController WASM action results', () => {
   });
 
   it('returns failure and does not enter host on-chain mode when WASM rejects', () => {
+    expectConsoleError('go on chain domain error');
     const { blob, cradle } = createReadyBlob();
     activeBlob = blob;
     (cradle.go_on_chain as jest.Mock).mockReturnValue(failedResult('go on chain domain error'));
@@ -1191,6 +1196,7 @@ describe('cradle serialization schema restore guard', () => {
   ])(
     'rejects and deletes a record with a %s cradle schema',
     async (_label, gameSessionSchemaVersion) => {
+      expectConsoleError('[save] rejecting incompatible session record');
       markSavedSession();
       await writeSessionRecord({
         version: 11n,
@@ -1446,6 +1452,7 @@ describe('go-on-chain terminal remap', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
 
+    expectConsoleError('no channel coin spend info cached');
     expect(blob.goOnChain()).toBe(false);
     expect((blob as any).onChain).toBe(false);
   });
