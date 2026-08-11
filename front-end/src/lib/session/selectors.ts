@@ -487,7 +487,11 @@ export function selectGameDashboardView(
   model: SessionModel | null,
   options: GameDashboardSelectorOptions = {},
 ): GameDashboardViewModel {
-  if (!model && options.setupPending) {
+  // setupPending must win even when a finished freeze model is still mounted.
+  // Accepting a new session after a terminal display leaves that model in place
+  // until retireTerminalDisplay runs after async replaceSession; without this
+  // override the dashboard would keep a disabled Done action for that window.
+  if (options.setupPending) {
     return {
       channelStatusLabel: 'Setting Up',
       channelDetail: null,

@@ -53,6 +53,23 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       actionKind: 'cancel',
     });
 
+    // Accepting after a finished freeze keeps the terminal model until
+    // retireTerminalDisplay; setupPending must still expose Cancel.
+    const finishedFreeze = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean' } },
+    });
+    expect(selectGameDashboardView(finishedFreeze)).toMatchObject({
+      actionLabel: 'Done',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+    expect(selectGameDashboardView(finishedFreeze, { setupPending: true })).toMatchObject({
+      channelStatusLabel: 'Setting Up',
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    });
+
     for (const state of [
       'Handshaking',
       'WaitingForHeightToOffer',
