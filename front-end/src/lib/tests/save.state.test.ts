@@ -2,6 +2,7 @@ import {
   saveSession,
   peekSession,
   clearSession,
+  clearSessionPairing,
   clearGameSessionPreservingHistory,
   getPlayerId,
   getSessionId,
@@ -176,6 +177,37 @@ describe('flat state', () => {
     const newId = getPlayerId();
     expect(newId).toBeTruthy();
     expect(newId).toBe(oldId);
+  });
+
+  it('clears pairing identifiers only from phases that own pairing state', async () => {
+    await expect(clearSessionPairing()).resolves.toBeUndefined();
+    expect(loadState().phase).toBe('preferences');
+
+    await replaceSession(
+      baseSave({
+        pairingToken: 'pending-token',
+        sessionPeerId: 'pending-peer',
+        gameSessionId: 'pending-game',
+        iStarted: true,
+        myContribution: '100',
+        theirContribution: '100',
+        perGameAmount: '10',
+      }),
+    );
+    await clearSessionPairing();
+    const pending = requirePreHandshake(loadState());
+    expect(pending.pairing.peerId).toBeUndefined();
+    expect(pending.pairing.gameSessionId).toBeUndefined();
+
+    await saveLiveFields({
+      ...sampleSession,
+      sessionPeerId: 'live-peer',
+      gameSessionId: 'live-game',
+    });
+    await clearSessionPairing();
+    const live = requireLive(loadState());
+    expect(live.pairing.peerId).toBeUndefined();
+    expect(live.pairing.gameSessionId).toBeUndefined();
   });
 
   it('clearSession wipes game state but preserves identity, preferences, blockchainType, and boot marker', async () => {

@@ -31,6 +31,7 @@ import {
   saveSession,
   replaceSession,
   clearSession,
+  clearSessionPairing,
   hardReset,
   shouldOfferResumeOrStartOver,
   hydrateSessionCacheFromDisk,
@@ -1120,8 +1121,6 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
-    const peerId = peerSessionRef.current?.peerId ?? null;
-    const gameSessionId = peerSessionRef.current?.sessionId ?? null;
     const diagnosticLog = loadState().history.diagnosticLog;
     const wasmNotificationHistory = loadState().history.wasmNotificationHistory;
     clearSession();
@@ -1129,12 +1128,6 @@ const Shell = () => {
       saveSession({
         scope: 'common',
         history: { humanHistory, diagnosticLog, wasmNotificationHistory },
-      });
-    }
-    if (peerId || gameSessionId) {
-      saveSession({
-        scope: 'pairing',
-        pairing: { peerId: peerId ?? undefined, gameSessionId: gameSessionId ?? undefined },
       });
     }
   }, []);
@@ -1190,10 +1183,7 @@ const Shell = () => {
     peerSessionRef.current = null;
     peerMessageHandlerRef.current = null;
     if (options?.persistSession !== false) {
-      saveSession({
-        scope: 'pairing',
-        pairing: { peerId: undefined, gameSessionId: undefined },
-      });
+      clearSessionPairing();
     }
     setPeerLiveness(null);
   }, []);

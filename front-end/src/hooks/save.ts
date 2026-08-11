@@ -562,7 +562,6 @@ export type SessionCacheUpdate =
       history?: Partial<SessionHistorySave>;
     }
   | { scope: 'presentation'; presentation: Partial<SessionPresentationSave> }
-  | { scope: 'pairing'; pairing: Partial<SessionPairingSave> }
   | {
       scope: 'live';
       pairing: SessionPairingSave;
@@ -585,12 +584,6 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
         }
         Object.assign(s.presentation, update.presentation);
         break;
-      case 'pairing':
-        if (s.phase !== 'live' && s.phase !== 'pre-handshake') {
-          throw new Error(`Cannot patch pairing while session phase is ${s.phase}`);
-        }
-        Object.assign(s.pairing, update.pairing);
-        break;
       case 'live': {
         const common = commonFields(s);
         Object.assign(common.history, update.history);
@@ -606,6 +599,16 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
       }
     }
     capPersistedHistories(s);
+  });
+}
+
+/** Clear peer relay identifiers when the current phase owns pairing state. */
+export function clearSessionPairing(): Promise<void> {
+  return mutate((state) => {
+    if (state.phase === 'live' || state.phase === 'pre-handshake') {
+      state.pairing.peerId = undefined;
+      state.pairing.gameSessionId = undefined;
+    }
   });
 }
 
