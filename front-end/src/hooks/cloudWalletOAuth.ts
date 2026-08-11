@@ -10,6 +10,7 @@ import {
   saveOAuthPending,
   type CloudWalletAuthState,
 } from './cloudWalletAuth';
+import { log } from '../services/log';
 
 export const OAUTH_MESSAGE_TYPE = 'chia-gaming/oauth';
 export const SIGNATURE_REQUEST_MESSAGE_TYPE = 'chia-cloud-wallet/signature-request';
@@ -176,17 +177,46 @@ export function openOAuthPopup(authorizeUrl: string): Window | null {
   );
 }
 
-/** Wait for the Cloud Wallet consent screen to post the selected walletId to this opener. */
+let warnedConsentOriginMismatch = false;
+
+/** Log once (dev) when a consent-shaped message arrives from an unexpected origin. */
+function warnConsentOriginMismatchOnce(actual: string, expected: string) {
+  if (warnedConsentOriginMismatch) return;
+  warnedConsentOriginMismatch = true;
+  log(
+    `[cloud-wallet] ignoring consent message from unexpected origin ${actual} (expected ${expected}); check CLOUD_WALLET_UI_URL`,
+  );
+}
+
+/**
+ * Wait for the Cloud Wallet consent screen to post the selected walletId to this opener.
+ *
+ * The consent message can race with the OAuth code redirect: Cloud Wallet may
+ * post the walletId just before the popup navigates or closes. Rather than
+ * resolving `undefined` the instant the popup closes (or the auth code arrives),
+ * we start a short grace period and only give up if no consent message lands
+ * within it. A late message during the grace period still resolves normally.
+ *
+ * Returns a handle so the caller can start the grace period once it has the auth
+ * code (`notifyCodeReceived`), in addition to the popup-close trigger handled here.
+ */
 export function waitForGamingConsentWalletId(
   popup: Window | null,
   timeoutMs = 5 * 60 * 1000,
-): Promise<string | undefined> {
-  return new Promise((resolve, _reject) => {
+  graceMs = 700,
+): { promise: Promise<string | undefined>; notifyCodeReceived: () => void } {
+  let startGrace = () => {};
+  const uiOrigin = new URL(getCloudWalletUiUrl()).origin;
+
+  const promise = new Promise<string | undefined>((resolve) => {
     let settled = false;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
       clearInterval(closePoll);
       window.removeEventListener('message', onMessage);
       fn();
@@ -196,12 +226,24 @@ export function waitForGamingConsentWalletId(
       finish(() => resolve(undefined));
     }, timeoutMs);
 
-    const uiOrigin = new URL(getCloudWalletUiUrl()).origin;
+    startGrace = () => {
+      if (settled || graceTimer) return;
+      // Stop polling for popup close; a late consent message can still resolve
+      // during the grace window via onMessage.
+      clearInterval(closePoll);
+      graceTimer = setTimeout(() => {
+        finish(() => resolve(undefined));
+      }, graceMs);
+    };
 
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== uiOrigin) return;
       const data = event.data;
-      if (!data || data.type !== GAMING_CONSENT_MESSAGE_TYPE) return;
+      const looksLikeConsent = !!data && data.type === GAMING_CONSENT_MESSAGE_TYPE;
+      if (event.origin !== uiOrigin) {
+        if (looksLikeConsent) warnConsentOriginMismatchOnce(event.origin, uiOrigin);
+        return;
+      }
+      if (!looksLikeConsent) return;
       if (typeof data.walletId !== 'string') return;
       finish(() => resolve(data.walletId));
     };
@@ -210,10 +252,12 @@ export function waitForGamingConsentWalletId(
 
     const closePoll = setInterval(() => {
       if (popup && popup.closed) {
-        finish(() => resolve(undefined));
+        startGrace();
       }
     }, 400);
   });
+
+  return { promise, notifyCodeReceived: () => startGrace() };
 }
 
 /** Wait for OAuth callback postMessage from /oauth/callback. */
@@ -294,9 +338,12 @@ export async function beginOAuthPopupLogin(): Promise<{
   }
 
   try {
-    const walletIdPromise = waitForGamingConsentWalletId(popup);
+    const consent = waitForGamingConsentWalletId(popup);
     const code = await waitForOAuthCode(state, popup);
-    const consentWalletId = await walletIdPromise;
+    // Code is in hand; give any in-flight consent message a short grace period
+    // rather than blocking on the full consent timeout.
+    consent.notifyCodeReceived();
+    const consentWalletId = await consent.promise;
     if (!consentWalletId) {
       throw new Error(
         'Cloud Wallet consent did not return a walletId. Ensure the consent screen supports gaming clients.',
@@ -479,6 +526,9 @@ export async function graphqlRequest<T>(
 }
 
 export function encodeRelayGlobalId(typename: string, id: string): string {
+  // Cloud Wallet already emits global ids as `Typename_xxx` (e.g. Wallet_abc).
+  // Pass those through untouched rather than re-encoding them as base64.
+  if (id.startsWith(`${typename}_`)) return id;
   // Already a Relay id?
   if (id.includes(':') === false && /^[A-Za-z0-9+/=]+$/.test(id)) {
     try {
