@@ -9,6 +9,7 @@ import {
 import type {
   GameInstanceModel,
   GameInstanceViewModel,
+  ProposalGroupOrigin,
   GameTerminalModel,
   GameTurnState,
   RegisteredGameType,
@@ -19,6 +20,7 @@ export interface GameSlice {
   handKey: number;
   activeIds: string[];
   currentHandIds: string[];
+  currentHandOrigin: ProposalGroupOrigin | null;
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
@@ -31,6 +33,7 @@ export const INITIAL_GAME_SLICE: GameSlice = {
   handKey: 0,
   activeIds: [],
   currentHandIds: [],
+  currentHandOrigin: null,
   instances: {},
   lastDisplayedId: null,
   activeGameType: 'calpoker',
@@ -44,6 +47,7 @@ export type GameSliceAction =
       acceptedId: string;
       amount: string;
       startTurn: GameTurnState;
+      origin: ProposalGroupOrigin;
       gameType?: RegisteredGameType;
     }
   | { type: 'remove-group'; groupIds: readonly string[] }
@@ -118,6 +122,7 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
         handKey: newHand ? slice.handKey + 1 : slice.handKey,
         activeIds: newHand ? [...action.groupIds] : slice.activeIds,
         currentHandIds: newHand ? [...action.groupIds] : slice.currentHandIds,
+        currentHandOrigin: newHand ? action.origin : slice.currentHandOrigin,
         instances,
         lastDisplayedId: newHand ? action.acceptedId : slice.lastDisplayedId,
         activeGameType: newHand ? (action.gameType ?? slice.activeGameType) : slice.activeGameType,
@@ -126,10 +131,12 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
     }
     case 'remove-group': {
       const removed = new Set(action.groupIds);
+      const currentHandIds = slice.currentHandIds.filter((id) => !removed.has(id));
       next = {
         ...slice,
         activeIds: slice.activeIds.filter((id) => !removed.has(id)),
-        currentHandIds: slice.currentHandIds.filter((id) => !removed.has(id)),
+        currentHandIds,
+        currentHandOrigin: currentHandIds.length === 0 ? null : slice.currentHandOrigin,
         instances: Object.fromEntries(
           Object.entries(slice.instances).filter(([id]) => !removed.has(id)),
         ),

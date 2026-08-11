@@ -21,11 +21,53 @@ import type {
   GameTerminalModel,
   GameTurnState,
   HandStatus,
+  ProposalGroupDisposition,
+  ProposalGroupModel,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
   StatusBarBalanceSegment,
 } from './types';
+
+export function selectProposalGroupByMemberId(
+  model: SessionModel,
+  memberId: string,
+): ProposalGroupModel | null {
+  return (
+    model.betweenHand.proposalGroups.find((group) => group.memberIds.includes(memberId)) ?? null
+  );
+}
+
+export function selectProposalGroupByDisposition(
+  model: SessionModel,
+  disposition: ProposalGroupDisposition,
+): ProposalGroupModel | null {
+  return (
+    model.betweenHand.proposalGroups.find((group) => group.disposition === disposition) ?? null
+  );
+}
+
+export function selectIncomingProposalGroup(model: SessionModel): ProposalGroupModel | null {
+  return (
+    selectProposalGroupByDisposition(model, 'incoming-review') ??
+    selectProposalGroupByDisposition(model, 'incoming-cached')
+  );
+}
+
+export function selectIProposedHand(model: SessionModel): boolean {
+  if (model.game.currentHandOrigin !== null) {
+    return model.game.currentHandOrigin === 'local';
+  }
+  if (model.game.currentHandIds.length > 0) {
+    throw new Error('Game model invariant broken: current hand is missing its origin');
+  }
+  const proposal =
+    selectProposalGroupByDisposition(model, 'accepted') ??
+    selectProposalGroupByDisposition(model, 'incoming-review') ??
+    selectProposalGroupByDisposition(model, 'incoming-cached') ??
+    selectProposalGroupByDisposition(model, 'outgoing');
+  return proposal?.origin === 'local';
+}
 
 /**
  * Per-game on-chain classifications become authoritative only once the unroll
@@ -571,6 +613,7 @@ export interface GameSessionViewModel {
   betweenHands: boolean;
   channelQueue: QueuedNotificationModel[];
   gameQueue: QueuedNotificationModel[];
+  incomingProposalGroup: ProposalGroupModel | null;
 }
 
 export function selectGameSessionView(model: SessionModel): GameSessionViewModel {
@@ -587,6 +630,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
     betweenHands: selectBetweenHands(model),
     channelQueue: model.channel.queue,
     gameQueue: model.game.queue,
+    incomingProposalGroup: selectIncomingProposalGroup(model),
   };
 }
 

@@ -29,6 +29,12 @@ export type SpTerminalState =
   | 'folded-by-you'
   | 'folded-by-opponent'
   | 'won-by-opponent-failure';
+export interface PendingSpacepokerTerminalAction {
+  action: 'fold' | 'concede' | 'reveal';
+  submission: 'make-move' | 'accept-settlement';
+  previousTerminalState: SpTerminalState;
+  previousGameState: SpGameState;
+}
 
 export interface SpacepokerHandState {
   gameState: SpGameState;
@@ -44,6 +50,7 @@ export interface SpacepokerHandState {
   outcome: SpOutcome | null;
   terminalState?: SpTerminalState;
   terminalRecovery?: 'concede' | 'reveal' | null;
+  pendingTerminalAction: PendingSpacepokerTerminalAction | null;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
   displayMode: SpacepokerDisplayMode;
@@ -132,6 +139,18 @@ function isOutcome(value: unknown): value is SpOutcome {
   );
 }
 
+function isPendingTerminalAction(value: unknown): value is PendingSpacepokerTerminalAction {
+  if (typeof value !== 'object' || value === null) return false;
+  const pending = value as Partial<PendingSpacepokerTerminalAction>;
+  return (
+    (pending.action === 'fold' || pending.action === 'concede' || pending.action === 'reveal') &&
+    (pending.submission === 'make-move' || pending.submission === 'accept-settlement') &&
+    typeof pending.previousTerminalState === 'string' &&
+    TERMINALS.has(pending.previousTerminalState) &&
+    isGameState(pending.previousGameState)
+  );
+}
+
 function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<SpacepokerHandState>;
@@ -179,6 +198,8 @@ function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
     (state.terminalRecovery === null ||
       state.terminalRecovery === 'concede' ||
       state.terminalRecovery === 'reveal') &&
+    (state.pendingTerminalAction === null ||
+      isPendingTerminalAction(state.pendingTerminalAction)) &&
     (state.coinTossIOpen === null || typeof state.coinTossIOpen === 'boolean') &&
     typeof state.unitSizeMojos === 'bigint' &&
     state.unitSizeMojos > 0n &&
@@ -189,7 +210,7 @@ function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
 
 export const spacepokerStateCodec = defineGameStateCodec<SpacepokerHandState>({
   gameType: 'spacepoker',
-  version: 1n,
+  version: 2n,
   canRemountFinished: true,
   isState: isSpacepokerHandState,
 });

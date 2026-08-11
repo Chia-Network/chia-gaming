@@ -19,6 +19,7 @@ import { formatMojos } from '../util';
 import { SessionPhase } from '../types/ChiaGaming';
 import { RestoreStatus, type SessionController } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
+import { requireLiveGameHandSource } from '../lib/gameMount';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
@@ -551,7 +552,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     blockchain,
     terminalPresentation,
   );
-  const terminalMode = session.interactionMode === 'terminal';
+  const terminalMode = session.handSource.interactionMode === 'terminal';
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -567,10 +568,10 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       onProtocolStateProviderChange(null);
       return;
     }
-    const gameObject = session.sessionController;
+    const gameObject = requireLiveGameHandSource(session.handSource);
     onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
-  }, [session.sessionController, onProtocolStateProviderChange, terminalMode]);
+  }, [session.handSource, onProtocolStateProviderChange, terminalMode]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;
@@ -578,10 +579,10 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       onCoinsProviderChange(null);
       return;
     }
-    const gameObject = session.sessionController;
+    const gameObject = requireLiveGameHandSource(session.handSource);
     onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
     return () => onCoinsProviderChange(null);
-  }, [session.sessionController, onCoinsProviderChange, terminalMode]);
+  }, [session.handSource, onCoinsProviderChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {
@@ -649,8 +650,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
 
   // Rising edge: proposal cached in decision mode, or replaced while reviewing.
   // Combined id so promoting cache → review does not double-fire.
-  const attentionProposalId =
-    session.reviewPeerProposal?.id ?? session.cachedPeerProposal?.id ?? null;
+  const attentionProposalId = session.incomingProposalGroup?.primaryId ?? null;
   const prevAttentionProposalId = useRef(attentionProposalId);
   useEffect(() => {
     const prev = prevAttentionProposalId.current;
@@ -693,7 +693,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
 
   const handEverStarted = session.handKey > 0;
   const hasPersistedGameState = !!session.gameSpecificView.handState;
-  const hasReviewPeerProposal = session.reviewPeerProposal != null;
+  const hasReviewPeerProposal = session.incomingProposalGroup?.disposition === 'incoming-review';
   const showBetweenHandOverlay =
     session.betweenHands &&
     session.channelStatus.state === 'Active' &&
@@ -736,9 +736,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
         <div
           ref={gameAreaRef}
           tabIndex={-1}
-          inert={terminalMode || gameInterfaceIsInertForBetweenHandDialog}
-          data-game-interaction-mode={session.interactionMode}
-          aria-disabled={terminalMode || undefined}
+          inert={gameInterfaceIsInertForBetweenHandDialog}
+          data-game-interaction-mode={session.handSource.interactionMode}
+          aria-disabled={gameInterfaceIsInertForBetweenHandDialog || undefined}
           className="relative overflow-hidden z-0 focus:outline-none"
         >
           {showGameInterface && (
@@ -813,9 +813,10 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           {session.betweenHandMode === 'compose-proposal' && (
             <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}
-          {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-            <ReviewProposalDialog session={session} />
-          )}
+          {session.betweenHandMode === 'review-incoming-proposal' &&
+            session.incomingProposalGroup?.disposition === 'incoming-review' && (
+              <ReviewProposalDialog session={session} />
+            )}
         </BetweenHandOverlay>
       )}
 

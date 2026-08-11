@@ -9,25 +9,10 @@ import {
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
+import { liveSave } from './session_save_envelope.fixtures';
 
 function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
-  return {
-    version: 11n,
-    playerId: 'p1',
-    serializedGameSession: new Uint8Array([1]),
-    gameSessionSchemaVersion: 3n,
-    pairingToken: 'pair',
-    messageNumber: 1n,
-    remoteNumber: 0n,
-    iStarted: true,
-    myContribution: '100',
-    theirContribution: '100',
-    perGameAmount: '100',
-    rewardPuzzleHash: '11'.repeat(32),
-    unackedMessages: [],
-    activeGameIds: [],
-    ...fields,
-  };
+  return liveSave(fields as unknown as Record<string, unknown>);
 }
 
 const CAL_TERMS = {
@@ -62,6 +47,7 @@ describe('session model round trips', () => {
       game: {
         activeIds: ['7'],
         currentHandIds: ['7'],
+        currentHandOrigin: 'peer',
         lastDisplayedId: '7',
         instances: {
           '7': {
@@ -87,6 +73,7 @@ describe('session model round trips', () => {
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds ?? [],
         currentHandGameIds: snapshot.currentHandGameIds,
+        currentHandOrigin: snapshot.currentHandOrigin,
         lastDisplayedGameId: snapshot.lastDisplayedGameId,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
@@ -95,6 +82,8 @@ describe('session model round trips', () => {
       }),
     );
     expect(restored.game.instances['7'].presentation).toBe('playing-move');
+    expect(restored.game.currentHandOrigin).toBe('peer');
+    expect(snapshot).not.toHaveProperty('iProposedHand');
     expect(selectDisplayedGameInstance(restored)?.coin.turnState).toBe('playing-on-chain');
   });
 
@@ -103,6 +92,7 @@ describe('session model round trips', () => {
       game: {
         activeIds: ['7'],
         currentHandIds: ['7'],
+        currentHandOrigin: 'local',
         instances: {
           '7': {
             id: '7',
@@ -121,6 +111,7 @@ describe('session model round trips', () => {
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds ?? [],
         currentHandGameIds: snapshot.currentHandGameIds,
+        currentHandOrigin: snapshot.currentHandOrigin,
         lastDisplayedGameId: snapshot.lastDisplayedGameId,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
@@ -137,6 +128,7 @@ describe('session model round trips', () => {
       game: {
         activeGameType: 'krunk',
         currentHandIds: ['7', '9'],
+        currentHandOrigin: 'peer',
         instances: {
           '7': {
             id: '7',
@@ -175,6 +167,7 @@ describe('session model round trips', () => {
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds ?? [],
         currentHandGameIds: snapshot.currentHandGameIds,
+        currentHandOrigin: snapshot.currentHandOrigin,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
         betweenHandLastTerms: snapshot.betweenHandLastTerms,
@@ -188,6 +181,7 @@ describe('session model round trips', () => {
     );
 
     expect(restored.game.currentHandIds).toEqual(['7', '9']);
+    expect(restored.game.currentHandOrigin).toBe('peer');
     expect(restored.game.instances).toEqual(model.game.instances);
   });
 
@@ -254,6 +248,7 @@ describe('session model round trips', () => {
       game: {
         activeIds: ['active'],
         currentHandIds: ['active'],
+        currentHandOrigin: 'local',
         instances: { active, terminal },
         lastDisplayedId: 'terminal',
       },
@@ -270,6 +265,7 @@ describe('session model round trips', () => {
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds,
         currentHandGameIds: snapshot.currentHandGameIds,
+        currentHandOrigin: snapshot.currentHandOrigin,
         lastDisplayedGameId: snapshot.lastDisplayedGameId,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
@@ -296,6 +292,7 @@ describe('session model round trips', () => {
         game: {
           activeIds: ['9', '7'],
           currentHandIds: ['9', '7'],
+          currentHandOrigin: 'local',
           instances: {
             '9': {
               id: '9',
@@ -322,6 +319,7 @@ describe('session model round trips', () => {
         liveEnvelope({
           activeGameIds: snapshot.activeGameIds,
           currentHandGameIds: snapshot.currentHandGameIds,
+          currentHandOrigin: snapshot.currentHandOrigin,
           lastDisplayedGameId: 'missing',
           gameInstances: snapshot.gameInstances,
           activeGameType: snapshot.activeGameType,

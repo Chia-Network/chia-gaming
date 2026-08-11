@@ -5,6 +5,7 @@ import type {
   GameTurnState,
   HandTermsBaseModel,
   HandTermsModel,
+  ProposalGroupOrigin,
   RegisteredGameType,
 } from './session/types';
 
@@ -19,7 +20,7 @@ export type DurableGameStateEvent =
       id: string;
       groupIds: readonly string[];
       iStarted: boolean;
-      iProposedHand: boolean;
+      origin: ProposalGroupOrigin;
       terms: HandTermsModel;
     }
   | {

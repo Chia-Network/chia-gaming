@@ -153,7 +153,7 @@ export function ComposeProposalDialog({
 }
 
 export function ReviewProposalDialog({ session }: { session: UseGameSessionResult }) {
-  const review = session.reviewPeerProposal;
+  const review = session.incomingProposalGroup;
   if (!review) return null;
   return (
     <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">

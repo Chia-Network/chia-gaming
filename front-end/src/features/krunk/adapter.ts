@@ -147,7 +147,7 @@ export function reduceKrunkDurableState(
       event.groupIds.map((id, index) => {
         const proposerIsAlice = index === 0;
         const role =
-          proposerIsAlice === event.iProposedHand ? ('alice' as const) : ('bob' as const);
+          proposerIsAlice === (event.origin === 'local') ? ('alice' as const) : ('bob' as const);
         return [id, current?.games[id] ?? initialKrunkGameState(role)];
       }),
     );

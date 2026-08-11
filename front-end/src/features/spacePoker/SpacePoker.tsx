@@ -1,677 +1,28 @@
-import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../../hooks/SessionController';
-import {
-  useSpacepokerHand,
-  isTerminalSpacepokerHandler,
-  SpHandler,
-  SpHandEntry,
-  SpOutcome,
-  SpTerminalState,
-  SpacepokerDisplayMode,
-  SpacepokerHandState,
-} from './useSpacepokerHand';
-import { GameplayEvent } from '../../hooks/useGameSession';
-import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
-import { formatAmount } from '../../util';
-import { settlementLabel, type SettlementOutcome } from '../../lib/settlement';
+import { gameHandState, requireLiveGameHandSource, type GameHandSource } from '../../lib/gameMount';
 import type { GameTerminalModel } from '../../lib/session/types';
-import type { GameInteractionMode } from '../../lib/gameMount';
-
-const RANK_LABELS: Record<number, string> = {
-  2: '2',
-  3: '3',
-  4: '4',
-  5: '5',
-  6: '6',
-  7: '7',
-  8: '8',
-  9: '9',
-  10: 'T',
-  11: 'J',
-  12: 'Q',
-  13: 'K',
-  14: 'A',
-};
-
-const FULL_RANKS: Record<number, string> = {
-  2: 'Two',
-  3: 'Three',
-  4: 'Four',
-  5: 'Five',
-  6: 'Six',
-  7: 'Seven',
-  8: 'Eight',
-  9: 'Nine',
-  10: 'Ten',
-  11: 'Jack',
-  12: 'Queen',
-  13: 'King',
-  14: 'Ace',
-};
-
-export function spacePokerRankLabel(rank: bigint): string {
-  return RANK_LABELS[Number(rank)] ?? String(rank);
-}
-
-function fullRank(rank: bigint): string {
-  return FULL_RANKS[Number(rank)] ?? String(rank);
-}
-
-function kickerSuffix(kickers: bigint[]): string {
-  if (kickers.length === 0) return '';
-  if (kickers.length === 1) return `. ${fullRank(kickers[0])} kicker`;
-  return `. ${kickers.map(fullRank).join(', ')} kickers`;
-}
-
-// Eval format from space_hand_eval.clinc:
-//   5 of a kind:  (5 boost rank)
-//   4 of a kind:  (4 1 boost quad kicker)
-//   straight:     (3 3 boost high)
-//   full house:   (3 2 boost set pair)
-//   set:          (3 1 1 boost set k1 k2)
-//   two pair:     (2 2 1 boost hp lp k)
-//   pair:         (2 1 1 1 boost pr k1 k2 k3)
-//   high card:    (1 1 1 1 1 boost h k1 k2 k3 k4)
-function describeHand(eval_: bigint[]): string {
-  if (!eval_ || eval_.length === 0) return '';
-  const c0 = eval_[0];
-  if (c0 === 5n) {
-    const b = eval_[1],
-      r = eval_[2];
-    return b ? `Five of a Kind, Boosted, ${fullRank(r)}s` : `Five of a Kind, ${fullRank(r)}s`;
-  }
-  if (c0 === 4n && eval_[1] === 1n) {
-    const b = eval_[2],
-      r = eval_[3];
-    return (
-      (b ? `Four of a Kind, Boosted, ${fullRank(r)}s` : `Four of a Kind, ${fullRank(r)}s`) +
-      kickerSuffix([eval_[4]])
-    );
-  }
-  if (c0 === 3n && eval_[1] === 3n) {
-    const b = eval_[2],
-      r = eval_[3];
-    return b ? `Straight, Boosted, ${fullRank(r)} high` : `Straight, ${fullRank(r)} high`;
-  }
-  if (c0 === 3n && eval_[1] === 2n) {
-    const b = eval_[2],
-      s = eval_[3],
-      p = eval_[4];
-    return b
-      ? `Full House, Boosted, ${fullRank(s)}s full of ${fullRank(p)}s`
-      : `Full House, ${fullRank(s)}s full of ${fullRank(p)}s`;
-  }
-  if (c0 === 3n && eval_[1] === 1n && eval_[2] === 1n) {
-    const b = eval_[3],
-      r = eval_[4];
-    return (
-      (b ? `Three of a Kind, Boosted, ${fullRank(r)}s` : `Three of a Kind, ${fullRank(r)}s`) +
-      kickerSuffix(eval_.slice(5))
-    );
-  }
-  if (c0 === 2n && eval_[1] === 2n && eval_[2] === 1n) {
-    const b = eval_[3],
-      hp = eval_[4],
-      lp = eval_[5];
-    return (
-      (b
-        ? `Two Pair, Boosted, ${fullRank(hp)}s and ${fullRank(lp)}s`
-        : `Two Pair, ${fullRank(hp)}s and ${fullRank(lp)}s`) + kickerSuffix([eval_[6]])
-    );
-  }
-  if (c0 === 2n && eval_[1] === 1n && eval_[2] === 1n && eval_[3] === 1n) {
-    const b = eval_[4],
-      r = eval_[5];
-    return (
-      (b ? `Pair, Boosted, ${fullRank(r)}s` : `Pair of ${fullRank(r)}s`) +
-      kickerSuffix(eval_.slice(6))
-    );
-  }
-  if (c0 === 1n && eval_[1] === 1n && eval_[2] === 1n && eval_[3] === 1n && eval_[4] === 1n) {
-    const b = eval_[5],
-      r = eval_[6];
-    return (
-      (b ? `Boosted, ${fullRank(r)} high` : `${fullRank(r)} high`) + kickerSuffix(eval_.slice(7))
-    );
-  }
-  return eval_.join(' ');
-}
-
-// ── Hand history log formatting ──
-
-const LOG_RANKS: Record<number, string> = {
-  2: '2',
-  3: '3',
-  4: '4',
-  5: '5',
-  6: '6',
-  7: '7',
-  8: '8',
-  9: '9',
-  10: 'T',
-  11: 'J',
-  12: 'Q',
-  13: 'K',
-  14: 'A',
-};
-
-function logRank(rank: bigint): string {
-  return LOG_RANKS[Number(rank)] ?? String(rank);
-}
-
-function logHoleCards(cards: [bigint, bigint], boost: boolean): string {
-  return `${logRank(cards[0])}${logRank(cards[1])}${boost ? '+' : '-'}`;
-}
-
-function logBestHand(cards: bigint[], boost: boolean): string {
-  return cards.map((c) => logRank(c)).join('') + (boost ? '+' : '-');
-}
-
-function formatSpacepokerHandLog(
-  playerHoleCards: [bigint, bigint],
-  playerBoost: boolean,
-  opponentHoleCards: [bigint, bigint] | null,
-  opponentBoost: boolean | null,
-  communityCards: (bigint | null)[],
-  handHistory: SpHandEntry[],
-  outcome: SpOutcome | null,
-  terminalState: SpTerminalState,
-  coinTossIOpen: boolean | null,
-  betUnit: bigint,
-  stackSize: bigint,
-): string[] {
-  const weOpenFirst = coinTossIOpen === true;
-  const posLabel = weOpenFirst ? '1st' : '2nd';
-
-  // Build the flat item list from the hand history.
-  // Track each player's cumulative bet to detect all-in.
-  const items: string[] = [];
-  let ourTotal = 1n; // ante
-  let theirTotal = 1n; // ante
-  let nextRevealIdx = 0; // 0=flop(3 cards), 1=turn, 2=river
-
-  for (let i = 0; i < handHistory.length; i++) {
-    const entry = handHistory[i];
-    const isUs = entry.player === 'you';
-
-    if (entry.action === 'fold') {
-      items.push('\u274C');
-      continue;
-    }
-    if (entry.action === 'failed') {
-      items.push('\u274C');
-      continue;
-    }
-    if (entry.action === 'concede') {
-      items.push('\u{1F3F3}\uFE0F');
-      continue;
-    }
-    if (entry.action === 'reveal') {
-      if (isUs) {
-        // Our reveal at showdown — not an item in the log; the result line covers it.
-        continue;
-      }
-      // Opponent reveal: show eyes + their hole cards
-      if (opponentHoleCards) {
-        items.push('\u{1F440}' + logHoleCards(opponentHoleCards, opponentBoost ?? false));
-      }
-      continue;
-    }
-
-    if (entry.action === 'raise') {
-      const units = entry.units ?? 0n;
-      if (isUs) {
-        ourTotal += units;
-      } else {
-        theirTotal += units;
-      }
-      if ((isUs && ourTotal >= stackSize) || (!isUs && theirTotal >= stackSize)) {
-        items.push('all');
-      } else {
-        items.push(String(units));
-      }
-    } else {
-      // check or call — both rendered as checkmark
-      if (entry.action === 'call') {
-        // A call matches the outstanding raise; add it to the caller's total.
-        // The raise amount isn't on this entry, but we can infer it: the
-        // difference between the two players' totals before this call.
-        const gap = isUs ? theirTotal - ourTotal : ourTotal - theirTotal;
-        if (gap > 0n) {
-          if (isUs) ourTotal += gap;
-          else theirTotal += gap;
-        }
-      }
-      items.push('\u2705');
-    }
-
-    // After a street-ending action, insert the next community card reveal.
-    if (entry.endsStreet || entry.action === 'call') {
-      if (nextRevealIdx === 0) {
-        // Flop: 3 cards
-        const flop = communityCards.slice(0, 3).filter((c): c is bigint => c != null);
-        if (flop.length > 0) {
-          items.push('\u270B' + flop.map((c) => logRank(c)).join(''));
-          nextRevealIdx = 1;
-        }
-      } else if (nextRevealIdx === 1) {
-        // Turn
-        const turn = communityCards[3];
-        if (turn != null) {
-          items.push('\u270B' + logRank(turn));
-          nextRevealIdx = 2;
-        }
-      } else if (nextRevealIdx === 2) {
-        // River
-        const river = communityCards[4];
-        if (river != null) {
-          items.push('\u270B' + logRank(river));
-          nextRevealIdx = 3;
-        }
-      }
-    }
-  }
-
-  // If opponent's hole cards were revealed at showdown but no 'reveal' entry
-  // was in the history (e.g. the call at showdown carried the reveal data),
-  // append them with the eyes prefix.
-  const lastItem = items[items.length - 1];
-  const oppRevealed = terminalState === 'revealed' && opponentHoleCards;
-  if (oppRevealed) {
-    const oppStr = '\u{1F440}' + logHoleCards(opponentHoleCards!, opponentBoost ?? false);
-    if (lastItem !== oppStr && lastItem !== '\u{1F3F3}\uFE0F' && lastItem !== '\u274C') {
-      items.push(oppStr);
-    }
-  }
-
-  // Apply spacing.  After the position label there is always a double space.
-  // Between successive items the gap alternates:
-  //   1st: single, double, single, double, ...
-  //   2nd: double, single, double, single, ...
-  let actionLine = `${logHoleCards(playerHoleCards, playerBoost)} ${posLabel}`;
-  for (let i = 0; i < items.length; i++) {
-    if (i === 0) {
-      actionLine += '  '; // always double after position label
-    } else {
-      // Gap index (i-1) determines double/single.
-      // 1st: gap0 (between item0–item1) = single, gap1 = double, ...
-      //   → even gap index = single, odd = double
-      // 2nd: gap0 = double, gap1 = single, ...
-      //   → even gap index = double, odd = single
-      const gapIdx = i - 1;
-      const isDouble = weOpenFirst ? gapIdx % 2 !== 0 : gapIdx % 2 === 0;
-      actionLine += isDouble ? '  ' : ' ';
-    }
-    actionLine += items[i];
-  }
-
-  // Build result line
-  let resultLine = '';
-  if (terminalState === 'folded-by-you') {
-    // We folded: compute how much we lost
-    const lost = ourTotal;
-    const lostMojos = lost * betUnit;
-    resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
-  } else if (
-    terminalState === 'folded-by-opponent' ||
-    terminalState === 'won-by-opponent-failure'
-  ) {
-    // They folded: compute how much we won
-    const won = theirTotal;
-    const wonMojos = won * betUnit;
-    resultLine = `Win ${won} (${formatAmount(wonMojos)})`;
-  } else if (terminalState === 'conceded-by-opponent') {
-    // They conceded at showdown: we win the pot
-    const won = theirTotal;
-    const wonMojos = won * betUnit;
-    resultLine = `Win ${won} (${formatAmount(wonMojos)})`;
-    if (outcome?.playerHandCards && outcome.playerHandCards.length > 0) {
-      resultLine += ` with ${logBestHand(outcome.playerHandCards, playerBoost)}`;
-    }
-  } else if (terminalState === 'conceded-by-you') {
-    // We conceded at showdown
-    const lost = ourTotal;
-    const lostMojos = lost * betUnit;
-    resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
-  } else if (terminalState === 'revealed' && outcome) {
-    const r = outcome.result;
-    if (r > 0n) {
-      const won = theirTotal;
-      const wonMojos = won * betUnit;
-      resultLine = `Win ${won} (${formatAmount(wonMojos)})`;
-    } else if (r < 0n) {
-      const lost = ourTotal;
-      const lostMojos = lost * betUnit;
-      resultLine = `Lose ${lost} (${formatAmount(lostMojos)})`;
-    } else {
-      resultLine = 'Split';
-    }
-    if (outcome.playerHandCards && outcome.playerHandCards.length > 0) {
-      resultLine += ` with ${logBestHand(outcome.playerHandCards, playerBoost)}`;
-    }
-    if (outcome.opponentHandCards && outcome.opponentHandCards.length > 0) {
-      resultLine += ` vs ${logBestHand(outcome.opponentHandCards, opponentBoost ?? false)}`;
-    }
-  }
-
-  return [actionLine, resultLine];
-}
-
-const SEL_BAR = 'w-full h-1 rounded-full';
-const SEL_VIS = `${SEL_BAR} bg-canvas-text-contrast`;
-const SEL_HIDDEN = `${SEL_BAR} bg-transparent`;
-
-function SpCard({ rankLabelText, faceDown }: { rankLabelText?: string; faceDown?: boolean }) {
-  const base = 'inline-flex items-center justify-center rounded border font-bold select-none';
-  const size = 'w-10 h-14 sm:w-12 sm:h-16';
-  if (faceDown) {
-    return (
-      <div
-        className={`${base} ${size} bg-canvas-solid border-canvas-line text-canvas-bg text-4xl leading-none`}
-      >
-        ?
-      </div>
-    );
-  }
-  return (
-    <div
-      className={`${base} ${size} bg-canvas-bg border-2 border-canvas-text-contrast text-canvas-text-contrast`}
-    >
-      <svg
-        aria-label={rankLabelText ?? ''}
-        className="h-[90%] w-[90%] overflow-visible"
-        role="img"
-        viewBox="0 0 100 100"
-      >
-        <text
-          className="fill-current"
-          dominantBaseline="central"
-          fontSize="108"
-          fontWeight="700"
-          style={{
-            fontFamily:
-              'Cheltenham, "ITC Cheltenham", "Cheltenham Std", "Times New Roman", Times, serif',
-          }}
-          textAnchor="middle"
-          x="50"
-          y="50"
-        >
-          {rankLabelText ?? ''}
-        </text>
-      </svg>
-    </div>
-  );
-}
-
-function CardSlot() {
-  return (
-    <div className="inline-flex items-center justify-center rounded border border-dashed border-canvas-line w-10 h-14 sm:w-12 sm:h-16 text-canvas-text opacity-30" />
-  );
-}
-
-function CardColumn({
-  topSel,
-  bottomSel,
-  children,
-}: {
-  topSel?: boolean;
-  bottomSel?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      <div className={topSel ? SEL_VIS : SEL_HIDDEN} />
-      {children}
-      <div className={bottomSel ? SEL_VIS : SEL_HIDDEN} />
-    </div>
-  );
-}
-
-type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | null;
-
-export function spacePokerTerminalBanners(
-  terminalState: SpTerminalState,
-  showdownResult: bigint | null,
-): { player: HoleCardsBannerKind; opponent: HoleCardsBannerKind } {
-  if (terminalState === 'conceded-by-you') return { player: null, opponent: 'win' };
-  if (terminalState === 'conceded-by-opponent') return { player: 'win', opponent: null };
-  if (terminalState === 'folded-by-you') return { player: 'fold', opponent: null };
-  if (terminalState === 'folded-by-opponent') return { player: null, opponent: 'fold' };
-  if (terminalState === 'won-by-opponent-failure') return { player: 'win', opponent: null };
-  if (showdownResult === null) return { player: null, opponent: null };
-  if (showdownResult > 0n) return { player: 'win', opponent: null };
-  if (showdownResult < 0n) return { player: null, opponent: 'win' };
-  return { player: 'tie', opponent: 'tie' };
-}
-
-function HoleCardsGroup({
-  boosted,
-  banner,
-  children,
-}: {
-  boosted?: boolean;
-  banner?: HoleCardsBannerKind;
-  children: ReactNode;
-}) {
-  return (
-    <div className="relative inline-flex items-center">
-      <div className="flex gap-2 items-center">{children}</div>
-      {boosted && (
-        <span className="absolute left-full top-1/2 -translate-y-1/2 ml-1 text-2xl font-bold text-canvas-text-contrast leading-none">
-          +
-        </span>
-      )}
-      {banner && (
-        <span
-          className={`absolute left-full top-1/2 -translate-y-1/2 ${boosted ? 'ml-6' : 'ml-2'} whitespace-nowrap rounded-full px-4 py-2 text-base font-bold shadow-lg ${
-            banner === 'win'
-              ? 'bg-primary-solid text-primary-on-primary'
-              : 'bg-canvas-solid text-canvas-on-canvas'
-          }`}
-        >
-          {banner === 'win'
-            ? 'Winner!'
-            : banner === 'tie'
-              ? 'Tie'
-              : banner === 'concede'
-                ? 'Concede'
-                : 'Fold'}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function AmountBadge({ children }: { children: ReactNode }) {
-  return (
-    <span className="font-bold text-lg text-canvas-text-contrast tabular-nums">{children}</span>
-  );
-}
-
-function entrySymbol(entry: SpHandEntry, formatBet: (units: bigint) => string): string {
-  if (entry.action === 'check') return entry.endsStreet ? '\u270B' : '\u2705';
-  if (entry.action === 'call') return '\u270B';
-  if (entry.action === 'fold' || entry.action === 'failed') return '\u274C';
-  if (entry.action === 'concede') return '\u{1F3F3}\uFE0F';
-  if (entry.action === 'reveal') return '\u{1F440}';
-  return formatBet(entry.units ?? 0n);
-}
-
-function buildHistoryRows(
-  history: SpHandEntry[],
-  formatBet: (units: bigint) => string,
-): [string | null, string | null][] {
-  if (history.length === 0) return [];
-  const rows: [string | null, string | null][] = [];
-  let i = 0;
-  if (history[0].player === 'opponent') {
-    rows.push([null, entrySymbol(history[0], formatBet)]);
-    i = 1;
-  }
-  for (; i < history.length; i += 2) {
-    rows.push([
-      entrySymbol(history[i], formatBet),
-      history[i + 1] ? entrySymbol(history[i + 1], formatBet) : null,
-    ]);
-  }
-  return rows;
-}
-
-function HandHistoryPanel({ rows }: { rows: [string | null, string | null][] }) {
-  if (rows.length === 0) return null;
-  return (
-    <table className="text-base mx-auto table-auto">
-      <tbody>
-        {rows.map(([left, right], i) => (
-          <tr key={i} className={i > 0 ? 'border-t border-canvas-line' : ''}>
-            <td className="px-3 py-1 text-canvas-text-contrast text-center min-w-12 whitespace-nowrap tabular-nums">
-              {left ?? ''}
-            </td>
-            <td className="px-3 py-1 text-canvas-text-contrast text-center min-w-12 whitespace-nowrap tabular-nums">
-              {right ?? ''}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-export function spacePokerFooterStatus(handler: SpHandler, turnLine: string): string {
-  return isTerminalSpacepokerHandler(handler) ? '' : turnLine;
-}
-
-export function spacePokerTransitionCommentary(handler: SpHandler, myTurn: boolean): string {
-  if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) return 'Dealing cards…';
-  if (handler === SpHandler.End) {
-    return myTurn ? 'Finishing hand…' : 'Waiting for opponent to finish…';
-  }
-  return '';
-}
-
-export function spacePokerTerminalCommentary(
-  terminalState: SpTerminalState,
-  showdownResult: bigint | null,
-  terminalOutcome: SettlementOutcome | null,
-): string {
-  if (terminalState === 'conceded-by-opponent') {
-    return 'You revealed first and the opponent conceded.';
-  }
-  if (terminalState === 'conceded-by-you') {
-    return 'The opponent revealed first and you conceded.';
-  }
-  if (terminalState === 'folded-by-opponent') return 'The opponent folded. You won the hand.';
-  if (terminalState === 'folded-by-you') return 'You folded. The opponent won the hand.';
-  if (terminalState === 'won-by-opponent-failure') {
-    return "The opponent's final action failed. You won the hand.";
-  }
-  if (terminalState === 'revealed' && showdownResult !== null) {
-    if (showdownResult > 0n) return 'You won at showdown.';
-    if (showdownResult < 0n) return 'The opponent won at showdown.';
-    return 'The showdown ended in a tie.';
-  }
-  if (terminalOutcome !== null) return `${settlementLabel(terminalOutcome)}.`;
-  if (terminalState !== 'none') return 'The hand ended.';
-  return '';
-}
-
-interface ActionBarProps {
-  interactive: boolean;
-  handler: SpHandler;
-  myTurn: boolean;
-  round: string;
-  coinTossIOpen: boolean | null;
-  lastRaiseUnits: string;
-  maxRaiseUnits: string;
-  forcedAuto: boolean;
-  formatBet: (units: bigint) => string;
-  handleCheck: () => void;
-  handleRaise: (units: bigint) => void;
-  handleCall: () => void;
-  handleFold: () => void;
-}
-
-function ActionBar({
-  interactive,
-  handler,
-  myTurn,
-  round,
-  coinTossIOpen,
-  lastRaiseUnits,
-  maxRaiseUnits,
-  forcedAuto,
-  formatBet,
-  handleCheck,
-  handleRaise,
-  handleCall,
-  handleFold,
-}: ActionBarProps) {
-  const [raiseAmount, setRaiseAmount] = useState(1);
-  const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
-  const maxRaiseInput = Math.max(1, Number(maxRaiseUnits));
-  const raiseAmountInput = Math.min(raiseAmount, maxRaiseInput);
-  const isBeginRound = handler === SpHandler.BeginRound;
-  const autoPong = isBeginRound && round === '4' && coinTossIOpen === false;
-  const actionsEnabled = interactive && myTurn && inBetting && !autoPong && !forcedAuto;
-  const checkCallLabel =
-    handler === SpHandler.MidRound && lastRaiseUnits !== '0' ? 'Call' : 'Check';
-
-  useEffect(() => {
-    if (!actionsEnabled) {
-      setRaiseAmount(1);
-    }
-  }, [actionsEnabled]);
-
-  const doRaise = useCallback(() => {
-    if (!actionsEnabled || raiseAmountInput < 1 || raiseAmountInput > Number(maxRaiseUnits)) return;
-    handleRaise(BigInt(raiseAmountInput));
-  }, [actionsEnabled, raiseAmountInput, maxRaiseUnits, handleRaise]);
-
-  const btnClass =
-    'px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40';
-
-  return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      {isBeginRound ? (
-        <button onClick={handleCheck} disabled={!actionsEnabled} className={`${btnClass} w-16`}>
-          Check
-        </button>
-      ) : (
-        <button onClick={handleCall} disabled={!actionsEnabled} className={`${btnClass} w-16`}>
-          {checkCallLabel}
-        </button>
-      )}
-      <div className="flex items-center gap-1">
-        <button
-          onClick={doRaise}
-          disabled={!actionsEnabled || Number(maxRaiseUnits) < 1}
-          className={btnClass}
-        >
-          Raise
-        </button>
-        <input
-          type="range"
-          min={1}
-          max={maxRaiseInput}
-          value={raiseAmountInput}
-          onChange={(e) => setRaiseAmount(Number(e.target.value))}
-          disabled={!actionsEnabled}
-          className="w-20 sm:w-32 disabled:opacity-40"
-        />
-        <span className="text-xs text-canvas-text-contrast w-16 text-center">
-          {formatBet(BigInt(raiseAmountInput))}
-        </span>
-      </div>
-      <button onClick={handleFold} disabled={!actionsEnabled || isBeginRound} className={btnClass}>
-        Fold
-      </button>
-    </div>
-  );
-}
+import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
+import type { GameplayEvent } from '../../hooks/useGameSession';
+import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
+import { SpacePokerActionControls } from './SpacePokerActionControls';
+import { SpacePokerHandHistory, SpacePokerTable } from './SpacePokerTable';
+import {
+  spacePokerFooterStatus,
+  spacePokerTerminalBanners,
+  spacePokerTerminalCommentary,
+  spacePokerTerminalIndicators,
+  spacePokerTurnLine,
+} from './statusPresentation';
+import {
+  SpHandler,
+  type SpacepokerDisplayMode,
+  type SpacepokerHandState,
+  useSpacepokerHand,
+} from './useSpacepokerHand';
 
 export interface SpacePokerProps {
-  gameObject: SessionController;
+  handSource: GameHandSource;
   gameId: string;
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
@@ -682,11 +33,10 @@ export interface SpacePokerProps {
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
-  interactionMode?: GameInteractionMode;
 }
 
 export default function SpacePoker({
-  gameObject,
+  handSource,
   gameId,
   iStarted,
   gameplayEvent$,
@@ -697,13 +47,12 @@ export default function SpacePoker({
   myName,
   opponentName,
   terminal,
-  interactionMode = 'live',
 }: SpacePokerProps) {
-  const interactive = interactionMode === 'live';
+  const interactive = handSource.interactionMode === 'live';
   const betSizeValue = BigInt(betSize);
   const unitSizeMojosValue = BigInt(unitSizeMojos);
   const sp = useSpacepokerHand(
-    gameObject,
+    handSource,
     gameId,
     iStarted,
     gameplayEvent$,
@@ -711,53 +60,41 @@ export default function SpacePoker({
     unitSizeMojosValue,
     onTurnChanged,
     terminal,
-    gameObject.handState ?? undefined,
-    interactive,
+    gameHandState(handSource) ?? undefined,
   );
   const { handler, myTurn, N } = sp.gameState;
 
-  const handleCheat = useCallback(() => {
-    if (!gameObject || !gameId) return;
-    gameObject.cheat(gameId, 0n);
-    // A cheat is just an (illegal) move; drive the same turn-change path a
-    // normal move uses so the status shows "Playing our move on-chain" while
-    // it lands, instead of staying on our turn.
-    onTurnChanged(false);
-  }, [gameObject, gameId, onTurnChanged]);
   const handleNerf = useCallback(() => {
-    if (!gameObject) return;
-    gameObject.nerf();
-  }, [gameObject]);
-  useCheatNerfKeys(handleCheat, handleNerf, interactive);
+    requireLiveGameHandSource(handSource).nerf();
+  }, [handSource]);
+  useCheatNerfKeys(sp.handleCheat, handleNerf, interactive);
 
-  // Write to the session history panel when the hand finishes.
-  // If restoring from a persisted terminal state, skip logging (already logged).
   const [alreadyTerminalAtMount] = useState(() => {
-    const hs = gameObject.handState;
-    if (!hs || hs.gameType !== 'spacepoker') return false;
-    const s = hs.state as SpacepokerHandState | undefined;
-    return s?.terminalState != null && s.terminalState !== 'none';
+    const handState = gameHandState(handSource);
+    if (!handState || handState.gameType !== 'spacepoker') return false;
+    const state = handState.state as SpacepokerHandState | undefined;
+    return state?.terminalState != null && state.terminalState !== 'none';
   });
   const gameLogFiredRef = useRef(alreadyTerminalAtMount);
   useEffect(() => {
-    if (sp.terminalState === 'none' || gameLogFiredRef.current) return;
-    if (!sp.playerHoleCards) return;
+    if (sp.terminalState === 'none' || gameLogFiredRef.current || !sp.playerHoleCards) return;
     gameLogFiredRef.current = true;
     const stackSize = sp.betUnit > 0n ? betSizeValue / sp.betUnit : 0n;
-    const lines = formatSpacepokerHandLog(
-      sp.playerHoleCards,
-      sp.playerBoost,
-      sp.opponentHoleCards,
-      sp.opponentBoost,
-      sp.communityCards,
-      sp.handHistory,
-      sp.outcome,
-      sp.terminalState,
-      sp.coinTossIOpen,
-      sp.betUnit,
-      stackSize,
+    onGameLog(
+      formatSpacepokerHandLog(
+        sp.playerHoleCards,
+        sp.playerBoost,
+        sp.opponentHoleCards,
+        sp.opponentBoost,
+        sp.communityCards,
+        sp.handHistory,
+        sp.outcome,
+        sp.terminalState,
+        sp.coinTossIOpen,
+        sp.betUnit,
+        stackSize,
+      ),
     );
-    onGameLog(lines);
   }, [
     sp.terminalState,
     sp.playerHoleCards,
@@ -773,82 +110,40 @@ export default function SpacePoker({
     onGameLog,
   ]);
 
-  const communitySlots = 5;
-  const communityReversed = [...sp.communityCards];
-
-  const playerName = myName ?? 'You';
-  const oppName = opponentName ?? 'Opponent';
-
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
   const maxRaise = sp.playerStack - (sp.lastRaise > 0n ? sp.lastRaise : 0n);
   const forcedAuto = inBetting && sp.lastRaise === 0n && sp.playerStack <= 0n;
-  const historyRows = buildHistoryRows(sp.handHistory, sp.formatBet);
   const showdownOutcome = sp.outcome;
-  const hasShowdownOutcome = !!showdownOutcome;
-  const showPrivateShowdown = sp.terminalState === 'revealed' || hasShowdownOutcome;
-
-  const oppHandDesc =
-    showPrivateShowdown && sp.outcome?.opponentHandEval && sp.outcome.opponentHandEval.length > 0
-      ? describeHand(sp.outcome.opponentHandEval)
-      : '';
-  const playerHandDesc =
-    showPrivateShowdown && sp.outcome?.playerHandEval && sp.outcome.playerHandEval.length > 0
-      ? describeHand(sp.outcome.playerHandEval)
-      : '';
-
+  const showPrivateShowdown = sp.terminalState === 'revealed' || showdownOutcome !== null;
   const finished = handler === SpHandler.Showdown || handler === SpHandler.Folded;
-  let playerIndicator = '';
-  let oppIndicator = '';
-  if (sp.terminalState === 'conceded-by-opponent') {
-    playerIndicator = ' \u2705';
-    oppIndicator = ' \u{1F3F3}\uFE0F';
-  } else if (sp.terminalState === 'conceded-by-you') {
-    playerIndicator = ' \u{1F3F3}\uFE0F';
-    oppIndicator = ' \u2705';
-  } else if (sp.terminalState === 'folded-by-you') {
-    playerIndicator = ' \u274C';
-    oppIndicator = ' \u2705';
-  } else if (sp.terminalState === 'folded-by-opponent') {
-    playerIndicator = ' \u2705';
-    oppIndicator = ' \u274C';
-  } else if (sp.terminalState === 'won-by-opponent-failure') {
-    playerIndicator = ' \u2705';
-    oppIndicator = ' \u274C';
-  } else if (hasShowdownOutcome && (finished || handler === SpHandler.End)) {
-    playerIndicator =
-      showdownOutcome.result > 0n ? ' \u2705' : showdownOutcome.result < 0n ? ' \u274C' : '';
-    oppIndicator =
-      showdownOutcome.result < 0n ? ' \u2705' : showdownOutcome.result > 0n ? ' \u274C' : '';
-  }
+  const visibleShowdownResult =
+    showdownOutcome && (finished || handler === SpHandler.End) ? showdownOutcome.result : null;
 
-  // Calpoker-style pill banners shown immediately to the right of each player's
-  // hole cards.
-  const { player: playerBanner, opponent: oppBanner } = spacePokerTerminalBanners(
-    sp.terminalState,
-    hasShowdownOutcome && (finished || handler === SpHandler.End) ? showdownOutcome.result : null,
+  const opponentHandDescription =
+    showPrivateShowdown &&
+    showdownOutcome?.opponentHandEval &&
+    showdownOutcome.opponentHandEval.length > 0
+      ? describeSpacePokerHand(showdownOutcome.opponentHandEval)
+      : '';
+  const playerHandDescription =
+    showPrivateShowdown &&
+    showdownOutcome?.playerHandEval &&
+    showdownOutcome.playerHandEval.length > 0
+      ? describeSpacePokerHand(showdownOutcome.playerHandEval)
+      : '';
+  const banners = spacePokerTerminalBanners(sp.terminalState, visibleShowdownResult);
+  const indicators = spacePokerTerminalIndicators(sp.terminalState, visibleShowdownResult);
+  const turnLine = spacePokerTurnLine(
+    handler,
+    myTurn,
+    N,
+    sp.coinTossIOpen,
+    sp.lastRaise,
+    sp.formatBet,
   );
-
-  let turnLine = '';
-  if (
-    myTurn &&
-    inBetting &&
-    !(handler === SpHandler.BeginRound && N === 4n && sp.coinTossIOpen === false)
-  ) {
-    turnLine =
-      handler === SpHandler.MidRound && sp.lastRaise > 0n
-        ? `Your turn, ${sp.formatBet(sp.lastRaise)} to call`
-        : 'Your turn';
-  } else if (myTurn && handler === SpHandler.BeginRound && N === 4n && sp.coinTossIOpen === false) {
-    turnLine = 'Coin toss: opponent opens\u2026';
-  } else if (!myTurn && inBetting) {
-    turnLine = 'Waiting for opponent\u2026';
-  }
-  if (!turnLine) {
-    turnLine = spacePokerTransitionCommentary(handler, myTurn);
-  }
   const terminalCommentary = spacePokerTerminalCommentary(
     sp.terminalState,
-    hasShowdownOutcome ? showdownOutcome.result : null,
+    showdownOutcome?.result ?? null,
     sp.terminalOutcome,
   );
   const footerStatus =
@@ -869,110 +164,27 @@ export default function SpacePoker({
         ))}
       </div>
 
-      {/* Opponent name */}
-      <AmountBadge>
-        {oppName}
-        {oppIndicator}
-      </AmountBadge>
-
-      {/* Opponent cards row with stack on left */}
-      <div className="relative flex justify-center w-full">
-        <div className="absolute left-0 top-1/2 -translate-y-1/2">
-          <AmountBadge>{sp.formatBet(sp.opponentStack)}</AmountBadge>
-        </div>
-        <HoleCardsGroup
-          boosted={sp.opponentHoleCards ? (sp.opponentBoost ?? false) : false}
-          banner={oppBanner}
-        >
-          {sp.opponentHoleCards ? (
-            sp.opponentHoleCards.map((c, i) => (
-              <CardColumn
-                key={i}
-                topSel={showPrivateShowdown && sp.outcome?.opponentHandCards?.includes(c)}
-              >
-                <SpCard rankLabelText={spacePokerRankLabel(c)} />
-              </CardColumn>
-            ))
-          ) : (
-            <>
-              <CardColumn>
-                <SpCard faceDown />
-              </CardColumn>
-              <CardColumn>
-                <SpCard faceDown />
-              </CardColumn>
-            </>
-          )}
-        </HoleCardsGroup>
-      </div>
-
-      {/* Opponent hand description — reserved height */}
-      <p className="text-xs text-canvas-text-contrast text-center min-h-4">{oppHandDesc}</p>
-
-      {/* Community cards row with pot on left */}
-      <div className="relative flex justify-center w-full">
-        <div className="absolute left-0 top-1/2 -translate-y-1/2">
-          <AmountBadge>{sp.formatBet(sp.pot)}</AmountBadge>
-        </div>
-        <div className="flex gap-1.5 items-center">
-          {Array.from({ length: communitySlots }).map((_, i) => {
-            const card = communityReversed[i];
-            if (card != null) {
-              return (
-                <CardColumn
-                  key={i}
-                  topSel={showPrivateShowdown && sp.outcome?.opponentHandCards?.includes(card)}
-                  bottomSel={showPrivateShowdown && sp.outcome?.playerHandCards?.includes(card)}
-                >
-                  <SpCard rankLabelText={spacePokerRankLabel(card)} />
-                </CardColumn>
-              );
-            }
-            return (
-              <CardColumn key={i}>
-                <CardSlot />
-              </CardColumn>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Player hand description — reserved height */}
-      <p className="text-xs text-canvas-text-contrast text-center min-h-4">{playerHandDesc}</p>
-
-      {/* Player cards row with stack on left */}
-      <div className="relative flex justify-center w-full">
-        <div className="absolute left-0 top-1/2 -translate-y-1/2">
-          <AmountBadge>{sp.formatBet(sp.playerStack)}</AmountBadge>
-        </div>
-        <HoleCardsGroup boosted={sp.playerHoleCards ? sp.playerBoost : false} banner={playerBanner}>
-          {sp.playerHoleCards ? (
-            sp.playerHoleCards.map((c, i) => (
-              <CardColumn
-                key={i}
-                bottomSel={showPrivateShowdown && sp.outcome?.playerHandCards?.includes(c)}
-              >
-                <SpCard rankLabelText={spacePokerRankLabel(c)} />
-              </CardColumn>
-            ))
-          ) : (
-            <>
-              <CardColumn>
-                <CardSlot />
-              </CardColumn>
-              <CardColumn>
-                <CardSlot />
-              </CardColumn>
-            </>
-          )}
-        </HoleCardsGroup>
-      </div>
-
-      {/* Player name */}
-      <AmountBadge>
-        {playerName}
-        {playerIndicator}
-      </AmountBadge>
+      <SpacePokerTable
+        opponentName={opponentName ?? 'Opponent'}
+        playerName={myName ?? 'You'}
+        opponentIndicator={indicators.opponent}
+        playerIndicator={indicators.player}
+        opponentStack={sp.opponentStack}
+        playerStack={sp.playerStack}
+        pot={sp.pot}
+        opponentHoleCards={sp.opponentHoleCards}
+        playerHoleCards={sp.playerHoleCards}
+        opponentBoost={sp.opponentBoost}
+        playerBoost={sp.playerBoost}
+        communityCards={sp.communityCards}
+        opponentHandDescription={opponentHandDescription}
+        playerHandDescription={playerHandDescription}
+        opponentBanner={banners.opponent}
+        playerBanner={banners.player}
+        outcome={showdownOutcome}
+        showPrivateShowdown={showPrivateShowdown}
+        formatBet={sp.formatBet}
+      />
 
       <div className="flex min-h-[4.5rem] flex-col justify-center gap-2">
         {sp.terminalRecovery && (
@@ -982,14 +194,15 @@ export default function SpacePoker({
             </p>
             <button
               type="button"
-              className="px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover"
+              className="px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40"
+              disabled={!interactive}
               onClick={sp.retryTerminalAction}
             >
               Retry
             </button>
           </div>
         )}
-        <ActionBar
+        <SpacePokerActionControls
           interactive={interactive}
           handler={handler}
           myTurn={myTurn}
@@ -1009,8 +222,7 @@ export default function SpacePoker({
         </p>
       </div>
 
-      {/* Hand history */}
-      <HandHistoryPanel rows={historyRows} />
+      <SpacePokerHandHistory history={sp.handHistory} formatBet={sp.formatBet} />
     </div>
   );
 }

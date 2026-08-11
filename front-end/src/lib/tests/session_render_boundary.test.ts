@@ -3,10 +3,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { EMPTY } from 'rxjs';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { destroySessionController } from '../../hooks/blobSingleton';
-import { createFrozenHandBridge } from '../../hooks/frozenHandBridge';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import type { PeerConnectionResult } from '../../types/ChiaGaming';
+import { requireLiveGameHandSource } from '../gameMount';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import {
   projectTerminalSessionResult,
@@ -115,25 +115,21 @@ describe('GameSession render boundary', () => {
         ],
       },
     });
-    const source = { model, iStarted: true, iProposedHand: true };
+    const source = { model, iStarted: true };
     const liveMakeMove = jest.fn();
     const liveDismissGame = jest.fn();
     const live = {
-      sessionController: { makeMove: liveMakeMove },
+      handSource: {
+        interactionMode: 'live',
+        controller: { makeMove: liveMakeMove },
+      },
       dismissGame: liveDismissGame,
     } as unknown as UseGameSessionResult;
-    const bridge = createFrozenHandBridge(model.game.handState);
     let observed: UseGameSessionResult | null = null;
 
     function TerminalHarness() {
       const terminal = useTerminalSessionPresentation(source);
-      const projected = projectTerminalSessionResult(
-        live,
-        terminal.presentation!,
-        bridge,
-        EMPTY,
-        terminal,
-      );
+      const projected = projectTerminalSessionResult(live, terminal.presentation!, EMPTY, terminal);
       observed = projected;
       return createElement(
         'button',
@@ -149,7 +145,9 @@ describe('GameSession render boundary', () => {
     act(() => renderer!.root.findByType('button').props.onClick());
     expect(observed!.gameQueue).toHaveLength(0);
 
-    observed!.sessionController.makeMove('7', null);
+    expect(() => requireLiveGameHandSource(observed!.handSource).makeMove('7', null)).toThrow(
+      'Protocol commands require a live game hand source',
+    );
     expect(liveMakeMove).not.toHaveBeenCalled();
     expect(liveDismissGame).not.toHaveBeenCalled();
   });

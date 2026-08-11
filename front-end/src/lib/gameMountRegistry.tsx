@@ -3,7 +3,6 @@ import { calpokerMountRegistration } from '../features/calPoker/LiveMount';
 import { krunkMountRegistration } from '../features/krunk/LiveMount';
 import { spacepokerMountRegistration } from '../features/spacePoker/LiveMount';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
-import type { SessionController } from '../hooks/SessionController';
 import type { FrozenGameMountOptions, GameMountNames, GameMountRegistration } from './gameMount';
 import type { SessionModel } from './session/model';
 import type { RegisteredGameType } from './session/types';
@@ -27,10 +26,9 @@ export function renderLiveGameMount(
 
 export function renderFrozenGameMount(
   model: SessionModel,
-  gameObject: SessionController,
   options: FrozenGameMountOptions,
 ): ReactElement {
   const gameType = model.game.handState?.gameType ?? model.game.activeGameType;
   if (!hasGameMount(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
-  return GAME_MOUNTS[gameType].renderFrozen(model, gameObject, options);
+  return GAME_MOUNTS[gameType].renderFrozen(model, options);
 }

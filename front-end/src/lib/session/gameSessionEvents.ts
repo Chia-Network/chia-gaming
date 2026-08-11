@@ -15,10 +15,10 @@ import {
 import { decodeGameTerms, isRegisteredGameType } from '../gameRegistry';
 import { DEFAULT_GAME_TIMEOUT_BLOCKS } from './normalization';
 import type {
-  GameInstanceModel,
   GameTerminalModel,
   GameTurnState,
   HandTermsModel,
+  ProposalGroupModel,
   QueuedNotificationModel,
 } from './types';
 
@@ -185,89 +185,6 @@ export function parseGameStatusTerminalInfo(
   return { type: 'none', outcome: null, label: null, myReward: null, rewardCoinHex: null };
 }
 
-export function activeIdsAfterProposalAccepted(
-  activeIds: string[],
-  acceptedId: string,
-  proposalGroupIds?: string[],
-): string[] {
-  const ids = proposalGroupIds?.length ? proposalGroupIds : [acceptedId];
-  return [...activeIds, ...ids.filter((id) => !activeIds.includes(id))];
-}
-
-export function clearProposalTracking(
-  ids: readonly string[],
-  termsById: Record<string, HandTerms>,
-  groupIdsById: Record<string, string[]>,
-  outgoingIds: Set<string>,
-): void {
-  const tracked = new Set(ids);
-  for (const id of ids) {
-    for (const groupId of groupIdsById[id] ?? []) tracked.add(groupId);
-  }
-  for (const id of tracked) {
-    delete termsById[id];
-    delete groupIdsById[id];
-    outgoingIds.delete(id);
-  }
-}
-
-export function clearProposalTerms(
-  ids: readonly string[],
-  termsById: Record<string, HandTerms>,
-  outgoingIds: Set<string>,
-): void {
-  for (const id of ids) {
-    delete termsById[id];
-    outgoingIds.delete(id);
-  }
-}
-
-export function outgoingProposalGroups(
-  outgoingIds: ReadonlySet<string>,
-  groupIdsById: Record<string, string[]>,
-): string[][] {
-  const groups: string[][] = [];
-  const seen = new Set<string>();
-  for (const id of outgoingIds) {
-    const group = groupIdsById[id] ?? [id];
-    const key = group.join('\0');
-    if (!seen.has(key)) {
-      seen.add(key);
-      groups.push([...group]);
-    }
-  }
-  return groups;
-}
-
-export function outgoingProposalTerms(
-  outgoingIds: ReadonlySet<string>,
-  termsById: Record<string, HandTerms>,
-): Record<string, HandTerms> {
-  return Object.fromEntries(
-    [...outgoingIds].flatMap((id) => (termsById[id] ? [[id, termsById[id]]] : [])),
-  );
-}
-
-export function proposalGroupMap(groups: readonly (readonly string[])[]): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
-  for (const group of groups) for (const id of group) result[id] = [...group];
-  return result;
-}
-
-export function removeProposalGroupFromHand(
-  groupIds: readonly string[],
-  activeIds: readonly string[],
-  currentHandIds: readonly string[],
-  instances: Record<string, GameInstanceModel>,
-) {
-  const removed = new Set(groupIds);
-  return {
-    activeIds: activeIds.filter((id) => !removed.has(id)),
-    currentHandIds: currentHandIds.filter((id) => !removed.has(id)),
-    instances: Object.fromEntries(Object.entries(instances).filter(([id]) => !removed.has(id))),
-  };
-}
-
 function parseTimeout(value: unknown): bigint | null {
   if (value == null) return DEFAULT_GAME_TIMEOUT_BLOCKS;
   const raw =
@@ -320,14 +237,20 @@ export function parseTermsFromNotificationValue(
   }
 }
 
-export function parseIncomingProposal(value: unknown) {
+export function parseIncomingProposal(value: unknown): ProposalGroupModel | null {
   if (typeof value !== 'object' || value === null) return null;
   const object = value as Record<string, unknown>;
   const gameType = gameTypeFromValue(object);
   const terms = gameType ? parseTermsFromNotificationValue(object, gameType) : null;
-  const groupIds = Array.isArray(object.group_ids) ? object.group_ids.map(String) : [];
-  if (!terms || object.id == null || groupIds.length === 0) return null;
-  return { id: String(object.id), groupIds, terms };
+  const memberIds = Array.isArray(object.group_ids) ? object.group_ids.map(String) : [];
+  if (!terms || object.id == null || memberIds.length === 0) return null;
+  return {
+    primaryId: String(object.id),
+    memberIds,
+    terms,
+    origin: 'peer',
+    disposition: 'incoming-cached',
+  };
 }
 
 export async function coinIdHex(value: unknown): Promise<string | null> {

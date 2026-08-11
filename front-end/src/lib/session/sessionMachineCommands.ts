@@ -1,5 +1,6 @@
 import { applyTermsToComposeDraft } from './composeDraft';
 import { gameTermsEqual, validateGameTerms } from '../gameRegistry';
+import { selectProposalGroupByDisposition } from './selectors';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -33,13 +34,17 @@ export function reduceSessionCommand(
   const betweenHand = state.model.betweenHand;
   switch (event.type) {
     case 'choose-same-terms': {
-      const cached = betweenHand.cachedPeerProposal;
+      const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
       if (cached) {
         if (gameTermsEqual(cached.terms, betweenHand.lastTerms)) {
           return {
             state,
             effects: [
-              { type: 'controller-accept-proposal', id: cached.id, context: 'choose-same-terms' },
+              {
+                type: 'controller-accept-proposal',
+                id: cached.primaryId,
+                context: 'choose-same-terms',
+              },
             ],
           };
         }
@@ -50,8 +55,11 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                cachedPeerProposal: null,
-                reviewPeerProposal: cached,
+                proposalGroups: betweenHand.proposalGroups.map((group) =>
+                  group.primaryId === cached.primaryId
+                    ? { ...group, disposition: 'incoming-review' as const }
+                    : group,
+                ),
                 mode: 'review-incoming-proposal',
               },
             },
@@ -94,7 +102,7 @@ export function reduceSessionCommand(
       };
     }
     case 'reject-current-proposal': {
-      const cached = betweenHand.cachedPeerProposal;
+      const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
       if (cached && !gameTermsEqual(cached.terms, betweenHand.lastTerms)) {
         return {
           state: {
@@ -103,8 +111,11 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                cachedPeerProposal: null,
-                reviewPeerProposal: cached,
+                proposalGroups: betweenHand.proposalGroups.map((group) =>
+                  group.primaryId === cached.primaryId
+                    ? { ...group, disposition: 'incoming-review' as const }
+                    : group,
+                ),
                 mode: 'review-incoming-proposal',
               },
             },
@@ -131,7 +142,7 @@ export function reduceSessionCommand(
           ? [
               {
                 type: 'controller-cancel-proposal',
-                id: cached.id,
+                id: cached.primaryId,
                 context: 'reject-current-proposal',
               },
             ]
@@ -160,15 +171,21 @@ export function reduceSessionCommand(
         effects: [{ type: 'controller-propose-game', terms: event.terms }],
       };
     case 'accept-review': {
-      const review = betweenHand.reviewPeerProposal;
+      const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
       if (!review) return { state, effects: [] };
       return {
         state,
-        effects: [{ type: 'controller-accept-proposal', id: review.id, context: 'accept-review' }],
+        effects: [
+          {
+            type: 'controller-accept-proposal',
+            id: review.primaryId,
+            context: 'accept-review',
+          },
+        ],
       };
     }
     case 'reject-review': {
-      const review = betweenHand.reviewPeerProposal;
+      const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
       if (!review) {
         return {
           state: {
@@ -187,7 +204,13 @@ export function reduceSessionCommand(
       }
       return {
         state,
-        effects: [{ type: 'controller-cancel-proposal', id: review.id, context: 'reject-review' }],
+        effects: [
+          {
+            type: 'controller-cancel-proposal',
+            id: review.primaryId,
+            context: 'reject-review',
+          },
+        ],
       };
     }
     case 'rejection-fallback-fired':

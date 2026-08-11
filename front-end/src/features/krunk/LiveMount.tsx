@@ -1,14 +1,18 @@
 import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
-import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
+import {
+  terminalGameHandSource,
+  type GameHandSource,
+  type GameMountRegistration,
+} from '../../lib/gameMount';
+import { selectIProposedHand } from '../../lib/session/selectors';
 import type { GameTerminalModel } from '../../lib/session/types';
 
 const Krunk = lazy(() => import('./Krunk'));
 
 export interface KrunkLiveMountProps {
-  gameObject: SessionController;
+  handSource: GameHandSource;
   currentHandGameIds: string[];
   activeGameIds: string[];
   iProposedHand: boolean;
@@ -20,7 +24,6 @@ export interface KrunkLiveMountProps {
   opponentName?: string;
   terminalsById: Record<string, GameTerminalModel>;
   amountsById: Record<string, string>;
-  interactionMode?: GameInteractionMode;
 }
 
 export function KrunkLiveMount(props: KrunkLiveMountProps) {
@@ -40,7 +43,7 @@ export const krunkMountRegistration: GameMountRegistration = {
     return (
       <KrunkLiveMount
         key={session.handKey}
-        gameObject={session.sessionController}
+        handSource={session.handSource}
         currentHandGameIds={session.currentHandGameIds}
         activeGameIds={session.activeGameIds}
         iProposedHand={session.iProposedHand}
@@ -50,18 +53,17 @@ export const krunkMountRegistration: GameMountRegistration = {
         appendGameLog={session.appendGameLog}
         terminalsById={session.gameSpecificView.terminalsById}
         amountsById={session.gameSpecificView.amountsById}
-        interactionMode={session.interactionMode}
         {...names}
       />
     );
   },
-  renderFrozen(model, gameObject, options) {
+  renderFrozen(model, options) {
     return (
       <KrunkLiveMount
-        gameObject={gameObject}
+        handSource={terminalGameHandSource(model.game.handState)}
         currentHandGameIds={model.game.currentHandIds}
         activeGameIds={model.game.activeIds}
-        iProposedHand={options.iProposedHand}
+        iProposedHand={selectIProposedHand(model)}
         gameplayEvent$={EMPTY}
         betSize={model.betweenHand.lastTerms.myContribution}
         onTurnChanged={() => {}}
@@ -72,7 +74,6 @@ export const krunkMountRegistration: GameMountRegistration = {
         amountsById={Object.fromEntries(
           Object.entries(model.game.instances).map(([id, instance]) => [id, instance.amount]),
         )}
-        interactionMode="terminal"
         myName={options.myName}
         opponentName={options.opponentName}
       />

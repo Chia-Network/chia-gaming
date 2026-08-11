@@ -25,6 +25,7 @@ function initialState(iStarted: boolean, unitSizeMojos: bigint): SpacepokerHandS
     outcome: null,
     terminalState: 'none',
     terminalRecovery: null,
+    pendingTerminalAction: null,
     coinTossIOpen: null,
     unitSizeMojos,
     displayMode: unitSizeMojos >= 1_000_000n ? 'xch' : 'mojos',
@@ -73,7 +74,7 @@ type SpacepokerReadableEvent =
   | { type: 'opponent-moved'; readable: Uint8Array }
   | { type: 'game-message'; readable: Uint8Array };
 
-export function reduceSpacepokerSettlementState(
+function reduceSpacepokerSettlementStateCore(
   current: SpacepokerHandState,
   outcome: SettlementOutcome,
 ): SpacepokerHandState {
@@ -159,6 +160,16 @@ export function reduceSpacepokerSettlementState(
     outcome: null,
     terminalState: 'settled',
     terminalRecovery: null,
+  };
+}
+
+export function reduceSpacepokerSettlementState(
+  current: SpacepokerHandState,
+  outcome: SettlementOutcome,
+): SpacepokerHandState {
+  return {
+    ...reduceSpacepokerSettlementStateCore(current, outcome),
+    pendingTerminalAction: null,
   };
 }
 
@@ -369,10 +380,12 @@ export function reduceSpacepokerDurableState(
       gameState: { ...current.gameState, myTurn: event.status === 'my-turn' },
     };
   }
-  return reduceSpacepokerFeatureState(current, {
+  const readableEvent = {
     type: event.moverShare === null ? 'game-message' : 'opponent-moved',
     readable: event.readable,
-  });
+  } as const;
+  const next = reduceSpacepokerFeatureState(current, readableEvent);
+  return readableEvent.type === 'opponent-moved' ? { ...next, pendingTerminalAction: null } : next;
 }
 
 export function validateSpacepokerTerms(terms: TermsFor<'spacepoker'>): boolean {

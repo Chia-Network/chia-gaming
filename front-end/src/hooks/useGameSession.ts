@@ -9,6 +9,7 @@ import {
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   selectGameSessionView,
   selectGameSpecificView,
+  selectIProposedHand,
   selectSessionPhase,
   sessionModelFromSave,
   type ComposeDraftState,
@@ -28,7 +29,7 @@ import {
   useTerminalSessionPresentation,
 } from '../lib/session/sessionResult';
 import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
-import { liveGameHandOrigin } from '../lib/gameMount';
+import { liveGameHandOrigin, type GameHandSource } from '../lib/gameMount';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -36,7 +37,6 @@ import { getOrCreateSessionController, initStarted, setInitStarted } from './blo
 import type { SessionController } from './SessionController';
 import type { SessionSave } from './save';
 import { getDefaultFee, getPlayerId } from './save';
-import { createFrozenHandBridge } from './frozenHandBridge';
 
 export type {
   GameplayEvent,
@@ -46,20 +46,13 @@ export type {
   QueuedNotification,
 } from '../lib/session/gameSessionEvents';
 export {
-  activeIdsAfterProposalAccepted,
-  clearProposalTerms,
-  clearProposalTracking,
   dispatchWasmNotification,
   gameplayEventForActionFailed,
   gameplayEventForGameActionError,
   gameplayEventForMoveRejected,
   gameplayEventsForGameStatus,
-  outgoingProposalGroups,
-  outgoingProposalTerms,
   parseGameStatusTerminalInfo,
   parseTermsFromNotificationValue,
-  proposalGroupMap,
-  removeProposalGroupFromHand,
   settledEventForInfo,
   terminalInfoFromGameSettled,
 } from '../lib/session/gameSessionEvents';
@@ -128,14 +121,14 @@ export function useGameSession(
   const { iStarted, perGameAmount } = params;
   const terminalState = useTerminalSessionPresentation(terminalPresentation);
   const terminalMode = terminalState.presentation != null;
-  const frozenBridge = useMemo(
-    () => createFrozenHandBridge(terminalState.presentation?.model.game.handState ?? null),
-    [terminalState.presentation?.model.game.handState],
+  const liveHandSource = useMemo<GameHandSource>(
+    () => ({ interactionMode: 'live', controller }),
+    [controller],
   );
 
   const restoredModel = useMemo(
-    () => (sessionSave ? sessionModelFromSave(sessionSave, perGameAmount) : null),
-    [sessionSave, perGameAmount],
+    () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
+    [sessionSave],
   );
   const restoredHandKeyRef = useRef<number | null>(null);
   const gameplaySubject = useRef(new Subject<GameplayEvent>()).current;
@@ -157,8 +150,9 @@ export function useGameSession(
           },
         }),
       {
-        firstGameAccepted: sessionSave?.channelStatus?.state === 'Active',
-        iProposedHand: sessionSave?.iProposedHand ?? false,
+        firstGameAccepted:
+          sessionSave?.phase === 'live' &&
+          sessionSave.presentation.channelStatus?.state === 'Active',
       },
     );
   }, [controller, perGameAmount, restoredModel, sessionSave]);
@@ -212,9 +206,14 @@ export function useGameSession(
     controller.onFeatureStateTransition = (gameType, id, state) => {
       return runtime.transitionFeatureState(gameType, id, state);
     };
+    controller.onFeatureStateWithLocalTurnTransition = (gameType, id, state, isMyTurn) =>
+      runtime.transitionFeatureStateWithLocalTurn(gameType, id, state, isMyTurn);
+    controller.onLocalGameAction = (request) => runtime.commitLocalGameAction(request);
     controller.onSaveNeeded = () => runtime.persist();
     return () => {
       controller.onFeatureStateTransition = null;
+      controller.onFeatureStateWithLocalTurnTransition = null;
+      controller.onLocalGameAction = null;
       controller.onSaveNeeded = null;
     };
   }, [controller, dispatch, runtime, terminalMode]);
@@ -335,17 +334,16 @@ export function useGameSession(
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,
-    iProposedHand: coordination.iProposedHand,
+    iProposedHand: selectIProposedHand(model),
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
-    sessionController: controller,
+    handSource: liveHandSource,
     gameplayEvent$,
     appendGameLog,
     onHandOutcome,
     onTurnChanged,
     betweenHandMode: model.betweenHand.mode,
-    cachedPeerProposal: model.betweenHand.cachedPeerProposal,
-    reviewPeerProposal: model.betweenHand.reviewPeerProposal,
+    incomingProposalGroup: view.incomingProposalGroup,
     lastHandTerms: model.betweenHand.lastTerms,
     composeDraftState: compose,
     chooseNewHandSameTerms: () => dispatch({ type: 'choose-same-terms' }),
@@ -366,7 +364,10 @@ export function useGameSession(
     goOnChain: () => dispatch({ type: 'go-on-chain' }),
     betweenHands: view.betweenHands,
     lastOutcomeWin: coordination.lastOutcomeWin,
-    restoredOutcomeWin: sessionSave?.lastOutcomeWin,
+    restoredOutcomeWin:
+      sessionSave?.phase === 'live' || sessionSave?.phase === 'terminal'
+        ? (sessionSave.presentation.lastOutcomeWin ?? undefined)
+        : undefined,
     restoreStatus: model.restore.status,
     restoreError: model.restore.error,
     sessionPhase,
@@ -375,15 +376,8 @@ export function useGameSession(
     dismissChannel: () => dispatch({ type: 'dismiss-channel' }),
     dismissGame: () => dispatch({ type: 'dismiss-game-notification' }),
     gameSpecificView,
-    interactionMode: 'live',
   };
   return terminalState.presentation
-    ? projectTerminalSessionResult(
-        liveResult,
-        terminalState.presentation,
-        frozenBridge,
-        EMPTY,
-        terminalState,
-      )
+    ? projectTerminalSessionResult(liveResult, terminalState.presentation, EMPTY, terminalState)
     : liveResult;
 }

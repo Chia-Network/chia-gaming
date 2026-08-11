@@ -1,12 +1,20 @@
 import { EMPTY } from 'rxjs';
 
 import type { SessionController } from '../../hooks/SessionController';
-import { createFrozenHandBridge } from '../../hooks/frozenHandBridge';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
 import { GAME_MOUNTS, hasGameMount } from '../gameMountRegistry';
-import { liveGameHandOrigin } from '../gameMount';
+import {
+  gameHandState,
+  liveGameHandOrigin,
+  requireLiveGameHandSource,
+  terminalGameHandSource,
+  type GameHandSource,
+} from '../gameMount';
 import { createSessionModel, type SessionModel } from '../session/model';
 import { projectTerminalSessionResult } from '../session/sessionResult';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import type { PersistedGameState } from '../session/gameStateCodec';
 
 describe('game mount registry', () => {
   it('recognizes registered keys and rejects unknown mounts', () => {
@@ -19,7 +27,7 @@ describe('game mount registry', () => {
 
   it('gives each Krunk hand a fresh React lifecycle', () => {
     const session = {
-      sessionController: {},
+      handSource: { interactionMode: 'live', controller: {} },
       currentHandGameIds: ['1', '3'],
       activeGameIds: ['1', '3'],
       iProposedHand: true,
@@ -47,29 +55,151 @@ describe('game mount registry', () => {
     expect(liveGameHandOrigin(4, 5)).toBe('fresh');
   });
 
-  it('keeps frozen hand state opaque to React prop diagnostics', () => {
+  it.each([
+    [
+      'calpoker',
+      ['1'],
+      { gameType: 'calpoker', myContribution: 10n, theirContribution: 10n, gameTimeout: 15n },
+    ],
+    [
+      'spacepoker',
+      ['1'],
+      {
+        gameType: 'spacepoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
+      },
+    ],
+    [
+      'krunk',
+      ['1', '2'],
+      { gameType: 'krunk', myContribution: 100n, theirContribution: 100n, gameTimeout: 15n },
+    ],
+  ] as const)(
+    'projects machine-owned %s state into live mounts and reset',
+    (gameType, ids, terms) => {
+      const formerControllerState: PersistedGameState = {
+        gameType: 'calpoker',
+        version: 1n,
+        state: { moveNumber: 99n },
+      };
+      let readHandState = () => formerControllerState;
+      const controller = {
+        get handState() {
+          return readHandState();
+        },
+        projectHandState(read: () => PersistedGameState | null) {
+          readHandState = read;
+          return () => {};
+        },
+        clearDerivedGamePresentation: () => {},
+      } as unknown as SessionController;
+      const runtime = new SessionMachineRuntime(
+        createSessionMachineState(
+          createSessionModel({
+            betweenHand: {
+              proposalGroups: [
+                {
+                  primaryId: ids[0],
+                  memberIds: [...ids],
+                  terms,
+                  origin: 'local',
+                  disposition: 'outgoing',
+                },
+              ],
+            },
+          }),
+        ),
+        {
+          controller,
+          iStarted: true,
+          restoring: false,
+          getRestoreStatus: () => 'idle',
+          getRestoreError: () => null,
+          emitGameplay: () => {},
+          onError: (error) => {
+            throw error;
+          },
+          persist: async () => {},
+        },
+      );
+      runtime.dispatch({
+        type: 'notification-accepted-group',
+        id: ids[0],
+        amount: String(terms.myContribution),
+        iStarted: true,
+      });
+      const model = runtime.getState().model;
+      const terminal = model.game.instances[ids[0]].terminal;
+      const mount = GAME_MOUNTS[gameType].renderLive(
+        {
+          handSource: { interactionMode: 'live', controller },
+          handKey: model.game.handKey,
+          activeGameId: ids[0],
+          currentHandGameIds: [...ids],
+          activeGameIds: [...ids],
+          iStarted: true,
+          playerNumber: 1,
+          iProposedHand: true,
+          gameplayEvent$: EMPTY,
+          currentHandAmount: terms.myContribution,
+          onHandOutcome: () => {},
+          onTurnChanged: () => {},
+          appendGameLog: () => {},
+          lastHandTerms: terms,
+          gameSpecificView: {
+            gameType,
+            displayGameId: ids[0],
+            handState: model.game.handState,
+            terminal,
+            terminalsById: Object.fromEntries(
+              ids.map((id) => [id, model.game.instances[id].terminal]),
+            ),
+            amountsById: Object.fromEntries(ids.map((id) => [id, model.game.instances[id].amount])),
+          },
+        } as unknown as UseGameSessionResult,
+        {},
+      );
+
+      expect(mount.props.handSource.controller.handState).toBe(model.game.handState);
+      expect(mount.props.handSource.controller.handState).not.toBe(formerControllerState);
+
+      runtime.dispatch({ type: 'notification-abandoned' });
+      expect(controller.handState).toBeNull();
+      runtime.dispose();
+    },
+  );
+
+  it('exposes terminal hand state as a readonly source without a controller', () => {
     const initial = {
       gameType: 'calpoker',
       version: 1n,
       state: { playerHand: [1n] },
     } as const;
-    const next = {
-      gameType: 'calpoker',
-      version: 1n,
-      state: { playerHand: [2n] },
-    } as const;
-    const bridge = createFrozenHandBridge(initial);
+    const source: GameHandSource = terminalGameHandSource(initial);
 
-    expect(Object.prototype.propertyIsEnumerable.call(bridge, 'handState')).toBe(false);
-    expect(bridge.handState).toBe(initial);
-    bridge.handState = next;
-    expect(bridge.handState).toBe(next);
+    if (source.interactionMode !== 'terminal') throw new Error('expected terminal source');
+    function assertReadonly(terminal: Extract<GameHandSource, { interactionMode: 'terminal' }>) {
+      // @ts-expect-error terminal hand state is a readonly contract
+      terminal.handState = null;
+    }
+    void assertReadonly;
+    expect(source.handState).toBe(initial);
+    expect(Object.keys(source)).not.toContain('handState');
+    expect(Object.isFrozen(source)).toBe(true);
+    expect(source).not.toHaveProperty('controller');
+    expect(() => requireLiveGameHandSource(source)).toThrow(
+      'Protocol commands require a live game hand source',
+    );
   });
 
   it('mounts finished Krunk hands without interactive protocol effects', () => {
     const model = {
       game: {
         currentHandIds: ['1', '3'],
+        currentHandOrigin: 'local',
         activeIds: ['3'],
         handState: { gameType: 'krunk', version: 2n, state: { games: {} } },
         instances: {},
@@ -77,16 +207,19 @@ describe('game mount registry', () => {
       betweenHand: { lastTerms: { myContribution: 100n } },
     } as unknown as SessionModel;
 
-    const mount = GAME_MOUNTS.krunk.renderFrozen(model, {} as SessionController, {
+    const mount = GAME_MOUNTS.krunk.renderFrozen(model, {
       iStarted: true,
-      iProposedHand: true,
     });
 
     expect(mount.props).toMatchObject({
       currentHandGameIds: ['1', '3'],
       activeGameIds: ['3'],
-      interactionMode: 'terminal',
+      handSource: {
+        interactionMode: 'terminal',
+        handState: model.game.handState,
+      },
     });
+    expect(mount.props).not.toHaveProperty('gameObject');
   });
 
   it.each([
@@ -107,6 +240,7 @@ describe('game mount registry', () => {
         game: {
           handKey: 7,
           currentHandIds: gameType === 'krunk' ? ['1', '2'] : ['1'],
+          currentHandOrigin: 'local',
           activeIds: [],
           lastDisplayedId: '1',
           activeGameType: gameType,
@@ -132,7 +266,7 @@ describe('game mount registry', () => {
       const realMakeMove = jest.fn();
       const realController = { makeMove: realMakeMove } as unknown as SessionController;
       const live = {
-        sessionController: realController,
+        handSource: { interactionMode: 'live', controller: realController },
         handKey: 7,
         handOrigin: 'restored',
         currentHandGameIds: model.game.currentHandIds,
@@ -147,7 +281,6 @@ describe('game mount registry', () => {
         onTurnChanged: () => {},
         appendGameLog: () => {},
         lastHandTerms: terms,
-        interactionMode: 'live',
         gameSpecificView: {
           gameType,
           displayGameId: '1',
@@ -157,13 +290,7 @@ describe('game mount registry', () => {
           amountsById: { '1': '100' },
         },
       } as unknown as UseGameSessionResult;
-      const bridge = createFrozenHandBridge(model.game.handState);
-      const terminal = projectTerminalSessionResult(
-        live,
-        { model, iStarted: true, iProposedHand: true },
-        bridge,
-        EMPTY,
-      );
+      const terminal = projectTerminalSessionResult(live, { model, iStarted: true }, EMPTY);
 
       const liveMount = GAME_MOUNTS[gameType].renderLive(live, {});
       const terminalMount = GAME_MOUNTS[gameType].renderLive(terminal, {});
@@ -171,15 +298,18 @@ describe('game mount registry', () => {
       expect(terminalMount.type).toBe(liveMount.type);
       expect(terminalMount.key).toBe(liveMount.key);
       expect(terminalMount.key).toBe('7');
-      expect(terminalMount.props.interactionMode).toBe('terminal');
+      expect(terminalMount.props.handSource.interactionMode).toBe('terminal');
       expect(liveMount.props.initialPersistedState).toBeUndefined();
       expect(terminalMount.props.initialPersistedState).toBeUndefined();
       if (gameType === 'calpoker') {
         expect(liveMount.props.handOrigin).toBe('restored');
         expect(terminalMount.props.handOrigin).toBe('terminal');
       }
-      expect(terminal.sessionController).toBe(bridge);
-      terminal.sessionController.makeMove('1', null);
+      expect(terminal.handSource.interactionMode).toBe('terminal');
+      expect(gameHandState(terminal.handSource)).toBe(model.game.handState);
+      expect(() => requireLiveGameHandSource(terminal.handSource).makeMove('1', null)).toThrow(
+        'Protocol commands require a live game hand source',
+      );
       expect(realMakeMove).not.toHaveBeenCalled();
     },
   );

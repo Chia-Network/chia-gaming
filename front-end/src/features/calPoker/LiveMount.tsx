@@ -1,12 +1,8 @@
 import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
-import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type {
-  GameHandOrigin,
-  GameInteractionMode,
-  GameMountRegistration,
-} from '../../lib/gameMount';
+import type { GameHandSource, GameHandOrigin, GameMountRegistration } from '../../lib/gameMount';
+import { gameHandState, terminalGameHandSource } from '../../lib/gameMount';
 import { formatAmount } from '../../util';
 import type {
   CalpokerDisplaySnapshotView,
@@ -20,7 +16,7 @@ import type { GameTerminalModel } from '../../lib/session/types';
 const Calpoker = lazy(() => import('./index'));
 
 export interface CalpokerLiveMountProps {
-  gameObject: SessionController;
+  handSource: GameHandSource;
   gameId: string;
   iStarted: boolean;
   playerNumber: number;
@@ -32,7 +28,6 @@ export interface CalpokerLiveMountProps {
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
-  interactionMode?: GameInteractionMode;
   handOrigin?: GameHandOrigin;
 }
 
@@ -76,7 +71,7 @@ function outcomeView(outcome: CalpokerOutcome | undefined): CalpokerOutcomeView 
 
 export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
   const {
-    gameObject,
+    handSource,
     gameId,
     iStarted,
     playerNumber,
@@ -88,7 +83,6 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     myName,
     opponentName,
     terminal,
-    interactionMode = 'live',
     handOrigin = 'fresh',
   } = props;
   const handleTurnChanged = useCallback(
@@ -96,15 +90,14 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     [gameId, onTurnChanged],
   );
   const hand = useCalpokerHand(
-    gameObject,
+    handSource,
     gameId,
     iStarted,
     gameplayEvent$,
     onOutcome,
     handleTurnChanged,
     terminal,
-    gameObject.handState ?? undefined,
-    interactionMode === 'live',
+    gameHandState(handSource) ?? undefined,
     handOrigin,
   );
   const handleGameLog = useCallback(
@@ -142,7 +135,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       myName={myName}
       opponentName={opponentName}
       terminalOutcome={hand.terminalOutcome}
-      interactionMode={interactionMode}
+      interactionMode={handSource.interactionMode}
     />
   );
 }
@@ -153,7 +146,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
     return (
       <CalpokerLiveMount
         key={session.handKey}
-        gameObject={session.sessionController}
+        handSource={session.handSource}
         gameId={gameId}
         iStarted={session.iStarted}
         playerNumber={session.playerNumber}
@@ -163,13 +156,12 @@ export const calpokerMountRegistration: GameMountRegistration = {
         appendGameLog={session.appendGameLog}
         perGameAmount={session.currentHandAmount}
         terminal={session.gameSpecificView.terminal}
-        interactionMode={session.interactionMode}
         handOrigin={session.handOrigin}
         {...names}
       />
     );
   },
-  renderFrozen(model, gameObject, options) {
+  renderFrozen(model, options) {
     const gameId =
       model.game.lastDisplayedId ??
       model.game.currentHandIds[0] ??
@@ -177,7 +169,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
       'finished';
     return (
       <CalpokerLiveMount
-        gameObject={gameObject}
+        handSource={terminalGameHandSource(model.game.handState)}
         gameId={gameId}
         iStarted={options.iStarted}
         playerNumber={options.iStarted ? 1 : 2}
@@ -187,7 +179,6 @@ export const calpokerMountRegistration: GameMountRegistration = {
         appendGameLog={() => {}}
         perGameAmount={model.betweenHand.lastTerms.myContribution}
         terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
-        interactionMode="terminal"
         handOrigin="terminal"
         myName={options.myName}
         opponentName={options.opponentName}

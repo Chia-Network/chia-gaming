@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { EMPTY } from 'rxjs';
+import { EMPTY, Subject } from 'rxjs';
 
 import {
   isTerminalSpacepokerHandler,
@@ -17,20 +17,22 @@ import {
   useSpacepokerHand,
   type UseSpacepokerHandResult,
 } from './useSpacepokerHand';
+import { spacePokerRankLabel } from './handPresentation';
 import {
   spacePokerFooterStatus,
-  spacePokerRankLabel,
   spacePokerTerminalBanners,
   spacePokerTerminalCommentary,
   spacePokerTransitionCommentary,
-} from './SpacePoker';
+} from './statusPresentation';
 import {
   gameplayEventForActionFailed,
   gameplayEventForGameActionError,
+  type GameplayEvent,
 } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import { decodeGameFeatureState } from '../../lib/gameRegistry';
 import { INITIAL_GAME_TERMINAL_MODEL } from '../../lib/session/model';
+import type { LocalGameActionRequest } from '../../lib/session/sessionMachineTypes';
 import { spacepokerStateCodec } from './stateCodec';
 
 describe('Space Poker terminal UX', () => {
@@ -289,19 +291,23 @@ describe('Space Poker feature-state authority', () => {
         outcome: null,
         terminalState: 'none',
         terminalRecovery: null,
+        pendingTerminalAction: null,
         coinTossIOpen: true,
         unitSizeMojos: 10n,
         displayMode: 'units',
       }),
       isChannelReady: () => true,
       transitionFeatureState: () => false,
+      commitLocalGameAction: () => {
+        throw new Error('check rejected');
+      },
       makeMove,
     } as unknown as SessionController;
     let hand: UseSpacepokerHandResult | undefined;
 
     function Harness() {
       hand = useSpacepokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         '7',
         false,
         EMPTY,
@@ -317,9 +323,7 @@ describe('Space Poker feature-state authority', () => {
     act(() => {
       renderer = create(React.createElement(Harness));
     });
-    act(() => {
-      hand?.handleCheck();
-    });
+    expect(() => act(() => hand?.handleCheck())).toThrow('check rejected');
 
     expect(hand?.gameState).toEqual({ handler: SpHandler.MidRound, myTurn: true, N: 3n });
     expect(hand?.handHistory).toEqual([]);
@@ -327,8 +331,59 @@ describe('Space Poker feature-state authority', () => {
     expect(onTurnChanged).not.toHaveBeenCalled();
   });
 
+  it('surfaces an automatic command failure instead of swallowing it', () => {
+    const controller = {
+      handState: spacepokerStateCodec.encode({
+        gameState: { handler: SpHandler.CommitA, myTurn: true, N: 4n },
+        playerHoleCards: null,
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [null, null, null, null, null],
+        halfPot: 1n,
+        lastRaise: 0n,
+        iRaisedLast: false,
+        handHistory: [],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        pendingTerminalAction: null,
+        coinTossIOpen: null,
+        unitSizeMojos: 10n,
+        displayMode: 'units',
+      }),
+      isChannelReady: () => true,
+      commitLocalGameAction: () => {
+        throw new Error('autoplay rejected');
+      },
+    } as unknown as SessionController;
+
+    function Harness() {
+      useSpacepokerHand(
+        { interactionMode: 'live', controller },
+        '7',
+        false,
+        EMPTY,
+        100n,
+        10n,
+        () => {},
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    expect(() =>
+      act(() => {
+        renderer = create(React.createElement(Harness));
+      }),
+    ).toThrow('autoplay rejected');
+  });
+
   it('commits a fold and its terminal presentation as one codec-valid state', () => {
     const acceptSettlement = jest.fn();
+    const gameplayEvents = new Subject<GameplayEvent>();
+    const onTurnChanged = jest.fn();
     const transitions: unknown[] = [];
     const controller = {
       handState: spacepokerStateCodec.encode({
@@ -345,6 +400,7 @@ describe('Space Poker feature-state authority', () => {
         outcome: null,
         terminalState: 'none',
         terminalRecovery: null,
+        pendingTerminalAction: null,
         coinTossIOpen: true,
         unitSizeMojos: 10n,
         displayMode: 'units',
@@ -354,19 +410,28 @@ describe('Space Poker feature-state authority', () => {
         transitions.push(state);
         return decodeGameFeatureState('spacepoker', state) !== null;
       },
+      transitionFeatureStateWithLocalTurn: (_gameType: string, _gameId: string, state: unknown) => {
+        transitions.push(state);
+        return decodeGameFeatureState('spacepoker', state) !== null;
+      },
+      commitLocalGameAction: (request: LocalGameActionRequest) => {
+        if (request.command.type !== 'accept-settlement') throw new Error('unexpected command');
+        acceptSettlement(request.id);
+        transitions.push(request.state);
+      },
       acceptSettlement,
     } as unknown as SessionController;
     let hand: UseSpacepokerHandResult | undefined;
 
     function Harness() {
       hand = useSpacepokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         '7',
         false,
-        EMPTY,
+        gameplayEvents,
         100n,
         10n,
-        jest.fn(),
+        onTurnChanged,
         INITIAL_GAME_TERMINAL_MODEL,
         controller.handState ?? undefined,
       );
@@ -385,8 +450,35 @@ describe('Space Poker feature-state authority', () => {
       gameState: { handler: SpHandler.Folded, myTurn: false, N: 3n },
       terminalState: 'folded-by-you',
       handHistory: [{ player: 'you', action: 'fold' }],
+      pendingTerminalAction: {
+        action: 'fold',
+        submission: 'accept-settlement',
+        previousTerminalState: 'none',
+        previousGameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+      },
     });
     expect(acceptSettlement).toHaveBeenCalledWith('7');
+    expect(onTurnChanged).not.toHaveBeenCalled();
+
+    act(() => {
+      gameplayEvents.next({
+        GameError: {
+          gameId: '7',
+          action: 'accept-settlement',
+          reason: 'cannot accept',
+          source: 'action',
+        },
+      });
+    });
+
+    expect(transitions).toHaveLength(2);
+    expect(decodeGameFeatureState('spacepoker', transitions[1])).toMatchObject({
+      gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+      terminalState: 'none',
+      handHistory: [],
+      pendingTerminalAction: null,
+    });
+    expect(onTurnChanged).not.toHaveBeenCalled();
   });
 
   it('omits the check-only endsStreet flag when calling a raise', () => {
@@ -407,6 +499,7 @@ describe('Space Poker feature-state authority', () => {
         outcome: null,
         terminalState: 'none',
         terminalRecovery: null,
+        pendingTerminalAction: null,
         coinTossIOpen: true,
         unitSizeMojos: 10n,
         displayMode: 'units',
@@ -416,13 +509,18 @@ describe('Space Poker feature-state authority', () => {
         transitions.push(state);
         return decodeGameFeatureState('spacepoker', state) !== null;
       },
+      commitLocalGameAction: (request: LocalGameActionRequest) => {
+        if (request.command.type !== 'make-move') throw new Error('unexpected command');
+        makeMove(request.id, request.command.readable);
+        transitions.push(request.state);
+      },
       makeMove,
     } as unknown as SessionController;
     let hand: UseSpacepokerHandResult | undefined;
 
     function Harness() {
       hand = useSpacepokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         '7',
         false,
         EMPTY,

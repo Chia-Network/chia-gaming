@@ -1,13 +1,14 @@
+import type { Program } from 'clvm-lib';
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
-import type { PersistedGameState } from './gameStateCodec';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameSliceAction } from './gameSlice';
 import type { GameplayEvent } from './gameSessionEvents';
 import type {
   BetweenHandModeModel,
-  BetweenHandProposalModel,
   GameTerminalModel,
   HandTermsModel,
+  ProposalGroupDisposition,
+  ProposalGroupModel,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
@@ -21,10 +22,7 @@ export interface SessionMachineCoordination {
   firstGameAccepted: boolean;
   sameTermsRequested: boolean;
   expectingCounterProposal: boolean;
-  iProposedHand: boolean;
   lastOutcomeWin?: OutcomeWin;
-  proposalTermsById: Record<string, HandTermsModel>;
-  proposalGroupIdsById: Record<string, string[]>;
   nextNotificationId: bigint;
   rejectionTimerGeneration: number;
   channelEnrichmentGeneration: number;
@@ -35,6 +33,18 @@ export interface SessionMachineCoordination {
 export interface SessionMachineState {
   model: SessionModel;
   coordination: SessionMachineCoordination;
+}
+
+export type LocalGameCommand =
+  | { type: 'make-move'; readable: Program | null }
+  | { type: 'accept-settlement' }
+  | { type: 'cheat'; moverShare: bigint };
+
+export interface LocalGameActionRequest {
+  gameType: RegisteredGameType;
+  id: string;
+  state: unknown;
+  command: LocalGameCommand;
 }
 
 export type SessionControllerCommand =
@@ -69,7 +79,6 @@ export type SessionMachineEffect =
       coin: unknown;
       channelState?: ChannelStatus;
     }
-  | { type: 'set-hand-state'; state: PersistedGameState | null }
   | { type: 'clear-derived-game-presentation' };
 
 export type SessionMachineEvent =
@@ -98,8 +107,12 @@ export type SessionMachineEvent =
   | { type: 'dismiss-channel' }
   | { type: 'dismiss-game-notification' }
   | { type: 'set-between-hand-mode'; mode: BetweenHandModeModel }
-  | { type: 'set-cached-proposal'; proposal: BetweenHandProposalModel | null }
-  | { type: 'set-review-proposal'; proposal: BetweenHandProposalModel | null }
+  | { type: 'upsert-proposal-group'; group: ProposalGroupModel }
+  | {
+      type: 'set-proposal-disposition';
+      primaryId: string;
+      disposition: ProposalGroupDisposition;
+    }
   | { type: 'set-rejected-terms'; terms: HandTermsModel | null }
   | { type: 'set-last-terms'; terms: HandTermsModel }
   | { type: 'set-pending-retry-terms'; terms: HandTermsModel | null }
@@ -113,24 +126,16 @@ export type SessionMachineEvent =
       draft: Partial<ComposeDraftState['spacepoker']>;
     }
   | { type: 'set-compose-proposal-sent'; sent: boolean }
-  | { type: 'track-proposal'; ids: string[]; terms: HandTermsModel; outgoing: boolean }
   | { type: 'clear-proposals'; ids?: readonly string[] }
-  | { type: 'begin-accepted-group'; groupIds: string[] }
-  | { type: 'finish-proposal-wave' }
-  | { type: 'remove-accepted-group'; groupIds: readonly string[] }
   | { type: 'set-same-terms-requested'; requested: boolean }
   | { type: 'set-expecting-counter-proposal'; expecting: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
-  | { type: 'set-i-proposed-hand'; proposed: boolean }
   | { type: 'set-last-outcome'; outcomeWin: OutcomeWin }
   | { type: 'hand-outcome'; outcomeWin: OutcomeWin }
   | {
       type: 'notification-accepted-group';
       id: string;
-      groupIds: string[];
       amount: string;
-      terms: HandTermsModel;
-      weProposed: boolean;
       iStarted: boolean;
     }
   | {
@@ -146,7 +151,6 @@ export type SessionMachineEvent =
   | {
       type: 'notification-insufficient-balance';
       id: string;
-      groupIds: string[];
       notification: QueuedNotificationModel;
     }
   | { type: 'notification-abandoned' }
@@ -155,6 +159,19 @@ export type SessionMachineEvent =
       gameType: RegisteredGameType;
       id: string;
       state: unknown;
+    }
+  | {
+      type: 'local-game-action-committed';
+      gameType: RegisteredGameType;
+      id: string;
+      state: unknown;
+    }
+  | {
+      type: 'feature-state-with-local-turn';
+      gameType: RegisteredGameType;
+      id: string;
+      state: unknown;
+      isMyTurn: boolean;
     }
   | { type: 'durable-local-turn'; id: string; isMyTurn: boolean; channelState: ChannelStatus }
   | { type: 'request-accept-proposal'; id: string }

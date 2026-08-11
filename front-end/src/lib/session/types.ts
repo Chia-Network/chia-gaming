@@ -132,10 +132,19 @@ export type HandTermsModel =
   | (HandTermsBaseModel & { gameType: 'spacepoker'; unitSizeMojos: bigint })
   | (HandTermsBaseModel & { gameType: 'krunk' });
 
-export interface BetweenHandProposalModel {
-  id: string;
-  groupIds: string[];
+export type ProposalGroupOrigin = 'local' | 'peer';
+export type ProposalGroupDisposition =
+  | 'outgoing'
+  | 'incoming-cached'
+  | 'incoming-review'
+  | 'accepted';
+
+export interface ProposalGroupModel {
+  primaryId: string;
+  memberIds: string[];
   terms: HandTermsModel;
+  origin: ProposalGroupOrigin;
+  disposition: ProposalGroupDisposition;
 }
 
 export type BetweenHandModeModel = 'decision' | 'compose-proposal' | 'review-incoming-proposal';
@@ -163,6 +172,7 @@ export interface GameModel {
   handKey: number;
   activeIds: string[];
   currentHandIds: string[];
+  currentHandOrigin: ProposalGroupOrigin | null;
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
@@ -172,16 +182,11 @@ export interface GameModel {
 
 export interface BetweenHandModel {
   mode: BetweenHandModeModel;
-  cachedPeerProposal: BetweenHandProposalModel | null;
-  reviewPeerProposal: BetweenHandProposalModel | null;
+  proposalGroups: ProposalGroupModel[];
   rejectedOnceTerms: HandTermsModel | null;
   lastTerms: HandTermsModel;
   compose: ComposeDraftState;
   newHandRequested: boolean;
-  outgoingProposalIds: string[];
-  outgoingProposalGroupIds: string[][];
-  acceptedProposalGroupIds: string[][];
-  outgoingProposalTerms: Record<string, HandTermsModel>;
   pendingRetryTerms: HandTermsModel | null;
 }
 

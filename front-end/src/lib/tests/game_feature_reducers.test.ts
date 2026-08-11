@@ -50,7 +50,7 @@ const acceptedSpacepoker = (): DurableGameStateEvent => ({
   id: 'space-1',
   groupIds: ['space-1'],
   iStarted: false,
-  iProposedHand: true,
+  origin: 'local',
   terms: {
     gameType: 'spacepoker',
     myContribution: 1_000n,
@@ -71,6 +71,28 @@ function applyReadable(state: SpacepokerHandState, payload: Uint8Array): Spacepo
 }
 
 describe('canonical feature gameplay reducers', () => {
+  it.each([
+    ['local', 'alice', 'bob'],
+    ['peer', 'bob', 'alice'],
+  ] as const)('assigns ordered Krunk roles from %s proposal origin', (origin, first, second) => {
+    const state = reduceKrunkDurableState(null, {
+      type: 'accepted-group',
+      id: 'krunk-1',
+      groupIds: ['krunk-1', 'krunk-2'],
+      iStarted: false,
+      origin,
+      terms: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+      },
+    });
+
+    expect(state?.games['krunk-1'].role).toBe(first);
+    expect(state?.games['krunk-2'].role).toBe(second);
+  });
+
   it('keeps Space Poker streets, board, betting, and codec projection identical at every step', () => {
     let state = reduceSpacepokerDurableState(null, acceptedSpacepoker());
     state = assertCodecValid(state);
@@ -702,7 +724,7 @@ describe('canonical feature gameplay reducers', () => {
       id: 'krunk-3',
       groupIds: ['krunk-3', 'krunk-4'],
       iStarted: true,
-      iProposedHand: true,
+      origin: 'local',
       terms: {
         gameType: 'krunk',
         myContribution: 100n,

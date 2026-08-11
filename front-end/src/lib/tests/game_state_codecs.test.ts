@@ -56,12 +56,28 @@ describe('game-owned state codecs', () => {
       outcome: null,
       terminalState: 'none' as const,
       terminalRecovery: null,
+      pendingTerminalAction: null,
       coinTossIOpen: null,
       unitSizeMojos: 10n,
       displayMode: 'mojos' as const,
     };
     const encoded = spacepokerStateCodec.encode(state);
     expect(spacepokerStateCodec.decode(encoded)).toEqual(state);
+    const pendingFold = {
+      ...state,
+      gameState: { handler: SpHandler.Folded, myTurn: false, N: 3n },
+      handHistory: [{ player: 'you' as const, action: 'fold' as const }],
+      terminalState: 'folded-by-you' as const,
+      pendingTerminalAction: {
+        action: 'fold' as const,
+        submission: 'accept-settlement' as const,
+        previousTerminalState: 'none' as const,
+        previousGameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+      },
+    };
+    expect(spacepokerStateCodec.decode(spacepokerStateCodec.encode(pendingFold))).toEqual(
+      pendingFold,
+    );
     expect(
       spacepokerStateCodec.decode({
         ...encoded,

@@ -37,6 +37,7 @@ import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
 } from '../session/terminalFinalization';
+import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
 const testIndexedDb = indexedDB;
 const liveCradle = new Uint8Array([1, 2, 3]);
@@ -101,6 +102,7 @@ const model = createSessionModel({
   game: {
     activeIds: [],
     currentHandIds: ['game-1'],
+    currentHandOrigin: 'local',
     lastDisplayedId: 'game-1',
     activeGameType: 'calpoker',
     handState,
@@ -132,7 +134,7 @@ const model = createSessionModel({
 
 function makeController(events: string[]): SessionController {
   return {
-    handState,
+    handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
     flushPendingSave: async () => {
       events.push('controller-flush');
     },
@@ -140,7 +142,7 @@ function makeController(events: string[]): SessionController {
 }
 
 async function seedLiveSession(): Promise<void> {
-  saveSession({
+  const live = liveSave({
     serializedGameSession: liveCradle,
     gameSessionSchemaVersion: 3n,
     pairingToken: 'live-token',
@@ -156,8 +158,32 @@ async function seedLiveSession(): Promise<void> {
     unackedMessages: [],
     activeGameIds: [],
   });
+  if (live.phase !== 'live') throw new Error('expected live fixture');
+  saveSession({
+    scope: 'live',
+    pairing: live.pairing,
+    live: live.live,
+    presentation: live.presentation,
+    history: live.history,
+  });
   await flushSessionSave();
   markSavedSession();
+}
+
+function terminalUpdate(fields: {
+  channelStatus: { state: string };
+  coinsOfInterest: Array<{ label: string; id: string }>;
+}) {
+  const complete = baseSave({
+    channelStatus: fields.channelStatus,
+    coinsOfInterest: fields.coinsOfInterest,
+    terminalIStarted: false,
+  });
+  if (complete.phase !== 'terminal') throw new Error('expected terminal fixture');
+  return {
+    terminal: complete.terminal,
+    presentation: complete.presentation,
+  };
 }
 
 beforeEach(async () => {
@@ -186,7 +212,6 @@ function finalizationArgs(controller: SessionController) {
       myName: 'Alice',
       opponentName: 'Bob',
       iStarted: true,
-      iProposedHand: true,
     },
     coins: [{ label: 'Reward coin', id: 'coin-1' }],
   };
@@ -223,7 +248,11 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   await Promise.resolve();
 
   expect(teardown).not.toHaveBeenCalled();
-  expect((await readSessionRecord())?.serializedGameSession).toEqual(liveCradle);
+  const liveRecord = await readSessionRecord();
+  const decodedLiveRecord = liveRecord ? decodeSessionSaveEnvelope(liveRecord).save : null;
+  expect(
+    decodedLiveRecord?.phase === 'live' && decodedLiveRecord.live.serializedGameSession,
+  ).toEqual(liveCradle);
 
   releaseWrite();
   await first;
@@ -241,26 +270,55 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   _resetForTests();
   const restored = await peekSession();
   expect(restored).toMatchObject({
-    terminalIStarted: true,
-    iProposedHand: true,
-    myAlias: 'Alice',
-    opponentAlias: 'Bob',
-    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    activeGameIds: [],
-    currentHandGameIds: ['game-1'],
-    lastDisplayedGameId: 'game-1',
+    phase: 'terminal',
+    terminal: {
+      iStarted: true,
+      myAlias: 'Alice',
+      opponentAlias: 'Bob',
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    },
+    presentation: {
+      currentHandOrigin: 'local',
+      activeGameIds: [],
+      currentHandGameIds: ['game-1'],
+      lastDisplayedGameId: 'game-1',
+    },
   });
-  expect(restored?.handState).toEqual(handState);
-  expect(restored?.gameInstances?.['game-1']?.terminal.label).toBe('Finished');
-  expect(restored?.serializedGameSession).toBeUndefined();
-  expect(restored?.pairingToken).toBeUndefined();
+  expect(restored?.phase === 'terminal' && restored.presentation.handState).toEqual(handState);
+  expect(
+    restored?.phase === 'terminal' &&
+      restored.presentation.gameInstances?.['game-1']?.terminal.label,
+  ).toBe('Finished');
+  expect(restored).not.toHaveProperty('live');
+  expect(restored).not.toHaveProperty('pairing');
+});
+
+it('round-trips an explicitly empty local alias without converting it to null', async () => {
+  await seedLiveSession();
+  const controller = makeController([]);
+  const args = finalizationArgs(controller);
+  args.identity.myName = '';
+
+  await finalizeTerminalSession(args, {
+    stageTerminal: stageTerminalSession,
+    flushSave: flushSessionSave,
+    discardTerminal: discardStagedTerminalSession,
+    updateMarker: markSavedSession,
+    teardown: jest.fn(),
+  });
+
+  _resetForTests();
+  const restored = await peekSession();
+  expect(restored?.phase === 'terminal' && restored.terminal.myAlias).toBe('');
 });
 
 it('atomically removes live restart fields through the real mutation queue', async () => {
-  const terminalWrite = saveTerminalSession({
-    channelStatus: { state: 'ResolvedClean' },
-    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-  });
+  const terminalWrite = saveTerminalSession(
+    terminalUpdate({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    }),
+  );
 
   for (const field of [
     'serializedGameSession',
@@ -285,17 +343,19 @@ it('atomically removes live restart fields through the real mutation queue', asy
   await terminalWrite;
   const stored = await readSessionRecord();
   expect(stored).not.toBeNull();
-  expect(decodeSessionSaveEnvelope(stored!).kind).toBe('terminal-frozen');
+  expect(decodeSessionSaveEnvelope(stored!).phase).toBe('terminal');
   expect(stored).not.toHaveProperty('serializedGameSession');
   expect(stored).not.toHaveProperty('messageNumber');
   expect(stored).not.toHaveProperty('unackedMessages');
 });
 
 it('retires a resolved display before accepting a fresh live session', async () => {
-  await saveTerminalSession({
-    channelStatus: { state: 'ResolvedClean' },
-    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-  });
+  await saveTerminalSession(
+    terminalUpdate({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    }),
+  );
   await flushSessionSave();
 
   let displayedSession = 'resolved';
@@ -308,15 +368,17 @@ it('retires a resolved display before accepting a fresh live session', async () 
       displayedSession = 'none';
     },
     persistLiveCheckpoint: async () => {
-      await replaceSession({
-        pairingToken,
-        sessionPeerId: 'new-peer',
-        gameSessionId: 'new-session',
-        iStarted: false,
-        myContribution: '60',
-        theirContribution: '40',
-        perGameAmount: '4',
-      });
+      await replaceSession(
+        baseSave({
+          pairingToken,
+          sessionPeerId: 'new-peer',
+          gameSessionId: 'new-session',
+          iStarted: false,
+          myContribution: '60',
+          theirContribution: '40',
+          perGameAmount: '4',
+        }),
+      );
     },
     mountLiveSession: () => {
       mountedPairingToken = pairingToken;
@@ -330,14 +392,16 @@ it('retires a resolved display before accepting a fresh live session', async () 
   expect(displayedSession).toBe('live');
   expect(mountedPairingToken).toBe(pairingToken);
   expect(hubBusy).toBe(true);
-  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).kind).toBe('pre-handshake');
+  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('pre-handshake');
 });
 
 it('keeps the resolved display and terminal checkpoint when fresh persistence fails', async () => {
-  await saveTerminalSession({
-    channelStatus: { state: 'ResolvedClean' },
-    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-  });
+  await saveTerminalSession(
+    terminalUpdate({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    }),
+  );
   await flushSessionSave();
 
   let displayedSession = 'resolved';
@@ -360,7 +424,7 @@ it('keeps the resolved display and terminal checkpoint when fresh persistence fa
 
   expect(displayedSession).toBe('resolved');
   expect(mounted).toBe(false);
-  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).kind).toBe('terminal-frozen');
+  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
 });
 
 it('routes a normally resolved on-chain snapshot through terminal persistence', async () => {
@@ -374,7 +438,8 @@ it('routes a normally resolved on-chain snapshot through terminal persistence', 
       messageNumber: 2n,
       remoteNumber: 1n,
       iStarted: true,
-      handState,
+      rewardPuzzleHash: '11'.repeat(32),
+      handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
       channelStatus: { state: 'ResolvedClean' },
       wasmNotificationHistory: [],
       diagnosticLog: [],
@@ -396,11 +461,60 @@ it('routes a normally resolved on-chain snapshot through terminal persistence', 
   expect(saveTerminal).toHaveBeenCalledTimes(1);
   expect(saveTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
-      channelStatus: { state: 'ResolvedClean' },
-      serializedGameSession: liveCradle,
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+      terminal: expect.objectContaining({
+        coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+      }),
+      presentation: expect.objectContaining({
+        channelStatus: { state: 'ResolvedClean' },
+        handState,
+      }),
     }),
   );
+});
+
+it('persists live machine hand state instead of a former controller bundle value', async () => {
+  const save = jest.fn(async () => {});
+  const liveModel = createSessionModel({
+    ...model,
+    channel: { ...model.channel, status: { ...model.channel.status, state: 'Active' } },
+  });
+  const formerControllerHandState = {
+    ...handState,
+    state: { ...handState.state, moveNumber: 99n },
+  };
+  const controller = {
+    getWasmFields: () => ({
+      serializedGameSession: liveCradle,
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'live-token',
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      iStarted: true,
+      rewardPuzzleHash: '11'.repeat(32),
+      handState: formerControllerHandState,
+      channelStatus: { state: 'Active' },
+      wasmNotificationHistory: [],
+      diagnosticLog: [],
+    }),
+  } as unknown as SessionController;
+
+  await persistSessionSnapshot({
+    controller,
+    getState: () => createSessionMachineState(liveModel),
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    save,
+  });
+
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      scope: 'live',
+      live: expect.objectContaining({ serializedGameSession: liveCradle }),
+      presentation: expect.objectContaining({ handState }),
+    }),
+  );
+  expect(save.mock.calls[0][0].presentation.handState).not.toEqual(formerControllerHandState);
 });
 
 it('freezes both role-aware Krunk timeout boards after queued terminal reductions', async () => {
@@ -417,6 +531,11 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       guesser: initialKrunkGameState('bob'),
     },
   });
+  let terminalHand = krunkStateCodec.decode(acceptedHandState)!;
+  for (const settledId of ids) {
+    terminalHand = reduceKrunkDurableState(terminalHand, { type: 'settled', id: settledId })!;
+  }
+  const terminalHandState = krunkStateCodec.encode(terminalHand);
   const timeoutModel = createSessionModel({
     channel: {
       status: {
@@ -428,9 +547,10 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     game: {
       activeIds: [],
       currentHandIds: ids,
+      currentHandOrigin: 'local',
       activeGameType: 'krunk',
       lastDisplayedId: 'picker',
-      handState: acceptedHandState,
+      handState: terminalHandState,
       instances: {
         picker: {
           id: 'picker',
@@ -469,31 +589,9 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       },
     },
   });
-  const transitions: Array<{
-    settledId: string;
-    payloadIds: string[];
-    terminalIds: string[];
-  }> = [];
   const controller = {
     handState: acceptedHandState,
-    flushPendingSave: async () => {
-      for (const settledId of ids) {
-        const current = krunkStateCodec.decode(controller.handState);
-        expect(current).not.toBeNull();
-        const next = reduceKrunkDurableState(current, { type: 'settled', id: settledId });
-        expect(next).not.toBeNull();
-        controller.handState = krunkStateCodec.encode(next!);
-        const decoded = krunkStateCodec.decode(controller.handState);
-        expect(decoded).not.toBeNull();
-        transitions.push({
-          settledId,
-          payloadIds: Object.keys(decoded!.games),
-          terminalIds: Object.entries(decoded!.games)
-            .filter(([, state]) => state.handler === KrunkHandler.Terminal)
-            .map(([id]) => id),
-        });
-      }
-    },
+    flushPendingSave: async () => {},
   } as unknown as SessionController;
   const stageTerminal = jest.fn(async () => {});
 
@@ -505,7 +603,6 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
         myName: 'Alice',
         opponentName: 'Bob',
         iStarted: false,
-        iProposedHand: true,
       },
       coins: [],
     },
@@ -522,18 +619,6 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     canRemountHand: true,
     terminalLabel: 'Opponent timed out',
   });
-  expect(transitions).toEqual([
-    {
-      settledId: 'picker',
-      payloadIds: ids,
-      terminalIds: ['picker'],
-    },
-    {
-      settledId: 'guesser',
-      payloadIds: ids,
-      terminalIds: ids,
-    },
-  ]);
   const frozenHand = krunkStateCodec.decode(terminal.model.game.handState);
   expect(frozenHand).not.toBeNull();
   expect(Object.keys(frozenHand!.games)).toEqual(ids);
@@ -562,35 +647,39 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     text: 'You got 100 mojo due to timeout.',
     kind: 'info',
   });
-  const frozen = renderFrozenGameMount(terminal.model, controller, {
+  const frozen = renderFrozenGameMount(terminal.model, {
     iStarted: false,
-    iProposedHand: true,
   });
   expect(frozen.props).toMatchObject({
     currentHandGameIds: ids,
     activeGameIds: [],
-    interactionMode: 'terminal',
+    handSource: {
+      interactionMode: 'terminal',
+      handState: terminal.model.game.handState,
+    },
   });
+  expect(frozen.props).not.toHaveProperty('gameObject');
   const markup = renderToStaticMarkup(
     React.createElement(FinishedSessionGameView, {
       model: terminal.model,
       myName: 'Alice',
       opponentName: 'Bob',
       iStarted: false,
-      iProposedHand: true,
     }),
   );
   expect(markup).toContain('data-testid="finished-session-game-view"');
   expect(markup).not.toContain('Game details unavailable');
   expect(stageTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
-      currentHandGameIds: ids,
-      activeGameIds: [],
-      handState: controller.handState,
-      gameInstances: {
-        picker: timeoutModel.game.instances.picker,
-        guesser: timeoutModel.game.instances.guesser,
-      },
+      presentation: expect.objectContaining({
+        currentHandGameIds: ids,
+        activeGameIds: [],
+        handState: terminalHandState,
+        gameInstances: {
+          picker: timeoutModel.game.instances.picker,
+          guesser: timeoutModel.game.instances.guesser,
+        },
+      }),
     }),
   );
 });
@@ -617,8 +706,13 @@ it('keeps live state and ownership after failure, then retries without teardown 
 
   expect(teardown).not.toHaveBeenCalled();
   expect(hasSavedSessionMarker()).toBe(true);
-  expect(loadState().serializedGameSession).toEqual(liveCradle);
-  expect((await readSessionRecord())?.serializedGameSession).toEqual(liveCradle);
+  const cached = loadState();
+  expect(cached.phase === 'live' && cached.live.serializedGameSession).toEqual(liveCradle);
+  const durable = await readSessionRecord();
+  const decodedDurable = durable ? decodeSessionSaveEnvelope(durable).save : null;
+  expect(decodedDurable?.phase === 'live' && decodedDurable.live.serializedGameSession).toEqual(
+    liveCradle,
+  );
 
   failWrite = false;
   await finalizeTerminalSession(finalizationArgs(controller), dependencies);
@@ -627,6 +721,8 @@ it('keeps live state and ownership after failure, then retries without teardown 
   expect(teardown).toHaveBeenCalledTimes(1);
   _resetForTests();
   const restored = await peekSession();
-  expect(restored?.serializedGameSession).toBeUndefined();
-  expect(restored?.channelStatus?.state).toBe('ResolvedClean');
+  expect(restored).not.toHaveProperty('live');
+  expect(restored?.phase === 'terminal' && restored.presentation.channelStatus?.state).toBe(
+    'ResolvedClean',
+  );
 });

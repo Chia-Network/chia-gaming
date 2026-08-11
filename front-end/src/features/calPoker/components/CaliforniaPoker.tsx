@@ -122,6 +122,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       pText: string,
       oText: string,
     ) => {
+      if (!interactive) return;
       const snap: CalpokerDisplaySnapshotView = {
         gameState: gs,
         winner: w,
@@ -134,18 +135,19 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       };
       onSnapshotChange(snap);
     },
-    [onSnapshotChange],
+    [interactive, onSnapshotChange],
   );
 
   const dealCards = useCallback(() => {
+    if (!interactive) return;
     setGameState(GAME_STATES.SELECTING);
     setCardSelections([]);
     setWinner(null);
     saveSnapshot(GAME_STATES.SELECTING, null, undefined, undefined, [], [], '', '');
-  }, [saveSnapshot, setCardSelections]);
+  }, [interactive, saveSnapshot, setCardSelections]);
 
   const toggleCardSelection = (cardId: string) => {
-    if (gameState !== GAME_STATES.SELECTING) return;
+    if (!interactive || gameState !== GAME_STATES.SELECTING) return;
 
     setCardSelections((prev: string[]) => {
       if (prev.includes(cardId)) {
@@ -157,6 +159,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const handleReorder = useCallback(
     (reordered: CardValueSuit[]) => {
+      if (!interactive) return;
       setPlayerCards(reordered);
       rememberedCardsRef.current = [reordered, rememberedCardsRef.current[1]];
       setHandOrder(reordered.map((c) => c.cardId!));
@@ -178,6 +181,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       aiBestHand,
       cardSelections,
       gameState,
+      interactive,
       onSnapshotChange,
       opponentDisplayText,
       opponentHaloCardIds,
@@ -217,7 +221,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [gameState, interactive, setCardSelections]);
 
-  const isDisabled = cardSelections.length !== 4;
+  const isDisabled = !interactive || cardSelections.length !== 4;
 
   const playerHalos = gameState === GAME_STATES.SELECTING ? cardSelections : playerHaloCardIds;
   const opponentHalos = opponentHaloCardIds;
@@ -241,6 +245,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const possessive = (label: string) => (label === 'You' ? 'Your' : `${label}'s`);
 
   const doHandleMakeMove = () => {
+    if (!interactive) return;
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
       const halos = [...cardSelections];
       setPlayerHaloCardIds(halos);
@@ -521,6 +526,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     outcome,
     terminalOutcome,
     dealCards,
+    interactive,
   });
 
   useEffect(() => {
@@ -552,7 +558,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           rank: { name: '', score: 0, tiebreakers: [] },
         });
       }
-    } else {
+    } else if (initial.interactive) {
       initial.dealCards();
     }
   }, []);
@@ -645,12 +651,14 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 winner={winner}
                 winnerType="player"
                 bestHand={playerBestHand}
-                onCardClick={toggleCardSelection}
+                onCardClick={interactive ? toggleCardSelection : undefined}
                 showSwapAnimation={showSwapAnimation}
                 gameState={gameState}
                 haloCardIds={playerHalos}
                 swapHiddenCardIds={playerSwapHiddenIds}
-                onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
+                onReorder={
+                  interactive && gameState === GAME_STATES.SELECTING ? handleReorder : undefined
+                }
                 timeoutBadge={
                   terminalOutcome
                     ? calpokerTimeoutBadge(terminalOutcome, 'ours', handCompleted)

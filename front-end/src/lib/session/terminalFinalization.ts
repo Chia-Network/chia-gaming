@@ -5,26 +5,25 @@ import {
   flushSessionSave,
   markSavedSession,
   stageTerminalSession,
-  type SessionSave,
+  type SessionPresentationSave,
+  type TerminalSessionSave,
 } from '../../hooks/save';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
 import { channelStatusPayloadFromModel } from './normalization';
-import { snapshotFromSessionModel } from './persistence';
+import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionModel } from './types';
 
 export interface TerminalSessionIdentity {
   myName: string;
   opponentName?: string;
   iStarted: boolean;
-  iProposedHand: boolean;
 }
 
 export interface TerminalFinalizationDependencies {
-  stageTerminal: (
-    fields: Partial<SessionSave> & {
-      coinsOfInterest: NonNullable<SessionSave['coinsOfInterest']>;
-    },
-  ) => Promise<void>;
+  stageTerminal: (fields: {
+    terminal: TerminalSessionSave['terminal'];
+    presentation: SessionPresentationSave;
+  }) => Promise<void>;
   flushSave: () => Promise<void>;
   discardTerminal: () => void;
   updateMarker: () => void;
@@ -64,21 +63,24 @@ export function finalizeTerminalSession(
 
   const finalization = (async () => {
     await args.controller.flushPendingSave();
-    const handState = structuredClone(args.controller.handState ?? args.model.game.handState);
+    const handState = structuredClone(args.model.game.handState);
     const model: SessionModel = {
       ...args.model,
       game: { ...args.model.game, handState },
     };
     const terminalFields = structuredClone({
-      ...snapshotFromSessionModel(model),
-      handState,
-      terminalIStarted: identity.iStarted,
-      iProposedHand: identity.iProposedHand,
-      ...(identity.myName ? { myAlias: identity.myName } : {}),
-      opponentAlias: identity.opponentName,
-      channelStatus: channelStatusPayloadFromModel(model.channel.status),
-      cleanShutdownStarted: model.channel.cleanShutdownStarted || undefined,
-      coinsOfInterest: coins,
+      terminal: {
+        iStarted: identity.iStarted,
+        coinsOfInterest: coins,
+        myAlias: identity.myName,
+        opponentAlias: identity.opponentName ?? null,
+      },
+      presentation: snapshotFromSessionModel(model, {
+        channelStatus: channelStatusPayloadFromModel(model.channel.status),
+        lastOutcomeWin: model.lastOutcomeWin ?? null,
+        waitingStateEnteredAt: null,
+        cleanShutdownGraceStartedAt: null,
+      }),
     });
     await dependencies.stageTerminal(terminalFields);
     try {

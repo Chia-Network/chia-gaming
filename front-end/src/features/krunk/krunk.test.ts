@@ -15,12 +15,11 @@ import {
   type KrunkGameState,
 } from './useKrunkHand';
 import {
-  activeIdsAfterProposalAccepted,
-  clearProposalTracking,
   gameplayEventForMoveRejected,
   gameplayEventsForGameStatus,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
+import { createSessionModel, selectProposalGroupByMemberId } from '../../lib/session/model';
 import { isValidKrunkStake } from './adapter';
 import {
   formatKrunkHandLog,
@@ -32,6 +31,7 @@ import {
 import Krunk from './Krunk';
 import { initialKrunkGameState, krunkStateCodec } from './stateCodec';
 import type { SessionController } from '../../hooks/SessionController';
+import type { LocalGameActionRequest } from '../../lib/session/sessionMachineTypes';
 import type { GameTerminalModel } from '../../lib/session/types';
 
 function terminal(
@@ -48,22 +48,30 @@ function terminal(
 }
 
 describe('Krunk terms', () => {
-  it('clears proposal terms, group links, and outgoing refs together', () => {
+  it('derives both member lookups from one normalized group', () => {
     const terms = {
       gameType: 'krunk',
       myContribution: 100n,
       theirContribution: 100n,
       gameTimeout: 15n,
     } as const;
-    const termsById = { '1': terms, '3': terms, stale: terms };
-    const groupsById = { '1': ['1', '3'], '3': ['1', '3'], stale: ['stale'] };
-    const outgoing = new Set(['1', '3', 'stale']);
+    const model = createSessionModel({
+      betweenHand: {
+        proposalGroups: [
+          {
+            primaryId: '1',
+            memberIds: ['1', '3'],
+            terms,
+            origin: 'local',
+            disposition: 'outgoing',
+          },
+        ],
+      },
+    });
 
-    clearProposalTracking(['1'], termsById, groupsById, outgoing);
-
-    expect(termsById).toEqual({ stale: terms });
-    expect(groupsById).toEqual({ stale: ['stale'] });
-    expect(outgoing).toEqual(new Set(['stale']));
+    expect(selectProposalGroupByMemberId(model, '1')).toBe(
+      selectProposalGroupByMemberId(model, '3'),
+    );
   });
 
   it('requires positive 100-mojo stake increments', () => {
@@ -118,12 +126,14 @@ describe('Krunk draft continuity', () => {
     });
     const gameplay = new Subject<import('../../hooks/useGameSession').GameplayEvent>();
     const renderPhases: string[] = [];
+    const controller = {
+      handState: persisted,
+      makeMove: jest.fn(),
+      commitLocalGameAction: jest.fn(),
+      transitionFeatureState: jest.fn((_, __, state) => state),
+    } as unknown as SessionController;
     const baseProps = {
-      gameObject: {
-        handState: persisted,
-        makeMove: jest.fn(),
-        transitionFeatureState: jest.fn((_, __, state) => state),
-      } as unknown as SessionController,
+      handSource: { interactionMode: 'live' as const, controller },
       currentHandGameIds: ['picker', 'guesser'],
       activeGameIds: ['picker', 'guesser'],
       iProposedHand: true,
@@ -133,7 +143,6 @@ describe('Krunk draft continuity', () => {
       onGameLog: () => {},
       terminalsById: {},
       amountsById: { picker: '100', guesser: '100' },
-      interactionMode: 'live' as const,
       opponentName: 'Peer',
     };
     const renderKrunk = (props: KrunkProps) =>
@@ -212,7 +221,7 @@ describe('Krunk draft continuity', () => {
           ...baseProps,
           activeGameIds: [],
           terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
-          interactionMode: 'terminal',
+          handSource: { interactionMode: 'terminal', handState: persisted },
         }),
       );
     });
@@ -241,6 +250,9 @@ describe('Krunk draft continuity', () => {
     });
     const makeMove = jest.fn();
     const transitionFeatureState = jest.fn(() => false);
+    const commitLocalGameAction = jest.fn(() => {
+      throw new Error('word rejected');
+    });
     const persisted = krunkStateCodec.encode({
       games: {
         picker: initialKrunkGameState('alice'),
@@ -252,11 +264,15 @@ describe('Krunk draft continuity', () => {
     act(() => {
       renderer = create(
         React.createElement(Krunk, {
-          gameObject: {
-            handState: persisted,
-            makeMove,
-            transitionFeatureState,
-          } as unknown as SessionController,
+          handSource: {
+            interactionMode: 'live',
+            controller: {
+              handState: persisted,
+              makeMove,
+              commitLocalGameAction,
+              transitionFeatureState,
+            } as unknown as SessionController,
+          },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['picker', 'guesser'],
           iProposedHand: true,
@@ -276,9 +292,10 @@ describe('Krunk draft continuity', () => {
       act(() => key!.props.onClick());
     }
     const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
-    expect(() => act(() => pick!.props.onClick())).not.toThrow();
+    expect(() => act(() => pick!.props.onClick())).toThrow('word rejected');
 
-    expect(transitionFeatureState).toHaveBeenCalledTimes(1);
+    expect(commitLocalGameAction).toHaveBeenCalledTimes(1);
+    expect(transitionFeatureState).not.toHaveBeenCalled();
     expect(makeMove).not.toHaveBeenCalled();
     act(() => renderer!.unmount());
     if (windowDescriptor) {
@@ -299,6 +316,10 @@ describe('Krunk draft continuity', () => {
     });
     const makeMove = jest.fn();
     const transitionFeatureState = jest.fn(() => true);
+    const commitLocalGameAction = jest.fn((request: LocalGameActionRequest) => {
+      if (request.command.type !== 'make-move') throw new Error('unexpected command');
+      makeMove(request.id, request.command.readable);
+    });
     const persisted = krunkStateCodec.encode({
       games: {
         picker: initialKrunkGameState('alice'),
@@ -310,11 +331,15 @@ describe('Krunk draft continuity', () => {
     act(() => {
       renderer = create(
         React.createElement(Krunk, {
-          gameObject: {
-            handState: persisted,
-            makeMove,
-            transitionFeatureState,
-          } as unknown as SessionController,
+          handSource: {
+            interactionMode: 'live',
+            controller: {
+              handState: persisted,
+              makeMove,
+              commitLocalGameAction,
+              transitionFeatureState,
+            } as unknown as SessionController,
+          },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['guesser'],
           iProposedHand: true,
@@ -339,12 +364,14 @@ describe('Krunk draft continuity', () => {
     expect(pick!.props.disabled).toBe(false);
     act(() => pick!.props.onClick());
 
-    expect(transitionFeatureState).toHaveBeenCalledWith(
-      'krunk',
-      'picker',
+    expect(commitLocalGameAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        handler: KrunkHandler.AliceWaiting,
-        secretWord: 'CRANE',
+        gameType: 'krunk',
+        id: 'picker',
+        state: expect.objectContaining({
+          handler: KrunkHandler.AliceWaiting,
+          secretWord: 'CRANE',
+        }),
       }),
     );
     expect(makeMove).toHaveBeenCalledWith('picker', expect.anything());
@@ -802,9 +829,8 @@ describe('Krunk draft continuity', () => {
   it('exposes the guesser game on the first atomic-group acceptance', () => {
     // First ProposalAccepted seeds activeIds and currentHandGameIds with the
     // full atomic group so both Krunk panels wire immediately.
-    const activeIds = activeIdsAfterProposalAccepted([], '1', ['1', '3']);
+    const activeIds = ['1', '3'];
     expect(activeIds).toEqual(['1', '3']);
-    expect(activeIdsAfterProposalAccepted(activeIds, '3', ['1', '3'])).toEqual(['1', '3']);
 
     const opponentCommit = {
       GameStatus: {

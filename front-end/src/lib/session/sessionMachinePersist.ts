@@ -1,9 +1,10 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
 import {
-  getBlockchainType,
+  loadState,
   saveSession,
   saveTerminalSession,
-  type SessionSave,
+  type SessionCacheUpdate,
+  type SessionPresentationSave,
 } from '../../hooks/save';
 import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
 import { isTerminalChannelSnapshot } from './selectors';
@@ -20,10 +21,15 @@ export interface SessionPersistDependencies {
   saveTerminal?: typeof saveTerminalSession;
 }
 
-/** Assemble at effect execution time, after any preceding hand-state commit. */
-export function assembleSessionSave(
-  dependencies: SessionPersistDependencies,
-): { save: Partial<SessionSave>; terminal: boolean } | null {
+/** Assemble at effect execution time from WASM facts and machine authority. */
+export function assembleSessionSave(dependencies: SessionPersistDependencies): {
+  live: Extract<SessionCacheUpdate, { scope: 'live' }>;
+  terminal: boolean;
+  presentation: SessionPresentationSave;
+  terminalIStarted: boolean;
+  myAlias?: string;
+  opponentAlias?: string;
+} | null {
   const wasm = dependencies.controller.getWasmFields();
   if (!wasm) return null;
   const state = dependencies.getState();
@@ -40,7 +46,6 @@ export function assembleSessionSave(
       hubReconciled: restoreStatus === 'restored',
     },
     channel: { ...state.model.channel, status: authoritativeStatus },
-    game: { ...state.model.game, handState: wasm.handState },
     history: {
       ...state.model.history,
       wasmNotificationHistory: wasm.wasmNotificationHistory,
@@ -48,34 +53,54 @@ export function assembleSessionSave(
     },
     lastOutcomeWin: wasm.lastOutcomeWin,
   });
-  const snapshot = snapshotFromSessionModel(model);
-  delete snapshot.humanHistory;
-  delete snapshot.diagnosticLog;
+  const current = loadState();
+  const currentPairing =
+    current.phase === 'pre-handshake' || current.phase === 'live' ? current.pairing : undefined;
+  const currentPresentation = current.phase === 'live' ? current.presentation : null;
+  if (wasm.rewardPuzzleHash === null) {
+    throw new Error('Cannot persist an initialized session without a reward puzzle hash');
+  }
+  const presentation = snapshotFromSessionModel(model, {
+    channelStatus: wasm.channelStatus ?? null,
+    lastOutcomeWin: wasm.lastOutcomeWin ?? null,
+    waitingStateEnteredAt: currentPresentation?.waitingStateEnteredAt ?? null,
+    cleanShutdownGraceStartedAt: currentPresentation?.cleanShutdownGraceStartedAt ?? null,
+  });
   return {
     terminal: isTerminalChannelSnapshot(authoritativeStatus),
-    save: {
-      blockchainType: getBlockchainType(),
-      serializedGameSession: wasm.serializedGameSession,
-      gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
-      pairingToken: wasm.pairingToken,
-      messageNumber: wasm.messageNumber,
-      remoteNumber: wasm.remoteNumber,
-      iStarted: wasm.iStarted,
-      myContribution: wasm.myContribution,
-      theirContribution: wasm.theirContribution,
-      perGameAmount: wasm.perGameAmount,
-      rewardPuzzleHash: wasm.rewardPuzzleHash,
-      unackedMessages: wasm.unackedMessages,
-      activeGameIds: model.game.activeIds,
-      iProposedHand: state.coordination.iProposedHand,
-      activeGameType: model.game.activeGameType,
-      handState: model.game.handState,
-      channelStatus: wasm.channelStatus,
-      myAlias: wasm.myAlias,
-      opponentAlias: wasm.opponentAlias,
-      lastOutcomeWin: wasm.lastOutcomeWin,
-      durabilityWarning: wasm.durabilityWarning,
-      ...snapshot,
+    presentation,
+    terminalIStarted: wasm.iStarted,
+    myAlias: wasm.myAlias,
+    opponentAlias: wasm.opponentAlias,
+    live: {
+      scope: 'live',
+      pairing: {
+        token: wasm.pairingToken,
+        peerId: currentPairing?.peerId,
+        gameSessionId: currentPairing?.gameSessionId,
+        iStarted: wasm.iStarted,
+        myContribution: wasm.myContribution,
+        theirContribution: wasm.theirContribution,
+        perGameAmount: wasm.perGameAmount,
+        channelTimeout: currentPairing?.channelTimeout,
+        unrollTimeout: currentPairing?.unrollTimeout,
+        myAlias: wasm.myAlias,
+        opponentAlias: wasm.opponentAlias,
+      },
+      live: {
+        serializedGameSession: wasm.serializedGameSession,
+        gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
+        messageNumber: wasm.messageNumber,
+        remoteNumber: wasm.remoteNumber,
+        rewardPuzzleHash: wasm.rewardPuzzleHash,
+        unackedMessages: wasm.unackedMessages,
+        durabilityWarning: wasm.durabilityWarning,
+      },
+      presentation,
+      history: {
+        wasmNotificationHistory: wasm.wasmNotificationHistory,
+        diagnosticLog: wasm.diagnosticLog,
+      },
     },
   };
 }
@@ -87,10 +112,15 @@ export async function persistSessionSnapshot(
   if (!assembled) return;
   if (assembled.terminal) {
     await (dependencies.saveTerminal ?? saveTerminalSession)({
-      ...assembled.save,
-      coinsOfInterest: dependencies.controller.getCoinsOfInterest(),
+      terminal: {
+        iStarted: assembled.terminalIStarted,
+        coinsOfInterest: dependencies.controller.getCoinsOfInterest(),
+        myAlias: assembled.myAlias ?? null,
+        opponentAlias: assembled.opponentAlias ?? null,
+      },
+      presentation: assembled.live.presentation,
     });
   } else {
-    await (dependencies.save ?? saveSession)(assembled.save);
+    await (dependencies.save ?? saveSession)(assembled.live);
   }
 }

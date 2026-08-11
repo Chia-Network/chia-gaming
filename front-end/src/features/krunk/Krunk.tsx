@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Observable } from 'rxjs';
-import { SessionController } from '../../hooks/SessionController';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
@@ -16,11 +15,11 @@ import { GameplayEvent } from '../../hooks/useGameSession';
 import { formatAmount } from '../../util';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
-import type { GameInteractionMode } from '../../lib/gameMount';
+import { gameHandState, type GameHandSource } from '../../lib/gameMount';
 import { krunkStateCodec } from './stateCodec';
 
 export interface KrunkProps {
-  gameObject: SessionController;
+  handSource: GameHandSource;
   currentHandGameIds: string[];
   activeGameIds: string[];
   iProposedHand: boolean;
@@ -32,7 +31,6 @@ export interface KrunkProps {
   opponentName?: string;
   terminalsById: Record<string, GameTerminalModel>;
   amountsById: Record<string, string>;
-  interactionMode?: GameInteractionMode;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -438,7 +436,7 @@ function OnScreenKeyboard({
 }
 
 const Krunk: React.FC<KrunkProps> = ({
-  gameObject,
+  handSource,
   currentHandGameIds,
   activeGameIds,
   iProposedHand,
@@ -450,10 +448,9 @@ const Krunk: React.FC<KrunkProps> = ({
   opponentName,
   terminalsById,
   amountsById,
-  interactionMode = 'live',
 }) => {
-  const interactive = interactionMode === 'live';
-  const initialPersistedState = gameObject.handState ?? undefined;
+  const interactive = handSource.interactionMode === 'live';
+  const initialPersistedState = gameHandState(handSource) ?? undefined;
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
   // roles are flipped: they're bob in game 0 and alice in game 1.
@@ -490,7 +487,7 @@ const Krunk: React.FC<KrunkProps> = ({
   // Alice game (I pick the word): iStarted=false → role='alice'.
   // Bob game (I guess): iStarted=true → role='bob'.
   const aliceHand = useKrunkHand(
-    gameObject,
+    handSource,
     aliceId,
     false,
     gameplayEvent$,
@@ -500,7 +497,7 @@ const Krunk: React.FC<KrunkProps> = ({
   );
 
   const bobHand = useKrunkHand(
-    gameObject,
+    handSource,
     bobId,
     true,
     gameplayEvent$,
@@ -601,14 +598,19 @@ const Krunk: React.FC<KrunkProps> = ({
   const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
   const filledGuessCount = bobHand.gameState.guesses.length + displayQueue.length;
   const isBobGuessPhase =
+    interactive &&
     bobInHand &&
     wordCommitted &&
     bobHand.gameState.role === 'bob' &&
     bobHand.gameState.handler === KrunkHandler.BobGuess;
   const canDraftGuess =
-    bobInHand && canDraftKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
+    interactive &&
+    bobInHand &&
+    canDraftKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
   const canQueueGuess =
-    bobInHand && canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
+    interactive &&
+    bobInHand &&
+    canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
 
   // Drain the queue whenever it becomes our turn to guess. Only pop after
   // we know submit will accept (BobGuess); otherwise a rejected submit
@@ -617,6 +619,7 @@ const Krunk: React.FC<KrunkProps> = ({
   // A dictionary rejection also lands in BobGuess — drop everything still
   // queued rather than auto-sending guesses that assumed the rejected word.
   useEffect(() => {
+    if (!interactive) return;
     if (isKrunkDictionaryRejectionError(bobHand.gameState.error)) {
       if (guessQueue.length > 0) setGuessQueue([]);
       return;
@@ -628,6 +631,7 @@ const Krunk: React.FC<KrunkProps> = ({
     submitBobGuessMove(next);
   }, [
     isBobGuessPhase,
+    interactive,
     guessQueue,
     bobHand.gameState.handler,
     bobHand.gameState.error,
@@ -770,6 +774,7 @@ const Krunk: React.FC<KrunkProps> = ({
 
   // Physical keyboard for pick/guess drafting.
   useEffect(() => {
+    if (!interactive) return;
     if (keyboardMode === null) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -797,7 +802,7 @@ const Krunk: React.FC<KrunkProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [keyboardMode, activeDraft, submitActive, backspace, typeLetter]);
+  }, [interactive, keyboardMode, activeDraft, submitActive, backspace, typeLetter]);
 
   // Label tracks the next action the player needs, even while waiting.
   const actionLabel = !wordCommitted ? 'Pick' : 'Guess';
@@ -872,14 +877,14 @@ const Krunk: React.FC<KrunkProps> = ({
       >
         <OnScreenKeyboard
           statuses={letterStatuses}
-          disabled={keyboardMode === null || handComplete}
+          disabled={!interactive || keyboardMode === null || handComplete}
           onLetter={typeLetter}
           onBackspace={backspace}
         />
         <button
           type="button"
           className="px-4 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40"
-          disabled={!actionEnabled || handComplete}
+          disabled={!interactive || !actionEnabled || handComplete}
           onClick={submitActive}
         >
           {actionLabel}

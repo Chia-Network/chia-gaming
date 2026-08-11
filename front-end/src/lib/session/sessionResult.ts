@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Observable } from 'rxjs';
 import type { CalpokerOutcome } from '../../features/calPoker/outcome';
-import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import type { GameHandOrigin, GameInteractionMode } from '../gameMount';
+import type { RestoreStatus } from '../../hooks/SessionController';
+import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '../gameMount';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameplayEvent } from './gameSessionEvents';
 import type {
   BetweenHandModeModel,
-  BetweenHandProposalModel,
   ChannelStatusModel,
   GameCoinModel,
   GameTerminalModel,
   HandTermsModel,
+  ProposalGroupModel,
   QueuedNotificationModel,
   SessionModel,
 } from './types';
 import type { selectGameSpecificView } from './selectors';
 import {
   selectGameSessionView,
+  selectIProposedHand,
+  selectIncomingProposalGroup,
   selectGameSpecificView as selectTerminalGameSpecificView,
   selectSessionPhase,
 } from './selectors';
@@ -42,14 +44,13 @@ export interface UseGameSessionResult {
   iProposedHand: boolean;
   activeGameType: HandTermsModel['gameType'];
   displayGameId: string | null;
-  sessionController: SessionController;
+  handSource: GameHandSource;
   gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   betweenHandMode: BetweenHandModeModel;
-  cachedPeerProposal: BetweenHandProposalModel | null;
-  reviewPeerProposal: BetweenHandProposalModel | null;
+  incomingProposalGroup: ProposalGroupModel | null;
   lastHandTerms: HandTermsModel;
   composeDraftState: ComposeDraftState;
   chooseNewHandSameTerms: () => void;
@@ -79,7 +80,6 @@ export interface UseGameSessionResult {
   dismissChannel: () => void;
   dismissGame: () => void;
   gameSpecificView: ReturnType<typeof selectGameSpecificView>;
-  interactionMode: GameInteractionMode;
 }
 
 export interface TerminalSessionPresentation {
@@ -87,7 +87,6 @@ export interface TerminalSessionPresentation {
   myName?: string;
   opponentName?: string;
   iStarted: boolean;
-  iProposedHand: boolean;
 }
 
 const NOOP = () => {};
@@ -141,11 +140,10 @@ export function useTerminalSessionPresentation(
 export function projectTerminalSessionResult(
   live: UseGameSessionResult,
   presentation: TerminalSessionPresentation,
-  bridge: SessionController,
   gameplayEvent$: Observable<GameplayEvent>,
   dismissals?: Pick<TerminalSessionPresentationState, 'dismissChannel' | 'dismissGame'>,
 ): UseGameSessionResult {
-  const { model, iStarted, iProposedHand } = presentation;
+  const { model, iStarted } = presentation;
   const view = selectGameSessionView(model);
 
   return {
@@ -164,17 +162,16 @@ export function projectTerminalSessionResult(
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,
-    iProposedHand,
+    iProposedHand: selectIProposedHand(model),
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
-    sessionController: bridge,
+    handSource: terminalGameHandSource(model.game.handState),
     gameplayEvent$,
     appendGameLog: NOOP,
     onHandOutcome: NOOP,
     onTurnChanged: NOOP,
     betweenHandMode: model.betweenHand.mode,
-    cachedPeerProposal: model.betweenHand.cachedPeerProposal,
-    reviewPeerProposal: model.betweenHand.reviewPeerProposal,
+    incomingProposalGroup: selectIncomingProposalGroup(model),
     lastHandTerms: model.betweenHand.lastTerms,
     composeDraftState: model.betweenHand.compose,
     chooseNewHandSameTerms: NOOP,
@@ -202,6 +199,5 @@ export function projectTerminalSessionResult(
     dismissChannel: dismissals?.dismissChannel ?? NOOP,
     dismissGame: dismissals?.dismissGame ?? NOOP,
     gameSpecificView: selectTerminalGameSpecificView(model),
-    interactionMode: 'terminal',
   };
 }

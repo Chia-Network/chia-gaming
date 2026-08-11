@@ -1,8 +1,6 @@
-import React, { Component, Suspense, useMemo } from 'react';
+import React, { Component, Suspense } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
-import { createFrozenHandBridge } from '../hooks/frozenHandBridge';
-import type { SessionController } from '../hooks/SessionController';
 import type { FrozenGameMountOptions } from '../lib/gameMount';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
@@ -13,7 +11,6 @@ export interface FinishedSessionGameViewProps {
   myName?: string;
   opponentName?: string;
   iStarted?: boolean;
-  iProposedHand?: boolean;
 }
 
 function FinishedSessionFallback({
@@ -97,30 +94,26 @@ export class FinishedSessionErrorBoundary extends Component<
 
 function FrozenGameMount({
   model,
-  bridge,
   options,
 }: {
   model: SessionModel;
-  bridge: SessionController;
   options: FrozenGameMountOptions;
 }) {
-  return renderFrozenGameMount(model, bridge, options);
+  return renderFrozenGameMount(model, options);
 }
 
 /**
  * Rehydrates a terminal hand only for display. Protocol lifecycle remains
- * absent: feature actions receive a frozen controller and no notifications.
+ * absent: feature actions receive terminal persisted state and no notifications.
  */
 const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   model,
   myName,
   opponentName,
   iStarted = false,
-  iProposedHand = false,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
-  const frozenBridge = useMemo(() => createFrozenHandBridge(handState), [handState]);
 
   if (!display.canRemountHand || !handState) {
     return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;
@@ -129,12 +122,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;
 
   return (
-    <div
-      className="relative h-full w-full min-h-0 pointer-events-none"
-      data-testid="finished-session-game-view"
-      aria-disabled
-      inert
-    >
+    <div className="relative h-full w-full min-h-0" data-testid="finished-session-game-view">
       <FinishedSessionErrorBoundary fallbackLabel={display.terminalLabel} resetKey={resetKey}>
         <Suspense
           fallback={
@@ -148,12 +136,10 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
         >
           <FrozenGameMount
             model={model}
-            bridge={frozenBridge}
             options={{
               myName,
               opponentName,
               iStarted,
-              iProposedHand,
             }}
           />
         </Suspense>

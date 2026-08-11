@@ -1,8 +1,12 @@
 import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
-import type { SessionController } from '../../hooks/SessionController';
 import type { GameplayEvent } from '../../hooks/useGameSession';
-import type { GameInteractionMode, GameMountRegistration } from '../../lib/gameMount';
+import {
+  gameHandState,
+  terminalGameHandSource,
+  type GameHandSource,
+  type GameMountRegistration,
+} from '../../lib/gameMount';
 import type { HandTermsModel } from '../../lib/session/types';
 import type { GameTerminalModel } from '../../lib/session/types';
 import { formatAmount } from '../../util';
@@ -11,7 +15,7 @@ import { resolveSpacepokerUnitSize } from './unitSize';
 const SpacePoker = lazy(() => import('./SpacePoker'));
 
 export interface SpacepokerLiveMountProps {
-  gameObject: SessionController;
+  handSource: GameHandSource;
   gameId: string;
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
@@ -21,12 +25,11 @@ export interface SpacepokerLiveMountProps {
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
-  interactionMode?: GameInteractionMode;
 }
 
 export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
   const {
-    gameObject,
+    handSource,
     gameId,
     iStarted,
     gameplayEvent$,
@@ -36,11 +39,10 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     myName,
     opponentName,
     terminal,
-    interactionMode = 'live',
   } = props;
   const unitSizeMojos = resolveSpacepokerUnitSize({
     terms,
-    persistedState: gameObject.handState ?? undefined,
+    persistedState: gameHandState(handSource) ?? undefined,
   });
   if (!unitSizeMojos) {
     throw new Error('Space Poker mount requires one canonical positive unit size');
@@ -61,7 +63,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
 
   return (
     <SpacePoker
-      gameObject={gameObject}
+      handSource={handSource}
       gameId={gameId}
       iStarted={iStarted}
       gameplayEvent$={gameplayEvent$}
@@ -72,7 +74,6 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
       myName={myName}
       opponentName={opponentName}
       terminal={terminal}
-      interactionMode={interactionMode}
     />
   );
 }
@@ -86,7 +87,7 @@ export const spacepokerMountRegistration: GameMountRegistration = {
     return (
       <SpacepokerLiveMount
         key={session.handKey}
-        gameObject={session.sessionController}
+        handSource={session.handSource}
         gameId={session.activeGameId ?? session.gameSpecificView.displayGameId ?? ''}
         iStarted={session.iStarted}
         gameplayEvent$={session.gameplayEvent$}
@@ -94,12 +95,11 @@ export const spacepokerMountRegistration: GameMountRegistration = {
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
         terminal={session.gameSpecificView.terminal}
-        interactionMode={session.interactionMode}
         {...names}
       />
     );
   },
-  renderFrozen(model, gameObject, options) {
+  renderFrozen(model, options) {
     const terms = model.betweenHand.lastTerms;
     if (terms.gameType !== 'spacepoker') {
       throw new Error('Finished Space Poker session is missing Space Poker terms');
@@ -111,7 +111,7 @@ export const spacepokerMountRegistration: GameMountRegistration = {
       'finished';
     return (
       <SpacepokerLiveMount
-        gameObject={gameObject}
+        handSource={terminalGameHandSource(model.game.handState)}
         gameId={gameId}
         iStarted={options.iStarted}
         gameplayEvent$={EMPTY}
@@ -119,7 +119,6 @@ export const spacepokerMountRegistration: GameMountRegistration = {
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
         terminal={model.game.instances[gameId]?.terminal ?? emptyFinishedTerminal()}
-        interactionMode="terminal"
         myName={options.myName}
         opponentName={options.opponentName}
       />

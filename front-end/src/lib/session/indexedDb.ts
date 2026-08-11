@@ -1,4 +1,4 @@
-import type { SessionSave } from '../../hooks/save';
+import type { SessionSave } from './saveEnvelope';
 import { decode, encode, type BencodexValue } from 'chia-gaming-bencodex';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
@@ -114,7 +114,7 @@ function obfuscateSessionRecord(record: SessionSave): Uint8Array {
   return masked;
 }
 
-function deobfuscateSessionRecord(masked: Uint8Array): SessionSave {
+function deobfuscateSessionRecord(masked: Uint8Array): unknown {
   if (masked.length < SALT_LEN) {
     throw new Error('Obfuscated session record is missing its salt');
   }
@@ -137,7 +137,7 @@ function deobfuscateSessionRecord(masked: Uint8Array): SessionSave {
   ) {
     throw new Error('Obfuscated session record did not decode to an object');
   }
-  return record as SessionSave;
+  return record;
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -176,7 +176,7 @@ function deleteDatabase(): Promise<void> {
   });
 }
 
-export async function readSessionRecord(): Promise<SessionSave | null> {
+export async function readSessionRecord(): Promise<unknown | null> {
   if (typeof indexedDB === 'undefined') return null;
   let db: IDBDatabase;
   try {
@@ -196,16 +196,17 @@ export async function readSessionRecord(): Promise<SessionSave | null> {
       request.onerror = () => reject(request.error ?? new Error('Failed to read session record'));
     });
     await transactionComplete(transaction);
-    if (record instanceof Uint8Array) {
-      try {
-        return deobfuscateSessionRecord(record);
-      } catch (error) {
-        throw new InvalidSessionRecordError(error);
-      }
+    if (record == null) return null;
+    if (!(record instanceof Uint8Array)) {
+      throw new InvalidSessionRecordError(
+        new Error('Session record is not an obfuscated binary envelope'),
+      );
     }
-    // Records written before save obfuscation remain readable. The next
-    // persistence write replaces them with the masked binary format.
-    return record && typeof record === 'object' ? (record as SessionSave) : null;
+    try {
+      return deobfuscateSessionRecord(record);
+    } catch (error) {
+      throw new InvalidSessionRecordError(error);
+    }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'NotFoundError') {
       db.close();

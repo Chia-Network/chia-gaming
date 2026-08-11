@@ -6,12 +6,10 @@ import type {
   SessionMachineEvent,
   SessionMachineState,
   SessionControllerCommand,
+  LocalGameCommand,
 } from './sessionMachineTypes';
 
-type CommandEffect = Exclude<
-  SessionMachineEffect,
-  { type: 'set-hand-state' } | { type: 'clear-derived-game-presentation' }
->;
+type CommandEffect = Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>;
 
 export interface SessionMachineInterpreterDependencies {
   controller: SessionController;
@@ -30,6 +28,20 @@ export class SessionMachineInterpreter {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly dependencies: SessionMachineInterpreterDependencies) {}
+
+  runLocalGameCommand(command: LocalGameCommand, id: string): void {
+    switch (command.type) {
+      case 'make-move':
+        this.dependencies.controller.makeMove(id, command.readable);
+        return;
+      case 'accept-settlement':
+        this.dependencies.controller.acceptSettlement(id);
+        return;
+      case 'cheat':
+        this.dependencies.controller.cheat(id, command.moverShare);
+        return;
+    }
+  }
 
   run(effect: CommandEffect): void {
     const dependencies = this.dependencies;

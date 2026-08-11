@@ -21,6 +21,7 @@ import { jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
 import type { RegisteredGameType } from '../lib/session/types';
+import type { LocalGameActionRequest } from '../lib/session/sessionMachineTypes';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -28,6 +29,7 @@ import {
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
+import { decodeChannelStatusPayload } from '../lib/session/persistence';
 
 export interface WasmFields {
   serializedGameSession: Uint8Array;
@@ -45,7 +47,6 @@ export interface WasmFields {
   diagnosticLog: string[];
   durabilityWarning: string | undefined;
   activeGameIds: string[];
-  handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
@@ -184,7 +185,7 @@ export class SessionController implements PollingGameSession {
     acknowledged: boolean;
   } | null = null;
   activeGameIds: string[] = [];
-  private _handState!: PersistedGameState | null;
+  private handStateProjection: (() => PersistedGameState | null) | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
@@ -194,14 +195,14 @@ export class SessionController implements PollingGameSession {
   onFeatureStateTransition:
     | ((gameType: RegisteredGameType, gameId: string, state: unknown) => boolean)
     | null = null;
+  onFeatureStateWithLocalTurnTransition:
+    | ((gameType: RegisteredGameType, gameId: string, state: unknown, isMyTurn: boolean) => boolean)
+    | null = null;
+  onLocalGameAction: ((request: LocalGameActionRequest) => void) | null = null;
   getFee: () => bigint = () => 0n;
 
   get handState(): PersistedGameState | null {
-    return this._handState;
-  }
-
-  set handState(state: PersistedGameState | null) {
-    this._handState = state;
+    return this.handStateProjection?.() ?? null;
   }
 
   constructor(
@@ -211,12 +212,6 @@ export class SessionController implements PollingGameSession {
     theirContribution: bigint,
     peer_conn: PeerConnectionResult,
   ) {
-    Object.defineProperty(this, '_handState', {
-      value: null,
-      enumerable: false,
-      configurable: true,
-      writable: true,
-    });
     const { sendMessage, sendAck } = peer_conn;
     this.uniqueId = uniqueId;
     this.pairingToken = '';
@@ -318,6 +313,7 @@ export class SessionController implements PollingGameSession {
     this.blockchainAttached = false;
     this.blockchain = null;
     this.onSaveNeeded = null;
+    this.handStateProjection = null;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -958,19 +954,21 @@ export class SessionController implements PollingGameSession {
       this.markNeedsImmediateDurability();
     } else if ('Notification' in event) {
       const n = event.Notification;
+      let notification = n;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
       if (tag === 'ChannelStatus') {
         const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
         if (cs) {
-          // The `coin` field is a serialized CoinString (a byte blob). Normalize
-          // it to a Uint8Array so the persisted SessionSave carries a typed
-          // array (exempt from the save-time number check, stored losslessly as
-          // $bytes) rather than a degraded plain array/object of numbers.
-          this.lastChannelStatus = {
+          const channelStatus = decodeChannelStatusPayload({
             ...cs,
             coin: coerceToBytes(cs.coin),
-          } as unknown as ChannelStatusPayload;
-          if (cs.state === 'Active') {
+          });
+          if (channelStatus === null) {
+            throw new Error('ChannelStatus notification payload is null');
+          }
+          this.lastChannelStatus = channelStatus;
+          notification = { ...n, ChannelStatus: channelStatus };
+          if (channelStatus.state === 'Active') {
             this.channelReady = true;
           }
         }
@@ -994,10 +992,10 @@ export class SessionController implements PollingGameSession {
       }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
-        jsonStringify(n),
+        jsonStringify(notification),
         WASM_NOTIFICATION_HISTORY_LIMIT,
       );
-      this.rxjsEmitter?.next({ type: 'notification', data: n });
+      this.rxjsEmitter?.next({ type: 'notification', data: notification });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
@@ -1455,7 +1453,6 @@ export class SessionController implements PollingGameSession {
       diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
       durabilityWarning: this.durabilityWarning,
       activeGameIds: [...this.activeGameIds],
-      handState: this.handState,
       channelStatus: this.lastChannelStatus,
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
@@ -1483,9 +1480,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  setHandState(state: PersistedGameState | null) {
-    this.handState = state;
-    this.scheduleSave();
+  projectHandState(read: () => PersistedGameState | null): () => void {
+    this.handStateProjection = read;
+    return () => {
+      if (this.handStateProjection === read) this.handStateProjection = null;
+    };
   }
 
   transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): boolean {
@@ -1507,13 +1506,31 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  commitLocalGameAction(request: LocalGameActionRequest): void {
+    if (!this.onLocalGameAction) {
+      throw new Error('Local game action callback is unavailable');
+    }
+    this.onLocalGameAction(request);
+  }
+
+  transitionFeatureStateWithLocalTurn(
+    gameType: RegisteredGameType,
+    gameId: string,
+    state: unknown,
+    isMyTurn: boolean,
+  ): boolean {
+    if (!this.onFeatureStateWithLocalTurnTransition) {
+      throw new Error('Feature state with local turn transition callback is unavailable');
+    }
+    return this.onFeatureStateWithLocalTurnTransition(gameType, gameId, state, isMyTurn);
+  }
+
   /**
    * Game IDs and hand state are host-side presentation state. An abandoned
    * session has no per-game terminal events to retire them individually.
    */
   clearDerivedGamePresentation(): void {
     this.activeGameIds = [];
-    this.handState = null;
     this.scheduleSave();
   }
 
@@ -1573,8 +1590,7 @@ export class SessionController implements PollingGameSession {
     try {
       const bytes = clvmToBytes(readable);
       const result = this.cradle.make_move(gameId, bytes);
-      this.processResult(result);
-      this.assertActionSucceeded(result, 'make move');
+      this.processCommandResult(result, 'make move');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
@@ -1592,8 +1608,7 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.acceptSettlement(gameId);
-      this.processResult(result);
-      this.assertActionSucceeded(result, 'accept settlement');
+      this.processCommandResult(result, 'accept settlement');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
@@ -1611,8 +1626,7 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cheat(gameId, moverShare);
-      this.processResult(result);
-      this.assertActionSucceeded(result, 'cheat');
+      this.processCommandResult(result, 'cheat');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);

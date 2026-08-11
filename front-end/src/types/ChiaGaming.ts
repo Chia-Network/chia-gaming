@@ -223,9 +223,10 @@ export interface ActionFailedPayload {
 export type WasmNotification = {
   [K in Exclude<
     WasmNotificationTag,
-    'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'
+    'ChannelStatus' | 'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'
   >]?: Record<string, unknown>;
 } & {
+  ChannelStatus?: ChannelStatusPayload;
   ProposalAccepted?: ProposalAcceptedPayload;
   MoveRejected?: MoveRejectedPayload;
   ActionFailed?: ActionFailedPayload;

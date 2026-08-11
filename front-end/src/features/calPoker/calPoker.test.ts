@@ -9,7 +9,6 @@ import {
   calpokerResponderFinishesAtReveal,
   shouldRestoreCalpokerSelection,
   useCalpokerHand,
-  type UseCalpokerHandResult,
 } from './useCalpokerHand';
 import {
   calpokerSettlementVerb,
@@ -29,6 +28,7 @@ import {
 } from './components/constants/constants';
 import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
 import type { CaliforniapokerProps, CalpokerOutcomeView } from './types/CaliforniapokerProps';
+import type { LocalGameActionRequest } from '../../lib/session/sessionMachineTypes';
 
 jest.mock('./components/components/GameBottomBar', () => () => null);
 jest.mock('./components/components', () => {
@@ -43,6 +43,15 @@ jest.mock('./components/components', () => {
       }),
   };
 });
+
+function makeLocalActionCommit(makeMove: jest.Mock) {
+  return (request: LocalGameActionRequest) => {
+    if (request.command.type !== 'make-move') {
+      throw new Error(`Unexpected test command ${request.command.type}`);
+    }
+    makeMove(request.id, request.command.readable);
+  };
+}
 
 describe('Calpoker bigint domain helpers', () => {
   it('accepts bigint card ids at display boundaries', () => {
@@ -116,6 +125,7 @@ describe('Calpoker fresh hand startup', () => {
 
   it('submits the opening nil move when fresh durable state is already installed', () => {
     const makeMove = jest.fn();
+    const commitLocalGameAction = jest.fn(makeLocalActionCommit(makeMove));
     const controller = {
       handState: calpokerStateCodec.encode({
         playerHand: [],
@@ -126,12 +136,13 @@ describe('Calpoker fresh hand startup', () => {
       }),
       isChannelReady: () => true,
       transitionFeatureState: () => true,
+      commitLocalGameAction,
       makeMove,
     } as unknown as SessionController;
 
     function Harness() {
       useCalpokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         '7',
         false,
         EMPTY,
@@ -149,6 +160,13 @@ describe('Calpoker fresh hand startup', () => {
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(makeMove).toHaveBeenCalledWith('7', null);
+    expect(commitLocalGameAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gameType: 'calpoker',
+        id: '7',
+        command: { type: 'make-move', readable: null },
+      }),
+    );
   });
 
   it('does not project or submit when the session rejects the opening state commit', () => {
@@ -164,13 +182,14 @@ describe('Calpoker fresh hand startup', () => {
       }),
       isChannelReady: () => true,
       transitionFeatureState: () => false,
+      commitLocalGameAction: () => {
+        throw new Error('opening rejected');
+      },
       makeMove,
     } as unknown as SessionController;
-    let hand: UseCalpokerHandResult | undefined;
-
     function Harness() {
-      hand = useCalpokerHand(
-        controller,
+      useCalpokerHand(
+        { interactionMode: 'live', controller },
         '7',
         false,
         EMPTY,
@@ -182,11 +201,11 @@ describe('Calpoker fresh hand startup', () => {
       return null;
     }
 
-    act(() => {
-      renderer = create(React.createElement(Harness));
-    });
-
-    expect(hand?.moveNumber).toBe(0n);
+    expect(() =>
+      act(() => {
+        renderer = create(React.createElement(Harness));
+      }),
+    ).toThrow('opening rejected');
     expect(makeMove).not.toHaveBeenCalled();
     expect(onTurnChanged).not.toHaveBeenCalled();
   });
@@ -203,12 +222,13 @@ describe('Calpoker fresh hand startup', () => {
       }),
       isChannelReady: () => true,
       transitionFeatureState: () => true,
+      commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
     } as unknown as SessionController;
 
     function Harness() {
       useCalpokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         '7',
         false,
         EMPTY,
@@ -216,7 +236,6 @@ describe('Calpoker fresh hand startup', () => {
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
         controller.handState ?? undefined,
-        true,
         'restored',
       );
       return null;
@@ -242,12 +261,13 @@ describe('Calpoker fresh hand startup', () => {
       getRestoreStatus: () => 'restored',
       isChannelReady: () => true,
       transitionFeatureState: () => true,
+      commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
     } as unknown as SessionController;
 
     function Harness({ gameId, handOrigin }: { gameId: string; handOrigin: GameHandOrigin }) {
       useCalpokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         gameId,
         false,
         EMPTY,
@@ -255,7 +275,6 @@ describe('Calpoker fresh hand startup', () => {
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
         controller.handState ?? undefined,
-        true,
         handOrigin,
       );
       return null;
@@ -305,13 +324,14 @@ describe('Calpoker terminal hand projection', () => {
         }
         return true;
       },
+      commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
     } as unknown as SessionController;
     let hand: ReturnType<typeof useCalpokerHand> | undefined;
 
     function Harness() {
       hand = useCalpokerHand(
-        controller,
+        { interactionMode: 'live', controller },
         '7',
         false,
         EMPTY,
@@ -319,7 +339,6 @@ describe('Calpoker terminal hand projection', () => {
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
         controller.handState ?? undefined,
-        true,
         'restored',
       );
       return null;
@@ -333,6 +352,7 @@ describe('Calpoker terminal hand projection', () => {
         [...opponentHand.slice(0, 4), ...playerHand.slice(4)],
         [...playerHand.slice(0, 4), ...opponentHand.slice(4)],
       );
+      hand!.handleMakeMove();
     });
 
     expect(rejectedPayloads).toEqual([]);
@@ -524,6 +544,7 @@ describe('Calpoker terminal hand projection', () => {
       }),
       isChannelReady: () => true,
       transitionFeatureState,
+      commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
     } as unknown as SessionController;
     const gameplay = new Subject<GameplayEvent>();
@@ -535,7 +556,9 @@ describe('Calpoker terminal hand projection', () => {
         mountCount();
       }, []);
       const hand = useCalpokerHand(
-        controller,
+        terminalOutcome === null
+          ? { interactionMode: 'live', controller }
+          : { interactionMode: 'terminal', handState: controller.handState },
         '7',
         false,
         gameplay,
@@ -551,7 +574,6 @@ describe('Calpoker terminal hand projection', () => {
             }
           : INITIAL_GAME_TERMINAL_MODEL,
         controller.handState ?? undefined,
-        terminalOutcome === null,
         'restored',
       );
       const outcomeViewValue: CalpokerOutcomeView | undefined = hand.outcome

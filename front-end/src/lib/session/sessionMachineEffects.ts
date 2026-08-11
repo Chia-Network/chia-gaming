@@ -5,7 +5,6 @@ import type {
 } from './sessionMachineTypes';
 
 export interface SessionMachineEffectController {
-  setHandState(state: SessionMachineState['model']['game']['handState']): void;
   clearDerivedGamePresentation(): void;
 }
 
@@ -14,13 +13,7 @@ export interface SessionMachineEffectRunner {
   getAuthority(): SessionMachineState;
   controller: SessionMachineEffectController;
   runCommand(
-    effect: Exclude<
-      SessionMachineEffect,
-      | { type: 'set-hand-state' }
-      | {
-          type: 'clear-derived-game-presentation';
-        }
-    >,
+    effect: Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>,
   ): void;
   render(state: SessionMachineState): void;
 }
@@ -31,9 +24,8 @@ export interface SessionMachineEffectRunner {
  *
  * Ordering is strict:
  * 1. publish the next synchronous dispatch authority;
- * 2. commit controller-owned durable payload state;
- * 3. run remaining controller/protocol commands in reducer order;
- * 4. schedule React's projection.
+ * 2. run controller/protocol commands and persistence in reducer order;
+ * 3. schedule React's projection.
  */
 export function runSessionMachineTransition(
   transition: SessionMachineTransition,
@@ -42,14 +34,9 @@ export function runSessionMachineTransition(
   runner.setAuthority(transition.state);
   try {
     for (const effect of transition.effects) {
-      if (effect.type === 'set-hand-state') {
-        runner.controller.setHandState(effect.state);
-      } else if (effect.type === 'clear-derived-game-presentation') {
+      if (effect.type === 'clear-derived-game-presentation') {
         runner.controller.clearDerivedGamePresentation();
-      }
-    }
-    for (const effect of transition.effects) {
-      if (effect.type !== 'set-hand-state' && effect.type !== 'clear-derived-game-presentation') {
+      } else {
         runner.runCommand(effect);
       }
     }

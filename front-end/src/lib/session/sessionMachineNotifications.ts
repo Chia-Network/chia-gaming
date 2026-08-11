@@ -1,6 +1,5 @@
 import type {
   ActionFailedPayload,
-  ChannelStatusPayload,
   GameSettledPayload,
   GameStatusPayload,
   WasmNotification,
@@ -20,6 +19,7 @@ import {
 } from './gameSessionEvents';
 import { channelStatusModelFromPayload } from './normalization';
 import { isTerminalGameStatus, type NonTerminalGameStatusPayload } from './presentation';
+import { selectProposalGroupByDisposition, selectProposalGroupByMemberId } from './selectors';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -54,19 +54,18 @@ export function reduceSessionNotification(
     return id;
   };
   const cancelStale = (exceptId?: string) => {
-    const proposals = [
-      current.model.betweenHand.cachedPeerProposal,
-      current.model.betweenHand.reviewPeerProposal,
-    ];
+    const proposals = current.model.betweenHand.proposalGroups.filter(
+      (group) => group.origin === 'peer' && group.disposition !== 'accepted',
+    );
     for (const proposal of proposals) {
-      if (proposal && proposal.id !== exceptId) {
-        effects.push({ type: 'controller-cancel-proposal', id: proposal.id });
+      if (proposal.primaryId !== exceptId) {
+        effects.push({ type: 'controller-cancel-proposal', id: proposal.primaryId });
       }
     }
   };
 
   if ('ChannelStatus' in notification) {
-    const payload = notification.ChannelStatus as ChannelStatusPayload | undefined;
+    const payload = notification.ChannelStatus;
     if (!payload) return { state, effects: [] };
     const status = channelStatusModelFromPayload(payload);
     step({ type: 'channel-status', status });
@@ -113,10 +112,13 @@ export function reduceSessionNotification(
       if (!current.coordination.firstGameAccepted) {
         step({ type: 'set-first-game-accepted', accepted: true });
         step({ type: 'game', action: { type: 'channel-active' } });
-        const cached = current.model.betweenHand.cachedPeerProposal;
+        const cached = selectProposalGroupByDisposition(current.model, 'incoming-cached');
         if (cached) {
-          step({ type: 'set-review-proposal', proposal: cached });
-          step({ type: 'set-cached-proposal', proposal: null });
+          step({
+            type: 'set-proposal-disposition',
+            primaryId: cached.primaryId,
+            disposition: 'incoming-review',
+          });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         } else {
           step({ type: 'set-between-hand-mode', mode: 'compose-proposal' });
@@ -136,20 +138,17 @@ export function reduceSessionNotification(
       return { state: current, effects };
     }
     step({
-      type: 'track-proposal',
-      ids: incoming.groupIds,
-      terms: incoming.terms,
-      outgoing: false,
+      type: 'upsert-proposal-group',
+      group: incoming,
     });
-    if (incoming.groupIds.length > 1 && incoming.id !== incoming.groupIds[0]) {
+    if (incoming.primaryId !== incoming.memberIds[0]) {
       return { state: current, effects };
     }
     if (current.model.game.activeIds.length > 0) {
-      effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+      effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
       return { state: current, effects };
     }
     if (current.model.game.handKey === 0) {
-      step({ type: 'set-cached-proposal', proposal: incoming });
       return { state: current, effects };
     }
     const between = current.model.betweenHand;
@@ -166,7 +165,11 @@ export function reduceSessionNotification(
               ...between,
               pendingRetryTerms: null,
               newHandRequested: false,
-              reviewPeerProposal: incoming,
+              proposalGroups: between.proposalGroups.map((group) =>
+                group.primaryId === incoming.primaryId
+                  ? { ...group, disposition: 'incoming-review' as const }
+                  : group,
+              ),
               mode: 'review-incoming-proposal',
             },
           },
@@ -180,12 +183,22 @@ export function reduceSessionNotification(
             betweenHand: { ...between, pendingRetryTerms: null, newHandRequested: false },
           },
         };
-        effects.push({ type: 'controller-accept-proposal', id: incoming.id });
+        effects.push({ type: 'controller-accept-proposal', id: incoming.primaryId });
       } else if (current.coordination.sameTermsRequested && !matchesLast) {
-        for (const id of between.outgoingProposalIds) {
-          if (id !== incoming.id) effects.push({ type: 'controller-cancel-proposal', id });
+        const outgoingMemberIds: string[] = [];
+        for (const group of between.proposalGroups) {
+          if (
+            group.origin === 'local' &&
+            group.disposition === 'outgoing' &&
+            group.primaryId !== incoming.primaryId
+          ) {
+            effects.push({ type: 'controller-cancel-proposal', id: group.primaryId });
+            outgoingMemberIds.push(...group.memberIds);
+          }
         }
-        step({ type: 'clear-proposals' });
+        if (outgoingMemberIds.length > 0) {
+          step({ type: 'clear-proposals', ids: outgoingMemberIds });
+        }
         current = {
           ...current,
           coordination: { ...current.coordination, sameTermsRequested: false },
@@ -195,7 +208,11 @@ export function reduceSessionNotification(
               ...current.model.betweenHand,
               pendingRetryTerms: null,
               newHandRequested: false,
-              reviewPeerProposal: incoming,
+              proposalGroups: current.model.betweenHand.proposalGroups.map((group) =>
+                group.primaryId === incoming.primaryId
+                  ? { ...group, disposition: 'incoming-review' as const }
+                  : group,
+              ),
               mode: 'review-incoming-proposal',
             },
           },
@@ -205,15 +222,19 @@ export function reduceSessionNotification(
         step({ type: 'set-pending-retry-terms', terms: null });
         if (matchesLast) {
           effects.push(
-            { type: 'controller-cancel-proposal', id: incoming.id },
+            { type: 'controller-cancel-proposal', id: incoming.primaryId },
             { type: 'controller-propose-game', terms: retry },
           );
         } else {
-          step({ type: 'set-review-proposal', proposal: incoming });
+          step({
+            type: 'set-proposal-disposition',
+            primaryId: incoming.primaryId,
+            disposition: 'incoming-review',
+          });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
       } else {
-        step({ type: 'set-cached-proposal', proposal: incoming });
+        // The normalized group already carries its cached disposition.
       }
     } else if (between.mode === 'compose-proposal') {
       if (between.pendingRetryTerms) {
@@ -221,23 +242,35 @@ export function reduceSessionNotification(
         step({ type: 'set-pending-retry-terms', terms: null });
         if (matchesLast) {
           effects.push(
-            { type: 'controller-cancel-proposal', id: incoming.id },
+            { type: 'controller-cancel-proposal', id: incoming.primaryId },
             { type: 'controller-propose-game', terms: retry },
           );
         } else {
           step({ type: 'set-compose-proposal-sent', sent: false });
-          step({ type: 'set-review-proposal', proposal: incoming });
+          step({
+            type: 'set-proposal-disposition',
+            primaryId: incoming.primaryId,
+            disposition: 'incoming-review',
+          });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
       } else if (gameTermsEqual(incoming.terms, between.rejectedOnceTerms)) {
-        effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+        effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
         step({ type: 'set-rejected-terms', terms: null });
       } else {
-        step({ type: 'set-review-proposal', proposal: incoming });
+        step({
+          type: 'set-proposal-disposition',
+          primaryId: incoming.primaryId,
+          disposition: 'incoming-review',
+        });
         step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
       }
     } else {
-      step({ type: 'set-review-proposal', proposal: incoming });
+      step({
+        type: 'set-proposal-disposition',
+        primaryId: incoming.primaryId,
+        disposition: 'incoming-review',
+      });
     }
     effects.push({ type: 'persist-session' });
     return { state: current, effects };
@@ -249,23 +282,18 @@ export function reduceSessionNotification(
     const id = String(accepted.id);
     const amount = parseAmount(accepted.amount);
     if (amount == null) throw new Error(`ProposalAccepted ${id} missing amount`);
-    const groupIds = current.coordination.proposalGroupIdsById[id] ?? [id];
-    const terms = current.coordination.proposalTermsById[id];
-    if (!terms) throw new Error(`ProposalAccepted ${id} missing tracked game terms`);
-    const first =
-      current.model.game.currentHandIds.length !== groupIds.length ||
-      current.model.game.currentHandIds.some((groupId, index) => groupId !== groupIds[index]);
+    const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
       id,
-      groupIds,
       amount,
-      terms,
-      weProposed: groupIds.some((groupId) =>
-        current.model.betweenHand.outgoingProposalIds.includes(groupId),
-      ),
       iStarted,
     });
+    const first =
+      previousHandIds.length !== current.model.game.currentHandIds.length ||
+      previousHandIds.some(
+        (groupId, index) => groupId !== current.model.game.currentHandIds[index],
+      );
     if (first) cancelStale(id);
     effects.push({ type: 'emit-gameplay', event: { ProposalAccepted: { id: accepted.id } } });
     return { state: current, effects };
@@ -386,11 +414,9 @@ export function reduceSessionNotification(
   if (durableKind === 'insufficient-balance') {
     const insufficient = notification.InsufficientBalance as Record<string, unknown> | undefined;
     const id = String(insufficient?.id ?? '');
-    const groupIds = current.coordination.proposalGroupIdsById[id] ?? [id];
     step({
       type: 'notification-insufficient-balance',
       id,
-      groupIds,
       notification: {
         id: nextId(),
         kind: 'insufficient-bal',
@@ -408,16 +434,12 @@ export function reduceSessionNotification(
       (notification.ProposalCancelled as Record<string, unknown> | undefined)?.reason ?? '',
     );
     const before = current;
-    const terms = id ? (before.coordination.proposalTermsById[id] ?? null) : null;
-    const wasOurs = id ? before.model.betweenHand.outgoingProposalIds.includes(id) : false;
+    const proposal = id ? selectProposalGroupByMemberId(before.model, id) : null;
+    const terms = proposal?.terms ?? null;
+    const wasOurs = proposal?.origin === 'local';
     if (id) {
-      step({ type: 'clear-proposals', ids: before.coordination.proposalGroupIdsById[id] ?? [id] });
-      const cached = before.model.betweenHand.cachedPeerProposal;
-      if (cached?.id === id || cached?.groupIds.includes(id))
-        step({ type: 'set-cached-proposal', proposal: null });
-      const review = before.model.betweenHand.reviewPeerProposal;
-      if (review?.id === id || review?.groupIds.includes(id)) {
-        step({ type: 'set-review-proposal', proposal: null });
+      step({ type: 'clear-proposals', ids: proposal?.memberIds ?? [id] });
+      if (proposal?.disposition === 'incoming-review') {
         step({ type: 'set-between-hand-mode', mode: 'compose-proposal' });
       }
     }

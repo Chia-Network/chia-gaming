@@ -65,6 +65,29 @@ describe('finished session shell display', () => {
     expect(selectFinishedSessionDisplay(model).canRemountHand).toBe(true);
   });
 
+  it('keeps the terminal hand wrapper available for pointer and text interaction', () => {
+    const model = createSessionModel({
+      game: {
+        activeGameType: 'krunk',
+        currentHandIds: ['picker', 'guesser'],
+        lastDisplayedId: 'picker',
+        handState: krunkStateCodec.encode({
+          games: {
+            picker: initialKrunkGameState('alice'),
+            guesser: initialKrunkGameState('bob'),
+          },
+        }),
+      },
+    });
+
+    const markup = renderToStaticMarkup(React.createElement(FinishedSessionGameView, { model }));
+
+    expect(markup).toContain('data-testid="finished-session-game-view"');
+    expect(markup).not.toContain('pointer-events-none');
+    expect(markup).not.toContain('aria-disabled');
+    expect(markup).not.toMatch(/\sinert(?:=|>)/);
+  });
+
   it('does not expose bigint hand payloads to React prop enumeration', () => {
     const model = createSessionModel({
       game: {

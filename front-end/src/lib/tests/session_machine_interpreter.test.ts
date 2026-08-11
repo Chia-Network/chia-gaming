@@ -11,6 +11,7 @@ import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter'
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { krunkStateCodec } from '../../features/krunk/stateCodec';
+import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -25,6 +26,28 @@ const KRUNK_TERMS = {
   gameTimeout: 15n,
 };
 
+function stateWithProposals(
+  groups: Array<{
+    memberIds: string[];
+    terms: typeof TERMS | typeof KRUNK_TERMS;
+    origin?: 'local' | 'peer';
+  }>,
+) {
+  return createSessionMachineState(
+    createSessionModel({
+      betweenHand: {
+        proposalGroups: groups.map(({ memberIds, terms, origin = 'local' }) => ({
+          primaryId: memberIds[0],
+          memberIds,
+          terms,
+          origin,
+          disposition: origin === 'local' ? ('outgoing' as const) : ('incoming-cached' as const),
+        })),
+      },
+    }),
+  );
+}
+
 function fakeController(overrides: Partial<SessionController> = {}): SessionController {
   return {
     isOffChainActive: () => true,
@@ -33,6 +56,10 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     cancel_proposal: jest.fn(),
     cleanShutdown: jest.fn(),
     goOnChain: () => true,
+    makeMove: jest.fn(),
+    acceptSettlement: jest.fn(),
+    cheat: jest.fn(),
+    projectHandState: () => () => {},
     ...overrides,
   } as unknown as SessionController;
 }
@@ -128,29 +155,28 @@ describe('session machine causal sequences', () => {
   ])(
     'preserves current Krunk authority through unroll for the $player picker',
     ({ iStarted, weProposed, pickerId }) => {
-      const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
-        controller: fakeController({
-          setHandState: jest.fn(),
-          clearDerivedGamePresentation: jest.fn(),
-        }),
-        iStarted,
-        restoring: false,
-        getRestoreStatus: () => 'idle',
-        getRestoreError: () => null,
-        emitGameplay: () => {},
-        onError: (error) => {
-          throw error;
+      const runtime = new SessionMachineRuntime(
+        stateWithProposals([
+          { memberIds: ['1', '2'], terms: KRUNK_TERMS, origin: weProposed ? 'local' : 'peer' },
+        ]),
+        {
+          controller: fakeController({ clearDerivedGamePresentation: jest.fn() }),
+          iStarted,
+          restoring: false,
+          getRestoreStatus: () => 'idle',
+          getRestoreError: () => null,
+          emitGameplay: () => {},
+          onError: (error) => {
+            throw error;
+          },
+          persist: async () => {},
         },
-        persist: async () => {},
-      });
+      );
       const ids = ['1', '2'];
       runtime.dispatch({
         type: 'notification-accepted-group',
         id: ids[0],
-        groupIds: ids,
         amount: '100',
-        terms: KRUNK_TERMS,
-        weProposed,
         iStarted,
       });
 
@@ -202,29 +228,28 @@ describe('session machine causal sequences', () => {
   );
 
   it('drops a retired feature callback while current malformed callbacks still fail fast', () => {
-    const setHandState = jest.fn();
-    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
-      controller: fakeController({
-        setHandState,
-        clearDerivedGamePresentation: jest.fn(),
-      }),
-      iStarted: false,
-      restoring: false,
-      getRestoreStatus: () => 'idle',
-      getRestoreError: () => null,
-      emitGameplay: () => {},
-      onError: (error) => {
-        throw error;
+    const runtime = new SessionMachineRuntime(
+      stateWithProposals([
+        { memberIds: ['1', '2'], terms: KRUNK_TERMS },
+        { memberIds: ['7'], terms: TERMS },
+      ]),
+      {
+        controller: fakeController({ clearDerivedGamePresentation: jest.fn() }),
+        iStarted: false,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        emitGameplay: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        persist: async () => {},
       },
-      persist: async () => {},
-    });
+    );
     runtime.dispatch({
       type: 'notification-accepted-group',
       id: '1',
-      groupIds: ['1', '2'],
       amount: '100',
-      terms: KRUNK_TERMS,
-      weProposed: true,
       iStarted: false,
     });
     runtime.dispatch({
@@ -241,19 +266,14 @@ describe('session machine causal sequences', () => {
     runtime.dispatch({
       type: 'notification-accepted-group',
       id: '7',
-      groupIds: ['7'],
       amount: '20',
-      terms: TERMS,
-      weProposed: true,
       iStarted: false,
     });
     const authority = runtime.getState();
-    const durableCommits = setHandState.mock.calls.length;
 
     expect(runtime.transitionFeatureState('calpoker', '2', { stale: true })).toBe(false);
     expect(runtime.transitionFeatureState('krunk', '7', { stale: true })).toBe(false);
     expect(runtime.getState()).toBe(authority);
-    expect(setHandState).toHaveBeenCalledTimes(durableCommits);
 
     expect(() => runtime.transitionFeatureState('calpoker', '7', { malformed: true })).toThrow(
       'Internal feature-state payload is invalid for calpoker',
@@ -264,10 +284,7 @@ describe('session machine causal sequences', () => {
   it('persists each accepted deferred coin enrichment once and ignores stale generations', async () => {
     const pending: Array<(coinHex: string | null) => void> = [];
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
-    const controller = fakeController({
-      setHandState: jest.fn(),
-      clearDerivedGamePresentation: jest.fn(),
-    });
+    const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
     const runtime = new SessionMachineRuntime(
       createSessionMachineState(
         createSessionModel({
@@ -532,7 +549,15 @@ describe('session machine controller command failures', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
         betweenHand: {
           mode: 'review-incoming-proposal',
-          reviewPeerProposal: { id: '7', groupIds: ['7'], terms: TERMS },
+          proposalGroups: [
+            {
+              primaryId: '7',
+              memberIds: ['7'],
+              terms: TERMS,
+              origin: 'peer',
+              disposition: 'incoming-review',
+            },
+          ],
         },
       }),
     );
@@ -553,7 +578,7 @@ describe('session machine controller command failures', () => {
     runtime.dispatch({ type: 'accept-review' });
 
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
-    expect(runtime.getState().model.betweenHand.reviewPeerProposal?.id).toBe('7');
+    expect(runtime.getState().model.betweenHand.proposalGroups[0]?.primaryId).toBe('7');
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
       message: expect.stringContaining('proposal no longer exists'),
@@ -573,7 +598,15 @@ describe('session machine controller command failures', () => {
     runtime.dispatch({ type: 'submit-compose', terms: TERMS });
 
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(true);
-    expect(runtime.getState().model.betweenHand.outgoingProposalIds).toEqual(['7']);
+    expect(runtime.getState().model.betweenHand.proposalGroups).toEqual([
+      {
+        primaryId: '7',
+        memberIds: ['7'],
+        terms: TERMS,
+        origin: 'local',
+        disposition: 'outgoing',
+      },
+    ]);
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toBe(runtime.getState());
     expect(rendered.at(-1)).toBe(runtime.getState());
@@ -600,15 +633,21 @@ describe('session machine controller command failures', () => {
     ],
   ])('keeps review state retryable when %s throws', (_name, override, event) => {
     const { persisted, rendered, runtime } = runtimeHarness(override);
-    const review = { id: '7', groupIds: ['7'], terms: TERMS };
-    runtime.dispatch({ type: 'set-review-proposal', proposal: review });
+    const review = {
+      primaryId: '7',
+      memberIds: ['7'],
+      terms: TERMS,
+      origin: 'peer' as const,
+      disposition: 'incoming-review' as const,
+    };
+    runtime.dispatch({ type: 'upsert-proposal-group', group: review });
     runtime.dispatch({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
     persisted.length = 0;
     rendered.length = 0;
 
     runtime.dispatch(event);
 
-    expect(runtime.getState().model.betweenHand.reviewPeerProposal).toEqual(review);
+    expect(runtime.getState().model.betweenHand.proposalGroups).toContainEqual(review);
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
@@ -629,8 +668,14 @@ describe('session machine controller command failures', () => {
   ])('persists successful %s confirmation exactly once', (_name, override, event, mode) => {
     const { persisted, rendered, runtime } = runtimeHarness(override);
     runtime.dispatch({
-      type: 'set-review-proposal',
-      proposal: { id: '7', groupIds: ['7'], terms: TERMS },
+      type: 'upsert-proposal-group',
+      group: {
+        primaryId: '7',
+        memberIds: ['7'],
+        terms: TERMS,
+        origin: 'peer',
+        disposition: 'incoming-review',
+      },
     });
     runtime.dispatch({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
     persisted.length = 0;
@@ -640,7 +685,7 @@ describe('session machine controller command failures', () => {
 
     expect(runtime.getState().model.betweenHand.mode).toBe(mode);
     if (event.type === 'reject-review') {
-      expect(runtime.getState().model.betweenHand.reviewPeerProposal).toBeNull();
+      expect(runtime.getState().model.betweenHand.proposalGroups).toEqual([]);
     }
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toBe(runtime.getState());
@@ -683,5 +728,100 @@ describe('session machine controller command failures', () => {
     expect(succeeded.persisted).toHaveLength(1);
     expect(succeeded.persisted[0].model.channel.cleanShutdownStarted).toBe(true);
     expect(succeeded.rendered.at(-1)).toBe(succeeded.runtime.getState());
+  });
+});
+
+describe('session machine local game action boundary', () => {
+  function localActionHarness(makeMove: SessionController['makeMove']) {
+    const controller = fakeController({ makeMove });
+    const initial = stateWithProposals([{ memberIds: ['7'], terms: TERMS }]);
+    const persisted: ReturnType<typeof createSessionMachineState>[] = [];
+    const rendered: ReturnType<typeof createSessionMachineState>[] = [];
+    const runtime = new SessionMachineRuntime(initial, {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      emitGameplay: () => {},
+      onError: (error) => {
+        throw error;
+      },
+      persist: async () => persisted.push(runtime.getState()),
+    });
+    runtime.setRender((state) => rendered.push(state));
+    runtime.dispatch({
+      type: 'notification-accepted-group',
+      id: '7',
+      amount: '20',
+      iStarted: false,
+    });
+    persisted.length = 0;
+    rendered.length = 0;
+    return { runtime, persisted, rendered };
+  }
+
+  it('leaves feature state, history, turn, and saves unchanged when Rust rejects synchronously', () => {
+    const makeMove = jest.fn(() => {
+      throw new Error('make move failed: rejected');
+    });
+    const { runtime, persisted, rendered } = localActionHarness(makeMove);
+    const before = runtime.getState();
+    const current = calpokerStateCodec.decode(before.model.game.handState)!;
+
+    expect(() =>
+      runtime.commitLocalGameAction({
+        gameType: 'calpoker',
+        id: '7',
+        state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+        command: { type: 'make-move', readable: null },
+      }),
+    ).toThrow('rejected');
+
+    expect(makeMove).toHaveBeenCalledTimes(1);
+    expect(runtime.getState()).toBe(before);
+    expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
+    expect(persisted).toHaveLength(0);
+    expect(rendered).toHaveLength(0);
+  });
+
+  it('commits accepted feature state and shared turn in one rendered transition', () => {
+    const makeMove = jest.fn();
+    const { runtime, persisted, rendered } = localActionHarness(makeMove);
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'make-move', readable: null },
+    });
+
+    expect(makeMove).toHaveBeenCalledTimes(1);
+    expect(rendered).toHaveLength(1);
+    expect(calpokerStateCodec.decode(rendered[0].model.game.handState)).toMatchObject({
+      moveNumber: 1n,
+      isPlayerTurn: false,
+    });
+    expect(rendered[0].model.game.instances['7'].presentation).toBe('off-chain-their-turn');
+    expect(persisted).toHaveLength(0);
+  });
+
+  it.each([
+    ['wrong type', { gameType: 'spacepoker' as const, id: '7' }, 'gameType'],
+    ['wrong id', { gameType: 'calpoker' as const, id: '9' }, 'game id'],
+  ])('fails fast for an internal %s local action', (_label, identity, message) => {
+    const makeMove = jest.fn();
+    const { runtime } = localActionHarness(makeMove);
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+
+    expect(() =>
+      runtime.commitLocalGameAction({
+        ...identity,
+        state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+        command: { type: 'make-move', readable: null },
+      }),
+    ).toThrow(message);
+    expect(makeMove).not.toHaveBeenCalled();
   });
 });
