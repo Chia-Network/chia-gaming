@@ -2,6 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { EMPTY, Subject } from 'rxjs';
 
+import SpacePoker from './SpacePoker';
 import {
   isTerminalSpacepokerHandler,
   opponentTerminalAction,
@@ -33,7 +34,7 @@ import type { SessionController } from '../../hooks/SessionController';
 import { decodeGameFeatureState } from '../../lib/gameRegistry';
 import { INITIAL_GAME_TERMINAL_MODEL } from '../../lib/session/model';
 import type { LocalGameActionRequest } from '../../lib/session/sessionMachineTypes';
-import { spacepokerStateCodec } from './stateCodec';
+import { spacepokerStateCodec, type SpacepokerHandState } from './stateCodec';
 
 describe('Space Poker terminal UX', () => {
   it('uses a single-character ten rank', () => {
@@ -267,10 +268,28 @@ describe('Space Poker terminal UX', () => {
 
 describe('Space Poker feature-state authority', () => {
   let renderer: ReactTestRenderer | null = null;
+  const originalWindow = globalThis.window;
+
+  beforeAll(() => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+  });
 
   afterEach(() => {
     if (renderer) act(() => renderer?.unmount());
     renderer = null;
+  });
+
+  afterAll(() => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: originalWindow,
+    });
   });
 
   it('does not project or submit when the session rejects a local action commit', () => {
@@ -551,5 +570,95 @@ describe('Space Poker feature-state authority', () => {
       ],
     });
     expect(makeMove).toHaveBeenCalledWith('7', null);
+  });
+
+  it.each([
+    { action: 'raise' as const, lastRaise: 0n },
+    { action: 'call' as const, lastRaise: 2n },
+  ])('keeps the live React boundary bigint-safe for slider/$action', ({ action, lastRaise }) => {
+    const committed: LocalGameActionRequest[] = [];
+    let postCommitStateReads = 0;
+
+    function Harness() {
+      const [, rerender] = React.useState(0);
+      const persistedRef = React.useRef(
+        spacepokerStateCodec.encode({
+          gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+          playerHoleCards: [1n, 2n],
+          playerBoost: false,
+          opponentHoleCards: null,
+          opponentBoost: null,
+          communityCards: [3n, 4n, 5n, null, null],
+          halfPot: 3n,
+          lastRaise,
+          iRaisedLast: false,
+          handHistory: [],
+          outcome: null,
+          terminalState: 'none',
+          terminalRecovery: null,
+          pendingTerminalAction: null,
+          coinTossIOpen: true,
+          unitSizeMojos: 10n,
+          displayMode: 'units',
+        }),
+      );
+      const controllerRef = React.useRef<SessionController | null>(null);
+      if (!controllerRef.current) {
+        const controller = {
+          isChannelReady: () => true,
+          commitLocalGameAction: (request: LocalGameActionRequest) => {
+            committed.push(request);
+            const canonical = spacepokerStateCodec.encode(request.state as SpacepokerHandState);
+            Object.defineProperty(canonical, 'state', {
+              get: () => {
+                postCommitStateReads += 1;
+                return request.state;
+              },
+              enumerable: true,
+            });
+            persistedRef.current = canonical;
+            rerender((value) => value + 1);
+          },
+        } as unknown as SessionController;
+        Object.defineProperty(controller, 'handState', {
+          get: () => persistedRef.current,
+          enumerable: false,
+        });
+        controllerRef.current = controller;
+      }
+      return React.createElement(SpacePoker, {
+        handSource: { interactionMode: 'live', controller: controllerRef.current },
+        gameId: '7',
+        iStarted: false,
+        gameplayEvent$: EMPTY,
+        betSize: '100',
+        unitSizeMojos: '10',
+        onTurnChanged: () => {},
+        onGameLog: () => {},
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      });
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    if (action === 'raise') {
+      act(() => {
+        renderer!.root.findByType('input').props.onChange({ target: { value: '3' } });
+      });
+    }
+    const button = renderer!.root
+      .findAllByType('button')
+      .find((candidate) => candidate.children[0] === (action === 'raise' ? 'Raise' : 'Call'));
+    expect(button).toBeDefined();
+    expect(() => act(() => button!.props.onClick())).not.toThrow();
+
+    expect(committed).toHaveLength(1);
+    expect(postCommitStateReads).toBe(0);
+    expect(decodeGameFeatureState('spacepoker', committed[0].state)).toMatchObject(
+      action === 'raise'
+        ? { gameState: { myTurn: false }, lastRaise: 3n }
+        : { gameState: { myTurn: false }, lastRaise: 0n },
+    );
   });
 });

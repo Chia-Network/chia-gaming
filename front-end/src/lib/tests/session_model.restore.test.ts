@@ -19,7 +19,6 @@ import {
   isActivelyPlayingOnChain,
   projectGameStatus,
 } from '../session/model';
-import { gameInitialTurn } from '../gameRegistry';
 import type { SessionSave } from '../../hooks/save';
 import { gameplayEventsForGameStatus, settledEventForInfo } from '../../hooks/useGameSession';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -430,11 +429,6 @@ describe('session model restore, schema, and event contracts', () => {
       displayGameId: '7',
       turnState: 'replaying',
     });
-  });
-
-  it('maps frontend Calpoker starter role to the opposite initial mover', () => {
-    expect(gameInitialTurn('calpoker', true)).toBe('their-turn');
-    expect(gameInitialTurn('calpoker', false)).toBe('my-turn');
   });
 
   it('does not regress terminal hand status when a local turn callback arrives late', () => {

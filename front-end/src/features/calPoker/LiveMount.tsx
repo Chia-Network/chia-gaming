@@ -2,7 +2,7 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import type { GameplayEvent } from '../../hooks/useGameSession';
 import type { GameHandSource, GameHandOrigin, GameMountRegistration } from '../../lib/gameMount';
-import { gameHandState, terminalGameHandSource } from '../../lib/gameMount';
+import { terminalGameHandSource } from '../../lib/gameMount';
 import { formatAmount } from '../../util';
 import type {
   CalpokerDisplaySnapshotView,
@@ -97,7 +97,6 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     onOutcome,
     handleTurnChanged,
     terminal,
-    gameHandState(handSource) ?? undefined,
     handOrigin,
   );
   const handleGameLog = useCallback(

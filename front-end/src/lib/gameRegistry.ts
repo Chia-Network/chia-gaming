@@ -9,7 +9,7 @@ import type {
   SavedTermsExtras,
 } from './gameAdapter';
 import type { GameStateCodec, PersistedGameState } from './session/gameStateCodec';
-import type { GameTurnState, HandTermsBaseModel, HandTermsModel } from './session/types';
+import type { HandTermsBaseModel, HandTermsModel } from './session/types';
 
 /**
  * The pure registration source of truth. `satisfies` makes adding a
@@ -38,7 +38,6 @@ interface ErasedGameRegistration {
   decodeFeatureState(value: unknown): unknown | null;
   readonly lifecycle: {
     proposalSenderGoesFirst(iStarted: boolean): boolean;
-    initialTurn(iStarted: boolean): GameTurnState;
   };
   readonly compose: {
     defaultDraft(perGameAmount: bigint): ComposeDraftFor<RegisteredGameType>;
@@ -151,10 +150,6 @@ export function validateGameTerms(terms: HandTermsModel): boolean {
 export function gameTermsEqual(a: HandTermsModel | null, b: HandTermsModel | null): boolean {
   if (!a || !b || a.gameType !== b.gameType) return false;
   return registrationFor(a.gameType).termsEqual(a, b);
-}
-
-export function gameInitialTurn(gameType: RegisteredGameType, iStarted: boolean): GameTurnState {
-  return registrationFor(gameType).lifecycle.initialTurn(iStarted);
 }
 
 export function reduceRegisteredGameState(

@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import type { SessionController } from '../hooks/SessionController';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { PersistedGameState } from './session/gameStateCodec';
@@ -40,6 +40,14 @@ export function terminalGameHandSource(
 
 export function gameHandState(source: GameHandSource): Readonly<PersistedGameState> | null {
   return source.interactionMode === 'live' ? source.controller.handState : source.handState;
+}
+
+/** Durable hand state is initialization input, never a reactive render dependency. */
+export function useInitialGameHandState(
+  source: GameHandSource,
+): Readonly<PersistedGameState> | null {
+  const [initial] = useState(() => gameHandState(source));
+  return initial;
 }
 
 export function requireLiveGameHandSource(source: GameHandSource): SessionController {

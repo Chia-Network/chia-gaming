@@ -112,11 +112,12 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
       const newHand = !sameHand;
       const instances = newHand ? {} : { ...slice.instances };
       for (const id of action.groupIds) {
-        instances[id] = instances[id] ?? newInstance(id, action.amount, action.startTurn);
+        instances[id] = instances[id] ?? newInstance(id, action.amount, 'their-turn');
       }
       instances[action.acceptedId] = {
         ...requireInstance({ ...slice, instances }, action.acceptedId),
         amount: action.amount,
+        presentation: action.startTurn === 'my-turn' ? 'off-chain-my-turn' : 'off-chain-their-turn',
       };
       next = {
         handKey: newHand ? slice.handKey + 1 : slice.handKey,

@@ -210,7 +210,6 @@ export const krunkRegistration: GameFeatureRegistration<'krunk', KrunkHandState,
   decodeFeatureState: decodeKrunkGameState,
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
-    initialTurn: (iStarted) => (iStarted ? 'their-turn' : 'my-turn'),
   },
   compose: {
     defaultDraft: () => ({ amount: 100n }),

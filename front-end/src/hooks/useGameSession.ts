@@ -166,9 +166,7 @@ export function useGameSession(
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
       emitGameplay: (event) => gameplaySubject.next(event),
-      onError: (error) => {
-        console.error('[session machine effect]', error);
-      },
+      onError: (error) => controller.reportRuntimeError(error),
     });
   }
   const runtime = runtimeRef.current;

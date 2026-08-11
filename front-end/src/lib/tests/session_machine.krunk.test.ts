@@ -22,6 +22,7 @@ describe('session machine behavior sequences', () => {
       id: '1',
       amount: '100',
       iStarted: false,
+      isMyTurn: false,
     });
 
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
@@ -62,6 +63,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '20',
       iStarted: false,
+      isMyTurn: true,
     });
 
     expect(state.model.game.activeIds).toEqual(['7']);
@@ -87,6 +89,7 @@ describe('session machine behavior sequences', () => {
       id: '1',
       amount: '100',
       iStarted: false,
+      isMyTurn: true,
     });
 
     state = reduceSessionNotification(
@@ -202,6 +205,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '100',
       iStarted: false,
+      isMyTurn: true,
     });
 
     const accepted = state.model.game.handState;

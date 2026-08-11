@@ -233,10 +233,7 @@ export function useSpacepokerHand(
     throw new Error('Space Poker requires a positive unit size');
   }
   const fallbackDisplayMode = defaultDisplayModeForUnit(unitSizeMojos);
-  const initialHandState = useMemo(
-    () => spacepokerStateFromPersisted(initialPersistedState),
-    [initialPersistedState],
-  );
+  const [initialHandState] = useState(() => spacepokerStateFromPersisted(initialPersistedState));
   if (initialHandState && initialHandState.unitSizeMojos !== unitSizeMojos) {
     throw new Error('Space Poker persisted unit size does not match proposal terms');
   }

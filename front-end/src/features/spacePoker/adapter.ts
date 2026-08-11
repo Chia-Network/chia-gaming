@@ -10,9 +10,9 @@ import { isForfeitOutcome, type SettlementOutcome } from '../../lib/settlement';
 import { spacepokerStateCodec, type SpacepokerHandState, type SpHandEntry } from './stateCodec';
 import { resolveSpacepokerUnitSize } from './unitSize';
 
-function initialState(iStarted: boolean, unitSizeMojos: bigint): SpacepokerHandState {
+function initialState(isMyTurn: boolean, unitSizeMojos: bigint): SpacepokerHandState {
   return {
-    gameState: { handler: 0n, myTurn: !iStarted, N: 4n },
+    gameState: { handler: 0n, myTurn: isMyTurn, N: 4n },
     playerHoleCards: null,
     playerBoost: false,
     opponentHoleCards: null,
@@ -354,7 +354,7 @@ export function reduceSpacepokerDurableState(
   if (event.type === 'abandoned' || event.type === 'remove-group') return null;
   if (event.type === 'accepted-group') {
     if (event.terms.gameType !== 'spacepoker') return current;
-    return current ?? initialState(event.iStarted, event.terms.unitSizeMojos);
+    return current ?? initialState(event.isMyTurn, event.terms.unitSizeMojos);
   }
   if (event.type === 'feature-state') {
     const state = spacepokerStateCodec.isState(event.state) ? event.state : null;
@@ -407,7 +407,6 @@ export const spacepokerRegistration: GameFeatureRegistration<'spacepoker', Space
   decodeFeatureState: (value) => (spacepokerStateCodec.isState(value) ? value : null),
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
-    initialTurn: (iStarted) => (iStarted ? 'their-turn' : 'my-turn'),
   },
   compose: {
     defaultDraft: () => ({ unitSize: 1n, stackSize: 10n }),

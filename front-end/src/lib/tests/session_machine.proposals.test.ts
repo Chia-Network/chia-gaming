@@ -13,6 +13,7 @@ describe('session machine behavior sequences', () => {
         id: 'missing',
         amount: '20',
         iStarted: false,
+        isMyTurn: false,
       }),
     ).toThrow('ProposalAccepted missing missing normalized proposal group');
     expect(() =>
@@ -39,7 +40,7 @@ describe('session machine behavior sequences', () => {
 
     reduceSessionNotification(
       state,
-      { ProposalAccepted: { id: '7', amount: '20' } },
+      { ProposalAccepted: { id: '7', amount: '20', our_turn: true } },
       true,
       capture,
     );
@@ -50,6 +51,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '20',
       iStarted: true,
+      isMyTurn: true,
     });
     expect(events[1]).toMatchObject({
       type: 'notification-insufficient-balance',
@@ -152,7 +154,7 @@ describe('session machine behavior sequences', () => {
     state = reduceSessionNotification(
       state,
 
-      { ProposalAccepted: { id: '1', amount: '200' } },
+      { ProposalAccepted: { id: '1', amount: '200', our_turn: false } },
 
       true,
 
@@ -165,7 +167,7 @@ describe('session machine behavior sequences', () => {
       state = reduceSessionNotification(
         state,
 
-        { ProposalAccepted: { id: '2', amount: '200' } },
+        { ProposalAccepted: { id: '2', amount: '200', our_turn: true } },
 
         true,
 

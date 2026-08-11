@@ -215,6 +215,7 @@ pub enum GameNotification {
     ProposalAccepted {
         id: GameID,
         amount: Amount,
+        our_turn: bool,
     },
     ProposalCancelled {
         id: GameID,

@@ -5762,7 +5762,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ProposalAccepted { id, amount }
+                GameNotification::ProposalAccepted { id, amount, .. }
                     if *id == GameID(3) && amount.to_u64() == 200
             )),
             "Bob should get ProposalAccepted with game 3's 200-mojo total, got: {p1_notifs:?}"

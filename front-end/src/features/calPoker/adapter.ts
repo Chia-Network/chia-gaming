@@ -9,13 +9,13 @@ import {
 import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
 import { calpokerStateCodec, type CalpokerHandState } from './stateCodec';
 
-function initialState(iStarted: boolean): CalpokerHandState {
+function initialState(isMyTurn: boolean): CalpokerHandState {
   return {
     playerHand: [],
     opponentHand: [],
     cardSelections: [],
     moveNumber: 0n,
-    isPlayerTurn: !iStarted,
+    isPlayerTurn: isMyTurn,
   };
 }
 
@@ -125,7 +125,7 @@ export function reduceCalpokerDurableState(
   event: DurableGameStateEvent,
 ): CalpokerHandState | null {
   if (event.type === 'abandoned' || event.type === 'remove-group') return null;
-  if (event.type === 'accepted-group') return current ?? initialState(event.iStarted);
+  if (event.type === 'accepted-group') return current ?? initialState(event.isMyTurn);
   if (event.type === 'feature-state') {
     const state = calpokerStateCodec.isState(event.state) ? event.state : null;
     if (state === null) throw new Error('Invalid Calpoker feature-state payload');
@@ -163,7 +163,6 @@ export const calpokerRegistration: GameFeatureRegistration<'calpoker', CalpokerH
   decodeFeatureState: (value) => (calpokerStateCodec.isState(value) ? value : null),
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
-    initialTurn: (iStarted) => (iStarted ? 'their-turn' : 'my-turn'),
   },
   compose: {
     defaultDraft: (perGameAmount) => ({ amount: perGameAmount }),

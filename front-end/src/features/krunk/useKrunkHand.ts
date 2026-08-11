@@ -285,7 +285,9 @@ export function useKrunkHand(
   // channel initiator plays bob and the receiver plays alice.
   const role: KrunkRole = iStarted ? 'bob' : 'alice';
 
-  const initialState = krunkGameStateFromPersisted(initialPersistedState, _gameId, role);
+  const [initialState] = useState(() =>
+    krunkGameStateFromPersisted(initialPersistedState, _gameId, role),
+  );
   const [gs, setGs] = useState<KrunkGameState>(initialState);
 
   const gsRef = useRef(gs);

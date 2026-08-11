@@ -748,9 +748,13 @@ impl OffChainPhase {
                     };
                     let ch = self.channel_state_mut()?;
                     ch.apply_received_accept_proposal(game_id)?;
+                    let our_turn = ch.game_is_my_turn(game_id).ok_or_else(|| {
+                        Error::StrErr(format!("accepted game {game_id} has no turn authority"))
+                    })?;
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: *game_id,
                         amount,
+                        our_turn,
                     }));
                 }
                 BatchAction::CancelProposal(game_id) => {
@@ -1113,9 +1117,15 @@ impl OffChainPhase {
                         let their_short =
                             proposal.their_contribution > ch.their_out_of_game_balance();
                         if our_short || their_short {
+                            let our_turn = ch.game_is_my_turn(&game_id).ok_or_else(|| {
+                                Error::StrErr(format!(
+                                    "insufficient-balance game {game_id} has no turn authority"
+                                ))
+                            })?;
                             effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                                 id: game_id,
                                 amount,
+                                our_turn,
                             }));
                             effects.push(Effect::Notify(GameNotification::InsufficientBalance {
                                 id: game_id,
@@ -1127,9 +1137,13 @@ impl OffChainPhase {
                             continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
+                        let our_turn = ch.game_is_my_turn(&game_id).ok_or_else(|| {
+                            Error::StrErr(format!("accepted game {game_id} has no turn authority"))
+                        })?;
                         effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                             id: game_id,
                             amount,
+                            our_turn,
                         }));
                     }
                     batch_actions.push(BatchAction::AcceptProposal(game_id));
@@ -1631,9 +1645,15 @@ impl FromLocalUI for OffChainPhase {
                     })?;
                     proposal.my_contribution.clone() + proposal.their_contribution.clone()
                 };
+                let our_turn = self.channel_state()?.game_is_my_turn(id).ok_or_else(|| {
+                    Error::StrErr(format!(
+                        "insufficient-balance game {id} has no turn authority"
+                    ))
+                })?;
                 all_effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                     id: *id,
                     amount,
+                    our_turn,
                 }));
             }
             all_effects.push(Effect::Notify(GameNotification::InsufficientBalance {

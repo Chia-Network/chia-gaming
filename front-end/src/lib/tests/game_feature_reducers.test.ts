@@ -50,6 +50,7 @@ const acceptedSpacepoker = (): DurableGameStateEvent => ({
   id: 'space-1',
   groupIds: ['space-1'],
   iStarted: false,
+  isMyTurn: true,
   origin: 'local',
   terms: {
     gameType: 'spacepoker',
@@ -80,6 +81,7 @@ describe('canonical feature gameplay reducers', () => {
       id: 'krunk-1',
       groupIds: ['krunk-1', 'krunk-2'],
       iStarted: false,
+      isMyTurn: true,
       origin,
       terms: {
         gameType: 'krunk',
@@ -724,6 +726,7 @@ describe('canonical feature gameplay reducers', () => {
       id: 'krunk-3',
       groupIds: ['krunk-3', 'krunk-4'],
       iStarted: true,
+      isMyTurn: true,
       origin: 'local',
       terms: {
         gameType: 'krunk',

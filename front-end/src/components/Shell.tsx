@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
-import { GameSessionErrorBoundary } from './GameSession';
+import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
@@ -29,6 +29,7 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
+  patchLiveSessionPresentation,
   replaceSession,
   clearSession,
   clearSessionPairing,
@@ -911,7 +912,7 @@ const Shell = () => {
         waitingEnteredAtRef.current = now;
         waitingStateRef.current = channelState;
         setAbandonEnabled(false);
-        saveSession({ scope: 'presentation', presentation: { waitingStateEnteredAt: now } });
+        patchLiveSessionPresentation({ waitingStateEnteredAt: now });
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
           if (dashboardSessionModelRef.current?.channel.status.state !== channelState) return;
@@ -926,10 +927,7 @@ const Shell = () => {
       if (waitingEnteredAtRef.current !== null) {
         waitingEnteredAtRef.current = null;
         waitingStateRef.current = null;
-        saveSession({
-          scope: 'presentation',
-          presentation: { waitingStateEnteredAt: null },
-        });
+        patchLiveSessionPresentation({ waitingStateEnteredAt: null });
       }
       setAbandonEnabled(false);
     }
@@ -2397,10 +2395,7 @@ const Shell = () => {
         waitingStateRef.current = null;
         setAbandonEnabled(false);
         if (restoredPresentation?.waitingStateEnteredAt != null) {
-          saveSession({
-            scope: 'presentation',
-            presentation: { waitingStateEnteredAt: null },
-          });
+          patchLiveSessionPresentation({ waitingStateEnteredAt: null });
         }
       }
 
@@ -2413,10 +2408,7 @@ const Shell = () => {
             () => {
               cleanShutdownGraceTimerRef.current = null;
               setCleanShutdownGraceActive(false);
-              saveSession({
-                scope: 'presentation',
-                presentation: { cleanShutdownGraceStartedAt: null },
-              });
+              patchLiveSessionPresentation({ cleanShutdownGraceStartedAt: null });
             },
             Number(GRACE_DELAY_MS - elapsed),
           );
@@ -2807,10 +2799,7 @@ const Shell = () => {
     cleanShutdownGraceTimerRef.current = setTimeout(() => {
       cleanShutdownGraceTimerRef.current = null;
       setCleanShutdownGraceActive(false);
-      saveSession({
-        scope: 'presentation',
-        presentation: { cleanShutdownGraceStartedAt: null },
-      });
+      patchLiveSessionPresentation({ cleanShutdownGraceStartedAt: null });
     }, Number(GRACE_DELAY_MS));
   }, []);
 
@@ -3143,614 +3132,619 @@ const Shell = () => {
   // GameSession/hub can finish restore, then flip to ready in one paint.
   const shellHidden = bootState.kind === 'autoResuming';
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        width: '100vw',
-        height: '100vh',
-        ...(shellHidden ? { visibility: 'hidden' as const } : {}),
-      }}
-      className="bg-canvas-bg-subtle text-canvas-text"
-      aria-hidden={shellHidden || undefined}
-    >
-      {/* Tab bar with branding */}
+    <>
+      <UncaughtClientErrorReporter />
       <div
         style={{
-          flexShrink: 0,
           display: 'flex',
-          alignItems: 'flex-end',
-          gap: '0.25rem',
-          padding: '0.5rem 1rem 0',
-          borderBottom: '1px solid var(--color-canvas-border)',
-          background: 'var(--color-canvas-bg-active)',
+          flexDirection: 'column',
+          position: 'relative',
+          width: '100vw',
+          height: '100vh',
+          ...(shellHidden ? { visibility: 'hidden' as const } : {}),
         }}
+        className="bg-canvas-bg-subtle text-canvas-text"
+        aria-hidden={shellHidden || undefined}
       >
-        {/* Tabs */}
-        {TAB_DEFS.map((tab) => {
-          const active = activeTab === tab.id;
-          const showDot =
-            !active &&
-            ((tab.id === 'game' && unreadGame) ||
-              (tab.id === 'wallet' && walletAlert) ||
-              (tab.id === 'hub' && hubAlert));
-
-          let dotColor: string | null = null;
-          switch (tab.id) {
-            case 'wallet':
-              dotColor = walletConnected
-                ? 'var(--color-success-solid)'
-                : 'var(--color-alert-solid)';
-              break;
-            case 'hub':
-              if (hubLiveness === 'connected') {
-                dotColor = 'var(--color-success-solid)';
-              } else if (hubLiveness === 'reconnecting') {
-                dotColor = 'var(--color-warning-solid)';
-              } else if (hubLiveness === 'inactive') {
-                dotColor = 'var(--color-alert-solid)';
-              } else {
-                dotColor = 'var(--color-canvas-text-subtle)';
-              }
-              break;
-            case 'game': {
-              const gameDot: GameTabDotColor = selectGameTabDotColor({
-                sessionPhase,
-                sessionError,
-                peerLiveness,
-                cleanShutdownInProgress: isCleanShutdownInProgress(dashboardSessionModel),
-              });
-              const gameDotCss: Record<GameTabDotColor, string> = {
-                green: 'var(--color-success-solid)',
-                yellow: 'var(--color-warning-solid)',
-                red: 'var(--color-alert-solid)',
-                gray: 'var(--color-canvas-text-subtle)',
-              };
-              dotColor = gameDotCss[gameDot];
-              break;
-            }
-          }
-
-          return (
-            <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              style={
-                active
-                  ? {
-                      background: 'var(--canvas-bg-subtle)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '0.35rem',
-                    }
-                  : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
-              }
-              className={
-                'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
-                (active
-                  ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
-                  : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
-              }
-            >
-              {dotColor && (
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: dotColor,
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-              {tab.label}
-              {showDot && (
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
-              )}
-            </button>
-          );
-        })}
-
-        {/* Right side: Branding + Theme */}
-        <div
-          style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}
-          className="flex items-center gap-2"
-        >
-          <img
-            src="images/chia_logo.png"
-            alt="Chia Logo"
-            className="max-w-12 h-auto"
-            style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
-          />
-          <button
-            onClick={() => setIsDark((d) => !d)}
-            className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
-            aria-label="toggle theme"
-            title="Toggle theme"
-          >
-            <span className="text-sm leading-none">{isDark ? '\u2600' : '\u263E'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Tab content */}
-      <div
-        style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
-        className="bg-canvas-bg-subtle"
-      >
-        {/* Wallet tab */}
+        {/* Tab bar with branding */}
         <div
           style={{
-            position: 'absolute',
-            inset: 0,
-            display: activeTab === 'wallet' ? 'flex' : 'none',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'auto',
-          }}
-        >
-          <Button
-            variant={transactionPublishNerfed ? 'solid' : 'outline'}
-            color={transactionPublishNerfed ? 'primary' : 'neutral'}
-            size="sm"
-            className="absolute right-4 top-4"
-            onClick={toggleTransactionPublishNerf}
-          >
-            Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
-          </Button>
-          {walletConnected ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
-                <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
-              </div>
-              {balance !== undefined && (
-                <p className="text-2xl font-bold text-canvas-text-contrast">
-                  {balance.toLocaleString()} mojos
-                </p>
-              )}
-              <div className="w-full max-w-xs text-sm text-canvas-text">
-                <div className="flex items-center gap-2 mb-1">
-                  <span>Transaction fee</span>
-                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                    <button
-                      onClick={() => handleFeeUnitChange('mojo')}
-                      className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      mojo
-                    </button>
-                    <button
-                      onClick={() => handleFeeUnitChange('xch')}
-                      className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      XCH
-                    </button>
-                  </div>
-                </div>
-                {feeEditing ? (
-                  <div className="flex gap-2">
-                    <input
-                      ref={feeInputRef}
-                      type="text"
-                      inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                      value={feeInput}
-                      onChange={(e) => setFeeInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && feeInputValid) commitFee();
-                        if (e.key === 'Escape') cancelEditFee();
-                      }}
-                      className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-                    />
-                    <button
-                      onClick={commitFee}
-                      disabled={!feeInputValid}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                    >
-                      Set
-                    </button>
-                    <button
-                      onClick={cancelEditFee}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={startEditingFee}
-                    className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
-                  >
-                    {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
-                  </button>
-                )}
-              </div>
-              <Button variant="solid" onClick={handleDisconnectWallet}>
-                Disconnect
-              </Button>
-            </div>
-          ) : connectionSetup ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <p className="text-lg font-semibold text-canvas-text-contrast">Scan QR Code</p>
-              <p className="text-sm text-canvas-text text-center">
-                Open your Chia wallet and scan this QR code to connect
-              </p>
-              <div className="p-4 rounded-xl border-2 border-canvas-border bg-white shadow-md">
-                {qrDataUrl ? (
-                  <img
-                    src={qrDataUrl}
-                    alt="Connection QR"
-                    className="w-[200px] h-auto rounded-md"
-                  />
-                ) : (
-                  <div className="w-[200px] h-[200px] flex items-center justify-center text-canvas-solid">
-                    Generating…
-                  </div>
-                )}
-              </div>
-              <div className="w-full max-w-sm flex gap-2">
-                <textarea
-                  readOnly
-                  value={connectionSetup.qrUri}
-                  rows={3}
-                  className="flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none"
-                />
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(connectionSetup.qrUri);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  }}
-                  className="self-center p-2 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                  title="Copy URI to clipboard"
-                >
-                  {copied ? (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      className="w-4 h-4"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      className="w-4 h-4"
-                    >
-                      <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-                      <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-              <div className="w-full max-w-sm text-sm text-canvas-text">
-                <div className="flex items-center gap-2 mb-1">
-                  <span>Transaction fee</span>
-                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                    <button
-                      onClick={() => handleFeeUnitChange('mojo')}
-                      className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      mojo
-                    </button>
-                    <button
-                      onClick={() => handleFeeUnitChange('xch')}
-                      className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                    >
-                      XCH
-                    </button>
-                  </div>
-                </div>
-                {feeEditing ? (
-                  <div className="flex gap-2">
-                    <input
-                      ref={feeInputRef}
-                      type="text"
-                      inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                      value={feeInput}
-                      onChange={(e) => setFeeInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && feeInputValid) commitFee();
-                        if (e.key === 'Escape') cancelEditFee();
-                      }}
-                      className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-                    />
-                    <button
-                      onClick={commitFee}
-                      disabled={!feeInputValid}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                    >
-                      Set
-                    </button>
-                    <button
-                      onClick={cancelEditFee}
-                      className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={startEditingFee}
-                    className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
-                  >
-                    {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
-                  </button>
-                )}
-              </div>
-              <p className="text-sm text-canvas-text animate-pulse">
-                Waiting for wallet to connect…
-              </p>
-              <Button variant="solid" onClick={handleCancelConnect}>
-                Cancel
-              </Button>
-              <SimulatorSetupModal
-                open={showSimModal}
-                onConnect={handleFinalize}
-                connecting={connecting}
-              />
-            </div>
-          ) : connecting ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
-              <p className="text-sm text-canvas-text animate-pulse">Connecting…</p>
-              <Button variant="solid" onClick={handleCancelConnect}>
-                Cancel
-              </Button>
-            </div>
-          ) : !walletConnected && activeBlockchainRef.current ? (
-            <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-3 h-3 rounded-full bg-alert-solid" />
-                <span className="text-lg font-semibold text-alert-text">Disconnected</span>
-              </div>
-              <p className="text-sm text-canvas-text">Connection was lost</p>
-              <Button variant="solid" onClick={handleReconnect}>
-                Reconnect
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
-              <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
-              <div className="w-full max-w-sm flex flex-col gap-3">
-                <Button
-                  variant="solid"
-                  fullWidth
-                  onClick={() => handleConnect('simulator', false, true)}
-                >
-                  Continue with Simulator
-                </Button>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 border-t border-canvas-border" />
-                  <span className="text-canvas-text font-medium text-sm">OR</span>
-                  <div className="flex-1 border-t border-canvas-border" />
-                </div>
-                <Button
-                  variant="solid"
-                  fullWidth
-                  onClick={() => handleConnect('walletconnect', false, true)}
-                >
-                  Link Wallet
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Hub tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: activeTab === 'hub' ? 'flex' : 'none',
-            flexDirection: 'column',
-          }}
-        >
-          {hubOrigin ? (
-            <>
-              <div className="flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0">
-                <span>
-                  {hubLiveness === 'connected'
-                    ? `Connected to ${hubOrigin}`
-                    : `${TRACKER_LIVENESS_LABELS[hubLiveness ?? 'disconnected']} from ${hubOrigin}`}
-                </span>
-                <div className="flex items-center gap-2">
-                  {hubLiveness === 'disconnected' && (
-                    <button
-                      onClick={() => connectToHub(hubOrigin)}
-                      className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium border border-canvas-border hover:bg-canvas-solid transition-colors"
-                    >
-                      Retry
-                    </button>
-                  )}
-                  <button
-                    onClick={handleDisconnectHub}
-                    className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-              {hubConnectionError && (
-                <p className="px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle">
-                  {hubConnectionError}
-                </p>
-              )}
-              <iframe
-                id="hub-iframe"
-                className="bg-canvas-bg-subtle"
-                style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
-                src={iframeUrl}
-              />
-            </>
-          ) : (
-            <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
-          )}
-        </div>
-
-        {/* Game Session tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
+            flexShrink: 0,
             display: 'flex',
-            flexDirection: 'column',
-            visibility: activeTab === 'game' ? 'visible' : 'hidden',
+            alignItems: 'flex-end',
+            gap: '0.25rem',
+            padding: '0.5rem 1rem 0',
+            borderBottom: '1px solid var(--color-canvas-border)',
+            background: 'var(--color-canvas-bg-active)',
           }}
         >
-          <GameDashboard
-            view={dashboardView}
-            balances={statusBarBalances}
-            onAction={handleDashboardAction}
-            getProtocolState={getProtocolState}
-            getCoins={getCoins}
-          />
-          <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-            {keepSession && restoreStatus === 'failed' ? (
-              <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
-                <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
-                <p className="max-w-lg text-sm text-center select-text cursor-text">
-                  {restoreError ?? 'The saved session could not be restored.'}
-                </p>
-                <button
-                  onClick={handleStartOver}
-                  disabled={startingOver}
-                  className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
-                >
-                  {startingOver ? 'Starting over\u2026' : 'Start over'}
-                </button>
-              </div>
-            ) : keepSession ? (
-              <div className="relative w-full h-full">
-                <GameSessionErrorBoundary>
-                  <GameSession
-                    key={sessionConfig!.pairingToken}
-                    params={sessionConfig!}
-                    peerConn={peerConn!}
-                    registerMessageHandler={registerMessageHandler}
-                    appendGameLog={appendHistory}
-                    sessionSave={sessionSavePropRef.current}
-                    blockchain={activeBlockchainPoller}
-                    onGameActivity={onGameActivity}
-                    onSessionPhaseChange={handleSessionPhaseChange}
-                    onRestoreStatusChange={handleRestoreStatusChange}
-                    onSessionModelChange={handleSessionModelChange}
-                    onProtocolStateProviderChange={handleProtocolStateProviderChange}
-                    onCoinsProviderChange={handleCoinsProviderChange}
-                    suppressPhaseReporting={restoreBlocked}
-                    terminalPresentation={terminalPresentation}
+          {/* Tabs */}
+          {TAB_DEFS.map((tab) => {
+            const active = activeTab === tab.id;
+            const showDot =
+              !active &&
+              ((tab.id === 'game' && unreadGame) ||
+                (tab.id === 'wallet' && walletAlert) ||
+                (tab.id === 'hub' && hubAlert));
+
+            let dotColor: string | null = null;
+            switch (tab.id) {
+              case 'wallet':
+                dotColor = walletConnected
+                  ? 'var(--color-success-solid)'
+                  : 'var(--color-alert-solid)';
+                break;
+              case 'hub':
+                if (hubLiveness === 'connected') {
+                  dotColor = 'var(--color-success-solid)';
+                } else if (hubLiveness === 'reconnecting') {
+                  dotColor = 'var(--color-warning-solid)';
+                } else if (hubLiveness === 'inactive') {
+                  dotColor = 'var(--color-alert-solid)';
+                } else {
+                  dotColor = 'var(--color-canvas-text-subtle)';
+                }
+                break;
+              case 'game': {
+                const gameDot: GameTabDotColor = selectGameTabDotColor({
+                  sessionPhase,
+                  sessionError,
+                  peerLiveness,
+                  cleanShutdownInProgress: isCleanShutdownInProgress(dashboardSessionModel),
+                });
+                const gameDotCss: Record<GameTabDotColor, string> = {
+                  green: 'var(--color-success-solid)',
+                  yellow: 'var(--color-warning-solid)',
+                  red: 'var(--color-alert-solid)',
+                  gray: 'var(--color-canvas-text-subtle)',
+                };
+                dotColor = gameDotCss[gameDot];
+                break;
+              }
+            }
+
+            return (
+              <button
+                key={tab.id}
+                onClick={() => handleTabChange(tab.id)}
+                style={
+                  active
+                    ? {
+                        background: 'var(--canvas-bg-subtle)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                      }
+                    : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
+                }
+                className={
+                  'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
+                  (active
+                    ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
+                    : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
+                }
+              >
+                {dotColor && (
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: dotColor,
+                      flexShrink: 0,
+                    }}
                   />
-                </GameSessionErrorBoundary>
-                {sessionConsentOverlay}
+                )}
+                {tab.label}
+                {showDot && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
+                )}
+              </button>
+            );
+          })}
+
+          {/* Right side: Branding + Theme */}
+          <div
+            style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}
+            className="flex items-center gap-2"
+          >
+            <img
+              src="images/chia_logo.png"
+              alt="Chia Logo"
+              className="max-w-12 h-auto"
+              style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
+            />
+            <button
+              onClick={() => setIsDark((d) => !d)}
+              className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
+              aria-label="toggle theme"
+              title="Toggle theme"
+            >
+              <span className="text-sm leading-none">{isDark ? '\u2600' : '\u263E'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tab content */}
+        <div
+          style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
+          className="bg-canvas-bg-subtle"
+        >
+          {/* Wallet tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: activeTab === 'wallet' ? 'flex' : 'none',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'auto',
+            }}
+          >
+            <Button
+              variant={transactionPublishNerfed ? 'solid' : 'outline'}
+              color={transactionPublishNerfed ? 'primary' : 'neutral'}
+              size="sm"
+              className="absolute right-4 top-4"
+              onClick={toggleTransactionPublishNerf}
+            >
+              Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+            </Button>
+            {walletConnected ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
+                  <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
+                </div>
+                {balance !== undefined && (
+                  <p className="text-2xl font-bold text-canvas-text-contrast">
+                    {balance.toLocaleString()} mojos
+                  </p>
+                )}
+                <div className="w-full max-w-xs text-sm text-canvas-text">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span>Transaction fee</span>
+                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
+                      <button
+                        onClick={() => handleFeeUnitChange('mojo')}
+                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        mojo
+                      </button>
+                      <button
+                        onClick={() => handleFeeUnitChange('xch')}
+                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        XCH
+                      </button>
+                    </div>
+                  </div>
+                  {feeEditing ? (
+                    <div className="flex gap-2">
+                      <input
+                        ref={feeInputRef}
+                        type="text"
+                        inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                        value={feeInput}
+                        onChange={(e) => setFeeInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && feeInputValid) commitFee();
+                          if (e.key === 'Escape') cancelEditFee();
+                        }}
+                        className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                      />
+                      <button
+                        onClick={commitFee}
+                        disabled={!feeInputValid}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
+                      >
+                        Set
+                      </button>
+                      <button
+                        onClick={cancelEditFee}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={startEditingFee}
+                      className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
+                    >
+                      {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                    </button>
+                  )}
+                </div>
+                <Button variant="solid" onClick={handleDisconnectWallet}>
+                  Disconnect
+                </Button>
               </div>
-            ) : sessionCanMount ? (
-              <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                Restoring session...
-              </div>
-            ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
-              <div className="relative w-full h-full">
-                <FinishedSessionGameView
-                  model={sessionModelForReactProps(dashboardSessionModel)}
-                  myName={finishedSessionIdentity?.myName ?? peekAlias()}
-                  opponentName={finishedSessionIdentity?.opponentName}
-                  iStarted={finishedSessionIdentity?.iStarted ?? false}
+            ) : connectionSetup ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <p className="text-lg font-semibold text-canvas-text-contrast">Scan QR Code</p>
+                <p className="text-sm text-canvas-text text-center">
+                  Open your Chia wallet and scan this QR code to connect
+                </p>
+                <div className="p-4 rounded-xl border-2 border-canvas-border bg-white shadow-md">
+                  {qrDataUrl ? (
+                    <img
+                      src={qrDataUrl}
+                      alt="Connection QR"
+                      className="w-[200px] h-auto rounded-md"
+                    />
+                  ) : (
+                    <div className="w-[200px] h-[200px] flex items-center justify-center text-canvas-solid">
+                      Generating…
+                    </div>
+                  )}
+                </div>
+                <div className="w-full max-w-sm flex gap-2">
+                  <textarea
+                    readOnly
+                    value={connectionSetup.qrUri}
+                    rows={3}
+                    className="flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(connectionSetup.qrUri);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                    className="self-center p-2 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                    title="Copy URI to clipboard"
+                  >
+                    {copied ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
+                        <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <div className="w-full max-w-sm text-sm text-canvas-text">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span>Transaction fee</span>
+                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
+                      <button
+                        onClick={() => handleFeeUnitChange('mojo')}
+                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        mojo
+                      </button>
+                      <button
+                        onClick={() => handleFeeUnitChange('xch')}
+                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      >
+                        XCH
+                      </button>
+                    </div>
+                  </div>
+                  {feeEditing ? (
+                    <div className="flex gap-2">
+                      <input
+                        ref={feeInputRef}
+                        type="text"
+                        inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                        value={feeInput}
+                        onChange={(e) => setFeeInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && feeInputValid) commitFee();
+                          if (e.key === 'Escape') cancelEditFee();
+                        }}
+                        className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                      />
+                      <button
+                        onClick={commitFee}
+                        disabled={!feeInputValid}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
+                      >
+                        Set
+                      </button>
+                      <button
+                        onClick={cancelEditFee}
+                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={startEditingFee}
+                      className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
+                    >
+                      {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                    </button>
+                  )}
+                </div>
+                <p className="text-sm text-canvas-text animate-pulse">
+                  Waiting for wallet to connect…
+                </p>
+                <Button variant="solid" onClick={handleCancelConnect}>
+                  Cancel
+                </Button>
+                <SimulatorSetupModal
+                  open={showSimModal}
+                  onConnect={handleFinalize}
+                  connecting={connecting}
                 />
-                {sessionConsentOverlay}
+              </div>
+            ) : connecting ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
+                <p className="text-sm text-canvas-text animate-pulse">Connecting…</p>
+                <Button variant="solid" onClick={handleCancelConnect}>
+                  Cancel
+                </Button>
+              </div>
+            ) : !walletConnected && activeBlockchainRef.current ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full bg-alert-solid" />
+                  <span className="text-lg font-semibold text-alert-text">Disconnected</span>
+                </div>
+                <p className="text-sm text-canvas-text">Connection was lost</p>
+                <Button variant="solid" onClick={handleReconnect}>
+                  Reconnect
+                </Button>
               </div>
             ) : (
-              <div className="relative w-full h-full">
-                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                  No active game session
+              <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
+                <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
+                <div className="w-full max-w-sm flex flex-col gap-3">
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('simulator', false, true)}
+                  >
+                    Continue with Simulator
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 border-t border-canvas-border" />
+                    <span className="text-canvas-text font-medium text-sm">OR</span>
+                    <div className="flex-1 border-t border-canvas-border" />
+                  </div>
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('walletconnect', false, true)}
+                  >
+                    Link Wallet
+                  </Button>
                 </div>
-                {sessionConsentOverlay}
+              </div>
+            )}
+          </div>
+
+          {/* Hub tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: activeTab === 'hub' ? 'flex' : 'none',
+              flexDirection: 'column',
+            }}
+          >
+            {hubOrigin ? (
+              <>
+                <div className="flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0">
+                  <span>
+                    {hubLiveness === 'connected'
+                      ? `Connected to ${hubOrigin}`
+                      : `${TRACKER_LIVENESS_LABELS[hubLiveness ?? 'disconnected']} from ${hubOrigin}`}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {hubLiveness === 'disconnected' && (
+                      <button
+                        onClick={() => connectToHub(hubOrigin)}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium border border-canvas-border hover:bg-canvas-solid transition-colors"
+                      >
+                        Retry
+                      </button>
+                    )}
+                    <button
+                      onClick={handleDisconnectHub}
+                      className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+                {hubConnectionError && (
+                  <p className="px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle">
+                    {hubConnectionError}
+                  </p>
+                )}
+                <iframe
+                  id="hub-iframe"
+                  className="bg-canvas-bg-subtle"
+                  style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                  src={iframeUrl}
+                />
+              </>
+            ) : (
+              <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
+            )}
+          </div>
+
+          {/* Game Session tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              visibility: activeTab === 'game' ? 'visible' : 'hidden',
+            }}
+          >
+            <GameDashboard
+              view={dashboardView}
+              balances={statusBarBalances}
+              onAction={handleDashboardAction}
+              getProtocolState={getProtocolState}
+              getCoins={getCoins}
+            />
+            <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
+              {keepSession && restoreStatus === 'failed' ? (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
+                  <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
+                  <p className="max-w-lg text-sm text-center select-text cursor-text">
+                    {restoreError ?? 'The saved session could not be restored.'}
+                  </p>
+                  <button
+                    onClick={handleStartOver}
+                    disabled={startingOver}
+                    className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+                  >
+                    {startingOver ? 'Starting over\u2026' : 'Start over'}
+                  </button>
+                </div>
+              ) : keepSession ? (
+                <div className="relative w-full h-full">
+                  <GameSessionErrorBoundary>
+                    <GameSession
+                      key={sessionConfig!.pairingToken}
+                      params={sessionConfig!}
+                      peerConn={peerConn!}
+                      registerMessageHandler={registerMessageHandler}
+                      appendGameLog={appendHistory}
+                      sessionSave={sessionSavePropRef.current}
+                      blockchain={activeBlockchainPoller}
+                      onGameActivity={onGameActivity}
+                      onSessionPhaseChange={handleSessionPhaseChange}
+                      onRestoreStatusChange={handleRestoreStatusChange}
+                      onSessionModelChange={handleSessionModelChange}
+                      onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                      onCoinsProviderChange={handleCoinsProviderChange}
+                      suppressPhaseReporting={restoreBlocked}
+                      terminalPresentation={terminalPresentation}
+                    />
+                  </GameSessionErrorBoundary>
+                  {sessionConsentOverlay}
+                </div>
+              ) : sessionCanMount ? (
+                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                  Restoring session...
+                </div>
+              ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
+                <div className="relative w-full h-full">
+                  <FinishedSessionGameView
+                    model={sessionModelForReactProps(dashboardSessionModel)}
+                    myName={finishedSessionIdentity?.myName ?? peekAlias()}
+                    opponentName={finishedSessionIdentity?.opponentName}
+                    iStarted={finishedSessionIdentity?.iStarted ?? false}
+                  />
+                  {sessionConsentOverlay}
+                </div>
+              ) : (
+                <div className="relative w-full h-full">
+                  <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                    No active game session
+                  </div>
+                  {sessionConsentOverlay}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* History tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              padding: '1rem',
+              display: activeTab === 'history' ? 'block' : 'none',
+            }}
+          >
+            <HistoryPanel lines={history} />
+          </div>
+
+          {/* Log tab */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              padding: '1rem',
+              display: activeTab === 'log' ? 'block' : 'none',
+            }}
+          >
+            {logLines.length > 0 ? (
+              <LogPanel lines={logLines} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                No log entries yet
               </div>
             )}
           </div>
         </div>
 
-        {/* History tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            padding: '1rem',
-            display: activeTab === 'history' ? 'block' : 'none',
-          }}
-        >
-          <HistoryPanel lines={history} />
-        </div>
-
-        {/* Log tab */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            padding: '1rem',
-            display: activeTab === 'log' ? 'block' : 'none',
-          }}
-        >
-          {logLines.length > 0 ? (
-            <LogPanel lines={logLines} />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-              No log entries yet
-            </div>
-          )}
-        </div>
-      </div>
-
-      {confirmDialog && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            background: 'rgba(0,0,0,0.5)',
-          }}
-        >
+        {confirmDialog && (
           <div
             style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 9999,
               display: 'flex',
-              flexDirection: 'column',
+              justifyContent: 'center',
               alignItems: 'center',
-              gap: '0.75rem',
-              padding: '1.5rem',
-              borderRadius: '0.5rem',
-              border: '1px solid var(--color-canvas-border)',
-              background: 'var(--color-canvas-bg)',
-              maxWidth: '24rem',
-              width: '90%',
+              background: 'rgba(0,0,0,0.5)',
             }}
           >
-            <p className="text-canvas-text-contrast font-semibold text-lg">{confirmDialog.title}</p>
-            <p className="text-canvas-text text-sm text-center">{confirmDialog.body}</p>
-            <button
-              onClick={confirmDialog.onConfirm}
-              className="w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '0.75rem',
+                padding: '1.5rem',
+                borderRadius: '0.5rem',
+                border: '1px solid var(--color-canvas-border)',
+                background: 'var(--color-canvas-bg)',
+                maxWidth: '24rem',
+                width: '90%',
+              }}
             >
-              {confirmDialog.confirmLabel ?? 'Proceed'}
-            </button>
-            <button
-              onClick={() => setConfirmDialog(null)}
-              className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-            >
-              Cancel
-            </button>
+              <p className="text-canvas-text-contrast font-semibold text-lg">
+                {confirmDialog.title}
+              </p>
+              <p className="text-canvas-text text-sm text-center">{confirmDialog.body}</p>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+              >
+                {confirmDialog.confirmLabel ?? 'Proceed'}
+              </button>
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 };
 

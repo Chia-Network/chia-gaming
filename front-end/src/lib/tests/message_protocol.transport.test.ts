@@ -276,8 +276,8 @@ describe('active game tracking', () => {
       blob.processResult({
         disposition: { kind: 'active' },
         events: [
-          { Notification: { ProposalAccepted: { id: '1', amount: '100' } } },
-          { Notification: { ProposalAccepted: { id: '3', amount: '100' } } },
+          { Notification: { ProposalAccepted: { id: '1', amount: '100', our_turn: true } } },
+          { Notification: { ProposalAccepted: { id: '3', amount: '100', our_turn: false } } },
         ],
       });
       blob.flushDeferredWork();

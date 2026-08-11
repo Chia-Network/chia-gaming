@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import { CalpokerOutcome } from './outcome';
@@ -9,6 +9,7 @@ import {
   requireLiveGameHandSource,
   type GameHandOrigin,
   type GameHandSource,
+  useInitialGameHandState,
 } from '../../lib/gameMount';
 import type { LocalGameCommand } from '../../lib/session/sessionMachineTypes';
 import {
@@ -88,14 +89,11 @@ export function useCalpokerHand(
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
   terminal: GameTerminalModel,
-  initialPersistedState?: Readonly<PersistedGameState>,
   handOrigin: GameHandOrigin = 'fresh',
 ): UseCalpokerHandResult {
   const interactive = handSource.interactionMode === 'live';
-  const initialHandState = useMemo(
-    () => calpokerStateFromPersisted(initialPersistedState),
-    [initialPersistedState],
-  );
+  const initialPersistedState = useInitialGameHandState(handSource);
+  const [initialHandState] = useState(() => calpokerStateFromPersisted(initialPersistedState));
   const [playerHand, setPlayerHand] = useState<bigint[]>(initialHandState?.playerHand ?? []);
   const [opponentHand, setOpponentHand] = useState<bigint[]>(initialHandState?.opponentHand ?? []);
   const [cardSelections, setOurCardSelections] = useState<bigint[]>(

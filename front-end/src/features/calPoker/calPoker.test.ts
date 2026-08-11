@@ -149,7 +149,6 @@ describe('Calpoker fresh hand startup', () => {
         () => {},
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
       );
       return null;
     }
@@ -196,7 +195,6 @@ describe('Calpoker fresh hand startup', () => {
         () => {},
         onTurnChanged,
         INITIAL_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
       );
       return null;
     }
@@ -235,7 +233,6 @@ describe('Calpoker fresh hand startup', () => {
         () => {},
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
         'restored',
       );
       return null;
@@ -274,7 +271,6 @@ describe('Calpoker fresh hand startup', () => {
         () => {},
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
         handOrigin,
       );
       return null;
@@ -338,7 +334,6 @@ describe('Calpoker terminal hand projection', () => {
         () => {},
         () => {},
         INITIAL_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
         'restored',
       );
       return null;
@@ -573,7 +568,6 @@ describe('Calpoker terminal hand projection', () => {
               rewardCoinHex: null,
             }
           : INITIAL_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
         'restored',
       );
       const outcomeViewValue: CalpokerOutcomeView | undefined = hand.outcome

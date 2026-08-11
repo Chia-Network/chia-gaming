@@ -1,6 +1,7 @@
 import { SessionController } from '../../hooks/SessionController';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import type { ChiaGame, WasmResult } from '../../types/ChiaGaming';
+import type { ChiaGame, WasmEvent, WasmResult } from '../../types/ChiaGaming';
+import { wasClientErrorReported } from '../clientError';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -12,6 +13,7 @@ import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { krunkStateCodec } from '../../features/krunk/stateCodec';
 import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -25,11 +27,18 @@ const KRUNK_TERMS = {
   theirContribution: 100n,
   gameTimeout: 15n,
 };
+const SPACEPOKER_TERMS = {
+  gameType: 'spacepoker' as const,
+  myContribution: 100n,
+  theirContribution: 100n,
+  gameTimeout: 15n,
+  unitSizeMojos: 10n,
+};
 
 function stateWithProposals(
   groups: Array<{
     memberIds: string[];
-    terms: typeof TERMS | typeof KRUNK_TERMS;
+    terms: typeof TERMS | typeof KRUNK_TERMS | typeof SPACEPOKER_TERMS;
     origin?: 'local' | 'peer';
   }>,
 ) {
@@ -148,6 +157,36 @@ describe('session machine effect interpreter', () => {
   });
 });
 
+describe('SessionController local action error reporting', () => {
+  it('reports an out-of-turn invariant through the session stream and still throws it', () => {
+    const invariant = new Error('Internal local action for game 2 attempted outside our turn');
+    const events: WasmEvent[] = [];
+    const controller = Object.create(SessionController.prototype) as SessionController;
+    controller.rxjsEmitter = { next: (event) => events.push(event) };
+    controller.onLocalGameAction = () => {
+      throw invariant;
+    };
+
+    expect(() =>
+      controller.commitLocalGameAction({
+        gameType: 'spacepoker',
+        id: '2',
+        state: { handler: 'betting' },
+        command: { type: 'make-move', readable: null },
+      }),
+    ).toThrow(invariant);
+    expect(events).toEqual([
+      {
+        type: 'game-action-error',
+        gameId: '2',
+        action: 'make-move',
+        error: invariant.message,
+      },
+    ]);
+    expect(wasClientErrorReported(invariant)).toBe(true);
+  });
+});
+
 describe('session machine causal sequences', () => {
   it.each([
     { player: 'proposer', iStarted: true, weProposed: true, pickerId: '1' },
@@ -178,6 +217,7 @@ describe('session machine causal sequences', () => {
         id: ids[0],
         amount: '100',
         iStarted,
+        isMyTurn: pickerId === ids[0],
       });
 
       const assertPickerAuthority = () => {
@@ -251,6 +291,7 @@ describe('session machine causal sequences', () => {
       id: '1',
       amount: '100',
       iStarted: false,
+      isMyTurn: true,
     });
     runtime.dispatch({
       type: 'notification-game-terminal',
@@ -268,6 +309,7 @@ describe('session machine causal sequences', () => {
       id: '7',
       amount: '20',
       iStarted: false,
+      isMyTurn: true,
     });
     const authority = runtime.getState();
 
@@ -755,11 +797,102 @@ describe('session machine local game action boundary', () => {
       id: '7',
       amount: '20',
       iStarted: false,
+      isMyTurn: true,
     });
     persisted.length = 0;
     rendered.length = 0;
     return { runtime, persisted, rendered };
   }
+
+  it('uses ordered Rust authority for opposite-turn Krunk members before the first move', () => {
+    const makeMove = jest.fn();
+    const runtime = new SessionMachineRuntime(
+      stateWithProposals([{ memberIds: ['2', '4'], terms: KRUNK_TERMS, origin: 'local' }]),
+      {
+        controller: fakeController({ makeMove }),
+        iStarted: true,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        emitGameplay: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        persist: async () => {},
+      },
+    );
+
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: { ProposalAccepted: { id: '2', amount: '100', our_turn: true } },
+    });
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: { ProposalAccepted: { id: '4', amount: '100', our_turn: false } },
+    });
+
+    const hand = krunkStateCodec.decode(runtime.getState().model.game.handState)!;
+    expect(hand.games['2']).toMatchObject({ role: 'alice', myTurn: true });
+    expect(hand.games['4']).toMatchObject({ role: 'bob', myTurn: false });
+    expect(runtime.getState().model.game.instances['2'].presentation).toBe('off-chain-my-turn');
+    expect(runtime.getState().model.game.instances['4'].presentation).toBe('off-chain-their-turn');
+
+    expect(() =>
+      runtime.commitLocalGameAction({
+        gameType: 'krunk',
+        id: '2',
+        state: {
+          ...hand.games['2'],
+          handler: 1n,
+          myTurn: false,
+          secretWord: 'CRANE',
+        },
+        command: { type: 'make-move', readable: null },
+      }),
+    ).not.toThrow();
+    expect(makeMove).toHaveBeenCalledWith('2', null);
+  });
+
+  it('uses Rust acceptance authority for the first Space Poker action', () => {
+    const makeMove = jest.fn();
+    const runtime = new SessionMachineRuntime(
+      stateWithProposals([{ memberIds: ['7'], terms: SPACEPOKER_TERMS, origin: 'local' }]),
+      {
+        controller: fakeController({ makeMove }),
+        iStarted: true,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        emitGameplay: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        persist: async () => {},
+      },
+    );
+
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: { ProposalAccepted: { id: '7', amount: '200', our_turn: true } },
+    });
+
+    const hand = spacepokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    expect(hand.gameState.myTurn).toBe(true);
+    expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
+
+    expect(() =>
+      runtime.commitLocalGameAction({
+        gameType: 'spacepoker',
+        id: '7',
+        state: { ...hand, gameState: { ...hand.gameState, myTurn: false } },
+        command: { type: 'make-move', readable: null },
+      }),
+    ).not.toThrow();
+    expect(makeMove).toHaveBeenCalledWith('7', null);
+  });
 
   it('leaves feature state, history, turn, and saves unchanged when Rust rejects synchronously', () => {
     const makeMove = jest.fn(() => {

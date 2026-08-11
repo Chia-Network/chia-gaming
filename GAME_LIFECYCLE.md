@@ -185,7 +185,7 @@ A single game's lifecycle, independent of other concurrent games:
 
 2. Accept   (BatchAction::AcceptProposal)
    → referee + game handler instantiated, game moves to live_games
-   → both sides receive ProposalAccepted
+   → both sides receive ProposalAccepted with that side's Rust-owned initial turn
 
 3. Play     (BatchAction::Move, alternating turns)
    → each move updates the referee state and mover_share

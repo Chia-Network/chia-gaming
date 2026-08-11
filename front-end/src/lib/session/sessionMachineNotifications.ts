@@ -282,12 +282,16 @@ export function reduceSessionNotification(
     const id = String(accepted.id);
     const amount = parseAmount(accepted.amount);
     if (amount == null) throw new Error(`ProposalAccepted ${id} missing amount`);
+    if (typeof accepted.our_turn !== 'boolean') {
+      throw new Error(`ProposalAccepted ${id} missing Rust turn authority`);
+    }
     const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
       id,
       amount,
       iStarted,
+      isMyTurn: accepted.our_turn,
     });
     const first =
       previousHandIds.length !== current.model.game.currentHandIds.length ||

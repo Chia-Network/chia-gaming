@@ -30,6 +30,7 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
 import { decodeChannelStatusPayload } from '../lib/session/persistence';
+import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 
 export interface WasmFields {
   serializedGameSession: Uint8Array;
@@ -1510,7 +1511,30 @@ export class SessionController implements PollingGameSession {
     if (!this.onLocalGameAction) {
       throw new Error('Local game action callback is unavailable');
     }
-    this.onLocalGameAction(request);
+    try {
+      this.onLocalGameAction(request);
+    } catch (error) {
+      if (!wasClientErrorReported(error)) {
+        markClientErrorReported(error);
+        const message = extractErrorMessage(error);
+        if (request.command.type === 'cheat') {
+          this.rxjsEmitter?.next({ type: 'error', error: message });
+        } else {
+          this.rxjsEmitter?.next({
+            type: 'game-action-error',
+            gameId: request.id,
+            action: request.command.type,
+            error: message,
+          });
+        }
+      }
+      throw error;
+    }
+  }
+
+  reportRuntimeError(error: unknown): void {
+    markClientErrorReported(error);
+    this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
   }
 
   transitionFeatureStateWithLocalTurn(
@@ -1594,6 +1618,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
+      markClientErrorReported(e);
       this.rxjsEmitter?.next({
         type: 'game-action-error',
         gameId,
@@ -1612,6 +1637,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
+      markClientErrorReported(e);
       this.rxjsEmitter?.next({
         type: 'game-action-error',
         gameId,
@@ -1630,6 +1656,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);
+      markClientErrorReported(e);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
       throw e;
     }

@@ -27,6 +27,8 @@ import Krunk from '../../features/krunk/Krunk';
 import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
 import SpacePoker from '../../features/spacePoker/SpacePoker';
 import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+import { UncaughtClientErrorReporter } from '../../components/GameSession';
+import { markClientErrorReported } from '../clientError';
 import { terminalGameHandSource } from '../gameMount';
 import type { GameTerminalModel } from '../session/types';
 
@@ -97,6 +99,37 @@ describe('terminal game controls', () => {
     }).not.toThrow();
 
     expect(protocolMutation).not.toHaveBeenCalled();
+  });
+
+  it('shows unreported browser errors without duplicating session-reported errors', async () => {
+    const listeners = new Map<string, EventListenerOrEventListenerObject>();
+    (window.addEventListener as jest.Mock).mockImplementation(
+      (type: string, listener: EventListenerOrEventListenerObject) => {
+        listeners.set(type, listener);
+      },
+    );
+    act(() => {
+      renderer = create(createElement(UncaughtClientErrorReporter));
+    });
+    const emitError = async (error: Error) => {
+      const listener = listeners.get('error');
+      if (typeof listener !== 'function') throw new Error('error listener was not installed');
+      await act(async () => {
+        listener({ error, message: error.message } as unknown as Event);
+        await Promise.resolve();
+      });
+    };
+
+    const alreadyReported = new Error('already visible through the session');
+    markClientErrorReported(alreadyReported);
+    await emitError(alreadyReported);
+    expect(renderer!.root.findAllByProps({ role: 'alertdialog' })).toHaveLength(0);
+
+    await emitError(new Error('uncaught browser failure'));
+    expect(renderer!.root.findByProps({ role: 'alertdialog' })).toBeDefined();
+    expect(renderer!.root.findByType('pre').children.join('')).toContain(
+      'uncaught browser failure',
+    );
   });
 
   it('disables Cal Poker selection, reorder, and submit controls', () => {
@@ -181,15 +214,15 @@ describe('terminal game controls', () => {
   it('freezes Space Poker protocol controls but keeps display toggles usable', () => {
     const handState = spacepokerStateCodec.encode({
       gameState: { handler: 2n, myTurn: true, N: 4n },
-      playerHoleCards: null,
+      playerHoleCards: [2n, 3n],
       playerBoost: false,
-      opponentHoleCards: null,
-      opponentBoost: null,
-      communityCards: [null, null, null, null, null],
+      opponentHoleCards: [4n, 5n],
+      opponentBoost: false,
+      communityCards: [6n, 7n, 8n, null, null],
       halfPot: 10n,
       lastRaise: 0n,
       iRaisedLast: false,
-      handHistory: [],
+      handHistory: [{ player: 'you', action: 'raise', units: 2n }],
       outcome: null,
       terminalState: 'none',
       terminalRecovery: null,

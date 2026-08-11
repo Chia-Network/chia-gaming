@@ -1,4 +1,6 @@
+import React from 'react';
 import { EMPTY } from 'rxjs';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { SessionController } from '../../hooks/SessionController';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
@@ -9,6 +11,7 @@ import {
   requireLiveGameHandSource,
   terminalGameHandSource,
   type GameHandSource,
+  useInitialGameHandState,
 } from '../gameMount';
 import { createSessionModel, type SessionModel } from '../session/model';
 import { projectTerminalSessionResult } from '../session/sessionResult';
@@ -53,6 +56,39 @@ describe('game mount registry', () => {
     expect(liveGameHandOrigin(null, 1)).toBe('fresh');
     expect(liveGameHandOrigin(4, 4)).toBe('restored');
     expect(liveGameHandOrigin(4, 5)).toBe('fresh');
+  });
+
+  it('captures controller hand state once for the lifetime of a mount', () => {
+    const first = { gameType: 'calpoker', version: 1n, state: { moveNumber: 0n } } as const;
+    const second = { gameType: 'calpoker', version: 1n, state: { moveNumber: 1n } } as const;
+    let current: PersistedGameState = first;
+    let reads = 0;
+    const controller = {
+      get handState() {
+        reads += 1;
+        return current;
+      },
+    } as unknown as SessionController;
+    const source: GameHandSource = { interactionMode: 'live', controller };
+    let observed: Readonly<PersistedGameState> | null = null;
+    let renderer: ReactTestRenderer | null = null;
+    function Harness({ tick }: { tick: number }) {
+      void tick;
+      observed = useInitialGameHandState(source);
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness, { tick: 0 }));
+    });
+    current = second;
+    act(() => {
+      renderer!.update(React.createElement(Harness, { tick: 1 }));
+    });
+
+    expect(reads).toBe(1);
+    expect(observed).toBe(first);
+    act(() => renderer?.unmount());
   });
 
   it.each([
@@ -130,6 +166,7 @@ describe('game mount registry', () => {
         id: ids[0],
         amount: String(terms.myContribution),
         iStarted: true,
+        isMyTurn: false,
       });
       const model = runtime.getState().model;
       const terminal = model.game.instances[ids[0]].terminal;

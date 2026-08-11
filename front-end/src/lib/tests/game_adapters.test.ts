@@ -8,7 +8,6 @@ import {
   decodePersistedGameTerms,
   encodeGameProposalParameters,
   encodeGameTermsExtras,
-  gameInitialTurn,
   gameTermsEqual,
   GAME_REGISTRATIONS,
   REGISTERED_GAMES,
@@ -31,7 +30,7 @@ describe('pure game registrations', () => {
     expect(GAME_REGISTRATIONS.calpoker).toBe(calpokerRegistration);
   });
 
-  it('encodes each factory parameter shape and lifecycle policy', () => {
+  it('encodes each factory parameter shape', () => {
     expect(
       encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).toList(),
     ).toHaveLength(2);
@@ -43,9 +42,6 @@ describe('pure game registrations', () => {
     expect(encodeGameProposalParameters({ gameType: 'krunk', ...base }, true).toBigInt()).toBe(
       100n,
     );
-    expect(gameInitialTurn('calpoker', true)).toBe('their-turn');
-    expect(gameInitialTurn('spacepoker', false)).toBe('my-turn');
-    expect(gameInitialTurn('krunk', true)).toBe('their-turn');
   });
 
   it('decodes Space Poker only with a positive encoded unit', () => {

@@ -405,6 +405,7 @@ export function postMoveHandState(
     id: ids[0],
     groupIds: ids,
     iStarted: false,
+    isMyTurn: true,
     origin: 'peer',
     terms,
   });

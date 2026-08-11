@@ -2,15 +2,12 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import type { GameplayEvent } from '../../hooks/useGameSession';
 import {
-  gameHandState,
   terminalGameHandSource,
   type GameHandSource,
   type GameMountRegistration,
 } from '../../lib/gameMount';
-import type { HandTermsModel } from '../../lib/session/types';
-import type { GameTerminalModel } from '../../lib/session/types';
+import type { GameTerminalModel, HandTermsModel } from '../../lib/session/types';
 import { formatAmount } from '../../util';
-import { resolveSpacepokerUnitSize } from './unitSize';
 
 const SpacePoker = lazy(() => import('./SpacePoker'));
 
@@ -40,25 +37,22 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     opponentName,
     terminal,
   } = props;
-  const unitSizeMojos = resolveSpacepokerUnitSize({
-    terms,
-    persistedState: gameHandState(handSource) ?? undefined,
-  });
-  if (!unitSizeMojos) {
+  const unitSizeMojosValue = terms.unitSizeMojos;
+  if (unitSizeMojosValue <= 0n) {
     throw new Error('Space Poker mount requires one canonical positive unit size');
   }
-  const stackSize = terms.myContribution / unitSizeMojos;
+  const stackSize = terms.myContribution / unitSizeMojosValue;
   const handleTurnChanged = useCallback(
     (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
     [gameId, onTurnChanged],
   );
   const handleGameLog = useCallback(
     (lines: string[]) => {
-      appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitSizeMojos)})`);
+      appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitSizeMojosValue)})`);
       lines.forEach(appendGameLog);
       appendGameLog('');
     },
-    [appendGameLog, stackSize, unitSizeMojos],
+    [appendGameLog, stackSize, unitSizeMojosValue],
   );
 
   return (
@@ -68,7 +62,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
       iStarted={iStarted}
       gameplayEvent$={gameplayEvent$}
       betSize={terms.myContribution.toString()}
-      unitSizeMojos={unitSizeMojos.toString()}
+      unitSizeMojos={unitSizeMojosValue.toString()}
       onTurnChanged={handleTurnChanged}
       onGameLog={handleGameLog}
       myName={myName}

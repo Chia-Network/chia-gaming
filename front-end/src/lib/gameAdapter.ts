@@ -20,6 +20,7 @@ export type DurableGameStateEvent =
       id: string;
       groupIds: readonly string[];
       iStarted: boolean;
+      isMyTurn: boolean;
       origin: ProposalGroupOrigin;
       terms: HandTermsModel;
     }
@@ -63,7 +64,6 @@ export interface GameFeatureRegistration<
   decodeFeatureState(value: unknown): TFeatureState | null;
   readonly lifecycle: {
     proposalSenderGoesFirst(iStarted: boolean): boolean;
-    initialTurn(iStarted: boolean): GameTurnState;
   };
   readonly compose: {
     defaultDraft(perGameAmount: bigint): ComposeDraftFor<T>;

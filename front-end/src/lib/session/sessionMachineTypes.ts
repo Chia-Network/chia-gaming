@@ -137,6 +137,7 @@ export type SessionMachineEvent =
       id: string;
       amount: string;
       iStarted: boolean;
+      isMyTurn: boolean;
     }
   | {
       type: 'notification-game-status';

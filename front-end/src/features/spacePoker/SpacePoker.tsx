@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Observable } from 'rxjs';
-import { gameHandState, requireLiveGameHandSource, type GameHandSource } from '../../lib/gameMount';
+import {
+  requireLiveGameHandSource,
+  type GameHandSource,
+  useInitialGameHandState,
+} from '../../lib/gameMount';
 import type { GameTerminalModel } from '../../lib/session/types';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import type { GameplayEvent } from '../../hooks/useGameSession';
@@ -51,6 +55,7 @@ export default function SpacePoker({
   const interactive = handSource.interactionMode === 'live';
   const betSizeValue = BigInt(betSize);
   const unitSizeMojosValue = BigInt(unitSizeMojos);
+  const initialPersistedState = useInitialGameHandState(handSource);
   const sp = useSpacepokerHand(
     handSource,
     gameId,
@@ -60,7 +65,7 @@ export default function SpacePoker({
     unitSizeMojosValue,
     onTurnChanged,
     terminal,
-    gameHandState(handSource) ?? undefined,
+    initialPersistedState ?? undefined,
   );
   const { handler, myTurn, N } = sp.gameState;
 
@@ -70,7 +75,7 @@ export default function SpacePoker({
   useCheatNerfKeys(sp.handleCheat, handleNerf, interactive);
 
   const [alreadyTerminalAtMount] = useState(() => {
-    const handState = gameHandState(handSource);
+    const handState = initialPersistedState;
     if (!handState || handState.gameType !== 'spacepoker') return false;
     const state = handState.state as SpacepokerHandState | undefined;
     return state?.terminalState != null && state.terminalState !== 'none';

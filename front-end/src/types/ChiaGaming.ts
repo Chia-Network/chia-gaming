@@ -206,6 +206,7 @@ export type ChannelSemanticPhase =
 export interface ProposalAcceptedPayload {
   id: bigint | number | string;
   amount: bigint | number | string | { amt?: unknown; Amount?: unknown };
+  our_turn: boolean;
 }
 
 export interface MoveRejectedPayload {

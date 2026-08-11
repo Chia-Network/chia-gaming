@@ -602,6 +602,16 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
   });
 }
 
+export function patchLiveSessionPresentation(
+  presentation: Partial<SessionPresentationSave>,
+): Promise<void> {
+  return mutate((state) => {
+    if (state.phase !== 'live') return;
+    Object.assign(state.presentation, presentation);
+    capPersistedHistories(state);
+  });
+}
+
 /** Clear peer relay identifiers when the current phase owns pairing state. */
 export function clearSessionPairing(): Promise<void> {
   return mutate((state) => {

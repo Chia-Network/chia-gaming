@@ -40,6 +40,11 @@ import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
+import {
+  clientErrorText,
+  markClientErrorReported,
+  wasClientErrorReported,
+} from '../lib/clientError';
 import { ComposeProposalDialog, ReviewProposalDialog } from './GameProposalDialogs';
 
 const FOCUSABLE_SELECTOR =
@@ -54,16 +59,18 @@ interface ErrorBoundaryState {
   dialogDismissed: boolean;
 }
 
-function RenderErrorDialog({
+export function RenderErrorDialog({
   title,
   error,
   componentStack,
+  description = 'The game UI hit a render error. The session shell is still running; details are shown below.',
   onDismiss,
   onReload,
 }: {
   title: string;
   error: string;
   componentStack: string | null;
+  description?: string;
   onDismiss?: () => void;
   onReload?: () => void;
 }) {
@@ -79,10 +86,7 @@ function RenderErrorDialog({
           <h2 id="render-error-title" className="text-lg font-semibold text-alert-text">
             {title}
           </h2>
-          <p className="mt-1 text-sm text-canvas-text">
-            The game UI hit a render error. The session shell is still running; details are shown
-            below.
-          </p>
+          <p className="mt-1 text-sm text-canvas-text">{description}</p>
         </div>
         <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded border border-canvas-line bg-canvas-bg-subtle p-3 text-xs select-text cursor-text">
           {error}
@@ -107,6 +111,39 @@ function RenderErrorDialog({
       </div>
     </div>
   );
+}
+
+export function UncaughtClientErrorReporter() {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const report = (reason: unknown) => {
+      if (wasClientErrorReported(reason)) return;
+      markClientErrorReported(reason);
+      const detail = clientErrorText(reason);
+      queueMicrotask(() => {
+        setError((current) => current ?? detail);
+      });
+    };
+    const handleError = (event: ErrorEvent) => report(event.error ?? event.message);
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => report(event.reason);
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
+
+  return error ? (
+    <RenderErrorDialog
+      title="Unexpected client error"
+      description="An uncaught error reached the browser. The active game remains visible behind this dialog."
+      error={error}
+      componentStack={null}
+      onDismiss={() => setError(null)}
+      onReload={() => window.location.reload()}
+    />
+  ) : null;
 }
 
 export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {

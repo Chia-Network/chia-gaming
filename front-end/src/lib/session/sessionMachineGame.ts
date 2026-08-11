@@ -1,10 +1,6 @@
 import { applyTermsToComposeDraft } from './composeDraft';
 import { gameSliceReducer, type GameSlice } from './gameSlice';
-import {
-  decodeGameFeatureState,
-  gameInitialTurn,
-  reduceRegisteredGameState,
-} from '../gameRegistry';
+import { decodeGameFeatureState, reduceRegisteredGameState } from '../gameRegistry';
 import { clearProposalIds } from './sessionMachineProposals';
 import { selectProposalGroupByMemberId } from './selectors';
 import type {
@@ -116,7 +112,7 @@ export function reduceDurableGameEvent(
         groupIds: proposal.memberIds,
         acceptedId: event.id,
         amount: event.amount,
-        startTurn: gameInitialTurn(proposal.terms.gameType, event.iStarted),
+        startTurn: event.isMyTurn ? 'my-turn' : 'their-turn',
         origin: proposal.origin,
         gameType: proposal.terms.gameType,
       });
@@ -161,6 +157,7 @@ export function reduceDurableGameEvent(
           id: event.id,
           groupIds: proposal.memberIds,
           iStarted: event.iStarted,
+          isMyTurn: event.isMyTurn,
           origin: proposal.origin,
           terms: proposal.terms,
         },

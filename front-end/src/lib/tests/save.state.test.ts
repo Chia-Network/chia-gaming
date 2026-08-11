@@ -1,5 +1,7 @@
 import {
   saveSession,
+  patchLiveSessionPresentation,
+  saveTerminalSession,
   peekSession,
   clearSession,
   clearSessionPairing,
@@ -23,6 +25,7 @@ import {
 import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope, sessionAmountsFromSave } from '../session/model';
 import { baseSave } from './session_save_envelope.fixtures';
+import { channelStatus } from './message_protocol.harness';
 import {
   makeStorage,
   requireLive,
@@ -208,6 +211,31 @@ describe('flat state', () => {
     const live = requireLive(loadState());
     expect(live.pairing.peerId).toBeUndefined();
     expect(live.pairing.gameSessionId).toBeUndefined();
+  });
+
+  it('ignores late live-presentation cleanup after terminal replacement', async () => {
+    await saveLiveFields(sampleSession);
+    const presentation = {
+      ...requireLive(loadState()).presentation,
+      channelStatus: channelStatus({ state: 'ResolvedClean' }),
+      waitingStateEnteredAt: 42n,
+    };
+    await saveTerminalSession({
+      terminal: {
+        iStarted: true,
+        coinsOfInterest: [],
+        myAlias: null,
+        opponentAlias: null,
+      },
+      presentation,
+    });
+
+    await expect(
+      patchLiveSessionPresentation({ waitingStateEnteredAt: null }),
+    ).resolves.toBeUndefined();
+    const terminal = loadState();
+    if (terminal.phase !== 'terminal') throw new Error('expected terminal session');
+    expect(terminal.presentation.waitingStateEnteredAt).toBe(42n);
   });
 
   it('clearSession wipes game state but preserves identity, preferences, blockchainType, and boot marker', async () => {

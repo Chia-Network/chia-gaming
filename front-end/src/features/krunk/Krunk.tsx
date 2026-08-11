@@ -15,7 +15,7 @@ import { GameplayEvent } from '../../hooks/useGameSession';
 import { formatAmount } from '../../util';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
-import { gameHandState, type GameHandSource } from '../../lib/gameMount';
+import { type GameHandSource, useInitialGameHandState } from '../../lib/gameMount';
 import { krunkStateCodec } from './stateCodec';
 
 export interface KrunkProps {
@@ -450,7 +450,7 @@ const Krunk: React.FC<KrunkProps> = ({
   amountsById,
 }) => {
   const interactive = handSource.interactionMode === 'live';
-  const initialPersistedState = gameHandState(handSource) ?? undefined;
+  const initialPersistedState = useInitialGameHandState(handSource) ?? undefined;
   // The hand proposer sent game 0 with my_turn=true (proposer is alice)
   // and game 1 with my_turn=false (proposer is bob). The acceptor's
   // roles are flipped: they're bob in game 0 and alice in game 1.

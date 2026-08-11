@@ -25,6 +25,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '20',
       iStarted: true,
+      isMyTurn: false,
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -67,6 +68,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '20',
       iStarted: true,
+      isMyTurn: false,
     });
 
     expect(state.model.game.handState).toEqual(progressed);
@@ -79,6 +81,7 @@ describe('session machine behavior sequences', () => {
       id: '9',
       amount: '20',
       iStarted: true,
+      isMyTurn: false,
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -120,6 +123,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '20',
       iStarted: true,
+      isMyTurn: false,
     });
 
     state = send(state, {
@@ -308,6 +312,7 @@ describe('session machine behavior sequences', () => {
           id: ids[0],
           amount: '100',
           iStarted: false,
+          isMyTurn: true,
         },
 
         acceptedOrder,
@@ -489,6 +494,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '100',
       iStarted: false,
+      isMyTurn: true,
     });
 
     const accepted = state.model.game.handState;
@@ -536,6 +542,7 @@ describe('session machine behavior sequences', () => {
       id: '7',
       amount: '10',
       iStarted: false,
+      isMyTurn: true,
     });
 
     expect(() =>

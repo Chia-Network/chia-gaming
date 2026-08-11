@@ -496,6 +496,11 @@ the controller's WASM-origin snapshot at effect execution time. Live game mounts
 receive a discriminated hand source containing the real controller; terminal
 mounts receive only readonly persisted hand state. There is no controller-owned
 feature-state mirror, render-driven save effect, or React/model mirror ref.
+Every game reads that hand source through `useInitialGameHandState` exactly once
+per keyed mount. The captured value is initialization/restore input only;
+subsequent canonical state transitions do not re-decode the source. A new
+`handKey` or a cold terminal mount creates the next lifetime and therefore the
+next snapshot.
 `SessionController.onSaveNeeded` invokes the same runtime persistence path for
 ordinary debounced WASM changes. Transaction submission and resubmission remain
 owned by Rust's `TransactionManager`, not by a frontend transaction field.
@@ -507,6 +512,8 @@ receive replay instructions, or reissue the move through WASM.
 keyed instances, `lastDisplayedId`, hand key, and active game type. Its reducer updates a game
 instance's coin and protocol presentation together, so there are no separately
 mutable aggregate current-game fields that can drift across game IDs. A game
+instance's initial turn comes from Rust's per-game `ProposalAccepted.our_turn`
+fact; the frontend does not reconstruct it from channel role or factory order. A game
 hook computes a candidate state and submits it through `commitLocalGameAction`;
 after Rust accepts, the root reducer applies the game-owned state and local-turn
 projection atomically. Feature hooks never write controller persistence state
@@ -578,6 +585,22 @@ keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
 every parent render. Persistence never routes cradle bytes through this
 React-prop path: it bencodex-encodes the complete `SessionSave`, masks the
 salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
+
+This helper is an opaque persistence bridge, not a numeric conversion API.
+Game codecs, reducers, refs, and hook-local state retain canonical `bigint`
+values, including through game-component props. React 19.2.8 or newer is
+required together with the checked-in `react-dom@19.2.8` pnpm patch. The patch
+applies React's upstream fix for development Performance Tracks incorrectly
+passing primitive BigInt arrays to native `JSON.stringify`, which crashed
+otherwise valid renders.
+
+Synchronous local-action failures are emitted as scoped session errors and then
+rethrow unchanged, preserving fail-fast invariants. Asynchronous runtime
+failures enter the same session notification stream. A Shell-level browser
+`error`/`unhandledrejection` reporter covers failures outside React boundaries
+with a dismissible/reloadable dialog over the still-mounted game. It never
+prevents the browser event and ignores error objects already reported through
+the session path.
 
 #### Session model ownership
 
@@ -1104,6 +1127,10 @@ write, updates the resume marker, and only then destroys the controller and
 releases the peer relay/hub busy state. If either durability step fails, the
 staged terminal candidate is discarded while the live cache and controller
 remain owned and retryable; teardown is not attempted.
+Timer/effect cleanup that can finish after this atomic replacement uses
+`patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
+no-op once terminal persistence owns the record. Ordinary presentation writes
+continue to fail fast outside the live phase.
 
 **Presentation, protocol, and restoration lifetimes.** These are three separate
 boundaries:

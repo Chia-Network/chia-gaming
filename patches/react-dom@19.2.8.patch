@@ -1,0 +1,12 @@
+diff --git a/cjs/react-dom-client.development.js b/cjs/react-dom-client.development.js
+index b9bb0b5bd00886f4ba53a0f3608d04dcc7567320..8a26bf14fd4052d86562a2a728088a197b9f95aa 100644
+--- a/cjs/react-dom-client.development.js
++++ b/cjs/react-dom-client.development.js
+@@ -3770,6 +3770,7 @@
+           } else return COMPLEX_ARRAY;
+         else {
+           if (
++            "bigint" === typeof value ||
+             "function" === typeof value ||
+             ("string" === typeof value && 50 < value.length) ||
+             (kind !== EMPTY_ARRAY && kind !== PRIMITIVE_ARRAY)
