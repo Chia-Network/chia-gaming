@@ -51,6 +51,15 @@ import {
   clearCloudWalletAuth,
 } from '../../hooks/cloudWalletAuth';
 import {
+  clearCloudWalletConfig,
+  getCloudWalletApiUrl,
+  getCloudWalletClientId,
+  getCloudWalletUiUrl,
+  loadCloudWalletConfig,
+  saveCloudWalletConfig,
+} from '../../hooks/cloudWalletConfig';
+import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
+import {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
@@ -166,6 +175,81 @@ describe('cloudWalletOAuth helpers', () => {
     const result = handleOAuthCallbackPage();
     expect(result.status).toBe('error');
     expect(String((posted[0] as any)?.error)).toMatch(/state mismatch/i);
+  });
+});
+
+describe('cloudWalletConfig', () => {
+  beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
+    clearCloudWalletConfig();
+  });
+
+  it('falls back to env defaults when nothing is stored', () => {
+    expect(getCloudWalletApiUrl()).toBe('http://127.0.0.1:3001');
+    expect(getCloudWalletUiUrl()).toBe('http://127.0.0.1:3000');
+    expect(getCloudWalletClientId()).toBe('');
+  });
+
+  it('persisted values take precedence and are normalized', () => {
+    saveCloudWalletConfig({
+      clientId: '  client-1  ',
+      apiUrl: 'http://api.local/',
+      uiUrl: 'http://ui.local/',
+    });
+    expect(getCloudWalletClientId()).toBe('client-1');
+    expect(getCloudWalletApiUrl()).toBe('http://api.local');
+    expect(getCloudWalletUiUrl()).toBe('http://ui.local');
+    expect(loadCloudWalletConfig()).toEqual({
+      clientId: 'client-1',
+      apiUrl: 'http://api.local',
+      uiUrl: 'http://ui.local',
+    });
+  });
+});
+
+describe('CloudBlockchainInterface beginConnect', () => {
+  beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
+    setTestGlobal('sessionStorage', makeStorage());
+    clearCloudWalletConfig();
+    clearCloudWalletAuth();
+  });
+
+  it('fresh connect exposes string setup fields for OAuth', async () => {
+    const iface = new CloudBlockchainInterface();
+    const setup = await iface.beginConnect('uid', true);
+    expect(setup.skipQr).toBe(true);
+    expect(setup.title).toBe('Cloud Wallet');
+    expect(setup.fields?.clientId?.type).toBe('string');
+    expect(setup.fields?.apiUrl?.type).toBe('string');
+    expect(setup.fields?.uiUrl?.type).toBe('string');
+  });
+
+  it('finalize persists config before attempting OAuth', async () => {
+    const iface = new CloudBlockchainInterface();
+    const setup = await iface.beginConnect('uid', true);
+    // OAuth cannot complete in the test environment (no popup), so finalize
+    // rejects -- but only after the config has been saved.
+    await expect(
+      setup.finalize({
+        clientId: 'client-xyz',
+        apiUrl: 'http://api.local/',
+        uiUrl: 'http://ui.local/',
+      }),
+    ).rejects.toBeTruthy();
+    expect(loadCloudWalletConfig()).toEqual({
+      clientId: 'client-xyz',
+      apiUrl: 'http://api.local',
+      uiUrl: 'http://ui.local',
+    });
+  });
+
+  it('finalize rejects when no client id is available', async () => {
+    const iface = new CloudBlockchainInterface();
+    const setup = await iface.beginConnect('uid', true);
+    await expect(setup.finalize({ clientId: '', apiUrl: '', uiUrl: '' })).rejects.toThrow(
+      /client id/i,
+    );
   });
 });
 

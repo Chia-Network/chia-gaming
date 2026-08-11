@@ -17,7 +17,7 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 import FinishedSessionGameView from './FinishedSessionGameView';
-import { SimulatorSetupModal } from './SimulatorSetupModal';
+import { ConnectionSetupModal } from './ConnectionSetupModal';
 import QRCode from 'qrcode';
 import {
   GameSessionParams,
@@ -1082,9 +1082,10 @@ const Shell = () => {
   }, [blockchainType]);
 
   // Connection state
-  const [showSimModal, setShowSimModal] = useState(false);
+  const [showConnectionSetupModal, setShowConnectionSetupModal] = useState(false);
   const [connectionSetup, setConnectionSetup] = useState<ConnectionSetup | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const wcAbortRef = useRef(false);
   const [defaultFee, setDefaultFee] = useState<bigint>(() => getDefaultFee());
@@ -2301,6 +2302,7 @@ const Shell = () => {
     async (bcType: ShellBlockchainType, silent = false, fresh = false) => {
       log(`[Shell] handleConnect: bcType=${bcType} silent=${silent} fresh=${fresh}`);
       wcAbortRef.current = false;
+      if (!silent) setConnectError(null);
       const { iface, pollMs } = getInterface(bcType);
       try {
         markSavedSession();
@@ -2320,9 +2322,11 @@ const Shell = () => {
             return;
           }
         }
-        if (!setup.skipQr) setConnectionSetup(setup);
+        // Retain the setup whenever we need the user to act on it: QR pairing or
+        // a setup-fields modal (which may be skipQr, e.g. Cloud Wallet OAuth).
+        if (!setup.skipQr || setup.fields) setConnectionSetup(setup);
         if (setup.fields && !silent) {
-          setShowSimModal(true);
+          setShowConnectionSetupModal(true);
           setConnecting(false);
           return;
         }
@@ -2337,6 +2341,7 @@ const Shell = () => {
       } catch (err) {
         if (!wcAbortRef.current) {
           console.error(`[Shell] ${bcType} connect failed`, err);
+          setConnectError(err instanceof Error ? err.message : String(err));
         }
         if (silent) {
           // Simulator may still be usable offline; WC/Cloud need a real session.
@@ -2360,22 +2365,27 @@ const Shell = () => {
     [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting, setWalletAlert],
   );
 
-  const handleFinalize = useCallback(async () => {
-    if (!connectionSetup || !blockchainType) return;
-    log(`[Shell] handleFinalize: bcType=${blockchainType}`);
-    const { iface, pollMs } = getInterface(blockchainType);
-    setConnecting(true);
-    try {
-      await connectionSetup.finalize();
-      log(`[Shell] handleFinalize: finalize complete`);
-      setShowSimModal(false);
-      completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
-    } catch (err) {
-      console.error(`[Shell] ${blockchainType} finalize failed`, err);
-    } finally {
-      setConnecting(false);
-    }
-  }, [connectionSetup, blockchainType, completeConnection]);
+  const handleFinalize = useCallback(
+    async (values?: Record<string, string | bigint>) => {
+      if (!connectionSetup || !blockchainType) return;
+      log(`[Shell] handleFinalize: bcType=${blockchainType}`);
+      const { iface, pollMs } = getInterface(blockchainType);
+      setConnectError(null);
+      setConnecting(true);
+      try {
+        await connectionSetup.finalize(values);
+        log(`[Shell] handleFinalize: finalize complete`);
+        setShowConnectionSetupModal(false);
+        completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
+      } catch (err) {
+        console.error(`[Shell] ${blockchainType} finalize failed`, err);
+        setConnectError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setConnecting(false);
+      }
+    },
+    [connectionSetup, blockchainType, completeConnection],
+  );
 
   const handleCancelConnect = useCallback(async () => {
     wcAbortRef.current = true;
@@ -2402,7 +2412,8 @@ const Shell = () => {
     clearSessionPreservingHistory();
     setConnecting(false);
     setWalletConnected(false);
-    setShowSimModal(false);
+    setShowConnectionSetupModal(false);
+    setConnectError(null);
   }, [blockchainType, clearSessionPreservingHistory, stopBalancePolling]);
 
   const onGameActivity = useCallback(() => {
@@ -3794,6 +3805,16 @@ const Shell = () => {
             >
               Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
             </Button>
+            <ConnectionSetupModal
+              open={showConnectionSetupModal && !!connectionSetup}
+              title={connectionSetup?.title}
+              description={connectionSetup?.description}
+              fields={connectionSetup?.fields}
+              onConnect={handleFinalize}
+              onCancel={handleCancelConnect}
+              connecting={connecting}
+              error={connectError}
+            />
             {walletConnected ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="flex items-center gap-2">
@@ -3864,7 +3885,7 @@ const Shell = () => {
                   Disconnect
                 </Button>
               </div>
-            ) : connectionSetup ? (
+            ) : connectionSetup && !connectionSetup.skipQr ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <p className="text-lg font-semibold text-canvas-text-contrast">Scan QR Code</p>
                 <p className="text-sm text-canvas-text text-center">
@@ -3986,13 +4007,6 @@ const Shell = () => {
                 <Button variant="solid" onClick={handleCancelConnect}>
                   Cancel
                 </Button>
-                {!isElectronDistribution() && (
-                  <SimulatorSetupModal
-                    open={showSimModal}
-                    onConnect={handleFinalize}
-                    connecting={connecting}
-                  />
-                )}
               </div>
             ) : connecting ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -4074,6 +4088,11 @@ const Shell = () => {
                     Cloud Wallet
                   </Button>
                 </div>
+                {connectError ? (
+                  <p className="w-full max-w-sm text-sm text-alert-text text-center break-words">
+                    {connectError}
+                  </p>
+                ) : null}
               </div>
             )}
           </div>

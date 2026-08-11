@@ -474,16 +474,19 @@ export interface BlockchainInboundAddressResult {
   puzzleHash: string;
 }
 
-export interface ConnectionField {
-  label: string;
-  default: bigint;
-}
+export type ConnectionField =
+  | { type: 'bigint'; label: string; default: bigint }
+  | { type: 'string'; label: string; default: string };
+
+export type ConnectionFieldValues = Record<string, string | bigint>;
 
 export interface ConnectionSetup {
   qrUri: string;
   skipQr?: boolean;
-  fields?: { balance?: ConnectionField };
-  finalize(values?: { balance?: bigint }): Promise<void>;
+  title?: string;
+  description?: string;
+  fields?: Record<string, ConnectionField>;
+  finalize(values?: ConnectionFieldValues): Promise<void>;
 }
 
 export interface InternalBlockchainInterface {
