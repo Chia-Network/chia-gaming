@@ -30,6 +30,22 @@ function setTestGlobal(key: string, value: unknown) {
   });
 }
 
+/** Minimal window stand-in that lets tests dispatch `message` events manually. */
+function makeFakeWindow() {
+  const handlers: Record<string, Array<(e: unknown) => void>> = {};
+  return {
+    addEventListener(type: string, cb: (e: unknown) => void) {
+      (handlers[type] ||= []).push(cb);
+    },
+    removeEventListener(type: string, cb: (e: unknown) => void) {
+      handlers[type] = (handlers[type] || []).filter((f) => f !== cb);
+    },
+    emit(type: string, event: unknown) {
+      (handlers[type] || []).slice().forEach((cb) => cb(event));
+    },
+  };
+}
+
 setTestGlobal('localStorage', makeStorage());
 setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
@@ -42,7 +58,9 @@ import {
   normalizeHex,
   oauthRedirectUri,
   signatureRequestApproveUrl,
+  waitForGamingConsentWalletId,
   with0x,
+  GAMING_CONSENT_MESSAGE_TYPE,
   OAUTH_MESSAGE_TYPE,
 } from '../../hooks/cloudWalletOAuth';
 import {
@@ -120,6 +138,13 @@ describe('cloudWalletOAuth helpers', () => {
     const id = encodeRelayGlobalId('Wallet', 'wal_1');
     expect(atob(id)).toBe('Wallet:wal_1');
     expect(encodeRelayGlobalId('Wallet', id)).toBe(id);
+  });
+
+  it('encodeRelayGlobalId passes through Cloud Wallet global ids unchanged', () => {
+    // Cloud Wallet emits `Typename_xxx` ids; these must not be re-encoded.
+    expect(encodeRelayGlobalId('Wallet', 'Wallet_abc123')).toBe('Wallet_abc123');
+    // A non-matching prefix still gets the base64 `Typename:id` treatment.
+    expect(atob(encodeRelayGlobalId('Wallet', 'Other_abc'))).toBe('Wallet:Other_abc');
   });
 
   it('handleOAuthCallbackPage posts code to opener on success', () => {
@@ -250,6 +275,79 @@ describe('CloudBlockchainInterface beginConnect', () => {
     await expect(setup.finalize({ clientId: '', apiUrl: '', uiUrl: '' })).rejects.toThrow(
       /client id/i,
     );
+  });
+});
+
+describe('waitForGamingConsentWalletId grace period', () => {
+  let fakeWindow: ReturnType<typeof makeFakeWindow>;
+
+  beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
+    clearCloudWalletConfig();
+    jest.useFakeTimers();
+    fakeWindow = makeFakeWindow();
+    setTestGlobal('window', fakeWindow);
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    setTestGlobal('window', globalThis);
+  });
+
+  const consentEvent = (walletId: string, origin = 'http://127.0.0.1:3000') => ({
+    origin,
+    data: { type: GAMING_CONSENT_MESSAGE_TYPE, walletId },
+  });
+
+  it('resolves immediately when the consent message arrives', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const { promise } = waitForGamingConsentWalletId(popup, 60_000, 500);
+    fakeWindow.emit('message', consentEvent('Wallet_immediate'));
+    await expect(promise).resolves.toBe('Wallet_immediate');
+  });
+
+  it('resolves a late walletId posted during the popup-close grace period', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const { promise } = waitForGamingConsentWalletId(popup, 60_000, 500);
+    popup.closed = true;
+    jest.advanceTimersByTime(400); // close poll detects close -> grace begins
+    fakeWindow.emit('message', consentEvent('Wallet_late'));
+    await expect(promise).resolves.toBe('Wallet_late');
+  });
+
+  it('resolves undefined only after the grace period elapses with no message', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const { promise } = waitForGamingConsentWalletId(popup, 60_000, 500);
+    popup.closed = true;
+    jest.advanceTimersByTime(400); // detect close, start 500ms grace
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    jest.advanceTimersByTime(499);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    jest.advanceTimersByTime(1);
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('notifyCodeReceived starts the grace period while the popup stays open', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const { promise, notifyCodeReceived } = waitForGamingConsentWalletId(popup, 60_000, 500);
+    notifyCodeReceived();
+    // A late message during the grace window still wins over the timeout.
+    fakeWindow.emit('message', consentEvent('Wallet_after_code'));
+    await expect(promise).resolves.toBe('Wallet_after_code');
+  });
+
+  it('ignores consent messages from an unexpected origin', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const { promise, notifyCodeReceived } = waitForGamingConsentWalletId(popup, 60_000, 500);
+    fakeWindow.emit('message', consentEvent('Wallet_evil', 'http://evil.example'));
+    notifyCodeReceived();
+    jest.advanceTimersByTime(500);
+    await expect(promise).resolves.toBeUndefined();
   });
 });
 
