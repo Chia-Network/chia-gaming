@@ -89,11 +89,13 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isRestoreBlocked,
+  restoreGateAfterTerminalFinalization,
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
+  shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
@@ -1404,9 +1406,7 @@ const Shell = () => {
                 ...(channelTimeout !== undefined
                   ? { channelTimeout: channelTimeout.toString() }
                   : {}),
-                ...(unrollTimeout !== undefined
-                  ? { unrollTimeout: unrollTimeout.toString() }
-                  : {}),
+                ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
               },
               identity: {
                 sessionId: hubSessionId,
@@ -1943,6 +1943,7 @@ const Shell = () => {
       bindPeerMessageHandler,
       setActiveTab,
       setHubAlert,
+      setRestoreHubReconciled,
     ],
   );
 
@@ -2312,12 +2313,32 @@ const Shell = () => {
       sessionSaveRef.current = null;
       sessionSavePropRef.current = undefined;
       clearSessionTimers();
-      setRestoreStatus('idle');
+      // Drop the restore mount flag before resetting status/hub gates. A resumed
+      // session keeps params.restoring=true; resetting gates alone would re-arm
+      // restoreBlocked and GameSession would show "Restoring session..." over
+      // the terminal presentation (visible on slash because hasError stays on game).
+      const restoreGate = restoreGateAfterTerminalFinalization();
+      const liveConfig = sessionConfigRef.current;
+      if (liveConfig?.restoring) {
+        setSessionConfig({ ...liveConfig, restoring: restoreGate.restoring });
+      }
+      setRestoreStatus(restoreGate.restoreStatus);
       setRestoreError(null);
-      setRestoreHubReconciled(false);
+      setRestoreHubReconciled(restoreGate.hubReconciled);
       return true;
     },
-    [clearSessionTimers, frozenCoins, resetPeerRelayState],
+    [
+      clearSessionTimers,
+      frozenCoins,
+      resetPeerRelayState,
+      setDashboardSessionModel,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const handleSessionPhaseChange = useCallback(
@@ -2339,7 +2360,13 @@ const Shell = () => {
       setSessionError(!!hasError);
       hubConnRef.current?.setBusy(shouldReportHubBusy(phase, walletConnectedRef.current));
     },
-    [finishResolvedSessionDisplay, setActiveTab, startBalancePolling],
+    [
+      finishResolvedSessionDisplay,
+      setActiveTab,
+      setSessionError,
+      setSessionPhase,
+      startBalancePolling,
+    ],
   );
 
   const handleRestoreStatusChange = useCallback(
@@ -2443,7 +2470,17 @@ const Shell = () => {
       );
       setResuming(false);
     },
-    [setActiveTab],
+    [
+      setActiveTab,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   // Hydrate local UI state from a SessionSave and kick off a backend connect.
@@ -2580,7 +2617,20 @@ const Shell = () => {
         }
       })();
     },
-    [uniqueId, completeConnection, stablePeerConn, setActiveTab, setWalletAlert],
+    [
+      uniqueId,
+      completeConnection,
+      stablePeerConn,
+      setActiveTab,
+      setWalletAlert,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   // User clicked "Resume Session" in the resumeDialog, or boot landed on
@@ -2944,7 +2994,7 @@ const Shell = () => {
       prev ? { ...prev, channel: { ...prev.channel, cleanShutdownStarted: true } } : prev,
     );
     sessionController?.cleanShutdown();
-  }, [startCleanShutdownGrace]);
+  }, [setDashboardSessionModel, startCleanShutdownGrace]);
 
   const performDashboardGoOnChain = useCallback(() => {
     if (!sessionController?.goOnChain()) return;
@@ -2953,7 +3003,7 @@ const Shell = () => {
     hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
-  }, [syncPeerLiveness]);
+  }, [setSessionPhase, syncPeerLiveness]);
 
   const requestDashboardGoOnChain = useCallback(() => {
     const channelState = dashboardSessionModel?.channel.status.state;
@@ -3781,7 +3831,10 @@ const Shell = () => {
                       onSessionModelChange={handleSessionModelChange}
                       onProtocolStateProviderChange={handleProtocolStateProviderChange}
                       onCoinsProviderChange={handleCoinsProviderChange}
-                      suppressPhaseReporting={restoreBlocked}
+                      suppressPhaseReporting={shouldSuppressPhaseReporting(
+                        restoreBlocked,
+                        terminalPresentation != null,
+                      )}
                       terminalPresentation={terminalPresentation}
                     />
                   </GameSessionErrorBoundary>
@@ -3792,11 +3845,10 @@ const Shell = () => {
                   )}
                   {sessionConsentOverlay}
                 </div>
-              ) : sessionCanMount ? (
-                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                  Restoring session...
-                </div>
               ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
+                // Prefer the finished freeze over sessionCanMount+"Restoring session...".
+                // After live terminal finalization, sessionConfig/peerConn often remain
+                // (warm GameSession path); if keepSession drops, we must not claim restore.
                 <div className="relative w-full h-full">
                   <FinishedSessionGameView
                     model={sessionModelForReactProps(dashboardSessionModel)}
@@ -3805,6 +3857,10 @@ const Shell = () => {
                     iStarted={finishedSessionIdentity?.iStarted ?? false}
                   />
                   {sessionConsentOverlay}
+                </div>
+              ) : sessionCanMount ? (
+                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                  Restoring session...
                 </div>
               ) : (
                 <div className="relative w-full h-full">
