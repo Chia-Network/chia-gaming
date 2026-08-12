@@ -344,22 +344,30 @@ export async function beginOAuthPopupLogin(): Promise<{
     // rather than blocking on the full consent timeout.
     consent.notifyCodeReceived();
     const consentWalletId = await consent.promise;
-    if (!consentWalletId) {
-      throw new Error(
-        'Cloud Wallet consent did not return a walletId. Ensure the consent screen supports gaming clients.',
-      );
-    }
-    if (consentWalletId === '*') {
-      throw new Error(
-        'Wildcard wallet consent is not supported for gaming. Please select a specific wallet.',
-      );
-    }
-    const walletId = encodeRelayGlobalId('Wallet', consentWalletId);
+
     const tokens = await exchangeAuthorizationCode({
       code,
       codeVerifier,
       redirectUri,
     });
+
+    let walletId: string;
+    if (consentWalletId && consentWalletId !== '*') {
+      // Concrete walletId from the consent screen (encode passes Wallet_* through).
+      walletId = encodeRelayGlobalId('Wallet', consentWalletId);
+    } else {
+      // The consent screen was skipped (already consented) or granted a wildcard.
+      // Resolve a concrete wallet from the grant; ids are already Wallet_<id>.
+      const provider: TokenProvider = { getAccessToken: async () => tokens.accessToken };
+      const resolved = await fetchFirstConsentedWalletId(provider);
+      if (!resolved) {
+        throw new Error(
+          'Cloud Wallet returned no consented wallets. Grant access to a specific wallet during consent.',
+        );
+      }
+      walletId = resolved;
+    }
+
     try {
       popup.close();
     } catch {
@@ -523,6 +531,24 @@ export async function graphqlRequest<T>(
     throw new Error('Cloud Wallet GraphQL response missing data');
   }
   return payload.data;
+}
+
+/**
+ * Query the wallets this OAuth grant has consented to and return the first id.
+ *
+ * Cloud Wallet returns ids already in `Wallet_<id>` form, so callers must use
+ * the value as-is (no `encodeRelayGlobalId`). Returns undefined when the grant
+ * has no consented wallets.
+ */
+export async function fetchFirstConsentedWalletId(
+  tokenProvider: TokenProvider,
+): Promise<string | undefined> {
+  const data = await graphqlRequest<{ oauthConsentedWallets: Array<{ id: string }> | null }>(
+    `query OAuthConsentedWallets { oauthConsentedWallets { id } }`,
+    undefined,
+    tokenProvider,
+  );
+  return data.oauthConsentedWallets?.[0]?.id;
 }
 
 export function encodeRelayGlobalId(typename: string, id: string): string {
