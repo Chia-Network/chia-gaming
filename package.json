@@ -8,17 +8,6 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "pnpm run lint --fix"
   },
-  "pnpm": {
-    "overrides": {
-      "brace-expansion@5.0.8": "5.0.9",
-      "@walletconnect/jsonrpc-ws-connection>ws": "8.21.2"
-    },
-    "patchedDependencies": {
-      "@walletconnect/sign-client@2.23.10": "front-end/patches/@walletconnect__sign-client@2.23.10.patch",
-      "@walletconnect/safe-json@1.0.2": "front-end/patches/@walletconnect__safe-json@1.0.2.patch",
-      "react-dom@19.2.8": "patches/react-dom@19.2.8.patch"
-    }
-  },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "eslint": "10.8.0",
