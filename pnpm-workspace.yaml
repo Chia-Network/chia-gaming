@@ -20,3 +20,4 @@ allowBuilds:
 patchedDependencies:
   "@walletconnect/sign-client@2.23.10": front-end/patches/@walletconnect__sign-client@2.23.10.patch
   "@walletconnect/safe-json@1.0.2": front-end/patches/@walletconnect__safe-json@1.0.2.patch
+  react-dom@19.2.8: patches/react-dom@19.2.8.patch
