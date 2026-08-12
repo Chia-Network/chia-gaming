@@ -894,7 +894,11 @@ const GameSession: React.FC<GameSessionProps> = (props) => {
     props.blockchain,
     props.terminalPresentation != null,
   );
-  if (!sessionController) return null;
+  if (!sessionController) {
+    // keepSession mounts us before the post-commit controller exists; keep the
+    // session-pane cover visible so accept does not flash a blank pane.
+    return props.showTransitionSurface ? <SessionTransitionSurface /> : null;
+  }
   return <MountedGameSession {...props} sessionController={sessionController} />;
 };
 

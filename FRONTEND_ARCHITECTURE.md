@@ -648,16 +648,16 @@ projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
 
 During the short interval after the user accepts a session — before
-`GameSession` has reported its first model, and also while a prior finished
+`GameSession` has reported its first live model, and also while a prior finished
 freeze model is still mounted until `retireTerminalDisplay` runs after async
 `replaceSession` — Shell passes an explicit `setupPending` input to the same
 dashboard selector. This makes the existing primary action show **Cancel**
 immediately without introducing a second setup button or a parallel
-cancellation path. Once setup is no longer pending and a live model exists,
-the action is entirely core-derived: handshake and wallet-signing statuses
-remain **Cancel**, while `OfferSent` / `TransactionPending` cross the
-commitment boundary and project **Waiting** (or the later timer-gated
-**Abandon** action).
+cancellation path. Once a live (non-resolved) model exists, labels and actions
+are entirely core-derived even if the session-pane transition is still pending:
+handshake and wallet-signing statuses remain **Cancel**, while `OfferSent` /
+`TransactionPending` cross the commitment boundary and project **Waiting** (or
+the later timer-gated **Abandon** action).
 
 The dashboard never derives whether a shutdown has value remaining from its
 displayed balances or game state. Rust provides `channelStatus.zero_payout`

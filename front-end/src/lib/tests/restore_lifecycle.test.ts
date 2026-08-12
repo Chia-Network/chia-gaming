@@ -11,6 +11,7 @@ import {
   shouldReportSessionPhase,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
+  shouldSynthesizeSetupPending,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
@@ -41,6 +42,14 @@ describe('restore lifecycle gates', () => {
     expect(shouldSuppressPhaseReporting(true, true)).toBe(false);
     expect(shouldSwitchToHubOnResolved('on-chain', true)).toBe(false);
     expect(shouldSwitchToHubOnResolved('off-chain', true)).toBe(false);
+  });
+
+  it('limits setupPending synthesis to the pre-first-model / finished-freeze window', () => {
+    expect(shouldSynthesizeSetupPending(false, false)).toBe(false);
+    // No live model yet (null model or finished freeze still mounted).
+    expect(shouldSynthesizeSetupPending(true, false)).toBe(true);
+    // First live handshake model must leave labels core-derived.
+    expect(shouldSynthesizeSetupPending(true, true)).toBe(false);
   });
 
   it('keeps the hub unavailable while restore is blocked', () => {

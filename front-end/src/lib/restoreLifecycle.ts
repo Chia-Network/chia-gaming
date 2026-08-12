@@ -45,6 +45,19 @@ export function shouldSuppressPhaseReporting(
   return restoreBlocked && !hasTerminalPresentation;
 }
 
+/**
+ * `setupPending` covers only the pre-first-model gap (and a finished freeze still
+ * mounted until retireTerminalDisplay). Once a live SessionModel exists, dashboard
+ * labels must be core-derived even while the session-pane transition remains
+ * pending through handshake Cancel states.
+ */
+export function shouldSynthesizeSetupPending(
+  sessionPaneTransition: boolean,
+  hasLiveSessionModel: boolean,
+): boolean {
+  return sessionPaneTransition && !hasLiveSessionModel;
+}
+
 export function shouldAdvertiseAvailable(
   sessionPhase: SessionPhase,
   restoreBlocked: boolean,

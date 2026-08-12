@@ -97,6 +97,7 @@ import {
   shouldReportHubBusyPresence,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
+  shouldSynthesizeSetupPending,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
 import {
@@ -3252,6 +3253,9 @@ const Shell = () => {
 
   const sessionPaneTransition =
     shellState.transition.kind === 'pending' && shellState.transition.scope === 'session-pane';
+  // Finished freeze (resolved) is not a live setup model — keep Cancel synthesized
+  // until the first non-resolved SessionModel arrives from GameSession.
+  const hasLiveSessionModel = dashboardSessionModel !== null && sessionPhase !== 'resolved';
 
   const sessionCanMount = sessionConfig !== null && peerConn !== null;
   const { startSession: sessionReadyToStart, keepSession } = shouldMountGameSession(
@@ -3264,7 +3268,7 @@ const Shell = () => {
 
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
-    setupPending: sessionPaneTransition,
+    setupPending: shouldSynthesizeSetupPending(sessionPaneTransition, hasLiveSessionModel),
     cleanShutdownGraceActive,
     abandonEnabled,
   });
@@ -3811,7 +3815,7 @@ const Shell = () => {
               getCoins={getCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-              {sessionPaneTransition && !keepSession && !sessionCanMount ? (
+              {sessionPaneTransition && !keepSession ? (
                 <SessionTransitionSurface />
               ) : keepSession && restoreStatus === 'failed' ? (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">

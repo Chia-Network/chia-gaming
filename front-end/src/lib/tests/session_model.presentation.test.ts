@@ -70,6 +70,19 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       actionKind: 'cancel',
     });
 
+    // Once a live handshake model exists, core labels must show even if a
+    // caller incorrectly left setupPending set (Shell should clear it).
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+        }),
+      ),
+    ).toMatchObject({
+      channelStatusLabel: 'Handshaking',
+      actionKind: 'cancel',
+    });
+
     for (const state of [
       'Handshaking',
       'WaitingForHeightToOffer',
