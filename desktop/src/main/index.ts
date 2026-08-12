@@ -1,7 +1,15 @@
 import path from 'node:path';
 
-import { BrowserWindow, app, dialog, session } from 'electron';
+import {
+  BrowserWindow,
+  Menu,
+  app,
+  dialog,
+  session,
+  type MenuItemConstructorOptions,
+} from 'electron';
 
+import { showAboutWindow } from './aboutWindow';
 import { registerAppSchemeAsPrivileged, serveAppScheme } from './appProtocol';
 import { loadDesktopConfig, type DesktopConfig } from './config';
 import { installHubTrustHandler } from './hubTrust';
@@ -13,6 +21,42 @@ import { installSessionSecurity, installWebContentsSecurity } from './security';
 // Both of these have to happen before the 'ready' event.
 registerAppSchemeAsPrivileged();
 app.enableSandbox();
+app.setName('Chia Gaming');
+
+function installApplicationMenu(): void {
+  const aboutItem: MenuItemConstructorOptions = {
+    label: 'About Chia Gaming',
+    click: showAboutWindow,
+  };
+  const macAppMenu: MenuItemConstructorOptions = {
+    label: 'Chia Gaming',
+    submenu: [
+      aboutItem,
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { label: 'Hide Chia Gaming', role: 'hide' },
+      { label: 'Hide Others', role: 'hideOthers' },
+      { label: 'Show All', role: 'unhide' },
+      { type: 'separator' },
+      { label: 'Quit Chia Gaming', role: 'quit' },
+    ],
+  };
+  const helpMenu: MenuItemConstructorOptions = {
+    label: 'Help',
+    submenu: [aboutItem],
+  };
+  const template: MenuItemConstructorOptions[] = [
+    ...(process.platform === 'darwin' ? [macAppMenu] : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    ...(process.platform === 'darwin' ? [] : [helpMenu]),
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function loadConfigOrExit(): DesktopConfig {
   try {
@@ -60,6 +104,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(() => {
+    installApplicationMenu();
     installSessionSecurity(session.defaultSession, policy);
     serveAppScheme(rendererRoot, policy);
     createMainWindow();
