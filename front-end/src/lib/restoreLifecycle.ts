@@ -100,11 +100,17 @@ export async function transitionToFreshSession(dependencies: {
   retireTerminalDisplay: () => void;
   mountLiveSession: () => void;
   reportBusy: () => void;
-}): Promise<void> {
+  /** When true after persist, skip retire/mount — caller already cancelled. */
+  shouldAbort?: () => boolean;
+}): Promise<'completed' | 'aborted'> {
   dependencies.reportBusy();
   await dependencies.persistLiveCheckpoint();
+  if (dependencies.shouldAbort?.()) {
+    return 'aborted';
+  }
   dependencies.retireTerminalDisplay();
   dependencies.mountLiveSession();
+  return 'completed';
 }
 
 /**

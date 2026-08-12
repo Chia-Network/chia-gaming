@@ -1358,8 +1358,9 @@ const Shell = () => {
         const diagnosticLog = loadState().history.diagnosticLog;
         const wasmNotificationHistory = loadState().history.wasmNotificationHistory;
 
-        await transitionToFreshSession({
+        const outcome = await transitionToFreshSession({
           reportBusy: () => conn.setBusy(true),
+          shouldAbort: () => epoch !== sessionStartEpochRef.current,
           retireTerminalDisplay: () => {
             sessionStartedRef.current = false;
             sessionFinishedCleanupRef.current = false;
@@ -1420,6 +1421,11 @@ const Shell = () => {
                   : {}),
               },
             });
+            // Cancel can interleave after replaceSession's awaits and still leave
+            // a durable pre-handshake checkpoint on the write chain. Drop it.
+            if (epoch !== sessionStartEpochRef.current) {
+              clearSessionPreservingHistory();
+            }
           },
           mountLiveSession: () => {
             if (epoch !== sessionStartEpochRef.current) {
@@ -1449,6 +1455,12 @@ const Shell = () => {
             setPeerLiveness(null);
           },
         });
+        if (outcome === 'aborted') {
+          log(
+            `[Shell] startFreshSessionWithPeer aborted: cancelled after persist peer=${request.peerId}`,
+          );
+          return;
+        }
       } catch (error) {
         console.error('[Shell] session start failed', error);
         sendSessionReject(request.peerId);
@@ -1459,6 +1471,7 @@ const Shell = () => {
       stablePeerConn,
       bindPeerMessageHandler,
       cancelAttemptedSession,
+      clearSessionPreservingHistory,
       sendSessionReject,
       setDashboardSessionModel,
       setPeerConn,
@@ -3836,13 +3849,9 @@ const Shell = () => {
                         terminalPresentation != null,
                       )}
                       terminalPresentation={terminalPresentation}
+                      showTransitionSurface={sessionPaneTransition}
                     />
                   </GameSessionErrorBoundary>
-                  {sessionPaneTransition && (
-                    <div className="absolute inset-0 z-30">
-                      <SessionTransitionSurface />
-                    </div>
-                  )}
                   {sessionConsentOverlay}
                 </div>
               ) : sessionPhase === 'resolved' && dashboardSessionModel ? (

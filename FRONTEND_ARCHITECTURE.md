@@ -1051,11 +1051,12 @@ For accepted session setup, the transition is keyed atomically with the same
 `pairingToken` that identifies the new controller instance. Completion for a
 different instance is ignored.
 
-`GameSession` remains mounted underneath a session-pane transition. This lets
-the WASM/controller setup continue and keeps its existing notification overlays
-available above the presentation surface. `GameSession` reports its normal
-`SessionModel` to Shell; it has no transition-specific rendering mode or
-readiness flag.
+`GameSession` remains mounted underneath a session-pane transition. The
+presentation surface is rendered inside `GameSession` (below its notification
+z-index) so WASM/controller setup can continue while existing notification
+overlays stay available and clickable above the surface. `GameSession` reports
+its normal `SessionModel` to Shell; it has no transition-specific readiness
+flag beyond the optional surface cover.
 
 Shell releases the transition when the canonical dashboard selector moves past
 the setup **Cancel** action. Because that selector reads the projected

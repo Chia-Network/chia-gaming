@@ -28,6 +28,7 @@ import {
   peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
+import { SessionTransitionSurface } from './SessionTransitionSurface';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
@@ -564,6 +565,8 @@ export interface GameSessionProps {
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
   terminalPresentation?: TerminalSessionPresentation | null;
+  /** Cover game content during session-pane setup; stays under notification z-index. */
+  showTransitionSurface?: boolean;
 }
 
 const MountedGameSession: React.FC<GameSessionProps & { sessionController: SessionController }> = ({
@@ -580,6 +583,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   blockchain,
   sessionController,
   terminalPresentation,
+  showTransitionSurface = false,
 }) => {
   const session = useGameSession(
     params,
@@ -844,6 +848,17 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
             </>
           )}
       </div>
+
+      {/*
+        Cover content during session-pane setup inside GameSession's stacking
+        context so notification overlays (z-40 / z-50) stay clickable above it.
+        A Shell sibling at z-30 would paint over those overlays.
+      */}
+      {showTransitionSurface && (
+        <div className="absolute inset-0 z-20" aria-hidden>
+          <SessionTransitionSurface />
+        </div>
+      )}
 
       {showBetweenHandOverlay && (
         <BetweenHandOverlay restoreFocus={restoreGameAreaFocus}>

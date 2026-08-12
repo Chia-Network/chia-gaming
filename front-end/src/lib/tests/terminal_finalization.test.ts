@@ -14,6 +14,7 @@ import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
+  clearSession,
   discardStagedTerminalSession,
   flushSessionSave,
   hasSavedSessionMarker,
@@ -363,7 +364,7 @@ it('retires a resolved display before accepting a fresh live session', async () 
   let hubBusy = false;
   const pairingToken = 'fresh-live-token';
 
-  await transitionToFreshSession({
+  const outcome = await transitionToFreshSession({
     retireTerminalDisplay: () => {
       displayedSession = 'none';
     },
@@ -389,10 +390,66 @@ it('retires a resolved display before accepting a fresh live session', async () 
     },
   });
 
+  expect(outcome).toBe('completed');
   expect(displayedSession).toBe('live');
   expect(mountedPairingToken).toBe(pairingToken);
   expect(hubBusy).toBe(true);
   expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('pre-handshake');
+});
+
+it('aborts after persist when the start epoch advances during replaceSession', async () => {
+  await saveTerminalSession(
+    terminalUpdate({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    }),
+  );
+  await flushSessionSave();
+
+  let displayedSession = 'resolved';
+  let mounted = false;
+  let startEpoch = 1;
+  const capturedEpoch = startEpoch;
+
+  const outcome = await transitionToFreshSession({
+    reportBusy: () => {},
+    shouldAbort: () => capturedEpoch !== startEpoch,
+    persistLiveCheckpoint: async () => {
+      await replaceSession(
+        baseSave({
+          pairingToken: 'cancelled-token',
+          sessionPeerId: 'peer',
+          gameSessionId: 'session',
+          iStarted: true,
+          myContribution: '10',
+          theirContribution: '10',
+          perGameAmount: '1',
+        }),
+      );
+      // Simulate dashboard Cancel bumping the epoch and clearing storage after
+      // replaceSession's awaits — the write must not survive as a resume target.
+      startEpoch += 1;
+      const humanHistory = loadState().history.humanHistory;
+      await clearSession();
+      if (humanHistory?.length) {
+        await saveSession({ scope: 'common', history: { humanHistory } });
+      }
+    },
+    retireTerminalDisplay: () => {
+      displayedSession = 'none';
+    },
+    mountLiveSession: () => {
+      mounted = true;
+      displayedSession = 'live';
+    },
+  });
+
+  expect(outcome).toBe('aborted');
+  expect(displayedSession).toBe('resolved');
+  expect(mounted).toBe(false);
+  await flushSessionSave();
+  const record = await readSessionRecord();
+  expect(record == null || decodeSessionSaveEnvelope(record).phase === 'preferences').toBe(true);
 });
 
 it('keeps the resolved display and terminal checkpoint when fresh persistence fails', async () => {
