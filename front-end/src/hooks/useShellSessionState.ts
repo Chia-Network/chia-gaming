@@ -5,57 +5,45 @@ import {
   type ShellSessionAction,
   type ShellSessionState,
   type ShellSessionTransitionReason,
-  type ShellSessionTransitionScope,
 } from '../lib/session/shellSessionState';
 
 export type TransitionWork = () => void | Promise<void>;
-export type TransitionOptions =
-  | {
-      scope: ShellSessionTransitionScope;
-      waitForReady?: false;
-    }
-  | {
-      scope: ShellSessionTransitionScope;
-      waitForReady: true;
-      readyKey: string;
-    };
 
-export interface UseShellSessionTransitionResult {
+export interface UseShellSessionStateResult {
   state: ShellSessionState;
   dispatch: React.Dispatch<ShellSessionAction>;
-  runTransition: (
+  /**
+   * Start an Accept transition (clears consent atomically) and run work.
+   * Completes when `completeTransition(readyKey)` fires, or ends on throw.
+   */
+  beginAcceptTransition: (
     reason: ShellSessionTransitionReason,
+    readyKey: string,
     work: TransitionWork,
-    options: TransitionOptions,
   ) => Promise<void>;
   completeTransition: (readyKey: string) => void;
   cancelTransition: () => void;
 }
 
-export function useShellSessionTransition(): UseShellSessionTransitionResult {
+/**
+ * Shell session fields + Accept session-pane transition bookkeeping.
+ * Accept abort/persist/epoch live in `useAcceptLifecycle`.
+ */
+export function useShellSessionState(): UseShellSessionStateResult {
   const [state, dispatch] = useReducer(shellSessionReducer, initialShellSessionState);
 
-  const runTransition = useCallback(
+  const beginAcceptTransition = useCallback(
     async (
       reason: ShellSessionTransitionReason,
+      readyKey: string,
       work: TransitionWork,
-      options: TransitionOptions,
     ): Promise<void> => {
-      dispatch({
-        type: 'startTransition',
-        reason,
-        scope: options.scope,
-        readyKey: options.waitForReady ? options.readyKey : null,
-      });
+      dispatch({ type: 'beginAccept', reason, readyKey });
       try {
         await work();
       } catch (error) {
         dispatch({ type: 'endTransition' });
         throw error;
-      } finally {
-        if (!options.waitForReady) {
-          dispatch({ type: 'endTransition' });
-        }
       }
     },
     [dispatch],
@@ -71,7 +59,7 @@ export function useShellSessionTransition(): UseShellSessionTransitionResult {
   return {
     state,
     dispatch,
-    runTransition,
+    beginAcceptTransition,
     completeTransition,
     cancelTransition,
   };

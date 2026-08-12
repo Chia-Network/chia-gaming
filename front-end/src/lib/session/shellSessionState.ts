@@ -1,6 +1,7 @@
 import type { GameSessionParams, PeerConnectionResult, SessionPhase } from '../../types/ChiaGaming';
 import type { AdvisoryStartParams } from '../../services/HubConnection';
 import type { RestoreStatus } from '../../hooks/SessionController';
+import type { AcceptReason } from './acceptLifecycle';
 import type { SessionModel } from './model';
 
 export type PendingSessionProposal = {
@@ -13,15 +14,11 @@ export type PendingSessionProposal = {
   game_session_id?: string;
 };
 
-export type ShellSessionTransitionReason =
-  | 'accept-advisory'
-  | 'accept-proposal'
-  | 'resume'
-  | 'start-over'
-  | 'disconnect'
-  | 'finish';
+/** Accept is the only remaining session-pane transition reason. */
+export type ShellSessionTransitionReason = AcceptReason;
 
-export type ShellSessionTransitionScope = 'shell' | 'session-pane';
+/** Session-pane only — unused shell-scope overlays were deleted. */
+export type ShellSessionTransitionScope = 'session-pane';
 
 export type ShellSessionTransition =
   | { kind: 'idle' }
@@ -66,11 +63,18 @@ export type ShellSessionAction =
   | { type: 'setRestoreError'; value: string | null }
   | { type: 'setRestoreHubReconciled'; value: boolean }
   | {
+      type: 'beginAccept';
+      reason: ShellSessionTransitionReason;
+      readyKey: string;
+    }
+  | {
       type: 'startTransition';
       reason: ShellSessionTransitionReason;
       scope: ShellSessionTransitionScope;
       readyKey: string | null;
     }
+  | { type: 'liveMounted'; sessionConfig: GameSessionParams; peerConn: PeerConnectionResult }
+  | { type: 'acceptAborted'; error?: boolean }
   | { type: 'completeTransition'; readyKey: string }
   | { type: 'endTransition' };
 
@@ -113,6 +117,19 @@ export function shellSessionReducer(
       return { ...state, restoreError: action.value };
     case 'setRestoreHubReconciled':
       return { ...state, restoreHubReconciled: action.value };
+    case 'beginAccept':
+      // Clears consent prompts atomically with entering the Accept transition.
+      return {
+        ...state,
+        pendingAdvisory: null,
+        pendingProposal: null,
+        transition: {
+          kind: 'pending',
+          reason: action.reason,
+          scope: 'session-pane',
+          readyKey: action.readyKey,
+        },
+      };
     case 'startTransition':
       return {
         ...state,
@@ -122,6 +139,20 @@ export function shellSessionReducer(
           scope: action.scope,
           readyKey: action.readyKey,
         },
+      };
+    case 'liveMounted':
+      return {
+        ...state,
+        sessionConfig: action.sessionConfig,
+        peerConn: action.peerConn,
+      };
+    case 'acceptAborted':
+      return {
+        ...state,
+        pendingAdvisory: null,
+        pendingProposal: null,
+        sessionError: !!action.error,
+        transition: { kind: 'idle' },
       };
     case 'completeTransition':
       return state.transition.kind === 'pending' && state.transition.readyKey === action.readyKey

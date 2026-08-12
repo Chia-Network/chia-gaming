@@ -24,14 +24,6 @@ describe('shellSessionReducer', () => {
         readyKey: 't',
       }),
     ).toBe(true);
-    expect(
-      isAcceptSessionTransition({
-        kind: 'pending',
-        reason: 'resume',
-        scope: 'shell',
-        readyKey: null,
-      }),
-    ).toBe(false);
   });
 
   it('returns the initial state', () => {
@@ -59,6 +51,55 @@ describe('shellSessionReducer', () => {
     expect(state.transition).toEqual({ kind: 'idle' });
   });
 
+  it('beginAccept clears consent prompts atomically with the transition', () => {
+    const withAdvisory: ShellSessionState = {
+      ...initialShellSessionState,
+      pendingAdvisory: {
+        peer_id: 'peer-1',
+        peer_alias: 'Alice',
+        my_amount: '100',
+        their_amount: '100',
+      },
+      pendingProposal: {
+        from_id: 'peer-2',
+        from_alias: 'Bob',
+        proposer_amount: '50',
+        responder_amount: '50',
+      },
+    };
+
+    const state = shellSessionReducer(withAdvisory, {
+      type: 'beginAccept',
+      reason: 'accept-advisory',
+      readyKey: 'token-1',
+    });
+
+    expect(state.transition).toEqual({
+      kind: 'pending',
+      reason: 'accept-advisory',
+      scope: 'session-pane',
+      readyKey: 'token-1',
+    });
+    expect(state.pendingAdvisory).toBeNull();
+    expect(state.pendingProposal).toBeNull();
+  });
+
+  it('liveMounted installs session config and peer connection together', () => {
+    const state = shellSessionReducer(initialShellSessionState, {
+      type: 'liveMounted',
+      sessionConfig: {
+        iStarted: false,
+        myContribution: 100n,
+        theirContribution: 100n,
+        perGameAmount: 10n,
+        pairingToken: 'token-1',
+      },
+      peerConn: { send: () => {}, close: () => {} } as never,
+    });
+    expect(state.sessionConfig?.pairingToken).toBe('token-1');
+    expect(state.peerConn).not.toBeNull();
+  });
+
   it('enters and leaves a transition', () => {
     const pending = shellSessionReducer(initialShellSessionState, {
       type: 'startTransition',
@@ -77,23 +118,8 @@ describe('shellSessionReducer', () => {
     expect(ended.transition).toEqual({ kind: 'idle' });
   });
 
-  it('records the last transition reason', () => {
-    const state = shellSessionReducer(initialShellSessionState, {
-      type: 'startTransition',
-      reason: 'resume',
-      scope: 'shell',
-      readyKey: null,
-    });
-    expect(state.transition).toEqual({
-      kind: 'pending',
-      reason: 'resume',
-      scope: 'shell',
-      readyKey: null,
-    });
-  });
-
-  it('clears the consent prompt while a transition is pending', () => {
-    const withAdvisory: ShellSessionState = {
+  it('acceptAborted clears consent, sets error, and ends the transition atomically', () => {
+    const withConsent: ShellSessionState = {
       ...initialShellSessionState,
       pendingAdvisory: {
         peer_id: 'peer-1',
@@ -101,61 +127,22 @@ describe('shellSessionReducer', () => {
         my_amount: '100',
         their_amount: '100',
       },
+      transition: {
+        kind: 'pending',
+        reason: 'accept-proposal',
+        scope: 'session-pane',
+        readyKey: 'token-1',
+      },
     };
 
-    const state = shellSessionReducer(withAdvisory, {
-      type: 'startTransition',
-      reason: 'accept-advisory',
-      scope: 'session-pane',
-      readyKey: null,
+    const state = shellSessionReducer(withConsent, {
+      type: 'acceptAborted',
+      error: true,
     });
-    const cleared = shellSessionReducer(state, {
-      type: 'setPendingAdvisory',
-      value: null,
-    });
-
-    expect(cleared.transition).toEqual({
-      kind: 'pending',
-      reason: 'accept-advisory',
-      scope: 'session-pane',
-      readyKey: null,
-    });
-    expect(cleared.pendingAdvisory).toBeNull();
-  });
-
-  it('installs the new session snapshot before ending the transition', () => {
-    let state = shellSessionReducer(initialShellSessionState, {
-      type: 'startTransition',
-      reason: 'accept-proposal',
-      scope: 'session-pane',
-      readyKey: null,
-    });
-
-    state = shellSessionReducer(state, {
-      type: 'setSessionConfig',
-      value: {
-        iStarted: false,
-        myContribution: 100n,
-        theirContribution: 100n,
-        perGameAmount: 10n,
-        pairingToken: 'token-1',
-      },
-    });
-    state = shellSessionReducer(state, {
-      type: 'setSessionPhase',
-      value: 'none',
-    });
-    state = shellSessionReducer(state, { type: 'endTransition' });
-
+    expect(state.pendingAdvisory).toBeNull();
+    expect(state.pendingProposal).toBeNull();
+    expect(state.sessionError).toBe(true);
     expect(state.transition).toEqual({ kind: 'idle' });
-    expect(state.sessionConfig).toEqual({
-      iStarted: false,
-      myContribution: 100n,
-      theirContribution: 100n,
-      perGameAmount: 10n,
-      pairingToken: 'token-1',
-    });
-    expect(state.sessionPhase).toBe('none');
   });
 
   it('releases a waiting transition only for its registered session', () => {

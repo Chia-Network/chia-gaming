@@ -1035,8 +1035,9 @@ The Shell is the top-level React component. It owns:
   (`useThemeSyncToIframe`)
 - **Tab navigation** — five tabs: Wallet, Hub, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
-- **Session lifecycle and transition presentation** — reducer-backed lifecycle
-  state plus scoped transition surfaces around asynchronous session operations
+- **Session lifecycle and Accept presentation** — `useShellSessionState` fields
+  plus `useAcceptLifecycle` / `acceptLifecycle` for Accept abort, persist, and
+  session-pane setup covers
 
 The Shell does not know about game protocol details. When the hub challenge
 flow completes, Shell creates `GameSessionParams` with the total channel amount
@@ -1053,35 +1054,36 @@ controller.
 
 #### Session transition ownership
 
-Shell owns session transitions through `useShellSessionTransition` and the
-reducer in `front-end/src/lib/session/shellSessionState.ts`. A transition has a
-reason and a presentation scope:
+Accept ownership lives in `front-end/src/lib/session/acceptLifecycle.ts` and
+`useAcceptLifecycle`, composed by Shell. Session fields and the Accept
+session-pane transition bookkeeping live in `useShellSessionState` /
+`shellSessionState.ts`.
 
-- `shell` replaces the whole shell for operations that intentionally make the
-  app unavailable.
-- `session-pane` preserves the tabs and `GameDashboard` while covering only the
-  game-content pane with `SessionTransitionSurface`.
+Accept session setup is always `session-pane` scope: tabs and `GameDashboard`
+stay mounted while `SessionTransitionSurface` covers only the game-content
+pane. Shell renders that cover only before `GameSession` is kept; once
+mounted, `GameSession` hosts the same surface under its notification z-index
+so overlays remain clickable.
 
-For accepted session setup, the transition is keyed atomically with the same
-`pairingToken` that identifies the new controller instance. Completion for a
-different instance is ignored.
+`beginAccept` clears consent prompts atomically with entering the pending
+transition, keyed by the same `pairingToken` that identifies the new
+controller instance. Completion for a different instance is ignored.
 
-`GameSession` remains mounted underneath a session-pane transition. The
-presentation surface is rendered inside `GameSession` (below its notification
-z-index) so WASM/controller setup can continue while existing notification
-overlays stay available and clickable above the surface. `GameSession` reports
-its normal `SessionModel` to Shell; it has no transition-specific readiness
-flag beyond the optional surface cover.
+Shell releases the transition via `shouldCompleteAcceptTransition`: true once
+the projected `ChannelStatus` leaves Cancel-only setup states. The core remains
+authoritative for that commitment boundary.
 
-Shell releases the transition when the canonical dashboard selector moves past
-the setup **Cancel** action. Because that selector reads the projected
-`ChannelStatus`, the core remains authoritative for the commitment boundary.
-Cancellation of an Accept attempt before the live checkpoint write lands uses
-`abandonFailedStartAttempt` (reject peer + clear provisional relay/transition)
-so a finished freeze and terminal IndexedDB save stay intact. After that write
-succeeds, Accept Cancel still goes through `abortAcceptAttemptIfActive`, which
-tears down via `cancelAttemptedSession` (full attempt cleanup) and releases the
-pending transition.
+`abortAccept` is the single Accept abort API (Cancel, `session_reject`,
+`delivery_failure`, remap, disconnect-during-Accept). It owns `session_reject`
+when a peer id is supplied and chooses freeze-safe disposition:
+pre-`replaceSession` → peer-only abandon via atomic `acceptAborted` (finished
+freeze + terminal IndexedDB stay); after the write lands → full attempt
+teardown via `cancelAttemptedSession`. `persistFreshStartCheckpoint` marks the
+write committed as soon as `replaceSession` succeeds, so a Cancel-race restore
+failure still takes full teardown rather than leaving an orphan live cradle.
+While Accept is pending or its persist callback is still draining,
+`getPresence` / wallet-reconnect busy and local prompt availability all stay
+blocked so hub re-identify cannot advertise available mid-Accept.
 
 ### Blockchain Connection Flow
 

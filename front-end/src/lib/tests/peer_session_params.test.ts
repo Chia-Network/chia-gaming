@@ -2,7 +2,6 @@ import {
   isValidSessionAmountString,
   isValidTimeoutString,
   parseSessionAmount,
-  startFailureDisposition,
 } from '../session/peerSessionParams';
 
 describe('peerSessionParams', () => {
@@ -54,16 +53,6 @@ describe('peerSessionParams', () => {
       expect(() => parseSessionAmount('0')).toThrow(/positive/);
       expect(() => parseSessionAmount('bad')).toThrow(/invalid session amount/);
       expect(() => parseSessionAmount('08')).toThrow(/invalid session amount/);
-    });
-  });
-
-  describe('startFailureDisposition', () => {
-    it('abandons the peer attempt only when persist has not committed', () => {
-      expect(startFailureDisposition(false)).toBe('abandon-peer-only');
-    });
-
-    it('cancels the full attempt once replaceSession has landed', () => {
-      expect(startFailureDisposition(true)).toBe('cancel-attempt');
     });
   });
 });

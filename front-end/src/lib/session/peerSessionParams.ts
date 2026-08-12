@@ -52,16 +52,3 @@ export function isValidTimeoutString(v: string | undefined): boolean {
   const n = parseOptionalBigInt(v);
   return n !== undefined && n >= BigInt(MIN_TIMEOUT_BLOCKS) && n <= BigInt(MAX_TIMEOUT_BLOCKS);
 }
-
-/**
- * After Accept, `transitionToFreshSession` only retires the finished freeze once
- * the live checkpoint write has landed. Failures or user Cancel before that must
- * end the peer attempt only — never clear IndexedDB / blank results. Once
- * replaceSession has successfully replaced the checkpoint, full attempt teardown
- * is required.
- */
-export function startFailureDisposition(
-  persistCommitted: boolean,
-): 'abandon-peer-only' | 'cancel-attempt' {
-  return persistCommitted ? 'cancel-attempt' : 'abandon-peer-only';
-}
