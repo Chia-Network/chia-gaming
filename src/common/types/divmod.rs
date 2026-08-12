@@ -11,7 +11,8 @@ pub fn divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt) {
     }
 }
 
-#[cfg(test)]
+// Collected only by the sim-tests runner (simulator is feature-gated).
+#[cfg(all(test, feature = "sim-tests"))]
 fn test_local_divmod() {
     assert_eq!(
         divmod((-7).to_bigint().unwrap(), 2.to_bigint().unwrap()),
@@ -31,7 +32,7 @@ fn test_local_divmod() {
     );
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sim-tests"))]
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![("test_local_divmod", &test_local_divmod)]
 }
