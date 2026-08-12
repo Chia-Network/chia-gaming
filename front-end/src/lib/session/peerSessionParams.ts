@@ -1,0 +1,59 @@
+/**
+ * Trust-boundary validation for peer/hub session start parameters.
+ *
+ * Bad inbound amounts or timeouts must be rejected at intake (reject the peer
+ * proposal / ignore the advisory). They must never reach session start logic
+ * that could tear down a finished freeze or IndexedDB checkpoint.
+ */
+
+export const MIN_TIMEOUT_BLOCKS = 3;
+export const MAX_TIMEOUT_BLOCKS = 30;
+
+export function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
+  if (!raw) return undefined;
+  try {
+    return BigInt(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Positive decimal bigint string (session buy-in amounts). */
+export function isValidSessionAmountString(raw: string | undefined): boolean {
+  if (raw === undefined || !/^\d+$/.test(raw)) return false;
+  try {
+    return BigInt(raw) > 0n;
+  } catch {
+    return false;
+  }
+}
+
+export function parseSessionAmount(raw: string): bigint {
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`invalid session amount: ${raw}`);
+  }
+  const amount = BigInt(raw);
+  if (amount <= 0n) {
+    throw new Error(`session amount must be positive, got ${raw}`);
+  }
+  return amount;
+}
+
+export function isValidTimeoutString(v: string | undefined): boolean {
+  if (v === undefined) return true;
+  if (!/^\d+$/.test(v)) return false;
+  const n = BigInt(v);
+  return n >= BigInt(MIN_TIMEOUT_BLOCKS) && n <= BigInt(MAX_TIMEOUT_BLOCKS);
+}
+
+/**
+ * After Accept, `transitionToFreshSession` only retires the finished freeze once
+ * persist succeeds. A start failure before that must end the peer attempt only —
+ * never `cancelAttemptedSession`, which clears IndexedDB and blanks results.
+ * Once persist has replaced the checkpoint, full attempt teardown is required.
+ */
+export function startFailureDisposition(
+  checkpointPersisted: boolean,
+): 'abandon-peer-only' | 'cancel-attempt' {
+  return checkpointPersisted ? 'cancel-attempt' : 'abandon-peer-only';
+}

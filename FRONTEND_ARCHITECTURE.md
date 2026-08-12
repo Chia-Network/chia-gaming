@@ -170,7 +170,7 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
 | Event              | Payload                                                                               | Purpose                                                                                                                                                                                                                                                   |
 | ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `registered`       | `{ player_id }`                                                                       | Confirmation of identity. Sent in response to `identify`.                                                                                                                                                                                                 |
-| `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. |
+| `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. The client ignores advisories with invalid amounts or out-of-range timeouts (no consent UI; advisory is hub-originated, so no `session_reject`). |
 | binary frame       | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]`   | A peer payload from another peer, relayed through the hub pipe with the sender's public id and alias.                                                                                                                                                     |
 | `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                     |
 | `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                  |
@@ -196,15 +196,21 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
    frames through the same addressed pipe. Starting persists session state
    asynchronously; a later `session_reject` (or local cancel) must abort that
    in-flight start so it cannot resurrect an orphan handshake.
-7. The peer receives the `session_proposal`, checks local availability, stores
-   the `game_session_id` in its PeerSession, reserves that peer id so early
-   handshake bytes can buffer, and shows its own consent prompt. If unavailable
+7. The peer receives the `session_proposal`, checks local availability and
+   validates amounts/timeouts at the trust boundary, stores the
+   `game_session_id` in its PeerSession, reserves that peer id so early
+   handshake bytes can buffer, and shows its own consent prompt. Invalid
+   amounts or out-of-range timeouts are rejected with `session_reject` only —
+   they must not clear a finished freeze or IndexedDB checkpoint. If unavailable
    or declined, it sends `session_reject` and discards any buffered handshake
    bytes. Receiving `session_reject` during pre-active matchmaking cancels the
    attempt (including any in-flight async start) and surfaces cancelled/error —
    it must not leave an orphan handshake. If accepted, the peer marks itself
    busy, starts the WASM session as receiver, and drains the buffered handshake
-   bytes.
+   bytes. A start failure before the live checkpoint replaces any terminal
+   save ends the peer attempt only (reject + clear provisional relay) and may
+   surface a session error warning; full attempt teardown is reserved for
+   failures after that persist succeeds.
 8. Both players exchange binary game frames through the addressed hub pipe.
    The reliability layer (msgno/ack/keepalive) is encoded inside the binary
    payload, peer-to-peer — the hub never interprets it.

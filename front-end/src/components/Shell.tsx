@@ -118,6 +118,13 @@ import {
   type SessionModel,
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
+import {
+  isValidSessionAmountString,
+  isValidTimeoutString,
+  parseOptionalBigInt,
+  parseSessionAmount,
+  startFailureDisposition,
+} from '../lib/session/peerSessionParams';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
@@ -219,19 +226,6 @@ type SessionStartRequest = {
   iStarted: boolean;
 };
 
-function parseSessionAmount(raw: string): bigint {
-  try {
-    const amount = BigInt(raw);
-    if (amount <= 0n) {
-      throw new Error(`session amount must be positive, got ${raw}`);
-    }
-    return amount;
-  } catch (e) {
-    if (e instanceof Error && e.message.startsWith('session amount')) throw e;
-    throw new Error(`invalid session amount: ${raw}`, { cause: e });
-  }
-}
-
 function SessionBuyIn({
   myAmount,
   theirAmount,
@@ -274,15 +268,6 @@ function SessionBuyIn({
   );
 }
 
-function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
-  if (!raw) return undefined;
-  try {
-    return BigInt(raw);
-  } catch {
-    return undefined;
-  }
-}
-
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
   sendMessage: () => false,
   sendAck: () => false,
@@ -301,9 +286,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
-
-const MIN_TIMEOUT_BLOCKS = 3;
-const MAX_TIMEOUT_BLOCKS = 30;
 
 function isAbandonWaitingState(
   state: SessionModel['channel']['status']['state'] | null | undefined,
@@ -358,12 +340,6 @@ function hubBusyFromSessionState(
 function tabForResumedSave(save: SessionSave): TabId | null {
   if (save.phase !== 'preferences') return 'game';
   return null;
-}
-
-function isValidTimeoutString(v: string | undefined): boolean {
-  if (v === undefined) return true;
-  const n = parseOptionalBigInt(v);
-  return n !== undefined && n >= BigInt(MIN_TIMEOUT_BLOCKS) && n <= BigInt(MAX_TIMEOUT_BLOCKS);
 }
 
 const TRACKER_LIVENESS_LABELS: Record<HubLiveness, string> = {
@@ -1321,6 +1297,35 @@ const Shell = () => {
     ],
   );
 
+  /**
+   * End a failed Accept without touching a finished freeze / terminal
+   * checkpoint that `transitionToFreshSession` never retired. Peer attempt
+   * only: reject already sent by caller; clear provisional relay + transition;
+   * surface sessionError as a should-never-happen belt-and-suspenders warning.
+   */
+  const abandonFailedStartAttempt = useCallback(
+    (options?: { error?: boolean }) => {
+      sessionStartEpochRef.current += 1;
+      abandonPendingRef.current = false;
+      setPendingAdvisoryState(null);
+      setPendingProposalState(null);
+      resetPeerRelayState();
+      cancelTransition();
+      setSessionError(!!options?.error);
+      hubConnRef.current?.setBusy(
+        shouldReportHubBusy(sessionPhaseRef.current, walletConnectedRef.current),
+        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
+      );
+    },
+    [
+      cancelTransition,
+      resetPeerRelayState,
+      setPendingAdvisoryState,
+      setPendingProposalState,
+      setSessionError,
+    ],
+  );
+
   const startFreshSessionWithPeer = useCallback(
     async (
       request: SessionStartRequest & {
@@ -1328,6 +1333,7 @@ const Shell = () => {
         pairingToken: string;
       },
     ) => {
+      let checkpointPersisted = false;
       try {
         const conn = hubConnRef.current;
         if (!conn) throw new Error('hub connection unavailable during session start');
@@ -1422,6 +1428,7 @@ const Shell = () => {
                   : {}),
               },
             });
+            checkpointPersisted = true;
             // Cancel can interleave after replaceSession's awaits and still leave
             // a durable pre-handshake checkpoint on the write chain. Drop it.
             if (epoch !== sessionStartEpochRef.current) {
@@ -1465,11 +1472,19 @@ const Shell = () => {
       } catch (error) {
         console.error('[Shell] session start failed', error);
         sendSessionReject(request.peerId);
-        cancelAttemptedSession({ error: true });
+        if (startFailureDisposition(checkpointPersisted) === 'cancel-attempt') {
+          cancelAttemptedSession({ error: true });
+        } else {
+          // Persist never succeeded: finished freeze + terminal checkpoint remain.
+          // End the peer attempt only and warn — parse/start failures past the
+          // intake wall should never happen.
+          abandonFailedStartAttempt({ error: true });
+        }
       }
     },
     [
       stablePeerConn,
+      abandonFailedStartAttempt,
       bindPeerMessageHandler,
       cancelAttemptedSession,
       clearSessionPreservingHistory,
@@ -1742,6 +1757,13 @@ const Shell = () => {
               log(`[Shell] advisory_start ignored: invalid timeouts peer=${params.peer_id}`);
               return;
             }
+            if (
+              !isValidSessionAmountString(params.my_amount) ||
+              !isValidSessionAmountString(params.their_amount)
+            ) {
+              log(`[Shell] advisory_start ignored: invalid amounts peer=${params.peer_id}`);
+              return;
+            }
             setPendingAdvisoryState(params);
             setActiveTab('game');
           },
@@ -1768,6 +1790,14 @@ const Shell = () => {
                 !isValidTimeoutString(msg.unroll_timeout)
               ) {
                 log(`[Shell] session_reject to=${fromId}: proposal invalid timeouts`);
+                sendSessionReject(fromId);
+                return;
+              }
+              if (
+                !isValidSessionAmountString(msg.proposer_amount) ||
+                !isValidSessionAmountString(msg.responder_amount)
+              ) {
+                log(`[Shell] session_reject to=${fromId}: proposal invalid amounts`);
                 sendSessionReject(fromId);
                 return;
               }
