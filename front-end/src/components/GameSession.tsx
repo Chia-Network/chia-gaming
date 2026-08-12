@@ -28,6 +28,8 @@ import {
   peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
+import { SessionTransitionSurface } from './SessionTransitionSurface';
+import { ACCEPT_SETTING_UP_COPY } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
@@ -564,6 +566,8 @@ export interface GameSessionProps {
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
   terminalPresentation?: TerminalSessionPresentation | null;
+  /** Cover game content during session-pane setup; stays under notification z-index. */
+  showTransitionSurface?: boolean;
 }
 
 const MountedGameSession: React.FC<GameSessionProps & { sessionController: SessionController }> = ({
@@ -580,6 +584,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   blockchain,
   sessionController,
   terminalPresentation,
+  showTransitionSurface = false,
 }) => {
   const session = useGameSession(
     params,
@@ -797,11 +802,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
             </GameAreaErrorBoundary>
           )}
 
-          {(!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
-            <div className="flex items-center justify-center py-20">
-              <p className="text-canvas-text">Setting up channel…</p>
-            </div>
-          )}
           {handEverStarted &&
             !PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state) &&
             !gameSpecificView.displayGameId &&
@@ -845,6 +845,24 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           )}
       </div>
 
+      {/*
+        Full-pane centered setup copy. SessionTransitionSurface covers Accept
+        cancel states; once that cover drops (OfferSent / TransactionPending)
+        keep the same absolute centering so the text does not jump to the top.
+        z-20 stays under notification overlays (z-40 / z-50).
+      */}
+      {showTransitionSurface ? (
+        <div className="absolute inset-0 z-20" aria-hidden>
+          <SessionTransitionSurface />
+        </div>
+      ) : (
+        (!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+            <p className="text-canvas-text">{ACCEPT_SETTING_UP_COPY}</p>
+          </div>
+        )
+      )}
+
       {showBetweenHandOverlay && (
         <BetweenHandOverlay restoreFocus={restoreGameAreaFocus}>
           {session.betweenHandMode === 'compose-proposal' && (
@@ -879,7 +897,11 @@ const GameSession: React.FC<GameSessionProps> = (props) => {
     props.blockchain,
     props.terminalPresentation != null,
   );
-  if (!sessionController) return null;
+  if (!sessionController) {
+    // keepSession mounts us before the post-commit controller exists; keep the
+    // session-pane cover visible so accept does not flash a blank pane.
+    return props.showTransitionSurface ? <SessionTransitionSurface /> : null;
+  }
   return <MountedGameSession {...props} sessionController={sessionController} />;
 };
 

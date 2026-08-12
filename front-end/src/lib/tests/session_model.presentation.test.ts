@@ -45,6 +45,75 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
   });
 
+  it('uses the existing dashboard action across the setup commitment boundary', () => {
+    expect(selectGameDashboardView(null, { setupPending: true })).toMatchObject({
+      channelStatusLabel: 'Setting Up',
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    });
+
+    // Accepting after a finished freeze keeps the terminal model until
+    // retireTerminalDisplay; setupPending must still expose Cancel.
+    const finishedFreeze = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean' } },
+    });
+    expect(selectGameDashboardView(finishedFreeze)).toMatchObject({
+      actionLabel: 'Done',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+    expect(selectGameDashboardView(finishedFreeze, { setupPending: true })).toMatchObject({
+      channelStatusLabel: 'Setting Up',
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    });
+
+    // Once a live handshake model exists, core labels must show even if a
+    // caller incorrectly left setupPending set (Shell should clear it).
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+        }),
+      ),
+    ).toMatchObject({
+      channelStatusLabel: 'Handshaking',
+      actionKind: 'cancel',
+    });
+
+    for (const state of [
+      'Handshaking',
+      'WaitingForHeightToOffer',
+      'WaitingForHeightToAccept',
+      'OurWalletMakingOffer',
+      'OurWalletMakingOfferAcceptance',
+    ] as const) {
+      expect(
+        selectGameDashboardView(
+          createSessionModel({
+            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+          }),
+        ).actionKind,
+      ).toBe('cancel');
+    }
+
+    for (const state of ['OfferSent', 'TransactionPending'] as const) {
+      expect(
+        selectGameDashboardView(
+          createSessionModel({
+            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+          }),
+        ),
+      ).toMatchObject({
+        actionLabel: 'Waiting',
+        actionEnabled: false,
+        actionKind: 'none',
+      });
+    }
+  });
+
   it('derives dashboard actions for no-session, waiting, active, and terminal states', () => {
     expect(selectGameDashboardView(null)).toMatchObject({
       channelStatusLabel: 'No Session',

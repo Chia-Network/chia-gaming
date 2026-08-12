@@ -19,6 +19,32 @@ export function isRestoreBlocked(
   );
 }
 
+/**
+ * After live terminal finalization the GameSession mount is no longer a restore.
+ * Clearing `restoring` prevents re-arming the "Restoring session..." gate when
+ * finishResolvedSessionDisplay resets status/hubReconciled — a resumed session
+ * otherwise keeps params.restoring=true forever and would flash that UI on slash
+ * (or any error resolution that stays on the game tab).
+ */
+export function restoreGateAfterTerminalFinalization(): {
+  restoring: false;
+  restoreStatus: 'idle';
+  hubReconciled: false;
+} {
+  return { restoring: false, restoreStatus: 'idle', hubReconciled: false };
+}
+
+/**
+ * GameSession's "Restoring session..." placeholder is only for an in-progress
+ * restore. Once Shell has a terminal presentation, the finished freeze must show.
+ */
+export function shouldSuppressPhaseReporting(
+  restoreBlocked: boolean,
+  hasTerminalPresentation: boolean,
+): boolean {
+  return restoreBlocked && !hasTerminalPresentation;
+}
+
 export function shouldAdvertiseAvailable(
   sessionPhase: SessionPhase,
   restoreBlocked: boolean,
@@ -74,11 +100,17 @@ export async function transitionToFreshSession(dependencies: {
   retireTerminalDisplay: () => void;
   mountLiveSession: () => void;
   reportBusy: () => void;
-}): Promise<void> {
+  /** When true after persist, skip retire/mount — caller already cancelled. */
+  shouldAbort?: () => boolean;
+}): Promise<'completed' | 'aborted'> {
   dependencies.reportBusy();
   await dependencies.persistLiveCheckpoint();
+  if (dependencies.shouldAbort?.()) {
+    return 'aborted';
+  }
   dependencies.retireTerminalDisplay();
   dependencies.mountLiveSession();
+  return 'completed';
 }
 
 /**

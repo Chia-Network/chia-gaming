@@ -29,6 +29,18 @@ import type {
   StatusBarBalanceSegment,
 } from './types';
 
+/** Shared empty dashboard fields; setupPending / no-session override labels + action. */
+export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
+  GameDashboardViewModel,
+  'channelStatusLabel' | 'actionLabel' | 'actionEnabled' | 'actionKind'
+> = {
+  channelDetail: null,
+  havePotato: false,
+  handStatusLabel: 'No hand',
+  handDetail: null,
+  lifecycleRows: [],
+};
+
 export function selectProposalGroupByMemberId(
   model: SessionModel,
   memberId: string,
@@ -273,6 +285,7 @@ export function selectGameTabDotColor(args: {
 
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
+  setupPending?: boolean;
   cleanShutdownGraceActive?: boolean;
   abandonEnabled?: boolean;
 }
@@ -486,14 +499,23 @@ export function selectGameDashboardView(
   model: SessionModel | null,
   options: GameDashboardSelectorOptions = {},
 ): GameDashboardViewModel {
+  // setupPending must win even when a finished freeze model is still mounted.
+  // Accepting a new session after a terminal display leaves that model in place
+  // until retireTerminalDisplay runs after async replaceSession; without this
+  // override the dashboard would keep a disabled Done action for that window.
+  if (options.setupPending) {
+    return {
+      ...EMPTY_DASHBOARD_VIEW_BASE,
+      channelStatusLabel: 'Setting Up',
+      actionLabel: 'Cancel',
+      actionEnabled: true,
+      actionKind: 'cancel',
+    };
+  }
   if (!model || options.hasSession === false) {
     return {
+      ...EMPTY_DASHBOARD_VIEW_BASE,
       channelStatusLabel: 'No Session',
-      channelDetail: null,
-      havePotato: false,
-      handStatusLabel: 'No hand',
-      handDetail: null,
-      lifecycleRows: [],
       actionLabel: 'No Session',
       actionEnabled: false,
       actionKind: 'none',

@@ -170,7 +170,7 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
 | Event              | Payload                                                                               | Purpose                                                                                                                                                                                                                                                   |
 | ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `registered`       | `{ player_id }`                                                                       | Confirmation of identity. Sent in response to `identify`.                                                                                                                                                                                                 |
-| `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. |
+| `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. The client ignores advisories with invalid amounts or out-of-range timeouts (no consent UI; advisory is hub-originated, so no `session_reject`). |
 | binary frame       | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]`   | A peer payload from another peer, relayed through the hub pipe with the sender's public id and alias.                                                                                                                                                     |
 | `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                     |
 | `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                  |
@@ -196,15 +196,30 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
    frames through the same addressed pipe. Starting persists session state
    asynchronously; a later `session_reject` (or local cancel) must abort that
    in-flight start so it cannot resurrect an orphan handshake.
-7. The peer receives the `session_proposal`, checks local availability, stores
-   the `game_session_id` in its PeerSession, reserves that peer id so early
-   handshake bytes can buffer, and shows its own consent prompt. If unavailable
+7. The peer receives the `session_proposal`, checks local availability and
+   validates amounts/timeouts at the trust boundary, stores the
+   `game_session_id` in its PeerSession, reserves that peer id so early
+   handshake bytes can buffer, and shows its own consent prompt. Invalid
+   amounts or out-of-range timeouts are rejected with `session_reject` only —
+   they must not clear a finished freeze or IndexedDB checkpoint. If unavailable
    or declined, it sends `session_reject` and discards any buffered handshake
-   bytes. Receiving `session_reject` during pre-active matchmaking cancels the
-   attempt (including any in-flight async start) and surfaces cancelled/error —
-   it must not leave an orphan handshake. If accepted, the peer marks itself
+   bytes. Receiving `session_reject` or `delivery_failure` during an Accept
+   transition aborts that attempt with the same freeze-safe disposition as
+   dashboard Cancel (peer-only abandon before the checkpoint write lands; full
+   teardown after). Outside Accept, `session_reject` during pre-active
+   matchmaking cancels the attempt (including any in-flight async start) and
+   surfaces cancelled/error — it must not leave an orphan handshake; resolved
+   finished sessions without an Accept in flight keep their freeze. If accepted,
+   the peer marks itself
    busy, starts the WASM session as receiver, and drains the buffered handshake
-   bytes.
+   bytes. A start failure or dashboard Cancel before the live checkpoint
+   write lands ends the peer attempt only (reject + clear provisional relay)
+   and must preserve any finished freeze / terminal IndexedDB save; full attempt
+   teardown is reserved for failures or Cancel after that persist succeeds. A
+   start failure past the intake wall may also surface a session error warning.
+   While an aborted Accept may still be draining its persist callback, the client
+   stays unavailable for new session prompts so a second Accept cannot race
+   checkpoint restore/cleanup.
 8. Both players exchange binary game frames through the addressed hub pipe.
    The reliability layer (msgno/ack/keepalive) is encoded inside the binary
    payload, peer-to-peer — the hub never interprets it.
@@ -426,7 +441,7 @@ are grouped under those phase-owned payloads:
 | `blockchainType`                | `'simulator' \| 'walletconnect'?`                                                                          | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
 | `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `4`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
-| `pairingToken`                  | `string?`                                                                                                  | Hub pairing token, for reconciliation on reconnect.                                                                                                                                                                                                                                                             |
+| `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
 | `gameSessionId`                 | `string?`                                                                                                  | Per-pairing game session id exchanged in `session_proposal`.                                                                                                                                                                                                                                                    |
@@ -646,6 +661,18 @@ projects channel / lifecycle labels and the primary action button
 (clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
 projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
+
+During the short interval after the user accepts a session — before
+`GameSession` has reported its first live model, and also while a prior finished
+freeze model is still mounted until `retireTerminalDisplay` runs after async
+`replaceSession` — Shell passes an explicit `setupPending` input to the same
+dashboard selector. This makes the existing primary action show **Cancel**
+immediately without introducing a second setup button or a parallel
+cancellation path. Once a live (non-resolved) model exists, labels and actions
+are entirely core-derived even if the session-pane transition is still pending:
+handshake and wallet-signing statuses remain **Cancel**, while `OfferSent` /
+`TransactionPending` cross the commitment boundary and project **Waiting** (or
+the later timer-gated **Abandon** action).
 
 The dashboard never derives whether a shutdown has value remaining from its
 displayed balances or game state. Rust provides `channelStatus.zero_payout`
@@ -1008,6 +1035,9 @@ The Shell is the top-level React component. It owns:
   (`useThemeSyncToIframe`)
 - **Tab navigation** — five tabs: Wallet, Hub, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
+- **Session lifecycle and Accept presentation** — `useShellSessionState` fields
+  plus `useAcceptLifecycle` / `acceptLifecycle` for Accept abort, persist, and
+  session-pane setup covers
 
 The Shell does not know about game protocol details. When the hub challenge
 flow completes, Shell creates `GameSessionParams` with the total channel amount
@@ -1021,6 +1051,39 @@ and clearing session refs) are driven by Shell's
 after Rust's final `ChannelStatus` snapshot has been projected into React, so
 Shell preserves the final dashboard snapshot before tearing down the live
 controller.
+
+#### Session transition ownership
+
+Accept ownership lives in `front-end/src/lib/session/acceptLifecycle.ts` and
+`useAcceptLifecycle`, composed by Shell. Session fields and the Accept
+session-pane transition bookkeeping live in `useShellSessionState` /
+`shellSessionState.ts`.
+
+Accept session setup is always `session-pane` scope: tabs and `GameDashboard`
+stay mounted while `SessionTransitionSurface` covers only the game-content
+pane. Shell renders that cover only before `GameSession` is kept; once
+mounted, `GameSession` hosts the same surface under its notification z-index
+so overlays remain clickable.
+
+`beginAccept` clears consent prompts atomically with entering the pending
+transition, keyed by the same `pairingToken` that identifies the new
+controller instance. Completion for a different instance is ignored.
+
+Shell releases the transition via `shouldCompleteAcceptTransition`: true once
+the projected `ChannelStatus` leaves Cancel-only setup states. The core remains
+authoritative for that commitment boundary.
+
+`abortAccept` is the single Accept abort API (Cancel, `session_reject`,
+`delivery_failure`, remap, disconnect-during-Accept). It owns `session_reject`
+when a peer id is supplied and chooses freeze-safe disposition:
+pre-`replaceSession` → peer-only abandon via atomic `acceptAborted` (finished
+freeze + terminal IndexedDB stay); after the write lands → full attempt
+teardown via `cancelAttemptedSession`. `persistFreshStartCheckpoint` marks the
+write committed as soon as `replaceSession` succeeds, so a Cancel-race restore
+failure still takes full teardown rather than leaving an orphan live cradle.
+While Accept is pending or its persist callback is still draining,
+`getPresence` / wallet-reconnect busy and local prompt availability all stay
+blocked so hub re-identify cannot advertise available mid-Accept.
 
 ### Blockchain Connection Flow
 

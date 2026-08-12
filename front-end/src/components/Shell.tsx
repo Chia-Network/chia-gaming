@@ -1,7 +1,21 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
+import { useAcceptLifecycle } from '../hooks/useAcceptLifecycle';
+import { useShellSessionState } from '../hooks/useShellSessionState';
+import {
+  PendingSessionProposal,
+  isAcceptSessionTransition,
+} from '../lib/session/shellSessionState';
+import {
+  persistFreshStartCheckpoint,
+  shouldCompleteAcceptTransition,
+  shouldSynthesizeSetupPending,
+  startFailureDisposition,
+} from '../lib/session/acceptLifecycle';
+import { selectGamePaneKind } from '../lib/session/gamePane';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
+import { SessionTransitionSurface } from './SessionTransitionSurface';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
@@ -41,6 +55,7 @@ import {
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   loadState,
+  saveTerminalSession,
   LiveSessionSave,
   SessionSave,
   getDefaultFee,
@@ -83,11 +98,13 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isRestoreBlocked,
+  restoreGateAfterTerminalFinalization,
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
+  shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
@@ -109,6 +126,12 @@ import {
   type SessionModel,
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
+import {
+  isValidSessionAmountString,
+  isValidTimeoutString,
+  parseOptionalBigInt,
+  parseSessionAmount,
+} from '../lib/session/peerSessionParams';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
@@ -200,16 +223,6 @@ function sessionSaveForReactProps(save: SessionSave | null): SessionSave | undef
   return propSafeSave;
 }
 
-type PendingSessionProposal = {
-  from_id: string;
-  from_alias: string;
-  proposer_amount: string;
-  responder_amount: string;
-  channel_timeout?: string;
-  unroll_timeout?: string;
-  game_session_id?: string;
-};
-
 type SessionStartRequest = {
   peerId: string;
   opponentAlias?: string;
@@ -219,19 +232,6 @@ type SessionStartRequest = {
   unroll_timeout?: string;
   iStarted: boolean;
 };
-
-function parseSessionAmount(raw: string): bigint {
-  try {
-    const amount = BigInt(raw);
-    if (amount <= 0n) {
-      throw new Error(`session amount must be positive, got ${raw}`);
-    }
-    return amount;
-  } catch (e) {
-    if (e instanceof Error && e.message.startsWith('session amount')) throw e;
-    throw new Error(`invalid session amount: ${raw}`, { cause: e });
-  }
-}
 
 function SessionBuyIn({
   myAmount,
@@ -275,15 +275,6 @@ function SessionBuyIn({
   );
 }
 
-function parseOptionalBigInt(raw: string | undefined): bigint | undefined {
-  if (!raw) return undefined;
-  try {
-    return BigInt(raw);
-  } catch {
-    return undefined;
-  }
-}
-
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
   sendMessage: () => false,
   sendAck: () => false,
@@ -302,9 +293,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
-
-const MIN_TIMEOUT_BLOCKS = 3;
-const MAX_TIMEOUT_BLOCKS = 30;
 
 function isAbandonWaitingState(
   state: SessionModel['channel']['status']['state'] | null | undefined,
@@ -341,30 +329,29 @@ function savedOpponentAlias(save: SessionSave | null | undefined): string | unde
   return undefined;
 }
 
-/** Hub busy from phase, wallet, and any in-progress non-terminal restore cradle. */
+/** Hub busy from phase, wallet, restore cradle, and in-flight Accept work. */
 function hubBusyFromSessionState(
   phase: SessionPhase,
   walletConnected: boolean,
   restoring: boolean,
   save: SessionSave | null | undefined,
+  acceptBusy?: { pending?: boolean; persistInFlight?: boolean },
 ): boolean {
-  return shouldReportHubBusyPresence(phase, walletConnected, {
-    restoring,
-    terminalSave: !!save && isTerminalSavedChannel(save),
-    hasCradle: save?.phase === 'live' || save?.phase === 'pre-handshake',
-  });
+  return (
+    !!acceptBusy?.pending ||
+    !!acceptBusy?.persistInFlight ||
+    shouldReportHubBusyPresence(phase, walletConnected, {
+      restoring,
+      terminalSave: !!save && isTerminalSavedChannel(save),
+      hasCradle: save?.phase === 'live' || save?.phase === 'pre-handshake',
+    })
+  );
 }
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
 function tabForResumedSave(save: SessionSave): TabId | null {
   if (save.phase !== 'preferences') return 'game';
   return null;
-}
-
-function isValidTimeoutString(v: string | undefined): boolean {
-  if (v === undefined) return true;
-  const n = parseOptionalBigInt(v);
-  return n !== undefined && n >= BigInt(MIN_TIMEOUT_BLOCKS) && n <= BigInt(MAX_TIMEOUT_BLOCKS);
 }
 
 const TRACKER_LIVENESS_LABELS: Record<HubLiveness, string> = {
@@ -647,12 +634,36 @@ const Shell = () => {
     setActiveTabRaw(tab);
     saveActiveTab(tab);
   }, []);
-  const [sessionConfig, setSessionConfig] = useState<GameSessionParams | null>(null);
+  // Shell session fields + Accept session-pane transition bookkeeping.
+  const {
+    state: shellState,
+    dispatch: shellDispatch,
+    beginAcceptTransition,
+    completeTransition,
+    cancelTransition,
+  } = useShellSessionState();
+  const {
+    sessionStartEpochRef,
+    freshStartPersistCommittedRef,
+    freshStartPersistInFlightRef,
+    bumpStartEpoch,
+    beginPersistFlight,
+    endPersistFlight,
+    markPersistCommitted,
+    abortAccept,
+  } = useAcceptLifecycle();
+  const shellDispatchRef = useRef(shellDispatch);
+  shellDispatchRef.current = shellDispatch;
+  const shellTransitionRef = useRef(shellState.transition);
+  shellTransitionRef.current = shellState.transition;
+  const sessionConfig = shellState.sessionConfig;
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
-  const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
-  const [dashboardSessionModel, setDashboardSessionModel] = useState<SessionModel | null>(null);
+  const peerConn = shellState.peerConn;
+  const dashboardSessionModel = shellState.dashboardSessionModel;
+  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
+  dashboardSessionModelRef.current = dashboardSessionModel;
   const [terminalPresentation, setTerminalPresentation] =
     useState<TerminalSessionPresentation | null>(null);
   const [finishedSessionIdentity, setFinishedSessionIdentity] = useState<{
@@ -672,17 +683,19 @@ const Shell = () => {
   const waitingStateRef = useRef<SessionModel['channel']['status']['state'] | null>(null);
 
   // Consent prompt state for the new hub protocol
-  const [pendingAdvisory, setPendingAdvisory] = useState<AdvisoryStartParams | null>(null);
+  const pendingAdvisory = shellState.pendingAdvisory;
   const pendingAdvisoryRef = useRef<AdvisoryStartParams | null>(null);
+  pendingAdvisoryRef.current = pendingAdvisory;
   const setPendingAdvisoryState = useCallback((next: AdvisoryStartParams | null) => {
     pendingAdvisoryRef.current = next;
-    setPendingAdvisory(next);
+    shellDispatchRef.current({ type: 'setPendingAdvisory', value: next });
   }, []);
-  const [pendingProposal, setPendingProposal] = useState<PendingSessionProposal | null>(null);
+  const pendingProposal = shellState.pendingProposal;
   const pendingProposalRef = useRef<PendingSessionProposal | null>(null);
+  pendingProposalRef.current = pendingProposal;
   const setPendingProposalState = useCallback((next: PendingSessionProposal | null) => {
     pendingProposalRef.current = next;
-    setPendingProposal(next);
+    shellDispatchRef.current({ type: 'setPendingProposal', value: next });
   }, []);
   const peerSessionRef = useRef<PeerSession | null>(null);
   const peerMessageHandlerRef = useRef<import('../services/PeerSession').MessageHandler | null>(
@@ -711,6 +724,54 @@ const Shell = () => {
   }, []);
   const getCoins = useCallback(() => coinsGetterRef.current?.() ?? frozenCoins, [frozenCoins]);
 
+  const setSessionConfig = useCallback((value: GameSessionParams | null) => {
+    sessionConfigRef.current = value;
+    shellDispatchRef.current({ type: 'setSessionConfig', value });
+  }, []);
+
+  const setPeerConn = useCallback((value: PeerConnectionResult | null) => {
+    shellDispatchRef.current({ type: 'setPeerConn', value });
+  }, []);
+
+  const setDashboardSessionModel = useCallback(
+    (value: SessionModel | null | ((prev: SessionModel | null) => SessionModel | null)) => {
+      const next = typeof value === 'function' ? value(dashboardSessionModelRef.current) : value;
+      dashboardSessionModelRef.current = next;
+      shellDispatchRef.current({ type: 'setDashboardSessionModel', value: next });
+    },
+    [],
+  );
+
+  const setSessionPhase = useCallback((value: SessionPhase) => {
+    shellDispatchRef.current({ type: 'setSessionPhase', value });
+  }, []);
+
+  const sessionPhase = shellState.sessionPhase;
+
+  const setSessionError = useCallback((value: boolean) => {
+    shellDispatchRef.current({ type: 'setSessionError', value });
+  }, []);
+
+  const sessionError = shellState.sessionError;
+
+  const setRestoreStatus = useCallback((value: RestoreStatus) => {
+    shellDispatchRef.current({ type: 'setRestoreStatus', value });
+  }, []);
+
+  const restoreStatus = shellState.restoreStatus;
+
+  const setRestoreError = useCallback((value: string | null) => {
+    shellDispatchRef.current({ type: 'setRestoreError', value });
+  }, []);
+
+  const restoreError = shellState.restoreError;
+
+  const setRestoreHubReconciled = useCallback((value: boolean) => {
+    shellDispatchRef.current({ type: 'setRestoreHubReconciled', value });
+  }, []);
+
+  const restoreHubReconciled = shellState.restoreHubReconciled;
+
   const stablePeerConn: PeerConnectionResult = useMemo(
     () => ({
       sendMessage: (n, m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
@@ -725,11 +786,6 @@ const Shell = () => {
   const [walletConnected, setWalletConnected] = useState(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
-  const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
-  const [sessionError, setSessionError] = useState(false);
-  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>('idle');
-  const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [restoreHubReconciled, setRestoreHubReconciled] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
     body: string;
@@ -1093,9 +1149,7 @@ const Shell = () => {
   const sessionStartedRef = useRef(false);
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
-  const dashboardSessionModelRef = useRef<SessionModel | null>(null);
-  /** Bumped on cancel so in-flight startFreshSessionWithPeer aborts after awaits. */
-  const sessionStartEpochRef = useRef(0);
+  sessionPhaseRef.current = sessionPhase;
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -1164,13 +1218,15 @@ const Shell = () => {
       pendingAdvisoryRef.current === null &&
       pendingProposalRef.current === null &&
       peerSessionRef.current === null &&
+      !isAcceptSessionTransition(shellTransitionRef.current) &&
+      !freshStartPersistInFlightRef.current &&
       !(
         (sessionSaveRef.current?.phase === 'live' ||
           sessionSaveRef.current?.phase === 'pre-handshake') &&
         sessionSaveRef.current.pairing.peerId
       )
     );
-  }, []);
+  }, [freshStartPersistInFlightRef]);
 
   const sendSessionReject = useCallback((peerId: string) => {
     hubConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
@@ -1188,10 +1244,10 @@ const Shell = () => {
 
   const cancelAttemptedSession = useCallback(
     (options?: { error?: boolean }) => {
-      sessionStartEpochRef.current += 1;
+      bumpStartEpoch();
       abandonPendingRef.current = false;
-      setPendingAdvisoryState(null);
-      setPendingProposalState(null);
+      pendingAdvisoryRef.current = null;
+      pendingProposalRef.current = null;
       resetPeerRelayState();
       destroySessionController();
       clearSessionPreservingHistory();
@@ -1218,7 +1274,6 @@ const Shell = () => {
       setAbandonEnabled(false);
       setCleanShutdownGraceActive(false);
       setSessionPhase('none');
-      setSessionError(!!options?.error);
       setSessionConfig(null);
       setPeerConn(null);
       dashboardSessionModelRef.current = null;
@@ -1227,185 +1282,310 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(false);
+      shellDispatchRef.current({ type: 'acceptAborted', error: !!options?.error });
       hubConnRef.current?.setBusy(shouldReportHubBusy('none', walletConnectedRef.current));
     },
     [
+      bumpStartEpoch,
       clearSessionPreservingHistory,
       resetPeerRelayState,
-      setPendingAdvisoryState,
-      setPendingProposalState,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionPhase,
     ],
   );
 
-  const startFreshSessionWithPeer = useCallback(
-    async (request: SessionStartRequest & { gameSessionId?: string }) => {
-      const conn = hubConnRef.current;
-      if (!conn) return;
-      const epoch = sessionStartEpochRef.current;
-
-      let myContribution: bigint;
-      let theirContribution: bigint;
-      try {
-        myContribution = parseSessionAmount(request.myAmount);
-        theirContribution = parseSessionAmount(request.theirAmount);
-      } catch (e) {
-        console.error('[Shell] rejecting session start with invalid amounts', e);
-        setSessionError(true);
-        return;
-      }
-      const minContribution =
-        myContribution < theirContribution ? myContribution : theirContribution;
-      const perGame = minContribution / 10n || 1n;
-      const sessionId = request.gameSessionId ?? generateSessionId();
-      const token = `peer_${request.peerId}_${Date.now()}`;
-      const hubSessionId = getSessionId();
-
-      const existing = peerSessionRef.current;
-      if (
-        existing &&
-        !existing.isDestroyed() &&
-        existing.peerId === request.peerId &&
-        existing.sessionId === sessionId
-      ) {
-        // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
-      } else {
-        existing?.destroy();
-        peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
-        bindPeerMessageHandler(peerSessionRef.current);
-      }
-      const channelTimeout = parseOptionalBigInt(request.channel_timeout);
-      const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
-      const diagnosticLog = loadState().history.diagnosticLog;
-      const wasmNotificationHistory = loadState().history.wasmNotificationHistory;
-
-      await transitionToFreshSession({
-        reportBusy: () => conn.setBusy(true),
-        retireTerminalDisplay: () => {
-          sessionStartedRef.current = false;
-          sessionFinishedCleanupRef.current = false;
-          sessionPhaseRef.current = 'none';
-          if (cleanShutdownGraceTimerRef.current !== null) {
-            clearTimeout(cleanShutdownGraceTimerRef.current);
-            cleanShutdownGraceTimerRef.current = null;
-          }
-          if (abandonTimerRef.current !== null) {
-            clearTimeout(abandonTimerRef.current);
-            abandonTimerRef.current = null;
-          }
-          waitingEnteredAtRef.current = null;
-          waitingStateRef.current = null;
-          setAbandonEnabled(false);
-          setCleanShutdownGraceActive(false);
-          setSessionPhase('none');
-          setSessionError(false);
-          setRestoreStatus('idle');
-          setRestoreError(null);
-          setRestoreHubReconciled(true);
-          dashboardSessionModelRef.current = null;
-          setDashboardSessionModel(null);
-          setTerminalPresentation(null);
-          setSessionConfig(null);
-          setPeerConn(null);
-          destroySessionController();
-        },
-        persistLiveCheckpoint: async () => {
-          // Atomically replace the terminal envelope with the full pre-cradle
-          // handshake before GameSession mounts and fetches hex assets. A
-          // stale-deploy reload mid-fetch must Resume with the same
-          // pairing/amounts/peer ids and hub session_id.
-          await replaceSession({
-            pairing: {
-              token,
-              peerId: request.peerId,
-              gameSessionId: sessionId,
-              iStarted: request.iStarted,
-              myContribution: myContribution.toString(),
-              theirContribution: theirContribution.toString(),
-              perGameAmount: perGame.toString(),
-              opponentAlias: request.opponentAlias,
-              ...(channelTimeout !== undefined
-                ? { channelTimeout: channelTimeout.toString() }
-                : {}),
-              ...(unrollTimeout !== undefined ? { unrollTimeout: unrollTimeout.toString() } : {}),
-            },
-            identity: {
-              sessionId: hubSessionId,
-              ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
-            },
-            history: {
-              ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
-              ...(diagnosticLog && diagnosticLog.length > 0 ? { diagnosticLog } : {}),
-              ...(wasmNotificationHistory && wasmNotificationHistory.length > 0
-                ? { wasmNotificationHistory }
-                : {}),
-            },
-          });
-        },
-        mountLiveSession: () => {
-          if (epoch !== sessionStartEpochRef.current) {
-            log(
-              `[Shell] startFreshSessionWithPeer aborted: cancelled during persist peer=${request.peerId}`,
-            );
-            return;
-          }
-          try {
-            getActiveBlockchain().start();
-          } catch {
-            /* not connected */
-          }
-          setSessionConfig({
-            iStarted: request.iStarted,
-            myContribution,
-            theirContribution,
-            perGameAmount: perGame,
-            restoring: false,
-            pairingToken: token,
-            myAlias: undefined,
-            opponentAlias: request.opponentAlias,
-            channelTimeout,
-            unrollTimeout,
-          });
-          setPeerConn(stablePeerConn);
-          setPeerLiveness(null);
-        },
-      });
+  /**
+   * End an Accept attempt without touching a finished freeze / terminal
+   * checkpoint that `transitionToFreshSession` never retired. Peer attempt
+   * only: clear provisional relay + transition; optional sessionError for
+   * real Accept setup failures.
+   */
+  const abandonFailedStartAttempt = useCallback(
+    (options?: { error?: boolean }) => {
+      bumpStartEpoch();
+      abandonPendingRef.current = false;
+      pendingAdvisoryRef.current = null;
+      pendingProposalRef.current = null;
+      resetPeerRelayState();
+      shellDispatchRef.current({ type: 'acceptAborted', error: !!options?.error });
+      // Stay busy while the aborted start may still be inside replaceSession /
+      // restore — otherwise a new Accept can race checkpoint cleanup.
+      hubConnRef.current?.setBusy(
+        freshStartPersistInFlightRef.current ||
+          shouldReportHubBusy(sessionPhaseRef.current, walletConnectedRef.current),
+        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
+      );
     },
-    [stablePeerConn, bindPeerMessageHandler],
+    [bumpStartEpoch, freshStartPersistInFlightRef, resetPeerRelayState],
+  );
+
+  const acceptAbortHandlers = useMemo(
+    () => ({
+      getTransition: () => shellTransitionRef.current,
+      abandonPeerOnly: abandonFailedStartAttempt,
+      cancelAttempt: cancelAttemptedSession,
+      sendSessionReject,
+    }),
+    [abandonFailedStartAttempt, cancelAttemptedSession, sendSessionReject],
+  );
+
+  /**
+   * Abort an in-flight Accept with the freeze-safe disposition, or return false
+   * so the caller can fall through to ordinary matchmaking cancel rules.
+   * Owns session_reject when peerId is provided.
+   */
+  const abortAcceptIfActive = useCallback(
+    (options?: { error?: boolean; peerId?: string }): boolean => {
+      return abortAccept(acceptAbortHandlers, options);
+    },
+    [abortAccept, acceptAbortHandlers],
+  );
+
+  const startFreshSessionWithPeer = useCallback(
+    async (
+      request: SessionStartRequest & {
+        gameSessionId?: string;
+        pairingToken: string;
+      },
+    ) => {
+      beginPersistFlight();
+      let epoch = sessionStartEpochRef.current;
+      try {
+        const conn = hubConnRef.current;
+        if (!conn) throw new Error('hub connection unavailable during session start');
+        epoch = sessionStartEpochRef.current;
+        const myContribution = parseSessionAmount(request.myAmount);
+        const theirContribution = parseSessionAmount(request.theirAmount);
+        const minContribution =
+          myContribution < theirContribution ? myContribution : theirContribution;
+        const perGame = minContribution / 10n || 1n;
+        const sessionId = request.gameSessionId ?? generateSessionId();
+        const token = request.pairingToken;
+        const hubSessionId = getSessionId();
+
+        const existing = peerSessionRef.current;
+        if (
+          existing &&
+          !existing.isDestroyed() &&
+          existing.peerId === request.peerId &&
+          existing.sessionId === sessionId
+        ) {
+          // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
+        } else {
+          existing?.destroy();
+          peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
+          bindPeerMessageHandler(peerSessionRef.current);
+        }
+        const channelTimeout = parseOptionalBigInt(request.channel_timeout);
+        const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
+        const diagnosticLog = loadState().history.diagnosticLog;
+        const wasmNotificationHistory = loadState().history.wasmNotificationHistory;
+
+        const outcome = await transitionToFreshSession({
+          reportBusy: () => conn.setBusy(true),
+          shouldAbort: () => epoch !== sessionStartEpochRef.current,
+          retireTerminalDisplay: () => {
+            sessionStartedRef.current = false;
+            sessionFinishedCleanupRef.current = false;
+            sessionPhaseRef.current = 'none';
+            if (cleanShutdownGraceTimerRef.current !== null) {
+              clearTimeout(cleanShutdownGraceTimerRef.current);
+              cleanShutdownGraceTimerRef.current = null;
+            }
+            if (abandonTimerRef.current !== null) {
+              clearTimeout(abandonTimerRef.current);
+              abandonTimerRef.current = null;
+            }
+            waitingEnteredAtRef.current = null;
+            waitingStateRef.current = null;
+            setAbandonEnabled(false);
+            setCleanShutdownGraceActive(false);
+            setSessionPhase('none');
+            setSessionError(false);
+            setRestoreStatus('idle');
+            setRestoreError(null);
+            setRestoreHubReconciled(true);
+            dashboardSessionModelRef.current = null;
+            setDashboardSessionModel(null);
+            setTerminalPresentation(null);
+            setSessionConfig(null);
+            setPeerConn(null);
+            destroySessionController();
+          },
+          persistLiveCheckpoint: async () => {
+            await persistFreshStartCheckpoint({
+              epoch,
+              getCurrentEpoch: () => sessionStartEpochRef.current,
+              loadState,
+              replaceSession,
+              saveTerminalSession: async (fields) => {
+                await saveTerminalSession(fields);
+                sessionSaveRef.current = loadState();
+              },
+              clearSessionPreservingHistory,
+              checkpoint: {
+                pairing: {
+                  token,
+                  peerId: request.peerId,
+                  gameSessionId: sessionId,
+                  iStarted: request.iStarted,
+                  myContribution: myContribution.toString(),
+                  theirContribution: theirContribution.toString(),
+                  perGameAmount: perGame.toString(),
+                  opponentAlias: request.opponentAlias,
+                  ...(channelTimeout !== undefined
+                    ? { channelTimeout: channelTimeout.toString() }
+                    : {}),
+                  ...(unrollTimeout !== undefined
+                    ? { unrollTimeout: unrollTimeout.toString() }
+                    : {}),
+                },
+                identity: {
+                  sessionId: hubSessionId,
+                  ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
+                },
+                history: {
+                  ...(historyRef.current.length > 0 ? { humanHistory: historyRef.current } : {}),
+                  ...(diagnosticLog && diagnosticLog.length > 0 ? { diagnosticLog } : {}),
+                  ...(wasmNotificationHistory && wasmNotificationHistory.length > 0
+                    ? { wasmNotificationHistory }
+                    : {}),
+                },
+              },
+              onCommitted: markPersistCommitted,
+            });
+          },
+          mountLiveSession: () => {
+            try {
+              getActiveBlockchain().start();
+            } catch {
+              /* not connected */
+            }
+            shellDispatchRef.current({
+              type: 'liveMounted',
+              sessionConfig: {
+                iStarted: request.iStarted,
+                myContribution,
+                theirContribution,
+                perGameAmount: perGame,
+                restoring: false,
+                pairingToken: token,
+                myAlias: undefined,
+                opponentAlias: request.opponentAlias,
+                channelTimeout,
+                unrollTimeout,
+              },
+              peerConn: stablePeerConn,
+            });
+            setPeerLiveness(null);
+          },
+        });
+        if (outcome === 'aborted') {
+          log(
+            `[Shell] startFreshSessionWithPeer aborted: cancelled after persist peer=${request.peerId}`,
+          );
+          return;
+        }
+      } catch (error) {
+        console.error('[Shell] session start failed', error);
+        sendSessionReject(request.peerId);
+        if (startFailureDisposition(freshStartPersistCommittedRef.current) === 'cancel-attempt') {
+          cancelAttemptedSession({ error: true });
+        } else {
+          // Persist never committed: finished freeze + terminal checkpoint remain.
+          abandonFailedStartAttempt({ error: true });
+        }
+      } finally {
+        endPersistFlight();
+        // Abandon kept the hub busy while this callback drained; release now.
+        if (epoch !== sessionStartEpochRef.current) {
+          hubConnRef.current?.setBusy(
+            shouldReportHubBusy(sessionPhaseRef.current, walletConnectedRef.current),
+            sessionConfigRef.current?.myAlias ??
+              savedMyAlias(sessionSaveRef.current) ??
+              peekAlias(),
+          );
+        }
+      }
+    },
+    [
+      stablePeerConn,
+      abandonFailedStartAttempt,
+      beginPersistFlight,
+      bindPeerMessageHandler,
+      cancelAttemptedSession,
+      clearSessionPreservingHistory,
+      endPersistFlight,
+      freshStartPersistCommittedRef,
+      markPersistCommitted,
+      sendSessionReject,
+      sessionStartEpochRef,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const acceptPendingAdvisory = useCallback(
     (advisory: AdvisoryStartParams) => {
       const conn = hubConnRef.current;
-      if (!conn) return;
-      setPendingAdvisoryState(null);
-      const gameSessionId = generateSessionId();
-      // Reserve the peer relay before sending so a delivery_failure for this
-      // proposal can cancel the attempt (PeerSession must already exist).
-      peerSessionRef.current?.destroy();
-      peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
-      bindPeerMessageHandler(peerSessionRef.current);
-      conn.sendPeerAppMessage(advisory.peer_id, {
-        type: 'session_proposal',
-        proposer_amount: advisory.my_amount,
-        responder_amount: advisory.their_amount,
-        // Hub-synced alias only — never getAlias(), which invents Player_*.
-        from_alias: peekAlias(),
-        channel_timeout: advisory.channel_timeout,
-        unroll_timeout: advisory.unroll_timeout,
-        game_session_id: gameSessionId,
-      });
-      startFreshSessionWithPeer({
-        peerId: advisory.peer_id,
-        opponentAlias: advisory.peer_alias,
-        myAmount: advisory.my_amount,
-        theirAmount: advisory.their_amount,
-        channel_timeout: advisory.channel_timeout,
-        unroll_timeout: advisory.unroll_timeout,
-        iStarted: true,
-        gameSessionId,
+      if (!conn || pendingAdvisoryRef.current !== advisory) return;
+      const pairingToken = `peer_${advisory.peer_id}_${Date.now()}`;
+      void beginAcceptTransition('accept-advisory', pairingToken, async () => {
+        try {
+          const gameSessionId = generateSessionId();
+          // Reserve the peer relay before sending so a delivery_failure for this
+          // proposal can cancel the attempt (PeerSession must already exist).
+          peerSessionRef.current?.destroy();
+          peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
+          bindPeerMessageHandler(peerSessionRef.current);
+          conn.sendPeerAppMessage(advisory.peer_id, {
+            type: 'session_proposal',
+            proposer_amount: advisory.my_amount,
+            responder_amount: advisory.their_amount,
+            // Hub-synced alias only — never getAlias(), which invents Player_*.
+            from_alias: peekAlias(),
+            channel_timeout: advisory.channel_timeout,
+            unroll_timeout: advisory.unroll_timeout,
+            game_session_id: gameSessionId,
+          });
+          await startFreshSessionWithPeer({
+            peerId: advisory.peer_id,
+            opponentAlias: advisory.peer_alias,
+            myAmount: advisory.my_amount,
+            theirAmount: advisory.their_amount,
+            channel_timeout: advisory.channel_timeout,
+            unroll_timeout: advisory.unroll_timeout,
+            iStarted: true,
+            gameSessionId,
+            pairingToken,
+          });
+        } catch (error) {
+          // Setup threw before startFreshSessionWithPeer could clean up (e.g.
+          // after PeerSession was reserved). Do not leave the lobby stuck.
+          console.error('[Shell] accept-advisory failed', error);
+          sendSessionReject(advisory.peer_id);
+          abandonFailedStartAttempt({ error: true });
+        }
       });
     },
-    [setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler],
+    [
+      abandonFailedStartAttempt,
+      beginAcceptTransition,
+      bindPeerMessageHandler,
+      sendSessionReject,
+      startFreshSessionWithPeer,
+    ],
   );
 
   const declinePendingAdvisory = useCallback(
@@ -1418,19 +1598,34 @@ const Shell = () => {
 
   const acceptPendingProposal = useCallback(
     (proposal: PendingSessionProposal) => {
-      setPendingProposalState(null);
-      startFreshSessionWithPeer({
-        peerId: proposal.from_id,
-        opponentAlias: proposal.from_alias,
-        myAmount: proposal.responder_amount,
-        theirAmount: proposal.proposer_amount,
-        channel_timeout: proposal.channel_timeout,
-        unroll_timeout: proposal.unroll_timeout,
-        iStarted: false,
-        gameSessionId: proposal.game_session_id,
+      if (pendingProposalRef.current !== proposal) return;
+      const pairingToken = `peer_${proposal.from_id}_${Date.now()}`;
+      void beginAcceptTransition('accept-proposal', pairingToken, async () => {
+        try {
+          await startFreshSessionWithPeer({
+            peerId: proposal.from_id,
+            opponentAlias: proposal.from_alias,
+            myAmount: proposal.responder_amount,
+            theirAmount: proposal.proposer_amount,
+            channel_timeout: proposal.channel_timeout,
+            unroll_timeout: proposal.unroll_timeout,
+            iStarted: false,
+            gameSessionId: proposal.game_session_id,
+            pairingToken,
+          });
+        } catch (error) {
+          console.error('[Shell] accept-proposal failed', error);
+          sendSessionReject(proposal.from_id);
+          abandonFailedStartAttempt({ error: true });
+        }
       });
     },
-    [setPendingProposalState, startFreshSessionWithPeer],
+    [
+      abandonFailedStartAttempt,
+      beginAcceptTransition,
+      sendSessionReject,
+      startFreshSessionWithPeer,
+    ],
   );
 
   const declinePendingProposal = useCallback(
@@ -1545,6 +1740,10 @@ const Shell = () => {
             true,
             !!sessionConfigRef.current?.restoring,
             sessionSaveRef.current,
+            {
+              pending: isAcceptSessionTransition(shellTransitionRef.current),
+              persistInFlight: freshStartPersistInFlightRef.current,
+            },
           ),
           sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
         );
@@ -1566,7 +1765,13 @@ const Shell = () => {
         );
       }
     });
-  }, [activeBlockchainPoller, blockchainType, setWalletAlert, startBalancePolling]);
+  }, [
+    activeBlockchainPoller,
+    blockchainType,
+    freshStartPersistInFlightRef,
+    setWalletAlert,
+    startBalancePolling,
+  ]);
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
   const [hubConnectionError, setHubConnectionError] = useState<string | null>(null);
@@ -1613,6 +1818,13 @@ const Shell = () => {
               log(`[Shell] advisory_start ignored: invalid timeouts peer=${params.peer_id}`);
               return;
             }
+            if (
+              !isValidSessionAmountString(params.my_amount) ||
+              !isValidSessionAmountString(params.their_amount)
+            ) {
+              log(`[Shell] advisory_start ignored: invalid amounts peer=${params.peer_id}`);
+              return;
+            }
             setPendingAdvisoryState(params);
             setActiveTab('game');
           },
@@ -1642,6 +1854,14 @@ const Shell = () => {
                 sendSessionReject(fromId);
                 return;
               }
+              if (
+                !isValidSessionAmountString(msg.proposer_amount) ||
+                !isValidSessionAmountString(msg.responder_amount)
+              ) {
+                log(`[Shell] session_reject to=${fromId}: proposal invalid amounts`);
+                sendSessionReject(fromId);
+                return;
+              }
               const proposalSessionId = msg.game_session_id ?? generateSessionId();
               peerSessionRef.current?.destroy();
               peerSessionRef.current = new PeerSession(fromId, proposalSessionId, conn);
@@ -1660,6 +1880,7 @@ const Shell = () => {
               if (ps?.peerId === fromId) {
                 log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
                 markPeerDead();
+                if (abortAcceptIfActive({ error: true })) return;
                 const channelState = dashboardSessionModelRef.current?.channel.status.state;
                 if (
                   shouldCancelOnPeerUnreachable(
@@ -1677,6 +1898,10 @@ const Shell = () => {
             console.warn('[Shell] delivery_failure to=%s', to);
             const ps = peerSessionRef.current;
             if (!ps || to !== ps.peerId) return;
+            if (abortAcceptIfActive()) {
+              markPeerDead();
+              return;
+            }
             const channelState = dashboardSessionModelRef.current?.channel.status.state;
             if (
               shouldCancelOnPeerUnreachable(
@@ -1707,28 +1932,41 @@ const Shell = () => {
             // Pre-cradle routing is by peer player_id. If *we* remapped (hub
             // restart or session_id churn), abort rather than handshaking at a
             // stale sessionPeerId. First-ever register (no prior id) is fine.
-            if (
-              prevMine &&
-              prevMine !== playerId &&
-              (pairing?.token || sessionConfigRef.current?.pairingToken) &&
-              save?.phase !== 'live' &&
-              shouldCancelOnPeerUnreachable(
-                sessionPhaseRef.current,
-                dashboardSessionModelRef.current?.channel.status.state,
-                abandonPendingRef.current,
-              )
-            ) {
-              console.warn(
-                '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
-                prevMine,
-                playerId,
-              );
-              log(
-                `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
-              );
-              saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
-              cancelAttemptedSession();
-              return;
+            // Cold Accept may not have pairing/sessionConfig tokens yet — still
+            // abort an in-flight Accept transition (same as session_reject).
+            if (prevMine && prevMine !== playerId && save?.phase !== 'live') {
+              if (abortAcceptIfActive()) {
+                console.warn(
+                  '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+                  prevMine,
+                  playerId,
+                );
+                log(
+                  `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
+                );
+                saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                return;
+              }
+              if (
+                (pairing?.token || sessionConfigRef.current?.pairingToken) &&
+                shouldCancelOnPeerUnreachable(
+                  sessionPhaseRef.current,
+                  dashboardSessionModelRef.current?.channel.status.state,
+                  abandonPendingRef.current,
+                )
+              ) {
+                console.warn(
+                  '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+                  prevMine,
+                  playerId,
+                );
+                log(
+                  `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
+                );
+                saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                cancelAttemptedSession();
+                return;
+              }
             }
             saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
             if (save) save.identity.myHubPlayerId = playerId;
@@ -1789,12 +2027,18 @@ const Shell = () => {
             const save = sessionSaveRef.current;
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
+            // Accept-pending + persist-drain must also stay busy: identify/reconnect
+            // re-applies getPresence and would otherwise undo explicit setBusy.
             return {
               busy: hubBusyFromSessionState(
                 sessionPhaseRef.current,
                 walletConnectedRef.current,
                 !!sessionConfigRef.current?.restoring,
                 save,
+                {
+                  pending: isAcceptSessionTransition(shellTransitionRef.current),
+                  persistInFlight: freshStartPersistInFlightRef.current,
+                },
               ),
               // Prefer session aliases, then the hub-synced prefs alias. Never call
               // getAlias() here — inventing Player_* would pollute identify/set_busy.
@@ -1821,6 +2065,8 @@ const Shell = () => {
       markPeerInactive,
       markPeerDead,
       cancelAttemptedSession,
+      abortAcceptIfActive,
+      freshStartPersistInFlightRef,
       isAvailableForNewSessionPrompt,
       sendSessionReject,
       setPendingAdvisoryState,
@@ -1828,6 +2074,7 @@ const Shell = () => {
       bindPeerMessageHandler,
       setActiveTab,
       setHubAlert,
+      setRestoreHubReconciled,
     ],
   );
 
@@ -1912,13 +2159,17 @@ const Shell = () => {
           true,
           !!sessionConfigRef.current?.restoring,
           sessionSaveRef.current,
+          {
+            pending: isAcceptSessionTransition(shellTransitionRef.current),
+            persistInFlight: freshStartPersistInFlightRef.current,
+          },
         ),
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
     },
-    [startBalancePolling, setConnecting, setActiveTab],
+    [freshStartPersistInFlightRef, startBalancePolling, setConnecting, setActiveTab],
   );
 
   // --- Unified connection flow ---
@@ -2056,7 +2307,7 @@ const Shell = () => {
 
   const cancelDashboardSession = useCallback(
     (options?: { retainFinishedGuard?: boolean }) => {
-      sessionStartEpochRef.current += 1;
+      bumpStartEpoch();
       abandonPendingRef.current = false;
       const alias =
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
@@ -2091,15 +2342,26 @@ const Shell = () => {
       setRestoreHubReconciled(false);
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
+      cancelTransition();
       hubConnRef.current?.setBusy(shouldReportHubBusy('none', walletConnectedRef.current), alias);
     },
     [
+      bumpStartEpoch,
+      cancelTransition,
       clearSessionPreservingHistory,
       clearSessionTimers,
       resetPeerRelayState,
       sendSessionReject,
       setPendingAdvisoryState,
       setPendingProposalState,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
     ],
   );
 
@@ -2187,12 +2449,32 @@ const Shell = () => {
       sessionSaveRef.current = null;
       sessionSavePropRef.current = undefined;
       clearSessionTimers();
-      setRestoreStatus('idle');
+      // Drop the restore mount flag before resetting status/hub gates. A resumed
+      // session keeps params.restoring=true; resetting gates alone would re-arm
+      // restoreBlocked and GameSession would show "Restoring session..." over
+      // the terminal presentation (visible on slash because hasError stays on game).
+      const restoreGate = restoreGateAfterTerminalFinalization();
+      const liveConfig = sessionConfigRef.current;
+      if (liveConfig?.restoring) {
+        setSessionConfig({ ...liveConfig, restoring: restoreGate.restoring });
+      }
+      setRestoreStatus(restoreGate.restoreStatus);
       setRestoreError(null);
-      setRestoreHubReconciled(false);
+      setRestoreHubReconciled(restoreGate.hubReconciled);
       return true;
     },
-    [clearSessionTimers, frozenCoins, resetPeerRelayState],
+    [
+      clearSessionTimers,
+      frozenCoins,
+      resetPeerRelayState,
+      setDashboardSessionModel,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const handleSessionPhaseChange = useCallback(
@@ -2214,25 +2496,41 @@ const Shell = () => {
       setSessionError(!!hasError);
       hubConnRef.current?.setBusy(shouldReportHubBusy(phase, walletConnectedRef.current));
     },
-    [finishResolvedSessionDisplay, setActiveTab, startBalancePolling],
+    [
+      finishResolvedSessionDisplay,
+      setActiveTab,
+      setSessionError,
+      setSessionPhase,
+      startBalancePolling,
+    ],
   );
 
-  const handleRestoreStatusChange = useCallback((status: RestoreStatus, error: string | null) => {
-    setRestoreStatus(status);
-    setRestoreError(error);
-    setDashboardSessionModel((prev) =>
-      prev ? { ...prev, restore: { ...prev.restore, status, error } } : prev,
-    );
-    if (status === 'failed') {
-      markSavedSession();
-      setSessionError(true);
-    }
-  }, []);
+  const handleRestoreStatusChange = useCallback(
+    (status: RestoreStatus, error: string | null) => {
+      setRestoreStatus(status);
+      setRestoreError(error);
+      setDashboardSessionModel((prev) =>
+        prev ? { ...prev, restore: { ...prev.restore, status, error } } : prev,
+      );
+      if (status === 'failed') {
+        markSavedSession();
+        setSessionError(true);
+      }
+    },
+    [setDashboardSessionModel, setRestoreError, setRestoreStatus, setSessionError],
+  );
 
-  const handleSessionModelChange = useCallback((model: SessionModel) => {
-    dashboardSessionModelRef.current = model;
-    setDashboardSessionModel(model);
-  }, []);
+  const handleSessionModelChange = useCallback(
+    (model: SessionModel) => {
+      dashboardSessionModelRef.current = model;
+      setDashboardSessionModel(model);
+      const pairingToken = sessionConfigRef.current?.pairingToken;
+      if (pairingToken && shouldCompleteAcceptTransition(model)) {
+        completeTransition(pairingToken);
+      }
+    },
+    [completeTransition, setDashboardSessionModel],
+  );
 
   const restoreBlocked = isRestoreBlocked(
     !!sessionConfig?.restoring,
@@ -2308,7 +2606,17 @@ const Shell = () => {
       );
       setResuming(false);
     },
-    [setActiveTab],
+    [
+      setActiveTab,
+      setDashboardSessionModel,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   // Hydrate local UI state from a SessionSave and kick off a backend connect.
@@ -2445,7 +2753,20 @@ const Shell = () => {
         }
       })();
     },
-    [uniqueId, completeConnection, stablePeerConn, setActiveTab, setWalletAlert],
+    [
+      uniqueId,
+      completeConnection,
+      stablePeerConn,
+      setActiveTab,
+      setWalletAlert,
+      setPeerConn,
+      setRestoreError,
+      setRestoreHubReconciled,
+      setRestoreStatus,
+      setSessionConfig,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   // User clicked "Resume Session" in the resumeDialog, or boot landed on
@@ -2651,13 +2972,14 @@ const Shell = () => {
         !!sessionConfigRef.current?.pairingToken ||
         sessionSaveRef.current?.phase === 'live' ||
         sessionSaveRef.current?.phase === 'pre-handshake';
+      const accepting = isAcceptSessionTransition(shellTransitionRef.current);
       const shouldCancel = shouldCancelAttemptOnDisconnect(
         hasAttempt,
         sessionPhaseRef.current,
         channelState,
         abandonPendingRef.current,
       );
-      if (hasPendingPrompt || shouldCancel) {
+      if (hasPendingPrompt || shouldCancel || accepting) {
         const peerId =
           peerSessionRef.current?.peerId ??
           pendingProposalRef.current?.from_id ??
@@ -2666,23 +2988,32 @@ const Shell = () => {
           sessionSaveRef.current?.phase === 'pre-handshake'
             ? sessionSaveRef.current.pairing.peerId
             : undefined);
-        if (peerId) sendSessionReject(peerId);
-      }
-      if (shouldCancel) {
-        if (!preserveHub) saveHubUrl(undefined);
-        cancelAttemptedSession();
-      } else {
-        if (hasPendingPrompt) {
-          setPendingAdvisoryState(null);
-          setPendingProposalState(null);
-          // Proposal path creates PeerSession before accept; drop it without
-          // clearSessionPreservingHistory (keeps terminal snapshot / freeze).
-          resetPeerRelayState();
+        if (accepting) {
+          if (!preserveHub) saveHubUrl(undefined);
+          // abortAccept owns reject for Accept branches.
+          abortAcceptIfActive(peerId ? { peerId } : undefined);
+        } else {
+          if (peerId) sendSessionReject(peerId);
+          if (shouldCancel) {
+            if (!preserveHub) saveHubUrl(undefined);
+            cancelAttemptedSession();
+          } else {
+            if (hasPendingPrompt) {
+              setPendingAdvisoryState(null);
+              setPendingProposalState(null);
+              // Proposal path creates PeerSession before accept; drop it without
+              // clearSessionPreservingHistory (keeps terminal snapshot / freeze).
+              resetPeerRelayState();
+            }
+            if (!preserveHub) saveHubUrl(undefined);
+          }
         }
-        if (!preserveHub) saveHubUrl(undefined);
+      } else if (!preserveHub) {
+        saveHubUrl(undefined);
       }
     },
     [
+      abortAcceptIfActive,
       cancelAttemptedSession,
       resetPeerRelayState,
       sendSessionReject,
@@ -2809,7 +3140,7 @@ const Shell = () => {
       prev ? { ...prev, channel: { ...prev.channel, cleanShutdownStarted: true } } : prev,
     );
     sessionController?.cleanShutdown();
-  }, [startCleanShutdownGrace]);
+  }, [setDashboardSessionModel, startCleanShutdownGrace]);
 
   const performDashboardGoOnChain = useCallback(() => {
     if (!sessionController?.goOnChain()) return;
@@ -2818,7 +3149,7 @@ const Shell = () => {
     hubConnRef.current?.setBusy(shouldReportHubBusy('on-chain'));
     peerSessionRef.current?.markDead();
     syncPeerLiveness();
-  }, [syncPeerLiveness]);
+  }, [setSessionPhase, syncPeerLiveness]);
 
   const requestDashboardGoOnChain = useCallback(() => {
     const channelState = dashboardSessionModel?.channel.status.state;
@@ -2839,9 +3170,22 @@ const Shell = () => {
   const handleDashboardAction = useCallback(
     (kind: GameDashboardActionKind) => {
       switch (kind) {
-        case 'cancel':
+        case 'cancel': {
+          // During Accept, Cancel before the checkpoint write lands must not wipe
+          // a finished freeze — same disposition as a pre-persist start failure.
+          if (isAcceptSessionTransition(shellState.transition)) {
+            const saved = sessionSaveRef.current;
+            const peerId =
+              peerSessionRef.current?.peerId ??
+              (saved?.phase === 'live' || saved?.phase === 'pre-handshake'
+                ? saved.pairing.peerId
+                : undefined);
+            // abortAccept owns reject for Accept Cancel.
+            if (abortAcceptIfActive(peerId ? { peerId } : undefined)) break;
+          }
           cancelDashboardSession();
           break;
+        }
         case 'clean-shutdown':
           requestDashboardCleanShutdown();
           break;
@@ -2873,9 +3217,11 @@ const Shell = () => {
     },
     [
       abandonActiveChannel,
+      abortAcceptIfActive,
       cancelDashboardSession,
       requestDashboardCleanShutdown,
       requestDashboardGoOnChain,
+      shellState.transition,
     ],
   );
 
@@ -3052,6 +3398,12 @@ const Shell = () => {
     );
   }
 
+  const sessionPaneTransition =
+    shellState.transition.kind === 'pending' && shellState.transition.scope === 'session-pane';
+  // Finished freeze (resolved) is not a live setup model — keep Cancel synthesized
+  // until the first non-resolved SessionModel arrives from GameSession.
+  const hasLiveSessionModel = dashboardSessionModel !== null && sessionPhase !== 'resolved';
+
   const sessionCanMount = sessionConfig !== null && peerConn !== null;
   const { startSession: sessionReadyToStart, keepSession } = shouldMountGameSession(
     sessionCanMount,
@@ -3063,6 +3415,7 @@ const Shell = () => {
 
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
+    setupPending: shouldSynthesizeSetupPending(sessionPaneTransition, hasLiveSessionModel),
     cleanShutdownGraceActive,
     abandonEnabled,
   });
@@ -3605,65 +3958,93 @@ const Shell = () => {
               getCoins={getCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-              {keepSession && restoreStatus === 'failed' ? (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
-                  <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
-                  <p className="max-w-lg text-sm text-center select-text cursor-text">
-                    {restoreError ?? 'The saved session could not be restored.'}
-                  </p>
-                  <button
-                    onClick={handleStartOver}
-                    disabled={startingOver}
-                    className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
-                  >
-                    {startingOver ? 'Starting over\u2026' : 'Start over'}
-                  </button>
-                </div>
-              ) : keepSession ? (
-                <div className="relative w-full h-full">
-                  <GameSessionErrorBoundary>
-                    <GameSession
-                      key={sessionConfig!.pairingToken}
-                      params={sessionConfig!}
-                      peerConn={peerConn!}
-                      registerMessageHandler={registerMessageHandler}
-                      appendGameLog={appendHistory}
-                      sessionSave={sessionSavePropRef.current}
-                      blockchain={activeBlockchainPoller}
-                      onGameActivity={onGameActivity}
-                      onSessionPhaseChange={handleSessionPhaseChange}
-                      onRestoreStatusChange={handleRestoreStatusChange}
-                      onSessionModelChange={handleSessionModelChange}
-                      onProtocolStateProviderChange={handleProtocolStateProviderChange}
-                      onCoinsProviderChange={handleCoinsProviderChange}
-                      suppressPhaseReporting={restoreBlocked}
-                      terminalPresentation={terminalPresentation}
-                    />
-                  </GameSessionErrorBoundary>
-                  {sessionConsentOverlay}
-                </div>
-              ) : sessionCanMount ? (
-                <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                  Restoring session...
-                </div>
-              ) : sessionPhase === 'resolved' && dashboardSessionModel ? (
-                <div className="relative w-full h-full">
-                  <FinishedSessionGameView
-                    model={sessionModelForReactProps(dashboardSessionModel)}
-                    myName={finishedSessionIdentity?.myName ?? peekAlias()}
-                    opponentName={finishedSessionIdentity?.opponentName}
-                    iStarted={finishedSessionIdentity?.iStarted ?? false}
-                  />
-                  {sessionConsentOverlay}
-                </div>
-              ) : (
-                <div className="relative w-full h-full">
-                  <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                    No active game session
-                  </div>
-                  {sessionConsentOverlay}
-                </div>
-              )}
+              {(() => {
+                const pane = selectGamePaneKind({
+                  sessionPaneTransition,
+                  keepSession,
+                  restoreStatus,
+                  restoreError,
+                  sessionPhase,
+                  hasDashboardModel: dashboardSessionModel !== null,
+                  sessionCanMount,
+                });
+                switch (pane.kind) {
+                  case 'transitionCover':
+                    return <SessionTransitionSurface />;
+                  case 'restoreFailed':
+                    return (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
+                        <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
+                        <p className="max-w-lg text-sm text-center select-text cursor-text">
+                          {pane.error ?? 'The saved session could not be restored.'}
+                        </p>
+                        <button
+                          onClick={handleStartOver}
+                          disabled={startingOver}
+                          className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+                        >
+                          {startingOver ? 'Starting over\u2026' : 'Start over'}
+                        </button>
+                      </div>
+                    );
+                  case 'gameSession':
+                    return (
+                      <div className="relative w-full h-full">
+                        <GameSessionErrorBoundary>
+                          <GameSession
+                            key={sessionConfig!.pairingToken}
+                            params={sessionConfig!}
+                            peerConn={peerConn!}
+                            registerMessageHandler={registerMessageHandler}
+                            appendGameLog={appendHistory}
+                            sessionSave={sessionSavePropRef.current}
+                            blockchain={activeBlockchainPoller}
+                            onGameActivity={onGameActivity}
+                            onSessionPhaseChange={handleSessionPhaseChange}
+                            onRestoreStatusChange={handleRestoreStatusChange}
+                            onSessionModelChange={handleSessionModelChange}
+                            onProtocolStateProviderChange={handleProtocolStateProviderChange}
+                            onCoinsProviderChange={handleCoinsProviderChange}
+                            suppressPhaseReporting={shouldSuppressPhaseReporting(
+                              restoreBlocked,
+                              terminalPresentation != null,
+                            )}
+                            terminalPresentation={terminalPresentation}
+                            showTransitionSurface={pane.showTransitionSurface}
+                          />
+                        </GameSessionErrorBoundary>
+                        {sessionConsentOverlay}
+                      </div>
+                    );
+                  case 'finishedFreeze':
+                    return (
+                      <div className="relative w-full h-full">
+                        <FinishedSessionGameView
+                          model={sessionModelForReactProps(dashboardSessionModel!)}
+                          myName={finishedSessionIdentity?.myName ?? peekAlias()}
+                          opponentName={finishedSessionIdentity?.opponentName}
+                          iStarted={finishedSessionIdentity?.iStarted ?? false}
+                        />
+                        {sessionConsentOverlay}
+                      </div>
+                    );
+                  case 'restoringPlaceholder':
+                    return (
+                      <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                        Restoring session...
+                      </div>
+                    );
+                  case 'empty':
+                    return (
+                      <div className="relative w-full h-full">
+                        <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                          No active game session
+                        </div>
+                        {sessionConsentOverlay}
+                      </div>
+                    );
+                }
+              })()}
             </div>
           </div>
 

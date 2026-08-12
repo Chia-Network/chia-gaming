@@ -1,5 +1,6 @@
 import {
   isRestoreBlocked,
+  restoreGateAfterTerminalFinalization,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelAttemptOnDisconnect,
@@ -8,6 +9,7 @@ import {
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
   shouldReportSessionPhase,
+  shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
 } from '../restoreLifecycle';
 
@@ -19,6 +21,26 @@ describe('restore lifecycle gates', () => {
     expect(isRestoreBlocked(true, 'failed', true)).toBe(true);
     expect(isRestoreBlocked(true, 'restored', true)).toBe(false);
     expect(isRestoreBlocked(false, 'idle', false)).toBe(false);
+  });
+
+  it('does not re-arm Restoring session after terminal finalization of a resumed mount', () => {
+    // Resumed live sessions keep params.restoring=true after WASM+hub succeed.
+    expect(isRestoreBlocked(true, 'restored', true)).toBe(false);
+
+    // The old finishResolvedSessionDisplay reset (idle + hubReconciled=false)
+    // while leaving restoring=true re-blocked GameSession via suppressPhaseReporting.
+    expect(isRestoreBlocked(true, 'idle', false)).toBe(true);
+    expect(shouldSuppressPhaseReporting(true, false)).toBe(true);
+
+    const after = restoreGateAfterTerminalFinalization();
+    expect(after.restoring).toBe(false);
+    expect(isRestoreBlocked(after.restoring, after.restoreStatus, after.hubReconciled)).toBe(false);
+
+    // Even if restoreBlocked were still true, a terminal presentation must win:
+    // slash stays on the game tab (hasError) and must show the finished freeze.
+    expect(shouldSuppressPhaseReporting(true, true)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('on-chain', true)).toBe(false);
+    expect(shouldSwitchToHubOnResolved('off-chain', true)).toBe(false);
   });
 
   it('keeps the hub unavailable while restore is blocked', () => {
