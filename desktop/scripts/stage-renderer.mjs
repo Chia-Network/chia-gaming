@@ -28,9 +28,18 @@ rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 cpSync(PLAYER_BUNDLE, OUT, { recursive: true });
 
-for (const file of ['index.html', 'bootstrap.mjs']) {
+for (const file of [
+  'index.html',
+  'bootstrap.mjs',
+  'about.html',
+  'about.css',
+  'about.mjs',
+  'about-theme.js',
+]) {
   copyFileSync(join(DESKTOP, 'renderer', file), join(OUT, file));
 }
+
+copyFileSync(join(DESKTOP, 'packaging', 'icon.svg'), join(OUT, 'about-icon.svg'));
 
 const favicon = join(REPO, 'front-end', 'public', 'favicon.svg');
 if (existsSync(favicon)) {
@@ -40,6 +49,11 @@ if (existsSync(favicon)) {
 const errors = [
   'index.html',
   'bootstrap.mjs',
+  'about.html',
+  'about.css',
+  'about.mjs',
+  'about-theme.js',
+  'about-icon.svg',
   'index.js',
   'index.css',
   'chia_gaming_wasm.js',
