@@ -21,6 +21,7 @@ describe('peerSessionParams', () => {
       expect(isValidSessionAmountString('not-a-number')).toBe(false);
       expect(isValidSessionAmountString('1.5')).toBe(false);
       expect(isValidSessionAmountString('0x10')).toBe(false);
+      expect(isValidSessionAmountString('08')).toBe(false);
     });
   });
 
@@ -37,6 +38,11 @@ describe('peerSessionParams', () => {
       expect(isValidTimeoutString('31')).toBe(false);
       expect(isValidTimeoutString('nope')).toBe(false);
     });
+
+    it('rejects leading-zero decimals without throwing', () => {
+      expect(isValidTimeoutString('08')).toBe(false);
+      expect(isValidTimeoutString('015')).toBe(false);
+    });
   });
 
   describe('parseSessionAmount', () => {
@@ -47,6 +53,7 @@ describe('peerSessionParams', () => {
     it('throws on invalid amounts', () => {
       expect(() => parseSessionAmount('0')).toThrow(/positive/);
       expect(() => parseSessionAmount('bad')).toThrow(/invalid session amount/);
+      expect(() => parseSessionAmount('08')).toThrow(/invalid session amount/);
     });
   });
 
