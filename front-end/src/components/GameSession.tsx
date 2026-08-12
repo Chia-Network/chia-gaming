@@ -29,6 +29,7 @@ import {
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
+import { ACCEPT_SETTING_UP_COPY } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
@@ -801,11 +802,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
             </GameAreaErrorBoundary>
           )}
 
-          {(!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
-            <div className="flex items-center justify-center py-20">
-              <p className="text-canvas-text">Setting up channel…</p>
-            </div>
-          )}
           {handEverStarted &&
             !PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state) &&
             !gameSpecificView.displayGameId &&
@@ -850,14 +846,21 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       </div>
 
       {/*
-        Cover content during session-pane setup inside GameSession's stacking
-        context so notification overlays (z-40 / z-50) stay clickable above it.
-        A Shell sibling at z-30 would paint over those overlays.
+        Full-pane centered setup copy. SessionTransitionSurface covers Accept
+        cancel states; once that cover drops (OfferSent / TransactionPending)
+        keep the same absolute centering so the text does not jump to the top.
+        z-20 stays under notification overlays (z-40 / z-50).
       */}
-      {showTransitionSurface && (
+      {showTransitionSurface ? (
         <div className="absolute inset-0 z-20" aria-hidden>
           <SessionTransitionSurface />
         </div>
+      ) : (
+        (!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+            <p className="text-canvas-text">{ACCEPT_SETTING_UP_COPY}</p>
+          </div>
+        )
       )}
 
       {showBetweenHandOverlay && (
