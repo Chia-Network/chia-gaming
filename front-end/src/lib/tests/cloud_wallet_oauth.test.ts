@@ -54,6 +54,7 @@ import {
   buildAuthorizeUrl,
   createPkceChallenge,
   encodeRelayGlobalId,
+  fetchFirstConsentedWalletId,
   handleOAuthCallbackPage,
   normalizeHex,
   oauthRedirectUri,
@@ -348,6 +349,46 @@ describe('waitForGamingConsentWalletId grace period', () => {
     notifyCodeReceived();
     jest.advanceTimersByTime(500);
     await expect(promise).resolves.toBeUndefined();
+  });
+});
+
+describe('fetchFirstConsentedWalletId', () => {
+  const provider = { getAccessToken: async () => 'access-token' };
+
+  beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
+    clearCloudWalletConfig();
+  });
+
+  afterEach(() => {
+    setTestGlobal('fetch', undefined);
+  });
+
+  function mockGraphql(data: unknown) {
+    const fetchMock = jest.fn(async () => ({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ data }),
+    }));
+    setTestGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('returns the first consented wallet id unchanged (no base64 re-encode)', async () => {
+    mockGraphql({
+      oauthConsentedWallets: [{ id: 'Wallet_abc' }, { id: 'Wallet_def' }],
+    });
+    await expect(fetchFirstConsentedWalletId(provider)).resolves.toBe('Wallet_abc');
+  });
+
+  it('returns undefined when there are no consented wallets', async () => {
+    mockGraphql({ oauthConsentedWallets: [] });
+    await expect(fetchFirstConsentedWalletId(provider)).resolves.toBeUndefined();
+  });
+
+  it('returns undefined when oauthConsentedWallets is null', async () => {
+    mockGraphql({ oauthConsentedWallets: null });
+    await expect(fetchFirstConsentedWalletId(provider)).resolves.toBeUndefined();
   });
 });
 
