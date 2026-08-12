@@ -58,11 +58,11 @@ describe('peerSessionParams', () => {
   });
 
   describe('startFailureDisposition', () => {
-    it('abandons the peer attempt only when persist never succeeded', () => {
+    it('abandons the peer attempt only when persist has not committed', () => {
       expect(startFailureDisposition(false)).toBe('abandon-peer-only');
     });
 
-    it('cancels the full attempt once the live checkpoint replaced the freeze', () => {
+    it('cancels the full attempt once replaceSession has landed', () => {
       expect(startFailureDisposition(true)).toBe('cancel-attempt');
     });
   });

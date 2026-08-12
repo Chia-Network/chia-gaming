@@ -32,6 +32,14 @@ export type ShellSessionTransition =
       readyKey: string | null;
     };
 
+/** True while Accept (advisory/proposal) transition work is in flight. */
+export function isAcceptSessionTransition(transition: ShellSessionTransition): boolean {
+  return (
+    transition.kind === 'pending' &&
+    (transition.reason === 'accept-advisory' || transition.reason === 'accept-proposal')
+  );
+}
+
 export interface ShellSessionState {
   sessionConfig: GameSessionParams | null;
   peerConn: PeerConnectionResult | null;

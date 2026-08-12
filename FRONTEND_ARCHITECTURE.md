@@ -203,14 +203,23 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
    amounts or out-of-range timeouts are rejected with `session_reject` only —
    they must not clear a finished freeze or IndexedDB checkpoint. If unavailable
    or declined, it sends `session_reject` and discards any buffered handshake
-   bytes. Receiving `session_reject` during pre-active matchmaking cancels the
-   attempt (including any in-flight async start) and surfaces cancelled/error —
-   it must not leave an orphan handshake. If accepted, the peer marks itself
+   bytes. Receiving `session_reject` or `delivery_failure` during an Accept
+   transition aborts that attempt with the same freeze-safe disposition as
+   dashboard Cancel (peer-only abandon before the checkpoint write lands; full
+   teardown after). Outside Accept, `session_reject` during pre-active
+   matchmaking cancels the attempt (including any in-flight async start) and
+   surfaces cancelled/error — it must not leave an orphan handshake; resolved
+   finished sessions without an Accept in flight keep their freeze. If accepted,
+   the peer marks itself
    busy, starts the WASM session as receiver, and drains the buffered handshake
-   bytes. A start failure before the live checkpoint replaces any terminal
-   save ends the peer attempt only (reject + clear provisional relay) and may
-   surface a session error warning; full attempt teardown is reserved for
-   failures after that persist succeeds.
+   bytes. A start failure or dashboard Cancel before the live checkpoint
+   write lands ends the peer attempt only (reject + clear provisional relay)
+   and must preserve any finished freeze / terminal IndexedDB save; full attempt
+   teardown is reserved for failures or Cancel after that persist succeeds. A
+   start failure past the intake wall may also surface a session error warning.
+   While an aborted Accept may still be draining its persist callback, the client
+   stays unavailable for new session prompts so a second Accept cannot race
+   checkpoint restore/cleanup.
 8. Both players exchange binary game frames through the addressed hub pipe.
    The reliability layer (msgno/ack/keepalive) is encoded inside the binary
    payload, peer-to-peer — the hub never interprets it.
@@ -1067,8 +1076,12 @@ flag beyond the optional surface cover.
 Shell releases the transition when the canonical dashboard selector moves past
 the setup **Cancel** action. Because that selector reads the projected
 `ChannelStatus`, the core remains authoritative for the commitment boundary.
-Cancellation uses the same `cancelDashboardSession` path as the visible
-dashboard button and explicitly releases any pending transition.
+Cancellation of an Accept attempt before the live checkpoint write lands uses
+`abandonFailedStartAttempt` (reject peer + clear provisional relay/transition)
+so a finished freeze and terminal IndexedDB save stay intact. After that write
+succeeds, Accept Cancel still goes through `abortAcceptAttemptIfActive`, which
+tears down via `cancelAttemptedSession` (full attempt cleanup) and releases the
+pending transition.
 
 ### Blockchain Connection Flow
 

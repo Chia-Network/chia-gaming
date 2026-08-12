@@ -14,7 +14,6 @@ import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
-  clearSession,
   discardStagedTerminalSession,
   flushSessionSave,
   hasSavedSessionMarker,
@@ -415,6 +414,14 @@ it('aborts after persist when the start epoch advances during replaceSession', a
     reportBusy: () => {},
     shouldAbort: () => capturedEpoch !== startEpoch,
     persistLiveCheckpoint: async () => {
+      const prior = loadState();
+      const terminalBackup =
+        prior.phase === 'terminal'
+          ? {
+              terminal: structuredClone(prior.terminal),
+              presentation: structuredClone(prior.presentation),
+            }
+          : null;
       await replaceSession(
         baseSave({
           pairingToken: 'cancelled-token',
@@ -426,13 +433,14 @@ it('aborts after persist when the start epoch advances during replaceSession', a
           perGameAmount: '1',
         }),
       );
-      // Simulate dashboard Cancel bumping the epoch and clearing storage after
-      // replaceSession's awaits — the write must not survive as a resume target.
+      // Simulate dashboard Cancel bumping the epoch during replaceSession's
+      // awaits — restore the finished freeze rather than wiping IndexedDB.
       startEpoch += 1;
-      const humanHistory = loadState().history.humanHistory;
-      await clearSession();
-      if (humanHistory?.length) {
-        await saveSession({ scope: 'common', history: { humanHistory } });
+      if (capturedEpoch !== startEpoch) {
+        if (terminalBackup) {
+          await saveTerminalSession(terminalBackup);
+        }
+        return;
       }
     },
     retireTerminalDisplay: () => {
@@ -448,8 +456,59 @@ it('aborts after persist when the start epoch advances during replaceSession', a
   expect(displayedSession).toBe('resolved');
   expect(mounted).toBe(false);
   await flushSessionSave();
-  const record = await readSessionRecord();
-  expect(record == null || decodeSessionSaveEnvelope(record).phase === 'preferences').toBe(true);
+  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
+});
+
+it('keeps the terminal checkpoint when Cancel aborts before replaceSession', async () => {
+  await saveTerminalSession(
+    terminalUpdate({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+    }),
+  );
+  await flushSessionSave();
+
+  let displayedSession = 'resolved';
+  let mounted = false;
+  let startEpoch = 1;
+  const capturedEpoch = startEpoch;
+  let replaceCalled = false;
+
+  // Simulate dashboard Cancel before persist begins.
+  startEpoch += 1;
+
+  const outcome = await transitionToFreshSession({
+    reportBusy: () => {},
+    shouldAbort: () => capturedEpoch !== startEpoch,
+    persistLiveCheckpoint: async () => {
+      if (capturedEpoch !== startEpoch) return;
+      replaceCalled = true;
+      await replaceSession(
+        baseSave({
+          pairingToken: 'should-not-write',
+          sessionPeerId: 'peer',
+          gameSessionId: 'session',
+          iStarted: true,
+          myContribution: '10',
+          theirContribution: '10',
+          perGameAmount: '1',
+        }),
+      );
+    },
+    retireTerminalDisplay: () => {
+      displayedSession = 'none';
+    },
+    mountLiveSession: () => {
+      mounted = true;
+      displayedSession = 'live';
+    },
+  });
+
+  expect(outcome).toBe('aborted');
+  expect(replaceCalled).toBe(false);
+  expect(displayedSession).toBe('resolved');
+  expect(mounted).toBe(false);
+  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
 });
 
 it('keeps the resolved display and terminal checkpoint when fresh persistence fails', async () => {

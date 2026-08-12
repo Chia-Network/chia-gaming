@@ -4,6 +4,7 @@ import { useShellSessionTransition } from '../hooks/useShellSessionTransition';
 import {
   PendingSessionProposal,
   ShellSessionTransitionReason,
+  isAcceptSessionTransition,
 } from '../lib/session/shellSessionState';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
@@ -47,6 +48,7 @@ import {
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   loadState,
+  saveTerminalSession,
   LiveSessionSave,
   SessionSave,
   getDefaultFee,
@@ -650,6 +652,8 @@ const Shell = () => {
   } = useShellSessionTransition();
   const shellDispatchRef = useRef(shellDispatch);
   shellDispatchRef.current = shellDispatch;
+  const shellTransitionRef = useRef(shellState.transition);
+  shellTransitionRef.current = shellState.transition;
   const sessionConfig = shellState.sessionConfig;
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
@@ -1146,6 +1150,10 @@ const Shell = () => {
   sessionPhaseRef.current = sessionPhase;
   /** Bumped on cancel so in-flight startFreshSessionWithPeer aborts after awaits. */
   const sessionStartEpochRef = useRef(0);
+  /** True once Accept's replaceSession write has landed. */
+  const freshStartPersistCommittedRef = useRef(false);
+  /** True while startFreshSessionWithPeer may still be inside persist/transition. */
+  const freshStartPersistInFlightRef = useRef(false);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -1214,6 +1222,7 @@ const Shell = () => {
       pendingAdvisoryRef.current === null &&
       pendingProposalRef.current === null &&
       peerSessionRef.current === null &&
+      !freshStartPersistInFlightRef.current &&
       !(
         (sessionSaveRef.current?.phase === 'live' ||
           sessionSaveRef.current?.phase === 'pre-handshake') &&
@@ -1239,6 +1248,7 @@ const Shell = () => {
   const cancelAttemptedSession = useCallback(
     (options?: { error?: boolean }) => {
       sessionStartEpochRef.current += 1;
+      freshStartPersistCommittedRef.current = false;
       abandonPendingRef.current = false;
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
@@ -1298,22 +1308,26 @@ const Shell = () => {
   );
 
   /**
-   * End a failed Accept without touching a finished freeze / terminal
+   * End an Accept attempt without touching a finished freeze / terminal
    * checkpoint that `transitionToFreshSession` never retired. Peer attempt
-   * only: reject already sent by caller; clear provisional relay + transition;
-   * surface sessionError as a should-never-happen belt-and-suspenders warning.
+   * only: clear provisional relay + transition; optional sessionError when
+   * used as a should-never-happen belt-and-suspenders warning.
    */
   const abandonFailedStartAttempt = useCallback(
     (options?: { error?: boolean }) => {
       sessionStartEpochRef.current += 1;
+      freshStartPersistCommittedRef.current = false;
       abandonPendingRef.current = false;
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
       resetPeerRelayState();
       cancelTransition();
       setSessionError(!!options?.error);
+      // Stay busy while the aborted start may still be inside replaceSession /
+      // restore — otherwise a new Accept can race checkpoint cleanup.
       hubConnRef.current?.setBusy(
-        shouldReportHubBusy(sessionPhaseRef.current, walletConnectedRef.current),
+        freshStartPersistInFlightRef.current ||
+          shouldReportHubBusy(sessionPhaseRef.current, walletConnectedRef.current),
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
     },
@@ -1326,6 +1340,23 @@ const Shell = () => {
     ],
   );
 
+  /**
+   * Abort an in-flight Accept with the freeze-safe disposition, or return false
+   * so the caller can fall through to ordinary matchmaking cancel rules.
+   */
+  const abortAcceptAttemptIfActive = useCallback(
+    (options?: { error?: boolean }): boolean => {
+      if (!isAcceptSessionTransition(shellTransitionRef.current)) return false;
+      if (startFailureDisposition(freshStartPersistCommittedRef.current) === 'abandon-peer-only') {
+        abandonFailedStartAttempt(options);
+      } else {
+        cancelAttemptedSession(options);
+      }
+      return true;
+    },
+    [abandonFailedStartAttempt, cancelAttemptedSession],
+  );
+
   const startFreshSessionWithPeer = useCallback(
     async (
       request: SessionStartRequest & {
@@ -1333,11 +1364,13 @@ const Shell = () => {
         pairingToken: string;
       },
     ) => {
-      let checkpointPersisted = false;
+      freshStartPersistCommittedRef.current = false;
+      freshStartPersistInFlightRef.current = true;
+      let epoch = sessionStartEpochRef.current;
       try {
         const conn = hubConnRef.current;
         if (!conn) throw new Error('hub connection unavailable during session start');
-        const epoch = sessionStartEpochRef.current;
+        epoch = sessionStartEpochRef.current;
         const myContribution = parseSessionAmount(request.myAmount);
         const theirContribution = parseSessionAmount(request.theirAmount);
         const minContribution =
@@ -1397,6 +1430,18 @@ const Shell = () => {
             destroySessionController();
           },
           persistLiveCheckpoint: async () => {
+            // Cancel / epoch bump before the write lands: keep the finished freeze.
+            if (epoch !== sessionStartEpochRef.current) return;
+            // Prefer durable cache over sessionSaveRef — finishResolvedSessionDisplay
+            // nulls the ref while loadState() still holds the terminal envelope.
+            const prior = loadState();
+            const terminalBackup =
+              prior.phase === 'terminal'
+                ? {
+                    terminal: structuredClone(prior.terminal),
+                    presentation: structuredClone(prior.presentation),
+                  }
+                : null;
             // Atomically replace the terminal envelope with the full pre-cradle
             // handshake before GameSession mounts and fetches hex assets. A
             // stale-deploy reload mid-fetch must Resume with the same
@@ -1428,12 +1473,19 @@ const Shell = () => {
                   : {}),
               },
             });
-            checkpointPersisted = true;
-            // Cancel can interleave after replaceSession's awaits and still leave
-            // a durable pre-handshake checkpoint on the write chain. Drop it.
+            // Cancel raced the write: restore the finished freeze rather than
+            // leaving preferences-only IndexedDB under a still-visible results UI.
             if (epoch !== sessionStartEpochRef.current) {
-              clearSessionPreservingHistory();
+              if (terminalBackup) {
+                await saveTerminalSession(terminalBackup);
+                sessionSaveRef.current = loadState();
+              } else {
+                clearSessionPreservingHistory();
+              }
+              return;
             }
+            // Only after the write: Cancel/failure must fully tear down the attempt.
+            freshStartPersistCommittedRef.current = true;
           },
           mountLiveSession: () => {
             if (epoch !== sessionStartEpochRef.current) {
@@ -1472,13 +1524,24 @@ const Shell = () => {
       } catch (error) {
         console.error('[Shell] session start failed', error);
         sendSessionReject(request.peerId);
-        if (startFailureDisposition(checkpointPersisted) === 'cancel-attempt') {
+        if (startFailureDisposition(freshStartPersistCommittedRef.current) === 'cancel-attempt') {
           cancelAttemptedSession({ error: true });
         } else {
-          // Persist never succeeded: finished freeze + terminal checkpoint remain.
+          // Persist never committed: finished freeze + terminal checkpoint remain.
           // End the peer attempt only and warn — parse/start failures past the
           // intake wall should never happen.
           abandonFailedStartAttempt({ error: true });
+        }
+      } finally {
+        freshStartPersistInFlightRef.current = false;
+        // Abandon kept the hub busy while this callback drained; release now.
+        if (epoch !== sessionStartEpochRef.current) {
+          hubConnRef.current?.setBusy(
+            shouldReportHubBusy(sessionPhaseRef.current, walletConnectedRef.current),
+            sessionConfigRef.current?.myAlias ??
+              savedMyAlias(sessionSaveRef.current) ??
+              peekAlias(),
+          );
         }
       }
     },
@@ -1508,39 +1571,54 @@ const Shell = () => {
       void runTransition(
         'accept-advisory',
         async () => {
-          setPendingAdvisoryState(null);
-          const gameSessionId = generateSessionId();
-          // Reserve the peer relay before sending so a delivery_failure for this
-          // proposal can cancel the attempt (PeerSession must already exist).
-          peerSessionRef.current?.destroy();
-          peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
-          bindPeerMessageHandler(peerSessionRef.current);
-          conn.sendPeerAppMessage(advisory.peer_id, {
-            type: 'session_proposal',
-            proposer_amount: advisory.my_amount,
-            responder_amount: advisory.their_amount,
-            // Hub-synced alias only — never getAlias(), which invents Player_*.
-            from_alias: peekAlias(),
-            channel_timeout: advisory.channel_timeout,
-            unroll_timeout: advisory.unroll_timeout,
-            game_session_id: gameSessionId,
-          });
-          await startFreshSessionWithPeer({
-            peerId: advisory.peer_id,
-            opponentAlias: advisory.peer_alias,
-            myAmount: advisory.my_amount,
-            theirAmount: advisory.their_amount,
-            channel_timeout: advisory.channel_timeout,
-            unroll_timeout: advisory.unroll_timeout,
-            iStarted: true,
-            gameSessionId,
-            pairingToken,
-          });
+          try {
+            setPendingAdvisoryState(null);
+            const gameSessionId = generateSessionId();
+            // Reserve the peer relay before sending so a delivery_failure for this
+            // proposal can cancel the attempt (PeerSession must already exist).
+            peerSessionRef.current?.destroy();
+            peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
+            bindPeerMessageHandler(peerSessionRef.current);
+            conn.sendPeerAppMessage(advisory.peer_id, {
+              type: 'session_proposal',
+              proposer_amount: advisory.my_amount,
+              responder_amount: advisory.their_amount,
+              // Hub-synced alias only — never getAlias(), which invents Player_*.
+              from_alias: peekAlias(),
+              channel_timeout: advisory.channel_timeout,
+              unroll_timeout: advisory.unroll_timeout,
+              game_session_id: gameSessionId,
+            });
+            await startFreshSessionWithPeer({
+              peerId: advisory.peer_id,
+              opponentAlias: advisory.peer_alias,
+              myAmount: advisory.my_amount,
+              theirAmount: advisory.their_amount,
+              channel_timeout: advisory.channel_timeout,
+              unroll_timeout: advisory.unroll_timeout,
+              iStarted: true,
+              gameSessionId,
+              pairingToken,
+            });
+          } catch (error) {
+            // Setup threw before startFreshSessionWithPeer could clean up (e.g.
+            // after PeerSession was reserved). Do not leave the lobby stuck.
+            console.error('[Shell] accept-advisory failed', error);
+            sendSessionReject(advisory.peer_id);
+            abandonFailedStartAttempt({ error: true });
+          }
         },
         { scope: 'session-pane', waitForReady: true, readyKey: pairingToken },
       );
     },
-    [runTransition, setPendingAdvisoryState, startFreshSessionWithPeer, bindPeerMessageHandler],
+    [
+      abandonFailedStartAttempt,
+      bindPeerMessageHandler,
+      runTransition,
+      sendSessionReject,
+      setPendingAdvisoryState,
+      startFreshSessionWithPeer,
+    ],
   );
 
   const declinePendingAdvisory = useCallback(
@@ -1558,23 +1636,35 @@ const Shell = () => {
       void runTransition(
         'accept-proposal',
         async () => {
-          setPendingProposalState(null);
-          await startFreshSessionWithPeer({
-            peerId: proposal.from_id,
-            opponentAlias: proposal.from_alias,
-            myAmount: proposal.responder_amount,
-            theirAmount: proposal.proposer_amount,
-            channel_timeout: proposal.channel_timeout,
-            unroll_timeout: proposal.unroll_timeout,
-            iStarted: false,
-            gameSessionId: proposal.game_session_id,
-            pairingToken,
-          });
+          try {
+            setPendingProposalState(null);
+            await startFreshSessionWithPeer({
+              peerId: proposal.from_id,
+              opponentAlias: proposal.from_alias,
+              myAmount: proposal.responder_amount,
+              theirAmount: proposal.proposer_amount,
+              channel_timeout: proposal.channel_timeout,
+              unroll_timeout: proposal.unroll_timeout,
+              iStarted: false,
+              gameSessionId: proposal.game_session_id,
+              pairingToken,
+            });
+          } catch (error) {
+            console.error('[Shell] accept-proposal failed', error);
+            sendSessionReject(proposal.from_id);
+            abandonFailedStartAttempt({ error: true });
+          }
         },
         { scope: 'session-pane', waitForReady: true, readyKey: pairingToken },
       );
     },
-    [runTransition, setPendingProposalState, startFreshSessionWithPeer],
+    [
+      abandonFailedStartAttempt,
+      runTransition,
+      sendSessionReject,
+      setPendingProposalState,
+      startFreshSessionWithPeer,
+    ],
   );
 
   const declinePendingProposal = useCallback(
@@ -1819,6 +1909,7 @@ const Shell = () => {
               if (ps?.peerId === fromId) {
                 log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
                 markPeerDead();
+                if (abortAcceptAttemptIfActive({ error: true })) return;
                 const channelState = dashboardSessionModelRef.current?.channel.status.state;
                 if (
                   shouldCancelOnPeerUnreachable(
@@ -1836,6 +1927,10 @@ const Shell = () => {
             console.warn('[Shell] delivery_failure to=%s', to);
             const ps = peerSessionRef.current;
             if (!ps || to !== ps.peerId) return;
+            if (abortAcceptAttemptIfActive()) {
+              markPeerDead();
+              return;
+            }
             const channelState = dashboardSessionModelRef.current?.channel.status.state;
             if (
               shouldCancelOnPeerUnreachable(
@@ -1866,28 +1961,41 @@ const Shell = () => {
             // Pre-cradle routing is by peer player_id. If *we* remapped (hub
             // restart or session_id churn), abort rather than handshaking at a
             // stale sessionPeerId. First-ever register (no prior id) is fine.
-            if (
-              prevMine &&
-              prevMine !== playerId &&
-              (pairing?.token || sessionConfigRef.current?.pairingToken) &&
-              save?.phase !== 'live' &&
-              shouldCancelOnPeerUnreachable(
-                sessionPhaseRef.current,
-                dashboardSessionModelRef.current?.channel.status.state,
-                abandonPendingRef.current,
-              )
-            ) {
-              console.warn(
-                '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
-                prevMine,
-                playerId,
-              );
-              log(
-                `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
-              );
-              saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
-              cancelAttemptedSession();
-              return;
+            // Cold Accept may not have pairing/sessionConfig tokens yet — still
+            // abort an in-flight Accept transition (same as session_reject).
+            if (prevMine && prevMine !== playerId && save?.phase !== 'live') {
+              if (abortAcceptAttemptIfActive()) {
+                console.warn(
+                  '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+                  prevMine,
+                  playerId,
+                );
+                log(
+                  `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
+                );
+                saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                return;
+              }
+              if (
+                (pairing?.token || sessionConfigRef.current?.pairingToken) &&
+                shouldCancelOnPeerUnreachable(
+                  sessionPhaseRef.current,
+                  dashboardSessionModelRef.current?.channel.status.state,
+                  abandonPendingRef.current,
+                )
+              ) {
+                console.warn(
+                  '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
+                  prevMine,
+                  playerId,
+                );
+                log(
+                  `[hub] player_id remapped during pre-cradle handshake (${prevMine} → ${playerId}); rematch required`,
+                );
+                saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                cancelAttemptedSession();
+                return;
+              }
             }
             saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
             if (save) save.identity.myHubPlayerId = playerId;
@@ -1980,6 +2088,7 @@ const Shell = () => {
       markPeerInactive,
       markPeerDead,
       cancelAttemptedSession,
+      abortAcceptAttemptIfActive,
       isAvailableForNewSessionPrompt,
       sendSessionReject,
       setPendingAdvisoryState,
@@ -2217,6 +2326,7 @@ const Shell = () => {
   const cancelDashboardSession = useCallback(
     (options?: { retainFinishedGuard?: boolean }) => {
       sessionStartEpochRef.current += 1;
+      freshStartPersistCommittedRef.current = false;
       abandonPendingRef.current = false;
       const alias =
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
@@ -2880,13 +2990,14 @@ const Shell = () => {
         !!sessionConfigRef.current?.pairingToken ||
         sessionSaveRef.current?.phase === 'live' ||
         sessionSaveRef.current?.phase === 'pre-handshake';
+      const accepting = isAcceptSessionTransition(shellTransitionRef.current);
       const shouldCancel = shouldCancelAttemptOnDisconnect(
         hasAttempt,
         sessionPhaseRef.current,
         channelState,
         abandonPendingRef.current,
       );
-      if (hasPendingPrompt || shouldCancel) {
+      if (hasPendingPrompt || shouldCancel || accepting) {
         const peerId =
           peerSessionRef.current?.peerId ??
           pendingProposalRef.current?.from_id ??
@@ -2897,7 +3008,10 @@ const Shell = () => {
             : undefined);
         if (peerId) sendSessionReject(peerId);
       }
-      if (shouldCancel) {
+      if (accepting) {
+        if (!preserveHub) saveHubUrl(undefined);
+        abortAcceptAttemptIfActive();
+      } else if (shouldCancel) {
         if (!preserveHub) saveHubUrl(undefined);
         cancelAttemptedSession();
       } else {
@@ -2912,6 +3026,7 @@ const Shell = () => {
       }
     },
     [
+      abortAcceptAttemptIfActive,
       cancelAttemptedSession,
       resetPeerRelayState,
       sendSessionReject,
@@ -3068,9 +3183,22 @@ const Shell = () => {
   const handleDashboardAction = useCallback(
     (kind: GameDashboardActionKind) => {
       switch (kind) {
-        case 'cancel':
+        case 'cancel': {
+          // During Accept, Cancel before the checkpoint write lands must not wipe
+          // a finished freeze — same disposition as a pre-persist start failure.
+          if (isAcceptSessionTransition(shellState.transition)) {
+            const saved = sessionSaveRef.current;
+            const peerId =
+              peerSessionRef.current?.peerId ??
+              (saved?.phase === 'live' || saved?.phase === 'pre-handshake'
+                ? saved.pairing.peerId
+                : undefined);
+            if (peerId) sendSessionReject(peerId);
+            if (abortAcceptAttemptIfActive()) break;
+          }
           cancelDashboardSession();
           break;
+        }
         case 'clean-shutdown':
           requestDashboardCleanShutdown();
           break;
@@ -3102,9 +3230,12 @@ const Shell = () => {
     },
     [
       abandonActiveChannel,
+      abortAcceptAttemptIfActive,
       cancelDashboardSession,
       requestDashboardCleanShutdown,
       requestDashboardGoOnChain,
+      sendSessionReject,
+      shellState.transition,
     ],
   );
 

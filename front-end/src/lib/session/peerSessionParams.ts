@@ -55,12 +55,13 @@ export function isValidTimeoutString(v: string | undefined): boolean {
 
 /**
  * After Accept, `transitionToFreshSession` only retires the finished freeze once
- * persist succeeds. A start failure before that must end the peer attempt only —
- * never `cancelAttemptedSession`, which clears IndexedDB and blanks results.
- * Once persist has replaced the checkpoint, full attempt teardown is required.
+ * the live checkpoint write has landed. Failures or user Cancel before that must
+ * end the peer attempt only — never clear IndexedDB / blank results. Once
+ * replaceSession has successfully replaced the checkpoint, full attempt teardown
+ * is required.
  */
 export function startFailureDisposition(
-  checkpointPersisted: boolean,
+  persistCommitted: boolean,
 ): 'abandon-peer-only' | 'cancel-attempt' {
-  return checkpointPersisted ? 'cancel-attempt' : 'abandon-peer-only';
+  return persistCommitted ? 'cancel-attempt' : 'abandon-peer-only';
 }

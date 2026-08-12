@@ -1,10 +1,39 @@
 import {
   initialShellSessionState,
+  isAcceptSessionTransition,
   shellSessionReducer,
   type ShellSessionState,
 } from '../session/shellSessionState';
 
 describe('shellSessionReducer', () => {
+  it('identifies accept transitions', () => {
+    expect(isAcceptSessionTransition({ kind: 'idle' })).toBe(false);
+    expect(
+      isAcceptSessionTransition({
+        kind: 'pending',
+        reason: 'accept-advisory',
+        scope: 'session-pane',
+        readyKey: 't',
+      }),
+    ).toBe(true);
+    expect(
+      isAcceptSessionTransition({
+        kind: 'pending',
+        reason: 'accept-proposal',
+        scope: 'session-pane',
+        readyKey: 't',
+      }),
+    ).toBe(true);
+    expect(
+      isAcceptSessionTransition({
+        kind: 'pending',
+        reason: 'resume',
+        scope: 'shell',
+        readyKey: null,
+      }),
+    ).toBe(false);
+  });
+
   it('returns the initial state', () => {
     expect(initialShellSessionState).toEqual({
       sessionConfig: null,
