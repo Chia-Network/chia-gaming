@@ -81,11 +81,78 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.0 --activate
 
-      - name: Build Electron installer
+      - name: Check for Apple signing credentials
+        if: matrix.platform == 'mac' && github.event_name != 'pull_request'
+        id: apple-signing
+        shell: bash
+        env:
+          APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
+          APPLE_DEV_ID_APP_PASS: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
+          APPLE_NOTARIZE_USERNAME: ${{ secrets.APPLE_NOTARIZE_USERNAME }}
+          APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          configured=0
+          for value in \
+            "$APPLE_DEV_ID_APP" \
+            "$APPLE_DEV_ID_APP_PASS" \
+            "$APPLE_NOTARIZE_USERNAME" \
+            "$APPLE_NOTARIZE_PASSWORD" \
+            "$APPLE_TEAM_ID"; do
+            if [[ -n "$value" ]]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [[ "$configured" -eq 5 ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$configured" -eq 0 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Apple signing is partially configured; all five Apple secrets are required"
+            exit 1
+          fi
+
+      - name: Import Apple app signing certificate
+        if: steps.apple-signing.outputs.available == 'true'
+        uses: Apple-Actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEV_ID_APP }}
+          p12-password: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
+
+      - name: Build signed Electron installer
+        if: steps.apple-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.APPLE_DEV_ID_APP }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
+        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+
+      - name: Build unsigned Electron installer
+        if: steps.apple-signing.outputs.available != 'true'
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: tools/build-electron.sh --platform=${{ matrix.platform }}
+
+      - name: Notarize and staple macOS installers
+        if: steps.apple-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          APPLE_NOTARIZE_USERNAME: ${{ secrets.APPLE_NOTARIZE_USERNAME }}
+          APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for dmg in desktop/release/*.dmg; do
+            xcrun notarytool submit \
+              --wait \
+              --apple-id "$APPLE_NOTARIZE_USERNAME" \
+              --password "$APPLE_NOTARIZE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              "$dmg"
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
+          done
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
