@@ -88,6 +88,17 @@ export function clearLease(): void {
   }
 }
 
+/** Drop the lease only if this tab still holds it, so a closed owner does not look like a live conflict. */
+export function releaseLeaseIfOwner(): void {
+  try {
+    if (localStorage.getItem(LEASE_KEY) === tabId) {
+      localStorage.removeItem(LEASE_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function isFenced(): boolean {
   return fenced;
 }

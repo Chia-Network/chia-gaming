@@ -11,6 +11,7 @@ import {
   shouldReportSessionPhase,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
+  shouldWarnOnSessionUnload,
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
@@ -59,6 +60,13 @@ describe('restore lifecycle gates', () => {
     // Once the restore gate opens, report the current authoritative phase once.
     expect(shouldReportSessionPhase('resolved', false, false)).toBe(true);
     expect(shouldReportSessionPhase('resolved', false, true)).toBe(false);
+  });
+
+  it('warns before unload only while a session is off-chain or on-chain', () => {
+    expect(shouldWarnOnSessionUnload('none')).toBe(false);
+    expect(shouldWarnOnSessionUnload('resolved')).toBe(false);
+    expect(shouldWarnOnSessionUnload('off-chain')).toBe(true);
+    expect(shouldWarnOnSessionUnload('on-chain')).toBe(true);
   });
 
   it('keeps hub presence busy until the session is resolved', () => {

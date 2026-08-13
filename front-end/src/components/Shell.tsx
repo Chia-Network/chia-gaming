@@ -77,6 +77,7 @@ import {
   onFenced,
   offFenced,
   peekAlias,
+  releaseLeaseIfOwner,
   setAlias,
 } from '../hooks/save';
 import {
@@ -106,6 +107,7 @@ import {
   shouldReportHubBusyPresence,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
+  shouldWarnOnSessionUnload,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
 import {
@@ -941,10 +943,18 @@ const Shell = () => {
     };
   }, []);
 
-  // Close WebSocket connections on page unload/reload so the browser doesn't
-  // leave stale TCP sockets that block new connections in the reloaded page.
+  // Warn before closing a tab with a live session. Disconnect sockets only on
+  // actual leave (`pagehide`): `beforeunload` also runs if the user stays, and
+  // dropping the hub there would strand a session they chose to keep.
   useEffect(() => {
-    const cleanup = () => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!shouldWarnOnSessionUnload(sessionPhaseRef.current)) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    const cleanup = (event: PageTransitionEvent) => {
+      if (event.persisted) return;
+      releaseLeaseIfOwner();
       hubConnRef.current?.disconnect();
       // WalletConnect sessions are intentionally durable across reloads.
       // Calling disconnect() here sends a protocol-level session_delete.
@@ -952,9 +962,11 @@ const Shell = () => {
         activeBlockchainRef.current?.disconnect().catch(() => {});
       }
     };
-    window.addEventListener('beforeunload', cleanup);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', cleanup);
     return () => {
-      window.removeEventListener('beforeunload', cleanup);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('pagehide', cleanup);
     };
   }, []);
 

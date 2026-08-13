@@ -50,6 +50,7 @@ import {
   peekAutoResumeOnce,
   randomHex,
   reclaimLease,
+  releaseLeaseIfOwner,
   resetStorageCoordinationForTests,
 } from './saveCoordination';
 
@@ -68,6 +69,7 @@ export {
   onFenced,
   peekAutoResumeOnce,
   reclaimLease,
+  releaseLeaseIfOwner,
 };
 
 export type { PersistedGameState } from '../lib/session/gameStateCodec';

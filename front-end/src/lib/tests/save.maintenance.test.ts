@@ -12,6 +12,7 @@ import {
   claimLease,
   checkLease,
   isLeaseConflict,
+  releaseLeaseIfOwner,
 } from '../../hooks/save';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { makeStorage, sampleSession, saveLiveFields, setTestGlobal } from './save.harness';
@@ -25,6 +26,19 @@ describe('tab lease', () => {
     localStorage.setItem('appState_activeTab', 'another-tab');
 
     expect(checkLease()).toBe(false);
+    expect(isLeaseConflict()).toBe(true);
+  });
+
+  it('clears the lease on close only when this tab still owns it', () => {
+    claimLease();
+    releaseLeaseIfOwner();
+    expect(localStorage.getItem('appState_activeTab')).toBeNull();
+    expect(checkLease()).toBe(true);
+    expect(isLeaseConflict()).toBe(false);
+
+    localStorage.setItem('appState_activeTab', 'another-tab');
+    releaseLeaseIfOwner();
+    expect(localStorage.getItem('appState_activeTab')).toBe('another-tab');
     expect(isLeaseConflict()).toBe(true);
   });
 });

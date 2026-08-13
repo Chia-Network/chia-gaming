@@ -72,6 +72,11 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase, walletConnected 
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
+/** Native leave-page warning: an off-chain or on-chain session is still live. */
+export function shouldWarnOnSessionUnload(sessionPhase: SessionPhase): boolean {
+  return sessionPhase === 'off-chain' || sessionPhase === 'on-chain';
+}
+
 /**
  * Full hub presence busy signal (matches Shell getPresence).
  *
