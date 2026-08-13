@@ -82,6 +82,8 @@ const SAVED_GAME_PRESENTATIONS: ReadonlySet<string> = new Set<GameProtocolPresen
   'illegal-move',
   'submitting-timeout',
   'finishing',
+  'finishing-waiting-timeout',
+  'finishing-spending',
   'ended',
 ]);
 

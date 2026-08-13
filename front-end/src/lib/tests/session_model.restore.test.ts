@@ -484,6 +484,46 @@ describe('session model restore, schema, and event contracts', () => {
     });
   });
 
+  it('maps WASM finishing-timeout statuses to wait versus spend', () => {
+    const previous = {
+      id: '7',
+      amount: '100',
+      coin: { coinHex: 'coin', turnState: 'my-turn' as const, onChain: true },
+      handStatus: 'our-turn' as const,
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+    };
+    expect(
+      projectGameStatus({
+        previous,
+        payload: {
+          id: '7',
+          status: 'finishing-waiting-timeout',
+          coin_id: 'coin',
+          other_params: { game_finished: true },
+        },
+        channelState: 'ResolvedUnrolled',
+      }),
+    ).toMatchObject({
+      coin: { turnState: 'finishing-waiting-timeout', onChain: true },
+      handStatus: 'finishing-waiting-timeout',
+    });
+    expect(
+      projectGameStatus({
+        previous,
+        payload: {
+          id: '7',
+          status: 'finishing-spending',
+          coin_id: 'coin',
+          other_params: { game_finished: true, submitting_timeout_claim: true },
+        },
+        channelState: 'ResolvedUnrolled',
+      }),
+    ).toMatchObject({
+      coin: { turnState: 'finishing-spending', onChain: true },
+      handStatus: 'finishing-spending',
+    });
+  });
+
   it('orders readable gameplay events before the Settled marker', () => {
     const notification = {
       GameStatus: {

@@ -155,6 +155,8 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   slashing: 'Slashing cheater',
   'submitting-timeout': 'Submitting timeout claim',
   finishing: 'Finishing',
+  'finishing-waiting-timeout': 'Finalizing waiting for timeout',
+  'finishing-spending': 'Finalizing spending',
   ended: 'Ended',
 };
 
@@ -362,6 +364,10 @@ function selectHandStatus(model: SessionModel): HandStatus {
         return 'replaying-move';
       case 'finishing':
         return 'finishing';
+      case 'finishing-waiting-timeout':
+        return 'finishing-waiting-timeout';
+      case 'finishing-spending':
+        return 'finishing-spending';
     }
   }
   return 'active';

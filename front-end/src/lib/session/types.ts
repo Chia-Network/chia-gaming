@@ -19,6 +19,8 @@ export type GameTurnState =
   | 'opponent-illegal-move'
   | 'submitting-timeout'
   | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended';
 
 export type HandStatus =
@@ -31,6 +33,8 @@ export type HandStatus =
   | 'slashing'
   | 'submitting-timeout'
   | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended';
 
 export type GameProtocolPresentation =
@@ -43,6 +47,8 @@ export type GameProtocolPresentation =
   | 'illegal-move'
   | 'submitting-timeout'
   | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended';
 
 export type GameTerminalType =

@@ -127,6 +127,7 @@ pub enum ChannelSemanticPhase {
 pub enum TimeoutClaimSemantic {
     ChannelTimeoutFinish,
     GameOpponentTurn { id: GameID },
+    GameFinishTimeout { id: GameID },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -139,6 +140,8 @@ pub enum GameStatusKind {
     Replaying,
     PlayingMove,
     IllegalMoveDetected,
+    FinishingWaitingTimeout,
+    FinishingSpending,
     EndedCancelled,
     EndedError,
 }

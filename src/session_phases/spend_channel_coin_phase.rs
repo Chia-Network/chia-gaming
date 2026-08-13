@@ -1012,6 +1012,8 @@ impl SpendChannelCoinPhase {
                 id: state.game_id,
                 status: if replaying_ids.contains(&state.game_id) {
                     GameStatusKind::Replaying
+                } else if state.game_finished {
+                    GameStatusKind::FinishingWaitingTimeout
                 } else if state.our_turn {
                     GameStatusKind::OnChainMyTurn
                 } else {

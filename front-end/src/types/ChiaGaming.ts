@@ -133,6 +133,8 @@ export type GameStatusState =
   | 'replaying'
   | 'playing-move'
   | 'illegal-move-detected'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended-cancelled'
   | 'ended-error';
 

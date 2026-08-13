@@ -425,7 +425,8 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                 ) => true,
                 (
                     GameNotification::GameStatus {
-                        status: GameStatusKind::OnChainTheirTurn,
+                        status:
+                            GameStatusKind::OnChainTheirTurn | GameStatusKind::FinishingWaitingTimeout,
                         other_params: Some(params),
                         ..
                     },
@@ -443,7 +444,9 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                         status:
                             GameStatusKind::OnChainMyTurn
                             | GameStatusKind::OnChainTheirTurn
-                            | GameStatusKind::Replaying,
+                            | GameStatusKind::Replaying
+                            | GameStatusKind::FinishingWaitingTimeout
+                            | GameStatusKind::FinishingSpending,
                         ..
                     },
                     ExpectedNotification::GameStatusOnChainTurn,
@@ -496,7 +499,10 @@ fn event_shape(actual: &TestEvent) -> String {
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
         TestEvent::Notification(n) => match n {
             GameNotification::GameStatus { id, status, other_params, .. } => {
-                if matches!(status, GameStatusKind::OnChainTheirTurn)
+                if matches!(
+                    status,
+                    GameStatusKind::OnChainTheirTurn | GameStatusKind::FinishingWaitingTimeout
+                )
                     && other_params
                         .as_ref()
                         .and_then(|p| p.moved_by_us)
@@ -757,15 +763,19 @@ impl ToLocalUI for LocalTestUIReceiver {
                         | GameStatusKind::Replaying
                         | GameStatusKind::PlayingMove
                         | GameStatusKind::IllegalMoveDetected
+                        | GameStatusKind::FinishingWaitingTimeout
+                        | GameStatusKind::FinishingSpending
                 ) {
                     self.events
                         .push(TestEvent::Notification(notification.clone()));
                 }
-                if matches!(status, GameStatusKind::OnChainTheirTurn)
-                    && other_params
-                        .as_ref()
-                        .and_then(|p| p.moved_by_us)
-                        .unwrap_or(false)
+                if matches!(
+                    status,
+                    GameStatusKind::OnChainTheirTurn | GameStatusKind::FinishingWaitingTimeout
+                ) && other_params
+                    .as_ref()
+                    .and_then(|p| p.moved_by_us)
+                    .unwrap_or(false)
                 {
                     // Preserve event-count parity for tests expecting a separate GameStatusMovedByUs signal.
                     self.events
@@ -1166,6 +1176,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameStatusKind::OnChainMyTurn
                         | GameStatusKind::OnChainTheirTurn
                         | GameStatusKind::Replaying
+                        | GameStatusKind::FinishingWaitingTimeout
+                        | GameStatusKind::FinishingSpending
                 ) {
                     continue;
                 }
@@ -1188,6 +1200,8 @@ fn run_game_container_with_action_list_with_success_predicate(
             GameStatusKind::OnChainMyTurn
                 | GameStatusKind::OnChainTheirTurn
                 | GameStatusKind::Replaying
+                | GameStatusKind::FinishingWaitingTimeout
+                | GameStatusKind::FinishingSpending
                 | GameStatusKind::EndedCancelled
                 | GameStatusKind::EndedError
         )
@@ -6478,7 +6492,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(
                 n,
                 GameNotification::GameStatus {
-                    status: GameStatusKind::OnChainTheirTurn,
+                    status: GameStatusKind::FinishingWaitingTimeout,
                     other_params: Some(params),
                     ..
                 } if params.moved_by_us == Some(true)

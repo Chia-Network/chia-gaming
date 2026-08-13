@@ -704,6 +704,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         | 'playing-on-chain'
         | 'replaying'
         | 'finishing'
+        | 'finishing-waiting-timeout'
+        | 'finishing-spending'
         | 'opponent-illegal-move',
       coinHex: string | null,
     ) => ({
@@ -775,6 +777,24 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         }),
       ).handStatusLabel,
     ).toBe('Finishing');
+
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+          game: game('finishing-waiting-timeout', 'abcd'),
+        }),
+      ).handStatusLabel,
+    ).toBe('Finalizing waiting for timeout');
+
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+          game: game('finishing-spending', 'abcd'),
+        }),
+      ).handStatusLabel,
+    ).toBe('Finalizing spending');
 
     // Detecting the opponent's illegal on-chain move puts us in the slash flow;
     // the bar should say so explicitly instead of a generic "Your turn".

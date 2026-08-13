@@ -985,7 +985,8 @@ impl GameSession {
                     self.emit_channel_status_if_changed();
                 }
             }
-            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+            TimeoutClaimSemantic::GameOpponentTurn { id }
+            | TimeoutClaimSemantic::GameFinishTimeout { id } => {
                 let notification = self
                     .peer
                     .as_any_mut()
@@ -1018,7 +1019,8 @@ impl GameSession {
                     self.emit_channel_status_if_changed();
                 }
             }
-            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+            TimeoutClaimSemantic::GameOpponentTurn { id }
+            | TimeoutClaimSemantic::GameFinishTimeout { id } => {
                 let notification = self
                     .peer
                     .as_any_mut()

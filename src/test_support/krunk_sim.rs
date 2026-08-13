@@ -732,7 +732,7 @@ mod sim_tests {
                     notification,
                     GameNotification::GameStatus {
                         id,
-                        status: GameStatusKind::OnChainTheirTurn,
+                        status: GameStatusKind::FinishingWaitingTimeout,
                         other_params: Some(params),
                         ..
                     } if *id == GameID(1) && params.game_finished == Some(true)
@@ -744,7 +744,7 @@ mod sim_tests {
                     notification,
                     GameNotification::GameStatus {
                         id,
-                        status: GameStatusKind::OnChainMyTurn,
+                        status: GameStatusKind::FinishingWaitingTimeout,
                         other_params: Some(params),
                         ..
                     } if *id == GameID(1) && params.game_finished == Some(true)
