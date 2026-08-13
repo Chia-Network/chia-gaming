@@ -48,6 +48,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
 
   it('uses the existing dashboard action across the setup commitment boundary', () => {
     expect(selectGameDashboardView(null, { setupPending: true })).toMatchObject({
+      bannerTone: 'playing',
       channelStatusLabel: 'Setting Up',
       actionLabel: 'Cancel',
       actionEnabled: true,
@@ -60,6 +61,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean' } },
     });
     expect(selectGameDashboardView(finishedFreeze)).toMatchObject({
+      bannerTone: 'ended',
       actionLabel: 'Done',
       actionEnabled: false,
       actionKind: 'none',
@@ -115,8 +117,59 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     }
   });
 
+  it('derives banner tone from session mode and peer liveness', () => {
+    expect(selectGameDashboardView(null)).toMatchObject({ bannerTone: 'idle' });
+    expect(selectGameDashboardView(null, { setupPending: true })).toMatchObject({
+      bannerTone: 'playing',
+    });
+    expect(
+      selectGameDashboardView(null, { setupPending: true, peerLiveness: 'degraded' }),
+    ).toMatchObject({ bannerTone: 'pings-bad' });
+
+    const active = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+    });
+    expect(selectGameDashboardView(active)).toMatchObject({ bannerTone: 'playing' });
+    expect(selectGameDashboardView(active, { peerLiveness: 'connected' })).toMatchObject({
+      bannerTone: 'playing',
+    });
+    expect(selectGameDashboardView(active, { peerLiveness: 'degraded' })).toMatchObject({
+      bannerTone: 'pings-bad',
+    });
+
+    const handshaking = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+    });
+    expect(selectGameDashboardView(handshaking, { peerLiveness: null })).toMatchObject({
+      bannerTone: 'playing',
+    });
+
+    const unrolling = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
+    });
+    expect(selectGameDashboardView(unrolling)).toMatchObject({ bannerTone: 'on-chain' });
+    expect(selectGameDashboardView(unrolling, { peerLiveness: 'degraded' })).toMatchObject({
+      bannerTone: 'on-chain',
+    });
+
+    const resolvedUnrolledLive = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
+      game: { activeIds: ['1'] },
+    });
+    expect(selectGameDashboardView(resolvedUnrolledLive)).toMatchObject({ bannerTone: 'on-chain' });
+
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedClean' } },
+        }),
+      ),
+    ).toMatchObject({ bannerTone: 'ended' });
+  });
+
   it('derives dashboard actions for no-session, waiting, active, and terminal states', () => {
     expect(selectGameDashboardView(null)).toMatchObject({
+      bannerTone: 'idle',
       channelStatusLabel: 'No Session',
       handStatusLabel: 'No hand',
       actionLabel: 'No Session',

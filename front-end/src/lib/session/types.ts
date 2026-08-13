@@ -246,7 +246,10 @@ export type GameDashboardActionLabel =
   | 'Abandon'
   | 'Done';
 
+export type BannerTone = 'idle' | 'playing' | 'pings-bad' | 'on-chain' | 'ended';
+
 export interface GameDashboardViewModel {
+  bannerTone: BannerTone;
   channelStatusLabel: string;
   channelDetail: string | null;
   havePotato: boolean;

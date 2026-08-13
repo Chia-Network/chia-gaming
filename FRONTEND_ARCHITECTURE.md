@@ -902,8 +902,9 @@ delivery, ack reception, and keepalive reception.
 
 Peer liveness is measured passively from relay traffic. The `PeerSession` object
 derives liveness indicators using a 5-second polling interval. These feed into
-the **tab-dot connectivity indicators** — colored dots to the left of each tab
-label showing connection health (green / yellow / red / gray). They are also
+the **tab pipe marks** — uncolored link / broken-chain emojis to the left of
+Wallet, Hub, and Game tab labels — and into the game dashboard **banner rail**
+(session mode: idle / playing / pings-bad / on-chain / ended). They are also
 passed to `GameSession` for in-game display. Separately, Shell has a cascade
 rule: if the peer is marked lost while the session is still off-chain, it calls
 `goOnChain()` on the WASM cradle.
@@ -931,12 +932,12 @@ Connected, keepalive timeout while WS is up → Inactive.
 
 **Peer indicator** (`PeerLiveness`) has four states:
 
-| State       | Meaning                                                                             | Dot color |
-| ----------- | ----------------------------------------------------------------------------------- | --------- |
-| `connected` | Peer traffic received within the last 30 seconds                                    | Green     |
-| `degraded`  | Delivery failure reported by hub, or no peer traffic for 30+ seconds                | Yellow    |
-| `dead`      | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Red       |
-| `null`      | No active peer session                                                              | Grey      |
+| State       | Meaning                                                                             | Tab mark |
+| ----------- | ----------------------------------------------------------------------------------- | -------- |
+| `connected` | Peer traffic received within the last 30 seconds                                    | Link     |
+| `degraded`  | Delivery failure reported by hub, or no peer traffic for 30+ seconds                | Link (banner rail yellow) |
+| `dead`      | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Broken chain |
+| `null`      | No keepalive yet, or no active peer session                                         | Link if a session is live (handshake); broken chain if none/resolved |
 
 `dead` is sticky: incoming messages from that peer are ignored. Only a new session start resets to `null`.
 

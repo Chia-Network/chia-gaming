@@ -472,10 +472,10 @@ The hub does not create a session. It can only advise and relay:
 
 - **Peer degradation (no auto-cascade)**: When the peer becomes unreachable
   (delivery failures, 30-second silence, or hub disconnect) while the
-  session is off-chain, `peerLiveness` moves to `'degraded'` (yellow dot).
-  There is no automatic go-on-chain — the user must decide to escalate.
-  Only explicit terminal signals (user clicks "Go On-Chain" or receives a
-  FOAD) mark the peer as dead.
+  session is off-chain, `peerLiveness` moves to `'degraded'` (yellow banner
+  rail; tab stays a link). There is no automatic go-on-chain — the user must
+  decide to escalate. Only explicit terminal signals (user clicks "Go
+  On-Chain" or receives a FOAD) mark the peer as dead.
 
 - **Cascade warning dialogs**: Confirmation dialogs currently warn before
   disconnecting or switching hubs when a peer/session would be affected.
@@ -485,41 +485,48 @@ The hub does not create a session. It can only advise and relay:
 
 ## UX: Connectivity Indicators
 
-### Tab dots
+### Tab pipe marks
 
-Each tab in the tab bar has a small colored dot to the left of its label
-text, indicating the connectivity health of the axis associated with that
-tab. The dot is always present (gray when idle/irrelevant) so the tab bar
-layout never shifts.
+Wallet, Hub, and Game tabs show an uncolored link (connected) or broken-chain
+(disconnected) emoji to the left of the label. History and Log have no pipe
+mark. The existing upper-right notification dots indicate unread activity and
+are unchanged.
 
-Separately, the existing upper-right notification dots indicate unread
-activity (new game events, etc.). These are unchanged and serve a different
-purpose.
+Pipe marks answer only “is this pipe up?” Session mode lives on the game
+dashboard banner rail, not on the tabs.
 
-### Per-tab color semantics
+| Tab | Link | Broken chain |
+|-----|------|----------------|
+| Wallet | Connected. | Disconnected. The **Wallet** label is also red. |
+| Hub | `hubLiveness === 'connected'` | Reconnecting, inactive, disconnected, or never connected |
+| Game | Live session and peer is not `dead` | `sessionPhase` none/resolved, or `peerLiveness === 'dead'` |
 
-| Tab | Green | Yellow | Red | Gray |
-|-----|-------|--------|-----|------|
-| Wallet | Connected | — | Disconnected | — |
-| Hub | Connected | Reconnecting | Inactive (no heartbeat) | Not connected (null / disconnected) |
-| Game | Peer connected (incl. clean shutdown) | On-chain, peer degraded, or peer unreachable during clean shutdown | Error, or peer dead outside clean shutdown | No session / resolved |
-| History | — | — | — | Always gray |
-| Log | — | — | — | Always gray |
+Handshake with `peerLiveness === null` counts as connected. `degraded` pings
+stay a link; that warning is banner-only. `sessionError` does not affect the
+tab mark.
 
-### Game tab dot priority
+### Game dashboard banner rail
 
-The Game tab dot checks conditions in this order:
+The session dashboard has a full-height left-edge color rail:
 
-1. `sessionPhase === 'none' || 'resolved'` → **gray** (no active session)
-2. `sessionError` → **red** (genuine error — always wins)
-3. Clean shutdown in progress (`ShuttingDown` / `ShutdownTransactionPending` /
-   `cleanShutdownStarted`):
-   - peer degraded (or unexpectedly dead) → **yellow** (unreachable)
-   - otherwise → **green** (cooperative close in flight; keepalives continue)
-4. `peerLiveness === 'dead'` → **red** (terminal — go-on-chain or FOAD)
-5. `sessionPhase === 'on-chain'` or `peerLiveness === 'degraded'` → **yellow** (resolving or stale peer)
-6. `peerLiveness === 'connected'` → **green** (playing normally)
-7. Otherwise → **gray**
+| Tone | Color | When |
+|------|-------|------|
+| `idle` | Gray | No session / never set up |
+| `playing` | Green | Setup, handshake, off-chain play, cooperative shutdown |
+| `pings-bad` | Yellow | Same as playing, but `peerLiveness === 'degraded'` |
+| `on-chain` | Red | Going on-chain, unrolling, or a resolved unroll that still has games |
+| `ended` | Blue | Terminal dashboard still showing (clean resolve, failed, abandoned) |
+
+On-chain beats yellow. Failed/stale outcomes that are actually over stay
+`ended`; the Channel label still names the outcome. Yellow also shows
+“Peer pings look stuck.”
+
+### Game tab connectedness
+
+`selectGameTabConnected` is true unless:
+
+1. `sessionPhase === 'none' || 'resolved'`, or
+2. `peerLiveness === 'dead'`
 
 Clean shutdown does **not** mark the peer dead on its own. Keepalives and the
 small allowlist of shutdown-related peer messages continue until local
@@ -528,17 +535,14 @@ shutdown completes. Successful/terminal session exit does not send
 does arrive during pre-active matchmaking, it is honored as an abort: cancel
 the attempt (including any in-flight async session start), surface
 cancelled/error, and do not leave an orphan handshake. When the channel
-reaches a terminal state the session exits and the dot goes gray.
+reaches a terminal state the session exits and the game tab shows a broken
+chain.
 
-### Game tab error conditions (red dot)
+### Session error conditions
 
-The Game tab shows a red dot when `sessionError` is true, or when
-`peerLiveness === 'dead'` outside a clean shutdown (go-on-chain or FOAD).
 `sessionError` is derived from:
 
 - `Failed` channel state — the channel encountered an unrecoverable error
-- `ResolvedStale` channel state — the channel resolved but the outcome is
-  suspect (e.g., opponent exploited a timeout)
 - `ResolvedStale` channel state — the channel resolved but the outcome is
   suspect (e.g., opponent exploited a timeout)
 - `game-error` game terminal — a generic game-level error (`GameStatus` with
@@ -549,7 +553,8 @@ The Game tab shows a red dot when `sessionError` is true, or when
 
 Normal settlements such as `accept_settlement`, `settled_cleanly`,
 `opponent_timed_out`, `we_accepted`, and `slashed_opponent` are **not** session
-errors.
+errors. These conditions do not change the tab pipe mark; terminal outcomes
+use the `ended` banner rail.
 
 ### Settlement labels
 

@@ -9,7 +9,7 @@ import {
   selectShouldAdvertiseAvailable,
   selectSessionPhase,
   selectShellView,
-  selectGameTabDotColor,
+  selectGameTabConnected,
   isCleanShutdownInProgress,
   sessionAmountsFromSave,
   sessionModelFromSave,
@@ -60,7 +60,7 @@ describe('session model restore, schema, and event contracts', () => {
     });
   });
 
-  it('keeps the game tab green during clean shutdown, yellow if peer drops, gray when done', () => {
+  it('treats a live game tab as connected until the peer is dead or the session ends', () => {
     const shuttingDown = createSessionModel({
       channel: {
         status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ShuttingDown' },
@@ -71,50 +71,54 @@ describe('session model restore, schema, and event contracts', () => {
       },
     });
     expect(isCleanShutdownInProgress(shuttingDown)).toBe(true);
-    // Peer stays live through cooperative close (keepalives continue).
     expect(
-      selectGameTabDotColor({
+      selectGameTabConnected({
         sessionPhase: 'off-chain',
-        sessionError: false,
         peerLiveness: 'connected',
-        cleanShutdownInProgress: true,
       }),
-    ).toBe('green');
-    // Real unreachability (silence / delivery failure) is yellow, not red.
+    ).toBe(true);
     expect(
-      selectGameTabDotColor({
+      selectGameTabConnected({
         sessionPhase: 'off-chain',
-        sessionError: false,
         peerLiveness: 'degraded',
-        cleanShutdownInProgress: true,
       }),
-    ).toBe('yellow');
-    // Dead should not occur during clean shutdown; if it does, treat as yellow.
+    ).toBe(true);
     expect(
-      selectGameTabDotColor({
+      selectGameTabConnected({
         sessionPhase: 'off-chain',
-        sessionError: false,
-        peerLiveness: 'dead',
-        cleanShutdownInProgress: true,
+        peerLiveness: null,
       }),
-    ).toBe('yellow');
+    ).toBe(true);
     expect(
-      selectGameTabDotColor({
+      selectGameTabConnected({
+        sessionPhase: 'off-chain',
+        peerLiveness: 'dead',
+      }),
+    ).toBe(false);
+    expect(
+      selectGameTabConnected({
+        sessionPhase: 'none',
+        peerLiveness: null,
+      }),
+    ).toBe(false);
+    expect(
+      selectGameTabConnected({
         sessionPhase: 'resolved',
-        sessionError: false,
         peerLiveness: 'connected',
-        cleanShutdownInProgress: false,
       }),
-    ).toBe('gray');
-    // Outside clean shutdown, peer dead is still red.
+    ).toBe(false);
     expect(
-      selectGameTabDotColor({
-        sessionPhase: 'off-chain',
-        sessionError: false,
+      selectGameTabConnected({
+        sessionPhase: 'on-chain',
         peerLiveness: 'dead',
-        cleanShutdownInProgress: false,
       }),
-    ).toBe('red');
+    ).toBe(false);
+    expect(
+      selectGameTabConnected({
+        sessionPhase: 'on-chain',
+        peerLiveness: 'connected',
+      }),
+    ).toBe(true);
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {

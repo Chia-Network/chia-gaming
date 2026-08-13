@@ -15,6 +15,7 @@ import {
 } from './presentation';
 import { RESOLVED_CHANNEL_STATES, WINDING_DOWN_CHANNEL_STATES } from './normalization';
 import type {
+  BannerTone,
   BetweenHandModeModel,
   ChannelStatusModel,
   GameCoinModel,
@@ -34,7 +35,7 @@ import type {
 /** Shared empty dashboard fields; setupPending / no-session override labels + action. */
 export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
   GameDashboardViewModel,
-  'channelStatusLabel' | 'actionLabel' | 'actionEnabled' | 'actionKind'
+  'bannerTone' | 'channelStatusLabel' | 'actionLabel' | 'actionEnabled' | 'actionKind'
 > = {
   channelDetail: null,
   havePotato: false,
@@ -248,8 +249,6 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
   };
 }
 
-export type GameTabDotColor = 'green' | 'yellow' | 'red' | 'gray';
-
 /** True while a cooperative close is in flight (not yet terminal). */
 export function isCleanShutdownInProgress(model: SessionModel | null): boolean {
   if (!model) return false;
@@ -262,29 +261,18 @@ export function isCleanShutdownInProgress(model: SessionModel | null): boolean {
 }
 
 /**
- * Game-tab connectivity dot. Clean shutdown keeps the peer live (keepalives
- * continue); yellow only if the peer becomes unreachable. Red is for genuine
- * errors / FOAD-style peer death outside cooperative close.
+ * Game-tab pipe mark. A live session counts as connected, including handshake
+ * before the first keepalive (`peerLiveness === null`). Degraded pings stay
+ * connected; `dead` or no/resolved session is disconnected.
  */
-export function selectGameTabDotColor(args: {
+export function selectGameTabConnected(args: {
   sessionPhase: SessionPhase;
-  sessionError: boolean;
   peerLiveness: PeerLiveness;
-  cleanShutdownInProgress: boolean;
-}): GameTabDotColor {
-  const { sessionPhase, sessionError, peerLiveness, cleanShutdownInProgress } = args;
-  if (sessionPhase === 'none' || sessionPhase === 'resolved') return 'gray';
-  if (sessionError) return 'red';
-  if (cleanShutdownInProgress) {
-    // Peer should not be marked dead during cooperative close; if liveness
-    // still reports dead/degraded, treat it as unreachable rather than error.
-    if (peerLiveness === 'dead' || peerLiveness === 'degraded') return 'yellow';
-    return 'green';
-  }
-  if (peerLiveness === 'dead') return 'red';
-  if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') return 'yellow';
-  if (peerLiveness === 'connected') return 'green';
-  return 'gray';
+}): boolean {
+  const { sessionPhase, peerLiveness } = args;
+  if (sessionPhase === 'none' || sessionPhase === 'resolved') return false;
+  if (peerLiveness === 'dead') return false;
+  return true;
 }
 
 export interface GameDashboardSelectorOptions {
@@ -292,6 +280,29 @@ export interface GameDashboardSelectorOptions {
   setupPending?: boolean;
   cleanShutdownGraceActive?: boolean;
   abandonEnabled?: boolean;
+  peerLiveness?: PeerLiveness;
+}
+
+function isOnChainBanner(model: SessionModel): boolean {
+  const state = model.channel.status.state;
+  if (state === 'GoingOnChain' || state === 'Unrolling') return true;
+  return (
+    (state === 'ResolvedUnrolled' || state === 'ResolvedStale') && model.game.activeIds.length > 0
+  );
+}
+
+function selectBannerTone(
+  model: SessionModel | null,
+  options: GameDashboardSelectorOptions,
+): BannerTone {
+  if (options.setupPending) {
+    return options.peerLiveness === 'degraded' ? 'pings-bad' : 'playing';
+  }
+  if (!model || options.hasSession === false) return 'idle';
+  if (isOnChainBanner(model)) return 'on-chain';
+  if (isTerminalChannelSnapshot(model.channel.status)) return 'ended';
+  if (options.peerLiveness === 'degraded') return 'pings-bad';
+  return 'playing';
 }
 
 function channelStatusDetail(model: SessionModel): string | null {
@@ -512,9 +523,11 @@ export function selectGameDashboardView(
   // Accepting a new session after a terminal display leaves that model in place
   // until retireTerminalDisplay runs after async replaceSession; without this
   // override the dashboard would keep a disabled Done action for that window.
+  const bannerTone = selectBannerTone(model, options);
   if (options.setupPending) {
     return {
       ...EMPTY_DASHBOARD_VIEW_BASE,
+      bannerTone,
       channelStatusLabel: 'Setting Up',
       actionLabel: 'Cancel',
       actionEnabled: true,
@@ -524,6 +537,7 @@ export function selectGameDashboardView(
   if (!model || options.hasSession === false) {
     return {
       ...EMPTY_DASHBOARD_VIEW_BASE,
+      bannerTone,
       channelStatusLabel: 'No Session',
       actionLabel: 'No Session',
       actionEnabled: false,
@@ -539,6 +553,7 @@ export function selectGameDashboardView(
   );
 
   return {
+    bannerTone,
     channelStatusLabel:
       channel.sessionDisposition === 'Abandoned'
         ? 'Abandoned'
