@@ -153,7 +153,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     }
     const ph = normalizeHex(data.wallet.address?.puzzleHash);
     if (!ph || ph.length !== 64) {
-      throw new Error('Cloud Wallet wallet has no address puzzle hash');
+      throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
     this.blockchainAddressData = { puzzleHash: ph };
     this.monitoringReady = true;
