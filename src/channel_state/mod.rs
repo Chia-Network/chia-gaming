@@ -174,16 +174,11 @@ impl ChannelState {
     /// Equal to `state_number()` when we hold the potato; one behind after we
     /// send, until the peer countersigns the new channel spend.
     pub fn unroll_target_state_number(&self) -> Option<usize> {
-        if let Some(info) = &self.latest_received_unroll {
-            return Some(info.coin.state_number);
-        }
-        // Never received: the only co-signed unroll is the handshake state (0).
-        // Holding the potato means we have not sent yet, so that is current.
-        if self.have_potato {
-            Some(self.state_number)
+        self.timeout_state_number().or(Some(if self.have_potato {
+            self.state_number
         } else {
-            Some(0)
-        }
+            0
+        }))
     }
 
     pub fn have_potato(&self) -> bool {
@@ -1604,7 +1599,6 @@ impl ChannelState {
     pub fn channel_coin_spent(
         &self,
         env: &mut ChannelEnv<'_>,
-        _myself: bool,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let (unrolling_state_number, conditions_hash) =
@@ -1615,9 +1609,9 @@ impl ChannelState {
             self.state_number
         );
 
-        let mut result = if unrolling_state_number == self.state_number {
-            self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
-        } else if self.preemption_source(unrolling_state_number).is_some() {
+        let mut result = if unrolling_state_number < self.state_number
+            && self.preemption_source(unrolling_state_number).is_some()
+        {
             self.make_preemption_unroll_spend(env, unrolling_state_number, &conditions_hash)
         } else {
             self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)

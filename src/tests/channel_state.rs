@@ -237,7 +237,7 @@ pub(crate) mod sim_tests {
         {
             let p0 = &game.player(0).ch;
             let conditions = make_conditions_for_state(&mut env, p0, 4);
-            let result = p0.channel_coin_spent(&mut env, false, conditions);
+            let result = p0.channel_coin_spent(&mut env, conditions);
             assert!(
                 result.is_ok(),
                 "same-parity historical state should time out, got: {result:?}"
@@ -252,7 +252,7 @@ pub(crate) mod sim_tests {
         {
             let p0 = &game.player(0).ch;
             let conditions = make_conditions_for_state(&mut env, p0, 3);
-            let result = p0.channel_coin_spent(&mut env, false, conditions);
+            let result = p0.channel_coin_spent(&mut env, conditions);
             assert!(
                 result.is_ok(),
                 "preemption with different-parity on-chain state should succeed, got: {result:?}"
@@ -266,7 +266,7 @@ pub(crate) mod sim_tests {
             let p0 = &game.player(0).ch;
             let conditions = make_conditions_for_state(&mut env, p0, 6);
             let result = p0
-                .channel_coin_spent(&mut env, false, conditions)
+                .channel_coin_spent(&mut env, conditions)
                 .expect("current state should resolve");
             assert!(result.timeout, "current state must use timeout");
         }
@@ -284,7 +284,7 @@ pub(crate) mod sim_tests {
                 assert_eq!(p0.state_number(), 7);
                 let conditions = make_conditions_for_state(&mut env, p0, 5);
                 let result = p0
-                    .channel_coin_spent(&mut env, false, conditions)
+                    .channel_coin_spent(&mut env, conditions)
                     .expect("co-signed adjacent state should preempt");
                 assert!(
                     !result.timeout,
@@ -387,7 +387,7 @@ pub(crate) mod sim_tests {
                 .to_clvm(env.allocator)
                 .expect("conditions");
             let p0 = &game.player(0).ch;
-            let result = p0.channel_coin_spent(&mut env, false, conditions);
+            let result = p0.channel_coin_spent(&mut env, conditions);
             assert!(
                 result.is_err(),
                 "unrecognized unroll puzzle hash should always fail, got: {result:?}"

@@ -30,7 +30,7 @@ pub fn classify_unroll(
     unroll_coin: &CoinString,
     on_chain_state: usize,
 ) -> Result<UnrollOutcome, Error> {
-    let spend_result = ch.channel_coin_spent(env, false, conditions_nodeptr);
+    let spend_result = ch.channel_coin_spent(env, conditions_nodeptr);
 
     match spend_result {
         Ok(result) if !result.timeout => {

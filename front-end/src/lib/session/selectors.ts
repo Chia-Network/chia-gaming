@@ -313,19 +313,9 @@ function channelStatusDetail(model: SessionModel): string | null {
   if (channel.sessionDisposition === 'AwaitOutboundTerminal') {
     return channel.advisory ?? 'Waiting for peer to acknowledge close';
   }
-  const unrollLabel = unrollActionLabel(channel);
-  if (unrollLabel) {
-    const unrollDetail = unrollActionDetail(channel);
-    if (unrollDetail) {
-      return channel.advisory ? `${unrollDetail}: ${channel.advisory}` : unrollDetail;
-    }
-    return channel.advisory;
-  }
-  if (channel.semanticPhase) {
-    const detail = unrollActionDetail(channel);
-    if (detail) {
-      return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
-    }
+  const unrollDetail = unrollActionDetail(channel);
+  if (unrollDetail) {
+    return channel.advisory ? `${unrollDetail}: ${channel.advisory}` : unrollDetail;
   }
   switch (channel.state) {
     case 'Active':

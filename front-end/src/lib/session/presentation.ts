@@ -291,14 +291,16 @@ type UnrollCopyChannel = Pick<
   'semanticPhase' | 'unrollInitiator' | 'unrollingStateNumber' | 'preemptingStateNumber'
 >;
 
+const finishingUnrollLabel = (opponent: boolean) =>
+  opponent ? 'Finishing opponent unroll' : 'Finishing unroll';
+
 const UNROLL_PHASE_LABEL: Record<ChannelSemanticPhase, (opponent: boolean) => string | null> = {
   submitting_channel_spend: () => null,
   unrolling: () => 'Unrolling',
   finding_state: (opponent) => (opponent ? 'Opponent unrolled' : 'Unrolled'),
   preempting: () => 'Preempting',
-  finishing_waiting_timeout: (opponent) =>
-    opponent ? 'Finishing opponent unroll' : 'Finishing unroll',
-  finishing_spending: (opponent) => (opponent ? 'Finishing opponent unroll' : 'Finishing unroll'),
+  finishing_waiting_timeout: finishingUnrollLabel,
+  finishing_spending: finishingUnrollLabel,
   resolving: () => null,
 };
 

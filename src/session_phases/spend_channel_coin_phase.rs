@@ -43,7 +43,6 @@ enum SpendChannelCoinState {
     UnrollSpend {
         unroll_coin: CoinString,
         state_number: usize,
-        preempting: bool,
         preempting_state_number: Option<usize>,
         reward_coin: Option<CoinString>,
     },
@@ -63,10 +62,6 @@ pub struct SpendChannelCoinPhase {
     advisory: Option<String>,
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
-    /// The submitter is deliberately not exposed until the channel spend has
-    /// been observed and classified as an unroll.
-    #[serde(default)]
-    channel_spend_started_locally: Option<bool>,
     #[serde(default)]
     unroll_initiator: Option<UnrollInitiator>,
     #[serde(default)]
@@ -112,7 +107,6 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            channel_spend_started_locally: Some(true),
             unroll_initiator: Some(UnrollInitiator::Us),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: None,
@@ -146,7 +140,6 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            channel_spend_started_locally: Some(false),
             unroll_initiator: Some(UnrollInitiator::Opponent),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution,
@@ -181,7 +174,6 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            channel_spend_started_locally: None,
             unroll_initiator: None,
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: Some(clean_shutdown_solution),
@@ -249,19 +241,20 @@ impl SpendChannelCoinPhase {
         }
     }
 
-    fn channel_spend_semantic_phase(&self) -> ChannelSemanticPhase {
+    fn channel_watch_status(&self) -> ChannelStatus {
         if self.expected_clean_shutdown_solution.is_some() {
-            ChannelSemanticPhase::SubmittingChannelSpend
+            ChannelStatus::ShutdownTransactionPending
         } else {
-            ChannelSemanticPhase::Unrolling
+            ChannelStatus::GoingOnChain
         }
     }
 
-    fn channel_conditions_semantic_phase(&self) -> ChannelSemanticPhase {
-        if self.expected_clean_shutdown_solution.is_some() {
-            ChannelSemanticPhase::Resolving
-        } else {
-            ChannelSemanticPhase::FindingState
+    fn channel_watch_phase(&self, finding: bool) -> ChannelSemanticPhase {
+        match (self.expected_clean_shutdown_solution.is_some(), finding) {
+            (true, false) => ChannelSemanticPhase::SubmittingChannelSpend,
+            (true, true) => ChannelSemanticPhase::Resolving,
+            (false, false) => ChannelSemanticPhase::Unrolling,
+            (false, true) => ChannelSemanticPhase::FindingState,
         }
     }
 
@@ -376,11 +369,6 @@ impl SpendChannelCoinPhase {
                 self.state = SpendChannelCoinState::ChannelConditions {
                     channel_coin: channel_coin.clone(),
                 };
-                // A local unroll spend is not proof it landed: the opponent can
-                // win the race. Attribution waits until the state number is known.
-                if self.channel_spend_started_locally == Some(true) {
-                    self.unroll_initiator = None;
-                }
                 effects.push(Effect::Log(format!(
                     "[spend-channel:channel-coin-spent] {}",
                     format_coin(coin_id)
@@ -391,14 +379,13 @@ impl SpendChannelCoinPhase {
             SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
-                preempting,
                 preempting_state_number,
                 ..
             } if coin_id == unroll_coin => {
                 self.state = SpendChannelCoinState::UnrollConditions {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
-                    preempting: *preempting,
+                    preempting: true,
                     preempting_state_number: *preempting_state_number,
                 };
                 effects.push(Effect::Log(format!(
@@ -727,18 +714,10 @@ impl SpendChannelCoinPhase {
             )?
         };
 
-        // Preemption means the landed unroll is the opponent's. Wait/finish
-        // keeps the local vs passively-observed attribution.
-        self.unroll_initiator = match &outcome {
-            UnrollOutcome::Preempted(_) => Some(UnrollInitiator::Opponent),
-            UnrollOutcome::WaitForTimeout | UnrollOutcome::Unrecoverable(_) => {
-                if self.channel_spend_started_locally == Some(false) {
-                    Some(UnrollInitiator::Opponent)
-                } else {
-                    Some(UnrollInitiator::Us)
-                }
-            }
-        };
+        // Preemption is the opponent's unroll. Other outcomes keep constructor attribution.
+        if matches!(outcome, UnrollOutcome::Preempted(_)) {
+            self.unroll_initiator = Some(UnrollInitiator::Opponent);
+        }
 
         effects.push(Effect::Log(format!(
             "[unroll-started] {} state={on_chain_state}",
@@ -759,7 +738,6 @@ impl SpendChannelCoinPhase {
                 self.state = SpendChannelCoinState::UnrollSpend {
                     unroll_coin: unroll_coin.clone(),
                     state_number: on_chain_state,
-                    preempting: true,
                     preempting_state_number,
                     reward_coin: None,
                 };
@@ -1243,41 +1221,30 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         }
         let view = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin } => {
-                let state = if self.expected_clean_shutdown_solution.is_some() {
-                    ChannelStatus::ShutdownTransactionPending
-                } else {
-                    ChannelStatus::GoingOnChain
-                };
-                let unroll_target = if state == ChannelStatus::GoingOnChain {
-                    self.base
-                        .channel_state
-                        .as_ref()
-                        .and_then(|ch| ch.unroll_target_state_number())
-                } else {
-                    None
-                };
+                let state = self.channel_watch_status();
+                let unrolling_state_number = (state == ChannelStatus::GoingOnChain)
+                    .then(|| {
+                        self.base
+                            .channel_state
+                            .as_ref()
+                            .and_then(|ch| ch.unroll_target_state_number())
+                    })
+                    .flatten();
                 SpendSnapshotView {
                     state,
                     coin: Some(channel_coin.clone()),
-                    semantic_phase: Some(self.channel_spend_semantic_phase()),
-                    unrolling_state_number: unroll_target,
+                    semantic_phase: Some(self.channel_watch_phase(false)),
+                    unrolling_state_number,
                     preempting_state_number: None,
                 }
             }
-            SpendChannelCoinState::ChannelConditions { channel_coin } => {
-                let state = if self.expected_clean_shutdown_solution.is_some() {
-                    ChannelStatus::ShutdownTransactionPending
-                } else {
-                    ChannelStatus::GoingOnChain
-                };
-                SpendSnapshotView {
-                    state,
-                    coin: Some(channel_coin.clone()),
-                    semantic_phase: Some(self.channel_conditions_semantic_phase()),
-                    unrolling_state_number: None,
-                    preempting_state_number: None,
-                }
-            }
+            SpendChannelCoinState::ChannelConditions { channel_coin } => SpendSnapshotView {
+                state: self.channel_watch_status(),
+                coin: Some(channel_coin.clone()),
+                semantic_phase: Some(self.channel_watch_phase(true)),
+                unrolling_state_number: None,
+                preempting_state_number: None,
+            },
             SpendChannelCoinState::UnrollTimeoutOrSpend {
                 unroll_coin,
                 state_number,
@@ -1526,7 +1493,7 @@ mod tests {
             after_spend.semantic_phase,
             Some(ChannelSemanticPhase::FindingState)
         );
-        assert_eq!(after_spend.unroll_initiator, None);
+        assert_eq!(after_spend.unroll_initiator, Some(UnrollInitiator::Us));
 
         phase.state = SpendChannelCoinState::UnrollTimeoutOrSpend {
             unroll_coin: test_coin(),
@@ -1549,7 +1516,6 @@ mod tests {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            channel_spend_started_locally: Some(false),
             unroll_initiator: Some(UnrollInitiator::Opponent),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: None,
@@ -1582,7 +1548,6 @@ mod tests {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            channel_spend_started_locally: Some(true),
             unroll_initiator: Some(UnrollInitiator::Us),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: None,
