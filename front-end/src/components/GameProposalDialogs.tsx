@@ -3,6 +3,7 @@ import { isValidKrunkStake } from '../features/krunk/adapter';
 import { gameDisplayName, REGISTERED_GAMES } from '../lib/gameRegistry';
 import { composeDraftCanSubmit, composeDraftTerms } from '../lib/session/model';
 import { formatMojos } from '../util';
+import { getCurrencyLabels } from '../constants/currency';
 import { AmountInput } from './AmountInput';
 import { Button } from './button';
 
@@ -118,7 +119,9 @@ export function ComposeProposalDialog({
           />
         )}
         {isKrunk && perHandAmount > 0n && !krunkStakeValid && (
-          <p className="text-xs text-alert-text">Krunk stakes must be multiples of 100 mojos.</p>
+          <p className="text-xs text-alert-text">
+            Krunk stakes must be multiples of 100 {getCurrencyLabels().mojos}.
+          </p>
         )}
         <div className="flex w-full flex-col items-center gap-1">
           <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>

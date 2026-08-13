@@ -8,6 +8,7 @@ import {
 import type { GameTerminalModel } from '../../lib/session/types';
 import { useCheatNerfKeys } from '../../hooks/useCheatNerfKeys';
 import type { GameplayEvent } from '../../hooks/useGameSession';
+import { getCurrencyLabels } from '../../constants/currency';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
 import { SpacePokerHandHistory, SpacePokerTable } from './SpacePokerTable';
@@ -68,6 +69,7 @@ export default function SpacePoker({
     initialPersistedState ?? undefined,
   );
   const { handler, myTurn, N } = sp.gameState;
+  const spCurrency = getCurrencyLabels();
 
   const handleNerf = useCallback(() => {
     requireLiveGameHandSource(handSource).nerf();
@@ -164,7 +166,7 @@ export default function SpacePoker({
             className={`rounded px-2 py-0.5 ${sp.displayMode === mode ? 'bg-canvas-solid text-canvas-bg' : 'border border-canvas-line text-canvas-text-contrast'}`}
             onClick={() => sp.setDisplayMode(mode)}
           >
-            {mode === 'xch' ? 'XCH' : mode}
+            {mode === 'xch' ? spCurrency.xch : mode === 'mojos' ? spCurrency.mojos : mode}
           </button>
         ))}
       </div>

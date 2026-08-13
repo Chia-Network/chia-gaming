@@ -62,6 +62,8 @@ import {
   setDefaultFee as saveDefaultFee,
   getFeeUnit,
   setFeeUnit as saveFeeUnit,
+  getNetwork,
+  setNetwork as saveNetwork,
   getActiveTab as getSavedTab,
   setActiveTab as saveActiveTab,
   getUnreadGame as getSavedUnreadGame,
@@ -79,6 +81,8 @@ import {
   peekAlias,
   setAlias,
 } from '../hooks/save';
+import type { ChiaNetwork } from '../lib/session/saveEnvelope';
+import { getCurrencyLabels } from '../constants/currency';
 import {
   sessionController,
   destroySessionController,
@@ -244,6 +248,7 @@ function SessionBuyIn({
   channelTimeout?: string;
   unrollTimeout?: string;
 }) {
+  const labels = getCurrencyLabels();
   const effectiveChannelTimeout =
     parseOptionalBigInt(channelTimeout) ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS;
   const effectiveUnrollTimeout =
@@ -252,7 +257,7 @@ function SessionBuyIn({
     return (
       <>
         <br />
-        Buy-in: <strong>{myAmount}</strong> mojos
+        Buy-in: <strong>{myAmount}</strong> {labels.mojos}
         <br />
         Channel timeout: <strong>{effectiveChannelTimeout.toString()}</strong> blocks
         <br />
@@ -264,9 +269,9 @@ function SessionBuyIn({
   return (
     <>
       <br />
-      Your buy-in: <strong>{myAmount}</strong> mojos
+      Your buy-in: <strong>{myAmount}</strong> {labels.mojos}
       <br />
-      Their buy-in: <strong>{theirAmount}</strong> mojos
+      Their buy-in: <strong>{theirAmount}</strong> {labels.mojos}
       <br />
       Channel timeout: <strong>{effectiveChannelTimeout.toString()}</strong> blocks
       <br />
@@ -1040,6 +1045,7 @@ const Shell = () => {
   const wcAbortRef = useRef(false);
   const [defaultFee, setDefaultFee] = useState<bigint>(() => getDefaultFee());
   const [feeUnit, setFeeUnit] = useState<'mojo' | 'xch'>(() => getFeeUnit());
+  const [network, setNetwork] = useState<ChiaNetwork>(() => getNetwork());
   const [feeEditing, setFeeEditing] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const feeInputRef = useRef<HTMLInputElement>(null);
@@ -1117,6 +1123,13 @@ const Shell = () => {
     },
     [feeEditing, feeInput, parseFeeInput],
   );
+
+  const handleNetworkChange = useCallback((next: ChiaNetwork) => {
+    setNetwork(next);
+    saveNetwork(next);
+  }, []);
+
+  const currency = useMemo(() => getCurrencyLabels(), [network]);
 
   // Theme state
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -3652,7 +3665,7 @@ const Shell = () => {
                 </div>
                 {balance !== undefined && (
                   <p className="text-2xl font-bold text-canvas-text-contrast">
-                    {balance.toLocaleString()} mojos
+                    {balance.toLocaleString()} {currency.mojos}
                   </p>
                 )}
                 <div className="w-full max-w-xs text-sm text-canvas-text">
@@ -3663,13 +3676,13 @@ const Shell = () => {
                         onClick={() => handleFeeUnitChange('mojo')}
                         className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
                       >
-                        mojo
+                        {currency.mojo}
                       </button>
                       <button
                         onClick={() => handleFeeUnitChange('xch')}
                         className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
                       >
-                        XCH
+                        {currency.xch}
                       </button>
                     </div>
                   </div>
@@ -3706,7 +3719,7 @@ const Shell = () => {
                       onClick={startEditingFee}
                       className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
                     >
-                      {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                      {feeDisplayText()} {feeUnit === 'xch' ? currency.xch : currency.mojos}
                     </button>
                   )}
                 </div>
@@ -3783,13 +3796,13 @@ const Shell = () => {
                         onClick={() => handleFeeUnitChange('mojo')}
                         className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
                       >
-                        mojo
+                        {currency.mojo}
                       </button>
                       <button
                         onClick={() => handleFeeUnitChange('xch')}
                         className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
                       >
-                        XCH
+                        {currency.xch}
                       </button>
                     </div>
                   </div>
@@ -3826,7 +3839,7 @@ const Shell = () => {
                       onClick={startEditingFee}
                       className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
                     >
-                      {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                      {feeDisplayText()} {feeUnit === 'xch' ? currency.xch : currency.mojos}
                     </button>
                   )}
                 </div>
@@ -3864,6 +3877,23 @@ const Shell = () => {
             ) : (
               <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
                 <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
+                <div className="w-full max-w-sm flex flex-col items-center gap-1">
+                  <span className="text-sm text-canvas-text">Network</span>
+                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
+                    <button
+                      onClick={() => handleNetworkChange('mainnet')}
+                      className={`px-3 py-1 transition-colors ${network === 'mainnet' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                    >
+                      Mainnet
+                    </button>
+                    <button
+                      onClick={() => handleNetworkChange('testnet')}
+                      className={`px-3 py-1 transition-colors border-l border-canvas-border ${network === 'testnet' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                    >
+                      Testnet
+                    </button>
+                  </div>
+                </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
                   <Button
                     variant="solid"

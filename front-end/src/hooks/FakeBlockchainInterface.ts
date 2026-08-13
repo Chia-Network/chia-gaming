@@ -1,4 +1,5 @@
 import { encodeU64AsClvmHex, normalizeCoinStringHex } from '../util';
+import { getCurrencyLabels } from '../constants/currency';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { jsonParse, jsonStringify } from '../util/jsonSafe';
 
@@ -369,7 +370,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       fields: {
-        balance: { label: 'Starting balance (mojos)', default: 1_000_000n },
+        balance: {
+          label: `Starting balance (${getCurrencyLabels().mojos})`,
+          default: 1_000_000n,
+        },
       },
       finalize: async (values?: { balance?: bigint }) => {
         log('[sim-blockchain] finalize: start');

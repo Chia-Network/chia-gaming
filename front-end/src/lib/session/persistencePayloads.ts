@@ -245,6 +245,13 @@ export function validateCommonFields(save: SessionSave): void {
   ) {
     throw new Error('Garbled save: invalid blockchainType');
   }
+  if (
+    save.preferences.network !== undefined &&
+    save.preferences.network !== 'mainnet' &&
+    save.preferences.network !== 'testnet'
+  ) {
+    throw new Error('Garbled save: invalid network');
+  }
   if (save.preferences.defaultFee !== undefined) {
     requireBigint(save.preferences.defaultFee, 'preferences.defaultFee');
   }
