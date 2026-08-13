@@ -9,5 +9,6 @@ export const HUB_TRUST_CHANNEL = 'chia-gaming:request-hub-trust';
  * - `granted`  just added to it; the renderer must reload to pick up the widened
  *              CSP before the hub becomes reachable.
  * - `invalid`  malformed origin, or a request from somewhere that may not ask.
+ * - `persist-failed` valid origin that could not be saved for the required reload.
  */
-export type HubTrustOutcome = 'trusted' | 'granted' | 'invalid';
+export type HubTrustOutcome = 'trusted' | 'granted' | 'invalid' | 'persist-failed';

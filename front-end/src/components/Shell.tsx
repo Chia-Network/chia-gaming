@@ -157,19 +157,6 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
 }
 
-function normalizeHubOrigin(origin: string): string {
-  try {
-    const url = new URL(origin);
-    if (url.hostname === '127.0.0.1' && url.port === '3003') {
-      url.hostname = 'localhost';
-      return url.origin;
-    }
-  } catch {
-    return origin;
-  }
-  return origin;
-}
-
 function humanHistoryFromSave(save: SessionSave): string[] | undefined {
   return save.history.humanHistory;
 }
@@ -1780,8 +1767,7 @@ const Shell = () => {
 
   // Connect to a hub by origin URL. Creates the hub iframe + game relay WebSocket.
   const connectToHub = useCallback(
-    (rawOrigin: string, options: { resetSession?: boolean } = {}) => {
-      const origin = normalizeHubOrigin(rawOrigin);
+    (origin: string, options: { resetSession?: boolean } = {}) => {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
       setHubConnectionError(null);
@@ -2130,11 +2116,27 @@ const Shell = () => {
       hubConnRef.current = null;
       return;
     }
-    const url = getHubUrl();
-    if (url && !hubConnRef.current) {
-      connectToHub(url);
+    const origin = getHubUrl();
+    let cancelled = false;
+    if (origin && !hubConnRef.current) {
+      void requestHubTrust(origin).then((trust) => {
+        if (cancelled) return;
+        const trustError = hubTrustError(trust, origin);
+        if (trustError !== null) {
+          saveHubUrl(undefined);
+          setHubConnectionError(trustError);
+          return;
+        }
+        if (trust === 'granted') {
+          saveHubUrl(origin);
+          window.location.reload();
+          return;
+        }
+        connectToHub(origin);
+      });
     }
     return () => {
+      cancelled = true;
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
     };
