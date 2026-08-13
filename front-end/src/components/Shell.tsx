@@ -434,13 +434,13 @@ function GameDashboard({
                   <span className="font-medium text-canvas-text-contrast">
                     {view.channelStatusLabel}
                   </span>
+                  {view.channelDetail && (
+                    <span className="text-canvas-text">{view.channelDetail}</span>
+                  )}
                   {view.havePotato && (
                     <span aria-label="You have the potato" title="You have the potato">
                       🥔
                     </span>
-                  )}
-                  {view.channelDetail && (
-                    <span className="text-canvas-text">{view.channelDetail}</span>
                   )}
                   {view.bannerTone === 'pings-bad' && (
                     <span className="text-warning-text">Peer pings look stuck</span>
