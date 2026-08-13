@@ -20,8 +20,9 @@ pub enum UnrollOutcome {
     Unrecoverable(String),
 }
 
-/// Determine whether an unroll can be preempted, needs to wait for timeout, or
-/// is unrecoverable.  Used by SpendChannelCoinPhase.
+/// Map `channel_coin_spent`'s parse result to an unroll outcome.
+/// Parse errors (never signed, conditions mismatch) stay unrecoverable;
+/// they are not widened to a timeout just because some historical record exists.
 pub fn classify_unroll(
     ch: &ChannelState,
     env: &mut ChannelEnv<'_>,
@@ -43,16 +44,9 @@ pub fn classify_unroll(
             Ok(UnrollOutcome::Preempted(bundle))
         }
         Ok(_) => Ok(UnrollOutcome::WaitForTimeout),
-        Err(e) => {
-            let can_timeout = ch.get_historical_unroll_for_state(on_chain_state).is_ok();
-            if can_timeout {
-                Ok(UnrollOutcome::WaitForTimeout)
-            } else {
-                Ok(UnrollOutcome::Unrecoverable(format!(
-                    "cannot preempt ({e:?}) and no stored state for timeout at {on_chain_state}"
-                )))
-            }
-        }
+        Err(e) => Ok(UnrollOutcome::Unrecoverable(format!(
+            "channel coin spend at state {on_chain_state} is not a signed unroll we can finish or preempt: {e:?}"
+        ))),
     }
 }
 

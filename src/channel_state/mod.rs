@@ -5,7 +5,6 @@ pub mod game_start_info;
 pub mod runner;
 pub mod types;
 
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -1591,74 +1590,37 @@ impl ChannelState {
         ))
     }
 
-    /// Ensure that we include the last state sequence number in a memo so we can
-    /// possibly supercede an earlier unroll.
+    /// Classify a parsed channel-coin spend from its CREATE_COIN conditions.
+    /// Who submitted the spend is not an input; the conditions are.
     ///
-    /// Look at the conditions:
-    ///
-    /// The current sequence number is always either
-    /// We have two sequence numbers:
-    ///  - unroll state number
-    ///  - channel coin spend state number
-    ///
-    /// Whenever the channel coin gets spent, either we'll want to make it hit
-    /// its timeout or supercede the state that's in it.
-    ///
-    /// If the sequence number in the unroll is equal to our current state number
-    /// then force the timeout.
-    ///
-    /// Otherwise
-    ///   Not equal, and parity equal - hard error
-    ///   Less than our current unroll number - either same parity (fucked) or
-    ///   opposite (return a spend to supercede the spend it gave)
-    ///   Equal to unroll, try to timeout
-    ///   Equal to state, not unroll, try to timeout (different)
-    ///   Greater than state number - hard error
-    ///
-    /// Conditions on spending the channel should have default_conditions_hash
-    /// and state number as rems.
-    ///
-    /// Happens because one of us decided to start spending it.
-    /// Play has not necessarily ended.
-    /// One way in which this is spent is the clean unroll.
-    ///   Clean unroll won't reach here.
-    /// One of the two sides, started unrolling.
-    ///   So we must unroll as well.
-    ///
-    /// Give a spend to do as well to start our part of the unroll given that
-    /// the channel coin is spent.
-    ///
-    /// Must have the option that games were outright canceled.
-    /// Need to make the result richer to communicate that.
+    /// - Unknown puzzle hash (never signed) fails in
+    ///   `resolve_unroll_from_conditions`. A state we have not reached cannot
+    ///   be in the map, so "future" is the same check.
+    /// - Equal to our current state number → timeout.
+    /// - Older, opposite parity, signed preemption source → preempt.
+    /// - Older, same parity (or no signed preemption source) → timeout using
+    ///   the compact historical record we signed.
+    /// - Conditions-hash mismatch vs the signed historical record → error.
     pub fn channel_coin_spent(
         &self,
         env: &mut ChannelEnv<'_>,
-        myself: bool,
+        _myself: bool,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let (unrolling_state_number, conditions_hash) =
             self.resolve_unroll_from_conditions(env, conditions)?;
+        game_assert!(
+            unrolling_state_number <= self.state_number,
+            "signed unroll {unrolling_state_number} cannot exceed our state {}",
+            self.state_number
+        );
 
-        // Always let the retained full latest records determine whether an
-        // older state can be preempted. Their state-number parity, not
-        // `self.state_number`'s parity, controls whether the spend is valid.
-        // If neither latest record has the required parity and peer signature,
-        // the exact compact historical record still provides a valid timeout.
-        let mut result = match (myself, unrolling_state_number.cmp(&self.state_number)) {
-            (true, _) | (_, Ordering::Equal) => {
-                self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
-            }
-            // On-chain state is from the future relative to us - error.
-            (_, Ordering::Greater) => Err(Error::StrErr(format!(
-                "Reply from the future onchain {} (me {})",
-                unrolling_state_number, self.state_number,
-            ))),
-            (_, Ordering::Less) if self.preemption_source(unrolling_state_number).is_some() => {
-                self.make_preemption_unroll_spend(env, unrolling_state_number, &conditions_hash)
-            }
-            (_, Ordering::Less) => {
-                self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
-            }
+        let mut result = if unrolling_state_number == self.state_number {
+            self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
+        } else if self.preemption_source(unrolling_state_number).is_some() {
+            self.make_preemption_unroll_spend(env, unrolling_state_number, &conditions_hash)
+        } else {
+            self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
         };
         if let Ok(ref mut r) = result {
             r.unrolling_state_number = unrolling_state_number;

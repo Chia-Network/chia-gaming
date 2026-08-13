@@ -5056,9 +5056,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             SimScriptAction::AcceptProposal(1, GameID(1)),
             // Let the handshake + empty potato exchanges settle.
             SimScriptAction::WaitBlocks(5, 0),
-            // Corrupt player 1: pretend we're at state 0.
-            // This wipes stored unroll/timeout so the real on-chain
-            // state number will be "from the future" AND unmatchable.
+            // Corrupt player 1: pretend we're at state 0 and wipe stored
+            // unroll records so the real on-chain unroll is one we never signed.
             SimScriptAction::CorruptStateNumber(1, 0),
             // Player 0 goes on chain normally (real state number).
             SimScriptAction::GoOnChain(0),
@@ -5088,7 +5087,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ..
                 })
             )),
-            "player 1 should get ChannelError for state-from-the-future, got: {p1_notifs:?}"
+            "player 1 should get ChannelError for an unroll they never signed, got: {p1_notifs:?}"
         );
         let channel_error_idx = p1_notifs
             .iter()
