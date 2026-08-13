@@ -1884,21 +1884,18 @@ impl PeerLifecyclePhase for OffChainPhase {
                 .iter()
                 .any(|a| matches!(a, GameAction::CleanShutdown));
         Some(ChannelStatusSnapshot {
-            state: if shutting_down {
-                ChannelStatus::ShuttingDown
-            } else {
-                ChannelStatus::Active
-            },
-            session_disposition: None,
-            advisory: None,
             coin: Some(ch.channel_coin().clone()),
             our_balance: Some(ch.my_out_of_game_balance()),
             their_balance: Some(ch.their_out_of_game_balance()),
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
             zero_payout: shutting_down.then(|| ch.has_zero_payout()),
-            unroll_initiator: None,
-            semantic_phase: None,
+            state_number: Some(ch.state_number()),
+            ..ChannelStatusSnapshot::new(if shutting_down {
+                ChannelStatus::ShuttingDown
+            } else {
+                ChannelStatus::Active
+            })
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

@@ -12,6 +12,7 @@ import {
   sessionModelFromSave,
   nextGameInstanceAfterLocalTurn,
 } from '../session/model';
+import { decodeChannelStatusPayload } from '../session/persistence';
 import type { SessionSave } from '../../hooks/save';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
@@ -165,6 +166,25 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       selectGameDashboardView(
         createSessionModel({
           channel: {
+            status: {
+              ...INITIAL_CHANNEL_STATUS_MODEL,
+              state: 'Active',
+              stateNumber: 7n,
+              havePotato: true,
+            },
+          },
+          game: { activeIds: [] },
+        }),
+      ),
+    ).toMatchObject({
+      channelStatusLabel: 'Active',
+      channelDetail: 'state 7',
+      havePotato: true,
+    });
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: {
             status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true },
           },
           game: { activeIds: [] },
@@ -251,7 +271,10 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         have_potato: true,
         zero_payout: true,
         unroll_initiator: 'opponent',
-        semantic_phase: 'waiting_timeout',
+        semantic_phase: 'finishing_waiting_timeout',
+        state_number: 4n,
+        unrolling_state_number: 3n,
+        preempting_state_number: 5n,
       }),
     ).toMatchObject({
       state: 'ShuttingDown',
@@ -262,68 +285,155 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       havePotato: true,
       zeroPayout: true,
       unrollInitiator: 'opponent',
-      semanticPhase: 'waiting_timeout',
+      semanticPhase: 'finishing_waiting_timeout',
+      stateNumber: 4n,
+      unrollingStateNumber: 3n,
+      preemptingStateNumber: 5n,
     });
   });
 
-  it('shows semantic progress alongside the authoritative channel advisory', () => {
-    const view = selectGameDashboardView(
-      createSessionModel({
-        channel: {
-          status: {
-            ...INITIAL_CHANNEL_STATUS_MODEL,
-            state: 'Unrolling',
-            semanticPhase: 'waiting_timeout',
-            advisory: 'The observed spend needs manual review',
-          },
-        },
+  it('promotes inbound integer state numbers to bigint before persistence', () => {
+    expect(
+      decodeChannelStatusPayload({
+        state: 'Active',
+        advisory: null,
+        coin: null,
+        our_balance: null,
+        their_balance: null,
+        game_allocated: null,
+        state_number: 0,
+        unrolling_state_number: 2,
+        preempting_state_number: 3,
       }),
-    );
-
-    expect(view.channelDetail).toBe('Waiting for timeout: The observed spend needs manual review');
+    ).toMatchObject({
+      state_number: 0n,
+      unrolling_state_number: 2n,
+      preempting_state_number: 3n,
+    });
   });
 
-  it('renders known unroll initiators without inventing an unknown label', () => {
-    const opponent = selectGameDashboardView(
-      createSessionModel({
-        channel: {
-          status: {
-            ...INITIAL_CHANNEL_STATUS_MODEL,
-            state: 'Unrolling',
-            semanticPhase: 'waiting_timeout',
-            unrollInitiator: 'opponent',
-          },
-        },
-      }),
-    );
-    expect(opponent.channelDetail).toBe('Waiting for timeout (initiated by opponent)');
+  it('names unroll, preempt, and finish-unroll actions with the relevant state numbers', () => {
+    const view = (status: Partial<typeof INITIAL_CHANNEL_STATUS_MODEL>) =>
+      selectGameDashboardView(
+        createSessionModel({
+          channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, ...status } },
+        }),
+      );
 
-    const us = selectGameDashboardView(
-      createSessionModel({
-        channel: {
-          status: {
-            ...INITIAL_CHANNEL_STATUS_MODEL,
-            state: 'Unrolling',
-            semanticPhase: 'preempting',
-            unrollInitiator: 'us',
-          },
-        },
+    expect(
+      view({
+        state: 'GoingOnChain',
+        semanticPhase: 'unrolling',
+        stateNumber: 7n,
+        unrollingStateNumber: 7n,
       }),
-    );
-    expect(us.channelDetail).toBe('Preempting unroll (initiated by you)');
+    ).toMatchObject({
+      channelStatusLabel: 'Unrolling',
+      channelDetail: 'to state 7',
+    });
 
-    const unknown = selectGameDashboardView(
-      createSessionModel({
-        channel: {
-          status: {
-            ...INITIAL_CHANNEL_STATUS_MODEL,
-            state: 'Unrolling',
-            semanticPhase: 'resolving',
-          },
-        },
+    expect(
+      view({
+        state: 'GoingOnChain',
+        semanticPhase: 'unrolling',
+        stateNumber: 7n,
+        unrollingStateNumber: 6n,
       }),
-    );
-    expect(unknown.channelDetail).toBe('Resolving');
+    ).toMatchObject({
+      channelStatusLabel: 'Unrolling',
+      channelDetail: 'to state 6',
+    });
+
+    expect(
+      view({
+        state: 'GoingOnChain',
+        semanticPhase: 'finding_state',
+        unrollInitiator: 'opponent',
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Opponent unrolled',
+      channelDetail: 'finding state',
+    });
+
+    expect(
+      view({
+        state: 'GoingOnChain',
+        semanticPhase: 'finding_state',
+        stateNumber: 7n,
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Unrolled',
+      channelDetail: 'finding state',
+    });
+
+    expect(
+      view({
+        state: 'Unrolling',
+        semanticPhase: 'finishing_waiting_timeout',
+        unrollingStateNumber: 7n,
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Finishing unroll',
+      channelDetail: 'waiting for timeout state 7',
+    });
+
+    expect(
+      view({
+        state: 'Unrolling',
+        semanticPhase: 'finishing_spending',
+        unrollingStateNumber: 7n,
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Finishing unroll',
+      channelDetail: 'spending state 7',
+    });
+
+    expect(
+      view({
+        state: 'Unrolling',
+        semanticPhase: 'preempting',
+        unrollingStateNumber: 2n,
+        preemptingStateNumber: 5n,
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Preempting',
+      channelDetail: 'from 2 to 5',
+    });
+
+    expect(
+      view({
+        state: 'Unrolling',
+        semanticPhase: 'finishing_waiting_timeout',
+        unrollInitiator: 'opponent',
+        unrollingStateNumber: 2n,
+        advisory: 'The observed spend needs manual review',
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Finishing opponent unroll',
+      channelDetail: 'waiting for timeout state 2: The observed spend needs manual review',
+    });
+
+    expect(
+      view({
+        state: 'Unrolling',
+        semanticPhase: 'finishing_spending',
+        unrollInitiator: 'opponent',
+        unrollingStateNumber: 2n,
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Finishing opponent unroll',
+      channelDetail: 'spending state 2',
+    });
+
+    expect(
+      view({
+        state: 'ShutdownTransactionPending',
+        semanticPhase: 'submitting_channel_spend',
+      }),
+    ).toMatchObject({
+      channelStatusLabel: 'Shutting Down',
+      channelDetail: 'Submitting channel spend',
+    });
   });
 
   it('prioritizes terminal disposition details over stale semantic progress', () => {
@@ -334,7 +444,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
             ...INITIAL_CHANNEL_STATUS_MODEL,
             state: 'Unrolling',
             sessionDisposition: 'Abandoned',
-            semanticPhase: 'waiting_timeout',
+            semanticPhase: 'finishing_waiting_timeout',
             advisory: 'Local session was abandoned',
           },
         },
@@ -352,7 +462,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
             ...INITIAL_CHANNEL_STATUS_MODEL,
             state: 'Unrolling',
             sessionDisposition: 'AwaitOutboundTerminal',
-            semanticPhase: 'submitting_timeout_finish',
+            semanticPhase: 'finishing_spending',
             advisory: null,
           },
         },
@@ -377,7 +487,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       have_potato: false,
       zero_payout: false,
       unroll_initiator: 'us' as const,
-      semantic_phase: 'submitting_timeout_finish' as const,
+      semantic_phase: 'finishing_spending' as const,
     };
     const restored = sessionModelFromSave(
       baseSave({
@@ -393,7 +503,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     expect(restored.channel.status.ourBalance).toBe('42');
     expect(restored.channel.status).toMatchObject({
       unrollInitiator: 'us',
-      semanticPhase: 'submitting_timeout_finish',
+      semanticPhase: 'finishing_spending',
     });
   });
 
@@ -415,6 +525,9 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     expect(restored.channel.status).toMatchObject({
       unrollInitiator: null,
       semanticPhase: null,
+      stateNumber: null,
+      unrollingStateNumber: null,
+      preemptingStateNumber: null,
     });
   });
 

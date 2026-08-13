@@ -1,5 +1,11 @@
-import type { ChannelStatus, GameStatusPayload, GameStatusState } from '../../types/ChiaGaming';
 import type {
+  ChannelSemanticPhase,
+  ChannelStatus,
+  GameStatusPayload,
+  GameStatusState,
+} from '../../types/ChiaGaming';
+import type {
+  ChannelStatusModel,
   GameCoinModel,
   GameInstanceModel,
   GameInstanceViewModel,
@@ -248,4 +254,54 @@ export function nextGameInstanceAfterLocalTurn(
 ): GameInstanceViewModel {
   const next = nextGamePresentationAfterLocalTurn(instance, isMyTurn, channelState);
   return next === instance ? instance : { ...instance, ...next };
+}
+
+type UnrollCopyChannel = Pick<
+  ChannelStatusModel,
+  'semanticPhase' | 'unrollInitiator' | 'unrollingStateNumber' | 'preemptingStateNumber'
+>;
+
+const UNROLL_PHASE_LABEL: Record<ChannelSemanticPhase, (opponent: boolean) => string | null> = {
+  submitting_channel_spend: () => null,
+  unrolling: () => 'Unrolling',
+  finding_state: (opponent) => (opponent ? 'Opponent unrolled' : 'Unrolled'),
+  preempting: () => 'Preempting',
+  finishing_waiting_timeout: (opponent) =>
+    opponent ? 'Finishing opponent unroll' : 'Finishing unroll',
+  finishing_spending: (opponent) => (opponent ? 'Finishing opponent unroll' : 'Finishing unroll'),
+  resolving: () => null,
+};
+
+const UNROLL_PHASE_DETAIL: Record<
+  ChannelSemanticPhase,
+  (channel: UnrollCopyChannel) => string | null
+> = {
+  submitting_channel_spend: () => 'Submitting channel spend',
+  unrolling: (channel) =>
+    channel.unrollingStateNumber != null ? `to state ${channel.unrollingStateNumber}` : null,
+  finding_state: () => 'finding state',
+  preempting: (channel) => {
+    const landed = channel.unrollingStateNumber;
+    const preempting = channel.preemptingStateNumber;
+    if (landed != null && preempting != null) return `from ${landed} to ${preempting}`;
+    if (landed != null) return `from ${landed}`;
+    return null;
+  },
+  finishing_waiting_timeout: (channel) =>
+    channel.unrollingStateNumber != null
+      ? `waiting for timeout state ${channel.unrollingStateNumber}`
+      : 'waiting for timeout',
+  finishing_spending: (channel) =>
+    channel.unrollingStateNumber != null ? `spending state ${channel.unrollingStateNumber}` : null,
+  resolving: () => 'Resolving',
+};
+
+export function unrollActionLabel(channel: UnrollCopyChannel): string | null {
+  return channel.semanticPhase
+    ? UNROLL_PHASE_LABEL[channel.semanticPhase](channel.unrollInitiator === 'opponent')
+    : null;
+}
+
+export function unrollActionDetail(channel: UnrollCopyChannel): string | null {
+  return channel.semanticPhase ? UNROLL_PHASE_DETAIL[channel.semanticPhase](channel) : null;
 }

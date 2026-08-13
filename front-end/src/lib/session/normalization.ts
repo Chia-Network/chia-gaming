@@ -25,6 +25,9 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   zeroPayout: null,
   unrollInitiator: null,
   semanticPhase: null,
+  stateNumber: null,
+  unrollingStateNumber: null,
+  preemptingStateNumber: null,
 };
 export const DEFAULT_GAME_TIMEOUT_BLOCKS = 15n;
 export const DEFAULT_CHANNEL_TIMEOUT_BLOCKS = 15n;
@@ -66,6 +69,9 @@ export function channelStatusModelFromPayload(status: ChannelStatusPayload): Cha
     zeroPayout: status.zero_payout ?? null,
     unrollInitiator: status.unroll_initiator ?? null,
     semanticPhase: status.semantic_phase ?? null,
+    stateNumber: status.state_number ?? null,
+    unrollingStateNumber: status.unrolling_state_number ?? null,
+    preemptingStateNumber: status.preempting_state_number ?? null,
   };
 }
 export function channelStatusPayloadFromModel(status: ChannelStatusModel): ChannelStatusPayload {
@@ -81,6 +87,9 @@ export function channelStatusPayloadFromModel(status: ChannelStatusModel): Chann
     zero_payout: status.zeroPayout,
     unroll_initiator: status.unrollInitiator,
     semantic_phase: status.semanticPhase,
+    state_number: status.stateNumber,
+    unrolling_state_number: status.unrollingStateNumber,
+    preempting_state_number: status.preemptingStateNumber,
   };
 }
 

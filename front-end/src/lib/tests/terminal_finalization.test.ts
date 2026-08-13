@@ -97,6 +97,9 @@ const model = createSessionModel({
       zeroPayout: null,
       unrollInitiator: null,
       semanticPhase: null,
+      stateNumber: null,
+      unrollingStateNumber: null,
+      preemptingStateNumber: null,
     },
   },
   game: {

@@ -98,6 +98,98 @@ pub(crate) mod sim_tests {
             .expect("should build conditions")
     }
 
+    #[test]
+    fn unroll_target_is_one_behind_after_sending_the_potato() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+        let nil = allocator.allocator().nil();
+        let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
+        let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
+        let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
+        let mut env = ChannelEnv {
+            allocator: &mut allocator,
+            referee_coin_puzzle: ref_coin_puz,
+            referee_coin_puzzle_hash: ref_coin_ph,
+            unroll_puzzle,
+            standard_puzzle,
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        };
+
+        let mut game = setup_handshake(&mut rng, &mut env);
+        let first_sender = if game.player(0).ch.have_potato() {
+            0
+        } else {
+            1
+        };
+        empty_potato_round_trip(&mut game, &mut env, first_sender);
+
+        let sender = if game.player(0).ch.have_potato() {
+            0
+        } else {
+            1
+        };
+        let receiver = sender ^ 1;
+
+        let before = game.player(sender).ch.state_number();
+        assert!(before > 0);
+        assert_eq!(
+            game.player(sender).ch.unroll_target_state_number(),
+            Some(before),
+            "holding the potato, unroll target is the current state"
+        );
+
+        let sigs = game
+            .player(sender)
+            .ch
+            .send_empty_potato(&mut env)
+            .expect("send_empty_potato");
+        assert!(!game.player(sender).ch.have_potato());
+        assert_eq!(game.player(sender).ch.state_number(), before + 1);
+        assert_eq!(
+            game.player(sender).ch.unroll_target_state_number(),
+            Some(before),
+            "after sending, unroll target stays on the last co-signed state"
+        );
+
+        game.player(receiver)
+            .ch
+            .received_empty_potato(&mut env, &sigs)
+            .expect("received_empty_potato");
+        assert_eq!(
+            game.player(receiver).ch.unroll_target_state_number(),
+            Some(game.player(receiver).ch.state_number()),
+            "receiver's unroll target matches the state they just co-signed"
+        );
+
+        let mut handshake_only = setup_handshake(&mut rng, &mut env);
+        let handshake_sender = if handshake_only.player(0).ch.have_potato() {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            handshake_only
+                .player(handshake_sender)
+                .ch
+                .unroll_target_state_number(),
+            Some(handshake_only.player(handshake_sender).ch.state_number())
+        );
+        handshake_only
+            .player(handshake_sender)
+            .ch
+            .send_empty_potato(&mut env)
+            .expect("send from handshake");
+        assert_eq!(
+            handshake_only
+                .player(handshake_sender)
+                .ch
+                .unroll_target_state_number(),
+            Some(0),
+            "first send from handshake unrolls to state 0, not the bumped current state"
+        );
+    }
+
     /// Test the parity constraint in preemption unroll spends.
     ///
     /// After 3 round-trips of empty potato exchanges, player 0 has:

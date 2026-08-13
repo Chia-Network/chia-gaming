@@ -171,6 +171,22 @@ impl ChannelState {
             .map(|t| t.coin.state_number)
     }
 
+    /// Last fully co-signed unroll we can spend the channel coin to.
+    /// Equal to `state_number()` when we hold the potato; one behind after we
+    /// send, until the peer countersigns the new channel spend.
+    pub fn unroll_target_state_number(&self) -> Option<usize> {
+        if let Some(info) = &self.latest_received_unroll {
+            return Some(info.coin.state_number);
+        }
+        // Never received: the only co-signed unroll is the handshake state (0).
+        // Holding the potato means we have not sent yet, so that is current.
+        if self.have_potato {
+            Some(self.state_number)
+        } else {
+            Some(0)
+        }
+    }
+
     pub fn have_potato(&self) -> bool {
         self.have_potato
     }
@@ -1685,11 +1701,15 @@ impl ChannelState {
         })
     }
 
-    /// Build a preemption (challenge-path) spend of the unroll coin.
-    /// The PUZZLE must match the on-chain coin (built from the state that
-    /// matches the on-chain unroll).  The SOLUTION and SIGNATURE come from
-    /// our latest state that satisfies the CLSP parity constraint:
-    ///   logand(1, logxor(our_state_number, OLD_SEQUENCE_NUMBER)) == 1
+    /// State number we would preempt `old_state_number` with, if any eligible
+    /// stored unroll record has the required parity and peer half-signature.
+    pub fn preempting_state_number_for(&self, old_state_number: usize) -> Option<usize> {
+        self.preemption_source(old_state_number)
+            .map(|info| info.coin.state_number)
+    }
+
+    /// Pick a stored unroll whose state number has opposite parity from
+    /// `old_state_number` and that carries the peer's preemption half-signature.
     fn preemption_source(&self, old_state_number: usize) -> Option<&ChannelUnrollSpendInfo> {
         let has_peer_sig = |info: &ChannelUnrollSpendInfo| {
             info.signatures.unroll_preempt_half_sig != Aggsig::default()
@@ -1707,6 +1727,11 @@ impl ChannelState {
         }
     }
 
+    /// Build a preemption (challenge-path) spend of the unroll coin.
+    /// The PUZZLE must match the on-chain coin (built from the state that
+    /// matches the on-chain unroll).  The SOLUTION and SIGNATURE come from
+    /// our latest state that satisfies the CLSP parity constraint:
+    ///   logand(1, logxor(our_state_number, OLD_SEQUENCE_NUMBER)) == 1
     fn make_preemption_unroll_spend(
         &self,
         env: &mut ChannelEnv<'_>,

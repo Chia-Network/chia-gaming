@@ -17,7 +17,9 @@ use crate::common::types::{GameID, PrivateKey, Program, Timeout};
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
 #[cfg(test)]
-use crate::session_phases::effects::{apply_effects, Effect, GameNotification};
+use crate::session_phases::effects::{
+    apply_effects, ChannelStatusSnapshot, Effect, GameNotification,
+};
 #[cfg(test)]
 use crate::session_phases::game_collection;
 #[cfg(test)]
@@ -165,9 +167,9 @@ impl ToLocalUI for Pipe {
                     }
                 }
             }
-            GameNotification::ChannelStatus {
+            GameNotification::ChannelStatus(ChannelStatusSnapshot {
                 state, advisory, ..
-            } => {
+            }) => {
                 use crate::session_phases::effects::ChannelStatus;
                 if matches!(
                     state,

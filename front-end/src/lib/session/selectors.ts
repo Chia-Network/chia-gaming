@@ -10,6 +10,8 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   ON_CHAIN_CHANNEL_STATES,
   gameInstanceView,
+  unrollActionDetail,
+  unrollActionLabel,
 } from './presentation';
 import { RESOLVED_CHANNEL_STATES, WINDING_DOWN_CHANNEL_STATES } from './normalization';
 import type {
@@ -298,26 +300,27 @@ function channelStatusDetail(model: SessionModel): string | null {
   if (channel.sessionDisposition === 'AwaitOutboundTerminal') {
     return channel.advisory ?? 'Waiting for peer to acknowledge close';
   }
-  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
-    submitting_channel_spend: 'Submitting channel spend',
-    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
-    preempting: 'Preempting unroll',
-    waiting_timeout: 'Waiting for timeout',
-    submitting_timeout_finish: 'Submitting timeout finish',
-    resolving: 'Resolving',
-  };
+  const unrollLabel = unrollActionLabel(channel);
+  if (unrollLabel) {
+    const unrollDetail = unrollActionDetail(channel);
+    if (unrollDetail) {
+      return channel.advisory ? `${unrollDetail}: ${channel.advisory}` : unrollDetail;
+    }
+    return channel.advisory;
+  }
   if (channel.semanticPhase) {
-    const phase = phaseLabels[channel.semanticPhase];
-    const initiator =
-      channel.unrollInitiator === 'us'
-        ? ' (initiated by you)'
-        : channel.unrollInitiator === 'opponent'
-          ? ' (initiated by opponent)'
-          : '';
-    const detail = `${phase}${initiator}`;
-    return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
+    const detail = unrollActionDetail(channel);
+    if (detail) {
+      return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
+    }
   }
   switch (channel.state) {
+    case 'Active':
+      if (channel.stateNumber != null) {
+        const stateDetail = `state ${channel.stateNumber}`;
+        return channel.advisory ? `${stateDetail}: ${channel.advisory}` : stateDetail;
+      }
+      return channel.advisory;
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
     default:
@@ -535,7 +538,7 @@ export function selectGameDashboardView(
         ? 'Abandoned'
         : channel.sessionDisposition === 'AwaitOutboundTerminal'
           ? 'Waiting for Peer'
-          : CHANNEL_STATUS_LABELS[channel.state],
+          : (unrollActionLabel(channel) ?? CHANNEL_STATUS_LABELS[channel.state]),
     channelDetail: channelStatusDetail(model),
     havePotato: channel.havePotato === true,
     handStatusLabel: collapsedHandStatusLabel(model),

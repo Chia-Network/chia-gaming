@@ -7,6 +7,26 @@ export function jsonParse(text: string): any {
   });
 }
 
+/**
+ * Promote integer `number`s to `bigint` at an inbound JS boundary.
+ * Typed arrays stay bytes — they are the documented exception to the bigint rule.
+ */
+export function integersToBigInt<T>(value: T): T {
+  return convertIntegersToBigInt(value) as T;
+}
+
+function convertIntegersToBigInt(value: unknown): unknown {
+  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
+  if (value === null || typeof value !== 'object') return value;
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return value;
+  if (Array.isArray(value)) return value.map(convertIntegersToBigInt);
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = convertIntegersToBigInt(entry);
+  }
+  return out;
+}
+
 const BYTES_TAG = '$bytes';
 
 function uint8ToBase64(bytes: Uint8Array): string {

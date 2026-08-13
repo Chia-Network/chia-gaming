@@ -1,4 +1,5 @@
 import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
+import { CHANNEL_SEMANTIC_PHASES } from '../../types/ChiaGaming';
 import type {
   LiveSessionSave,
   PreHandshakeSessionSave,
@@ -56,6 +57,7 @@ import {
   parseDiscriminant,
   requireBigintString,
   requireBigint,
+  requireOptionalBigint,
   requireBoolean,
   requireNullableString,
   requireRecord,
@@ -243,16 +245,12 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
       ? fields.semantic_phase
       : parseDiscriminant<NonNullable<ChannelStatusPayload['semantic_phase']>>(
           fields.semantic_phase,
-          new Set([
-            'submitting_channel_spend',
-            'resolving_opponent_channel_spend',
-            'preempting',
-            'waiting_timeout',
-            'submitting_timeout_finish',
-            'resolving',
-          ]),
+          new Set<string>(CHANNEL_SEMANTIC_PHASES),
           'channelStatus.semantic_phase',
         );
+  const optionalStateNumber = (
+    field: 'state_number' | 'unrolling_state_number' | 'preempting_state_number',
+  ) => requireOptionalBigint(fields[field], `channelStatus.${field}`);
   return {
     state: parseDiscriminant<ChannelStatus>(fields.state, CHANNEL_STATUSES, 'channelStatus.state'),
     session_disposition: sessionDisposition,
@@ -265,6 +263,9 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
     zero_payout: zeroPayout,
     unroll_initiator: unrollInitiator,
     semantic_phase: semanticPhase,
+    state_number: optionalStateNumber('state_number'),
+    unrolling_state_number: optionalStateNumber('unrolling_state_number'),
+    preempting_state_number: optionalStateNumber('preempting_state_number'),
   };
 }
 

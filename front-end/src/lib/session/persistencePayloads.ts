@@ -1,4 +1,5 @@
 import type { ChannelStatus } from '../../types/ChiaGaming';
+import { CHANNEL_SEMANTIC_PHASES } from '../../types/ChiaGaming';
 import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
 import type {
   LiveSessionSave,
@@ -62,14 +63,7 @@ const NOTIFICATION_KINDS = new Set([
   'insufficient-bal',
 ]);
 const SESSION_DISPOSITIONS = new Set(['AwaitOutboundTerminal', 'Abandoned']);
-const CHANNEL_SEMANTIC_PHASES = new Set([
-  'submitting_channel_spend',
-  'resolving_opponent_channel_spend',
-  'preempting',
-  'waiting_timeout',
-  'submitting_timeout_finish',
-  'resolving',
-]);
+const CHANNEL_SEMANTIC_PHASE_SET = new Set<string>(CHANNEL_SEMANTIC_PHASES);
 const OUTCOME_FLAGS = new Set(['win', 'lose', 'tie']);
 const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
   'none',
@@ -377,9 +371,24 @@ export function validateChannelStatus(value: unknown): void {
     status.semantic_phase !== undefined &&
     status.semantic_phase !== null &&
     (typeof status.semantic_phase !== 'string' ||
-      !CHANNEL_SEMANTIC_PHASES.has(status.semantic_phase))
+      !CHANNEL_SEMANTIC_PHASE_SET.has(status.semantic_phase))
   ) {
     throw new Error('Garbled save: invalid channelStatus.semantic_phase');
+  }
+  for (const field of [
+    'state_number',
+    'unrolling_state_number',
+    'preempting_state_number',
+  ] as const) {
+    const value = status[field];
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'bigint') {
+      if (value < 0n) throw new Error(`Garbled save: invalid channelStatus.${field}`);
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+      throw new Error(`Garbled save: invalid channelStatus.${field}`);
+    }
   }
 }
 

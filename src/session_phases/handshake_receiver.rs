@@ -770,8 +770,6 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         if self.failed {
             return Some(ChannelStatusSnapshot {
-                state: ChannelStatus::Failed,
-                session_disposition: None,
                 advisory: self.failure_advisory.clone(),
                 coin: self
                     .channel_state
@@ -789,10 +787,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     .channel_state
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
-                have_potato: None,
-                zero_payout: None,
-                unroll_initiator: None,
-                semantic_phase: None,
+                ..ChannelStatusSnapshot::new(ChannelStatus::Failed)
             });
         }
         // The channel-creation expiry -> Failed signal now lives in the
@@ -801,9 +796,6 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         // value; it no longer drives a status branch.
         if self.pending_coin_spend {
             return Some(ChannelStatusSnapshot {
-                state: ChannelStatus::WaitingForHeightToAccept,
-                session_disposition: None,
-                advisory: None,
                 coin: self
                     .channel_state
                     .as_ref()
@@ -820,10 +812,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     .channel_state
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
-                have_potato: None,
-                zero_payout: None,
-                unroll_initiator: None,
-                semantic_phase: None,
+                ..ChannelStatusSnapshot::new(ChannelStatus::WaitingForHeightToAccept)
             });
         }
         let state = match &self.state {
@@ -850,17 +839,11 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                 (None, None, None)
             };
         Some(ChannelStatusSnapshot {
-            state,
-            session_disposition: None,
-            advisory: None,
             coin,
             our_balance,
             their_balance,
             game_allocated,
-            have_potato: None,
-            zero_payout: None,
-            unroll_initiator: None,
-            semantic_phase: None,
+            ..ChannelStatusSnapshot::new(state)
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {

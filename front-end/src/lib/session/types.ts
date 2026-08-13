@@ -107,6 +107,9 @@ export interface ChannelStatusModel {
   zeroPayout: boolean | null;
   unrollInitiator: 'us' | 'opponent' | null;
   semanticPhase: ChannelStatusPayload['semantic_phase'] | null;
+  stateNumber: bigint | null;
+  unrollingStateNumber: bigint | null;
+  preemptingStateNumber: bigint | null;
 }
 
 export interface QueuedNotificationModel {

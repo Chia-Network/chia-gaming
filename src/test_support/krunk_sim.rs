@@ -84,7 +84,7 @@ mod sim_tests {
     use crate::channel_state::types::{ChannelEnv, OnChainGameState, TimeoutClaimState};
     use crate::common::types::{Amount, CoinString, Hash, PuzzleHash, Timeout};
     use crate::session_phases::effects::{
-        ChannelStatus, GameNotification, GameStatusKind, SettlementOutcome,
+        ChannelStatus, ChannelStatusSnapshot, GameNotification, GameStatusKind, SettlementOutcome,
     };
     use crate::session_phases::on_chain::{OnChainPhase, OnChainPhaseArgs};
     use crate::session_phases::types::{GameAction, PotatoState};
@@ -257,10 +257,12 @@ mod sim_tests {
             .position(|event| {
                 matches!(
                     event,
-                    TestEvent::Notification(GameNotification::ChannelStatus {
-                        state: ChannelStatus::ResolvedUnrolled,
-                        ..
-                    })
+                    TestEvent::Notification(GameNotification::ChannelStatus(
+                        ChannelStatusSnapshot {
+                            state: ChannelStatus::ResolvedUnrolled,
+                            ..
+                        }
+                    ))
                 )
             })
             .expect("picker must observe unroll resolution");
@@ -540,10 +542,10 @@ mod sim_tests {
                 assert!(
                     ui.notifications.iter().any(|notification| matches!(
                         notification,
-                        GameNotification::ChannelStatus {
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
                             state: ChannelStatus::ResolvedUnrolled,
                             ..
-                        }
+                        })
                     )),
                     "player {who} should resolve through the known unroll: {:?}",
                     ui.notifications
@@ -551,10 +553,10 @@ mod sim_tests {
                 assert!(
                     !ui.notifications.iter().any(|notification| matches!(
                         notification,
-                        GameNotification::ChannelStatus {
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
                             state: ChannelStatus::Failed,
                             ..
-                        }
+                        })
                     )),
                     "player {who} should not fail unroll recognition: {:?}",
                     ui.notifications
