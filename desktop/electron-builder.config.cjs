@@ -59,8 +59,8 @@ module.exports = {
     entitlementsInherit: 'packaging/entitlements.mac.plist',
     target: [{ target: 'dmg' }, { target: 'zip' }],
   },
-  // Notarization and signing identities are release-time concerns; configure
-  // Apple credentials in CI before enabling them.
+  // Trusted CI builds provide the Developer ID identity to electron-builder,
+  // then notarize and staple the resulting DMG before uploading it.
   win: { target: [{ target: 'nsis' }] },
   nsis: {
     oneClick: false,
