@@ -2123,7 +2123,9 @@ const Shell = () => {
         if (cancelled) return;
         const trustError = hubTrustError(trust, origin);
         if (trustError !== null) {
-          saveHubUrl(undefined);
+          if (trust === 'invalid') {
+            saveHubUrl(undefined);
+          }
           setHubConnectionError(trustError);
           return;
         }
