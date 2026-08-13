@@ -42,17 +42,17 @@ export function installHubTrustHandler(config: DesktopConfig, policy: PolicyRef)
       return 'trusted';
     }
 
-    config.hubOrigins = [...config.hubOrigins, origin];
-    policy.current = buildNetworkPolicy(config);
-    log.info(`trusted hub origin ${origin}`);
-
-    // Failing to persist costs the user the same reload next launch; it does
-    // not invalidate the grant made for this one.
+    const hubOrigins = [...config.hubOrigins, origin];
     try {
-      persistHubOrigins(config.hubOrigins);
+      persistHubOrigins(hubOrigins);
     } catch (error) {
       log.error(`could not persist hub origins: ${(error as Error).message}`);
+      return 'persist-failed';
     }
+
+    config.hubOrigins = hubOrigins;
+    policy.current = buildNetworkPolicy(config);
+    log.info(`trusted hub origin ${origin}`);
 
     return 'granted';
   });
