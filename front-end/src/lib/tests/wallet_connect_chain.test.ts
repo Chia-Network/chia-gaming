@@ -5,10 +5,7 @@ import {
   getRequiredNamespaces,
   ChiaMethod,
 } from '../../constants/wallet-connect';
-import {
-  MAINNET_GENESIS_CHALLENGE,
-  TESTNET_GENESIS_CHALLENGE,
-} from '../../constants/env';
+import { MAINNET_GENESIS_CHALLENGE, TESTNET_GENESIS_CHALLENGE } from '../../constants/env';
 import { setNetwork, _resetForTests } from '../../hooks/save';
 
 function makeStorage(): Storage {
