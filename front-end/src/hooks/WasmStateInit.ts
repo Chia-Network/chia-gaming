@@ -163,6 +163,7 @@ export class WasmStateInit {
     my_contribution: bigint,
     their_contribution: bigint,
     rewardPuzzleHash: string,
+    genesisChallenge: string,
     channelTimeout = 15,
     unrollTimeout = 15,
   ): { game: ChiaGame; puzzleHash: string } {
@@ -174,6 +175,7 @@ export class WasmStateInit {
       channel_timeout: channelTimeout,
       unroll_timeout: unrollTimeout,
       reward_puzzle_hash: rewardPuzzleHash,
+      genesis_challenge: genesisChallenge,
     });
 
     return {

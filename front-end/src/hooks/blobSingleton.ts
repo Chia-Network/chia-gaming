@@ -11,6 +11,7 @@ import {
   SessionSave,
 } from './save';
 import { coerceToBytes } from '../util';
+import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import {
   DIAGNOSTIC_LOG_LIMIT,
@@ -121,6 +122,7 @@ export async function configSessionController(
     sc.myContribution,
     theirContribution,
     sc.rewardPuzzleHash,
+    getGenesisChallenge(),
     channelTimeout,
     unrollTimeout,
   );

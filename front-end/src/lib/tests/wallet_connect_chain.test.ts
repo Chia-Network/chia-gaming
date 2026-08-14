@@ -1,5 +1,14 @@
 import 'fake-indexeddb/auto';
-import { getChainId, getRequiredNamespaces, ChiaMethod } from '../../constants/wallet-connect';
+import {
+  getChainId,
+  getGenesisChallenge,
+  getRequiredNamespaces,
+  ChiaMethod,
+} from '../../constants/wallet-connect';
+import {
+  MAINNET_GENESIS_CHALLENGE,
+  TESTNET_GENESIS_CHALLENGE,
+} from '../../constants/env';
 import { setNetwork, _resetForTests } from '../../hooks/save';
 
 function makeStorage(): Storage {
@@ -58,5 +67,35 @@ describe('WalletConnect chain id follows the network preference', () => {
   it('always requests the full Chia method set', () => {
     const methods = getRequiredNamespaces().chia.methods;
     expect(methods).toEqual(Object.values(ChiaMethod));
+  });
+});
+
+describe('genesis challenge follows the network preference', () => {
+  beforeEach(() => {
+    _resetForTests();
+    setGlobal('localStorage', makeStorage());
+    setGlobal('sessionStorage', makeStorage());
+  });
+
+  afterEach(() => {
+    _resetForTests();
+    Reflect.deleteProperty(globalThis, 'localStorage');
+    Reflect.deleteProperty(globalThis, 'sessionStorage');
+  });
+
+  it('defaults to the mainnet genesis challenge', () => {
+    expect(getGenesisChallenge()).toBe(MAINNET_GENESIS_CHALLENGE);
+  });
+
+  it('uses the testnet11 genesis challenge when the preference is testnet', () => {
+    setNetwork('testnet');
+    expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
+  });
+
+  it('switches back to mainnet when the preference changes', () => {
+    setNetwork('testnet');
+    expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
+    setNetwork('mainnet');
+    expect(getGenesisChallenge()).toBe(MAINNET_GENESIS_CHALLENGE);
   });
 });

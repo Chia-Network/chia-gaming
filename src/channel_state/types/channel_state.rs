@@ -71,7 +71,21 @@ pub struct ChannelEnv<'a> {
 }
 
 impl<'a> ChannelEnv<'a> {
+    /// Construct a channel environment using the mainnet genesis challenge.
+    /// Prefer `new_with_genesis` in production so signatures match the network
+    /// the session is bound to; this default is retained for tests and the
+    /// simulator, which operate against the mainnet constant.
     pub fn new(allocator: &'a mut AllocEncoder) -> Result<ChannelEnv<'a>, Error> {
+        ChannelEnv::new_with_genesis(allocator, &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA))
+    }
+
+    /// Construct a channel environment bound to a specific network's genesis
+    /// challenge (AGG_SIG_ME additional data). This value is folded into every
+    /// AGG_SIG_ME signature, so it must match the connected network.
+    pub fn new_with_genesis(
+        allocator: &'a mut AllocEncoder,
+        agg_sig_me_additional_data: &Hash,
+    ) -> Result<ChannelEnv<'a>, Error> {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
         let unroll_puzzle = read_hex_puzzle(
             allocator,
@@ -85,7 +99,7 @@ impl<'a> ChannelEnv<'a> {
             referee_coin_puzzle_hash,
             unroll_puzzle,
             standard_puzzle,
-            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         })
     }
 }

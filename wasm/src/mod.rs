@@ -138,7 +138,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 4;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 5;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -204,6 +204,7 @@ mod gaming_wasm {
         channel_timeout: i32,
         unroll_timeout: i32,
         reward_puzzle_hash: String,
+        genesis_challenge: String,
     }
 
     struct GameConfigPartial {
@@ -214,6 +215,7 @@ mod gaming_wasm {
         my_contribution: Amount,
         their_contribution: Amount,
         reward_puzzle_hash: PuzzleHash,
+        agg_sig_me_additional_data: Hash,
         rng_id: i32,
     }
 
@@ -227,6 +229,12 @@ mod gaming_wasm {
                 jsconfig.reward_puzzle_hash.len(),
             ))
         })?;
+        let genesis_challenge_bytes = hex::decode(&jsconfig.genesis_challenge).map_err(|e| {
+            js_error(&format!(
+                "genesis_challenge hex decode: {e:?} (length={})",
+                jsconfig.genesis_challenge.len(),
+            ))
+        })?;
 
         Ok(GameConfigPartial {
             game_types,
@@ -238,6 +246,7 @@ mod gaming_wasm {
             reward_puzzle_hash: PuzzleHash::from_hash(
                 Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?,
             ),
+            agg_sig_me_additional_data: Hash::from_slice(&genesis_challenge_bytes).into_js()?,
             rng_id: jsconfig.rng_id,
         })
     }
@@ -330,6 +339,7 @@ mod gaming_wasm {
                 my_contribution: partial.my_contribution,
                 their_contribution: partial.their_contribution,
                 reward_puzzle_hash: partial.reward_puzzle_hash,
+                agg_sig_me_additional_data: partial.agg_sig_me_additional_data,
             };
 
             let game_cradle = GameSession::new(rng, config);
