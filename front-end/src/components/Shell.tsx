@@ -1129,7 +1129,7 @@ const Shell = () => {
     saveNetwork(next);
   }, []);
 
-  const currency = useMemo(() => getCurrencyLabels(), [network]);
+  const currency = getCurrencyLabels();
 
   // Theme state
   const [isDark, setIsDark] = useState<boolean>(() => {
