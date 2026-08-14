@@ -6,7 +6,7 @@ import {
   ChiaMethod,
 } from '../../constants/wallet-connect';
 import { MAINNET_GENESIS_CHALLENGE, TESTNET_GENESIS_CHALLENGE } from '../../constants/env';
-import { setNetwork, _resetForTests } from '../../hooks/save';
+import { setNetwork, saveSession, _resetForTests } from '../../hooks/save';
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -94,5 +94,17 @@ describe('genesis challenge follows the network preference', () => {
     expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
     setNetwork('mainnet');
     expect(getGenesisChallenge()).toBe(MAINNET_GENESIS_CHALLENGE);
+  });
+
+  it('uses the mainnet challenge for the simulator even when testnet is selected', async () => {
+    setNetwork('testnet');
+    await saveSession({ scope: 'common', preferences: { blockchainType: 'simulator' } });
+    expect(getGenesisChallenge()).toBe(MAINNET_GENESIS_CHALLENGE);
+  });
+
+  it('still uses the testnet challenge for WalletConnect when testnet is selected', async () => {
+    setNetwork('testnet');
+    await saveSession({ scope: 'common', preferences: { blockchainType: 'walletconnect' } });
+    expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
   });
 });

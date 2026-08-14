@@ -9,6 +9,7 @@ import {
   TESTNET_GENESIS_CHALLENGE,
 } from './env';
 import { isTestnet } from './currency';
+import { PREFERENCES_KEY } from '../hooks/savePreferences';
 import { getNetwork } from '../hooks/save';
 
 export enum ChiaMethod {
@@ -35,18 +36,39 @@ export function getChainId(): string {
 }
 
 /**
- * Genesis challenge (AGG_SIG_ME additional data) hex for the currently-selected
- * Chia network. A build-time/window override wins over the persisted network
- * preference. This is threaded into the WASM game session so on-chain signatures
- * (channel funding, unroll, clean-shutdown payouts) match the connected network.
+ * True when the persisted connection preference is the local simulator.
+ * Direct localStorage read: `getBlockchainType()` would seed the session-save
+ * cache the same way `getNetwork()` would.
+ */
+function readBlockchainIsSimulator(): boolean {
+  try {
+    const raw = localStorage.getItem(PREFERENCES_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { blockchainType?: unknown };
+    return parsed.blockchainType === 'simulator';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Genesis challenge (AGG_SIG_ME additional data) hex for the chain this session
+ * will actually talk to. A build-time/window override wins.
  *
- * Reads the preference via `isTestnet()` (a direct, read-only lookup) rather
- * than `getNetwork()`, which would seed the session-save cache with a
+ * The local simulator always verifies spends against the hardcoded mainnet
+ * `AGG_SIG_ME_ADDITIONAL_DATA` constant, so simulator sessions use the mainnet
+ * challenge even if the UI network toggle is Testnet. That toggle still drives
+ * WalletConnect chain id and currency labels; it is not a simulated network.
+ *
+ * Reads preferences via direct localStorage lookups (`isTestnet()`,
+ * `readBlockchainIsSimulator()`) rather than `getNetwork()` /
+ * `getBlockchainType()`, which would seed the session-save cache with a
  * non-durable `preferences` record as a side effect — that seeding trips the
  * durability guard when this runs inside session creation.
  */
 export function getGenesisChallenge(): string {
   if (GENESIS_CHALLENGE_OVERRIDE) return GENESIS_CHALLENGE_OVERRIDE;
+  if (readBlockchainIsSimulator()) return MAINNET_GENESIS_CHALLENGE;
   return isTestnet() ? TESTNET_GENESIS_CHALLENGE : MAINNET_GENESIS_CHALLENGE;
 }
 
