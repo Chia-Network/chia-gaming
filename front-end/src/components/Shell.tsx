@@ -103,6 +103,7 @@ import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
+  sessionLocksNetwork,
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
@@ -1124,11 +1125,6 @@ const Shell = () => {
     [feeEditing, feeInput, parseFeeInput],
   );
 
-  const handleNetworkChange = useCallback((next: ChiaNetwork) => {
-    setNetwork(next);
-    saveNetwork(next);
-  }, []);
-
   const currency = getCurrencyLabels();
 
   // Theme state
@@ -1163,6 +1159,26 @@ const Shell = () => {
   const sessionFinishedCleanupRef = useRef(false);
   const sessionPhaseRef = useRef<SessionPhase>('none');
   sessionPhaseRef.current = sessionPhase;
+
+  const networkLocked = sessionLocksNetwork(
+    sessionPhase,
+    sessionSaveRef.current?.phase,
+    sessionConfig?.pairingToken,
+  );
+
+  const handleNetworkChange = useCallback((next: ChiaNetwork) => {
+    if (
+      sessionLocksNetwork(
+        sessionPhaseRef.current,
+        sessionSaveRef.current?.phase,
+        sessionConfigRef.current?.pairingToken,
+      )
+    ) {
+      return;
+    }
+    setNetwork(next);
+    saveNetwork(next);
+  }, []);
 
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
@@ -3881,18 +3897,27 @@ const Shell = () => {
                   <span className="text-sm text-canvas-text">Network</span>
                   <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
                     <button
+                      type="button"
+                      disabled={networkLocked}
                       onClick={() => handleNetworkChange('mainnet')}
-                      className={`px-3 py-1 transition-colors ${network === 'mainnet' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      className={`px-3 py-1 transition-colors ${network === 'mainnet' ? 'bg-canvas-bg-active font-semibold' : networkLocked ? '' : 'hover:bg-canvas-bg-hover'} ${networkLocked ? 'opacity-40 cursor-default' : ''}`}
                     >
                       Mainnet
                     </button>
                     <button
+                      type="button"
+                      disabled={networkLocked}
                       onClick={() => handleNetworkChange('testnet')}
-                      className={`px-3 py-1 transition-colors border-l border-canvas-border ${network === 'testnet' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                      className={`px-3 py-1 transition-colors border-l border-canvas-border ${network === 'testnet' ? 'bg-canvas-bg-active font-semibold' : networkLocked ? '' : 'hover:bg-canvas-bg-hover'} ${networkLocked ? 'opacity-40 cursor-default' : ''}`}
                     >
                       Testnet
                     </button>
                   </div>
+                  {networkLocked && (
+                    <p className="text-xs text-canvas-text text-center">
+                      Network is locked for this session
+                    </p>
+                  )}
                 </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
                   <Button

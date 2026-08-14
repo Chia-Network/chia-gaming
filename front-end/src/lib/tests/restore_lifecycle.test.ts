@@ -1,6 +1,7 @@
 import {
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
+  sessionLocksNetwork,
   shouldAdvertiseAvailable,
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelAttemptOnDisconnect,
@@ -76,6 +77,21 @@ describe('restore lifecycle gates', () => {
     // Explicit walletConnected=true matches the default behavior.
     expect(shouldReportHubBusy('none', true)).toBe(false);
     expect(shouldReportHubBusy('off-chain', true)).toBe(true);
+  });
+
+  it('locks the network while a session binds a genesis challenge', () => {
+    expect(sessionLocksNetwork('none')).toBe(false);
+    expect(sessionLocksNetwork('resolved')).toBe(false);
+    expect(sessionLocksNetwork('resolved', 'live', 'pair')).toBe(false);
+    expect(sessionLocksNetwork('resolved', 'terminal')).toBe(false);
+
+    expect(sessionLocksNetwork('off-chain')).toBe(true);
+    expect(sessionLocksNetwork('on-chain')).toBe(true);
+    expect(sessionLocksNetwork('none', 'live')).toBe(true);
+    expect(sessionLocksNetwork('none', 'pre-handshake')).toBe(true);
+    expect(sessionLocksNetwork('none', 'preferences', 'pair')).toBe(true);
+    expect(sessionLocksNetwork('none', 'preferences')).toBe(false);
+    expect(sessionLocksNetwork('none', 'terminal')).toBe(false);
   });
 
   it('keeps hub presence busy for a non-terminal restore cradle even when phase is still none', () => {

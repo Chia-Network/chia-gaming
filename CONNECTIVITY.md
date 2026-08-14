@@ -422,7 +422,10 @@ The hub does not create a session. It can only advise and relay:
   (`shouldReportHubBusy(phase, false)` forces busy regardless of phase) and
   cancels any pending pre-Active matchmaking attempt; wallet reconnect
   recomputes presence from the session phase and any in-progress non-terminal
-  restore cradle (phase alone is often still `none` mid-resume). (`Shell.tsx`)
+  restore cradle (phase alone is often still `none` mid-resume). The Choose
+  Connection network toggle is locked while a session binds a genesis
+  challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
+  chain id than the existing WASM cradle. (`Shell.tsx`)
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via
