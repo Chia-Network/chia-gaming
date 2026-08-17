@@ -2601,7 +2601,7 @@ const Shell = () => {
     applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
     const unsubscribe = activeBlockchainPoller.rpc.onPlayReadinessChange(applyReady);
     return unsubscribe;
-  }, [activeBlockchainPoller, hubOrigin, walletConnected]);
+  }, [activeBlockchainPoller, freshStartPersistInFlightRef, hubOrigin, walletConnected]);
 
   const handleTabChange = useCallback(
     (tabId: TabId) => {
