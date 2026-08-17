@@ -89,8 +89,9 @@ fn emit_rerun_directives(dir: &Path) {
 fn main() {
     emit_rerun_directives(Path::new("clsp"));
     println!("cargo:rerun-if-changed=chialisp.toml");
+    println!("cargo:rerun-if-env-changed=CHIALISP_COMPILE");
 
-    if std::env::var("CHIALISP_NOCOMPILE").is_err() {
+    if std::env::var("CHIALISP_COMPILE").is_ok() {
         if let Err(e) = compile_chialisp() {
             panic!("error compiling chialisp: {e:?}");
         }

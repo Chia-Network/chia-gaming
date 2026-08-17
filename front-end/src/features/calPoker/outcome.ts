@@ -1,6 +1,7 @@
 import { Program } from 'clvm-lib';
 
-import { cardIdToRankSuit } from './types/cardHelpers';
+import { makeDescription } from './components/utils';
+import { cardIdToRankSuit, handValueToDescription } from './types/cardHelpers';
 
 function selectCardsUsingBits<T>(cards: T[], mask: bigint): T[][] {
   const kept: T[] = [];
@@ -22,6 +23,80 @@ function compareCards(a: bigint, b: bigint): number {
   const bRankSuit = cardIdToRankSuit(b);
   const rankDifference = aRankSuit.rank - bRankSuit.rank;
   return rankDifference === 0 ? aRankSuit.suit - bRankSuit.suit : rankDifference;
+}
+
+export interface CalpokerOutcomeShape<T extends bigint | string> {
+  my_win_outcome: 'win' | 'lose' | 'tie';
+  my_cards: T[];
+  their_cards: T[];
+  my_final_hand: T[];
+  their_final_hand: T[];
+  my_used_cards: T[];
+  their_used_cards: T[];
+  my_hand_value: T[];
+  their_hand_value: T[];
+}
+
+export interface CalpokerFinalDisplayProjection<T extends bigint | string> {
+  winner: 'player' | 'ai' | 'tie';
+  playerCards: T[];
+  opponentCards: T[];
+  playerDiscardIds: T[];
+  opponentDiscardIds: T[];
+  playerHaloCardIds: T[];
+  opponentHaloCardIds: T[];
+  playerBestHandCardIds: T[];
+  opponentBestHandCardIds: T[];
+  playerDisplayText: string;
+  opponentDisplayText: string;
+}
+
+export function projectCalpokerFinalDisplay<T extends bigint | string>(
+  outcome: CalpokerOutcomeShape<T>,
+): CalpokerFinalDisplayProjection<T> {
+  const playerFinalSet = new Set(outcome.my_final_hand);
+  const opponentFinalSet = new Set(outcome.their_final_hand);
+  const playerDiscardIds = outcome.my_cards.filter((id) => !playerFinalSet.has(id));
+  const opponentDiscardIds = outcome.their_cards.filter((id) => !opponentFinalSet.has(id));
+  const playerDiscardToIncoming = new Map<T, T>();
+  const opponentDiscardToIncoming = new Map<T, T>();
+  for (let index = 0; index < playerDiscardIds.length; index++) {
+    playerDiscardToIncoming.set(playerDiscardIds[index], opponentDiscardIds[index]);
+  }
+  for (let index = 0; index < opponentDiscardIds.length; index++) {
+    opponentDiscardToIncoming.set(opponentDiscardIds[index], playerDiscardIds[index]);
+  }
+  const playerCards = outcome.my_cards.map((card) => playerDiscardToIncoming.get(card) ?? card);
+  const opponentCards = outcome.their_cards.map(
+    (card) => opponentDiscardToIncoming.get(card) ?? card,
+  );
+  const asBigints = (values: T[]) => values.map(BigInt);
+
+  return {
+    winner:
+      outcome.my_win_outcome === 'win'
+        ? 'player'
+        : outcome.my_win_outcome === 'lose'
+          ? 'ai'
+          : 'tie',
+    playerCards,
+    opponentCards,
+    playerDiscardIds,
+    opponentDiscardIds,
+    playerHaloCardIds: opponentDiscardIds,
+    opponentHaloCardIds: playerDiscardIds,
+    playerBestHandCardIds: outcome.my_used_cards,
+    opponentBestHandCardIds: outcome.their_used_cards,
+    playerDisplayText: makeDescription(
+      handValueToDescription(asBigints(outcome.my_hand_value), asBigints(outcome.my_used_cards)),
+    ),
+    opponentDisplayText: makeDescription(
+      handValueToDescription(
+        asBigints(outcome.their_hand_value),
+        asBigints(outcome.their_used_cards),
+      ),
+    ),
+  };
 }
 
 export class CalpokerOutcome {

@@ -47,6 +47,10 @@ cleanup() {
         kill "$SIM_PID" 2>/dev/null || true
         wait "$SIM_PID" 2>/dev/null || true
     fi
+    if [ -n "$HUB_TEST_PID" ]; then
+        kill "$HUB_TEST_PID" 2>/dev/null || true
+        wait "$HUB_TEST_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT INT TERM
 
@@ -79,7 +83,8 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 echo "=== Running hub-service tests ==="
-pnpm --filter chia-gaming-hub-service run test
+pnpm --filter chia-gaming-hub-service run test &
+HUB_TEST_PID=$!
 
 # Use a per-run port so a browser connected to the development simulator cannot
 # reconnect to the test simulator and submit transactions from unrelated state.
@@ -118,4 +123,24 @@ fi
 # We just guaranteed the sim is up; a "no sim" skip here would hide a broken
 # harness, so make it a hard failure to match CI.
 export LOAD_WASM_REQUIRE_SIM=1
-pnpm --filter chia-gaming-fe run test
+FRONTEND_STATUS=0
+if pnpm --filter chia-gaming-fe run test; then
+    :
+else
+    FRONTEND_STATUS=$?
+fi
+
+HUB_STATUS=0
+if wait "$HUB_TEST_PID"; then
+    :
+else
+    HUB_STATUS=$?
+fi
+HUB_TEST_PID=
+
+if [ "$FRONTEND_STATUS" -ne 0 ]; then
+    exit "$FRONTEND_STATUS"
+fi
+if [ "$HUB_STATUS" -ne 0 ]; then
+    exit "$HUB_STATUS"
+fi

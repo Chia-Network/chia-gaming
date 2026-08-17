@@ -43,8 +43,8 @@ mod sim_tests {
         sign_reward_payout, ChiaIdentity,
     };
     use crate::common::types::{
-        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, PublicKey, Puzzle, PuzzleHash,
-        Sha256tree,
+        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PublicKey, Puzzle,
+        PuzzleHash, Sha256tree,
     };
     use crate::simulator::Simulator;
 
@@ -163,12 +163,40 @@ mod sim_tests {
     }
 
     /// What event a ProposeNewGame action waits for before firing.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum ProposeTrigger {
         /// Wait for the channel to be created (handshake complete).
         Channel,
         /// Wait for a specific game (by GameID) to finish.
         AfterGame(GameID),
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum ActionReadiness {
+        Immediate,
+        GameCanMove { player: usize, game_id: GameID },
+        AcceptProposal { player: usize, game_id: GameID },
+        ChannelReady { player: usize },
+        AfterGame { game_id: GameID },
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum PostActionDrain {
+        None,
+        OnChain,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct ActionSchedule {
+        pub readiness: ActionReadiness,
+        pub post_action_drain: PostActionDrain,
+        pub expects_on_chain_transition: bool,
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum SimAssertion {
+        GameCoinPublished(usize, GameID),
+        GameCoinTimeoutRegistered(usize, GameID),
     }
 
     #[derive(Clone)]
@@ -214,6 +242,7 @@ mod sim_tests {
         /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
+        Assert(SimAssertion),
         /// Force-submit an unroll transaction for a player, bypassing
         /// handshake state checks.  Simulates a malicious peer who submits
         /// an old-state unroll even after agreeing to clean shutdown.
@@ -298,6 +327,7 @@ mod sim_tests {
                 SimScriptAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
+                SimScriptAction::Assert(assertion) => write!(formatter, "Assert({assertion:?})"),
                 SimScriptAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
                 SimScriptAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
                 SimScriptAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
@@ -331,6 +361,84 @@ mod sim_tests {
     }
 
     impl SimScriptAction {
+        pub fn schedule(&self) -> ActionSchedule {
+            match self {
+                Self::Move(player, game_id, _, _)
+                | Self::FakeMove(player, game_id, _, _)
+                | Self::BadSignatureMove(player, game_id, _) => ActionSchedule {
+                    readiness: ActionReadiness::GameCanMove {
+                        player: *player,
+                        game_id: *game_id,
+                    },
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: false,
+                },
+                Self::AcceptProposal(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::AcceptProposal {
+                        player: *player,
+                        game_id: *game_id,
+                    },
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: false,
+                },
+                Self::ProposeNewGame(player, trigger)
+                | Self::ProposeNewGameWithTimeout(player, trigger, _)
+                | Self::ProposeNewGameTheirTurn(player, trigger)
+                | Self::ProposeKrunkGroup(player, trigger) => ActionSchedule {
+                    readiness: match trigger {
+                        ProposeTrigger::Channel => {
+                            ActionReadiness::ChannelReady { player: *player }
+                        }
+                        ProposeTrigger::AfterGame(game_id) => {
+                            ActionReadiness::AfterGame { game_id: *game_id }
+                        }
+                    },
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: false,
+                },
+                Self::GoOnChain(_) => ActionSchedule {
+                    readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: true,
+                },
+                Self::Cheat(_, _, _)
+                | Self::AcceptSettlement(_, _)
+                | Self::CleanShutdown(_)
+                | Self::CancelProposal(_, _)
+                | Self::InjectRawMessage(_, _)
+                | Self::SelfAcceptProposal(_, _)
+                | Self::WrongParityProposal(_)
+                | Self::InvalidProposalParameters(_)
+                | Self::InvalidProposalTimeout(_) => ActionSchedule {
+                    readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: false,
+                },
+                Self::ForceUnroll(_) | Self::ForceStaleUnroll(_) => ActionSchedule {
+                    readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: true,
+                },
+                Self::Timeout(_)
+                | Self::ForceDestroyCoin(_, _)
+                | Self::NerfTransactions(_)
+                | Self::UnNerfTransactions(_)
+                | Self::BlockCoinReports(_)
+                | Self::UnblockCoinReports(_)
+                | Self::WaitBlocks(_, _)
+                | Self::CorruptStateNumber(_, _)
+                | Self::Assert(_)
+                | Self::UnNerfTransactionsFor(_)
+                | Self::NerfMessages(_)
+                | Self::UnNerfMessages
+                | Self::SaveUnrollSnapshot(_) => ActionSchedule {
+                    readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
+            }
+        }
+
         pub fn lose(&self) -> SimScriptAction {
             if let SimScriptAction::Move(p, g, m, _r) = self {
                 return SimScriptAction::Move(*p, *g, m.clone(), false);
@@ -462,10 +570,178 @@ mod sim_tests {
 
         Ok((party, channel_coin))
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn readable() -> ReadableMove {
+            ReadableMove::from_program(Rc::new(Program::from_hex("80").expect("nil")))
+        }
+
+        fn schedule(
+            readiness: ActionReadiness,
+            post_action_drain: PostActionDrain,
+            expects_on_chain_transition: bool,
+        ) -> ActionSchedule {
+            ActionSchedule {
+                readiness,
+                post_action_drain,
+                expects_on_chain_transition,
+            }
+        }
+
+        #[test]
+        fn every_script_action_has_an_exhaustive_data_bearing_schedule() {
+            let gid = GameID(7);
+            let immediate_drain =
+                schedule(ActionReadiness::Immediate, PostActionDrain::OnChain, false);
+            let immediate_no_drain =
+                schedule(ActionReadiness::Immediate, PostActionDrain::None, false);
+            let transition_drain =
+                schedule(ActionReadiness::Immediate, PostActionDrain::OnChain, true);
+            let transition_no_drain =
+                schedule(ActionReadiness::Immediate, PostActionDrain::None, true);
+            let can_move = schedule(
+                ActionReadiness::GameCanMove {
+                    player: 1,
+                    game_id: gid,
+                },
+                PostActionDrain::OnChain,
+                false,
+            );
+            let accept = schedule(
+                ActionReadiness::AcceptProposal {
+                    player: 1,
+                    game_id: gid,
+                },
+                PostActionDrain::OnChain,
+                false,
+            );
+            let channel = schedule(
+                ActionReadiness::ChannelReady { player: 1 },
+                PostActionDrain::OnChain,
+                false,
+            );
+            let after_game = schedule(
+                ActionReadiness::AfterGame { game_id: gid },
+                PostActionDrain::OnChain,
+                false,
+            );
+            let cases = vec![
+                (SimScriptAction::Timeout(1), immediate_no_drain),
+                (SimScriptAction::Move(1, gid, readable(), true), can_move),
+                (
+                    SimScriptAction::FakeMove(1, gid, readable(), vec![1]),
+                    can_move,
+                ),
+                (
+                    SimScriptAction::BadSignatureMove(1, gid, readable()),
+                    can_move,
+                ),
+                (
+                    SimScriptAction::Cheat(1, gid, Amount::new(10)),
+                    immediate_drain,
+                ),
+                (
+                    SimScriptAction::ForceDestroyCoin(1, gid),
+                    immediate_no_drain,
+                ),
+                (SimScriptAction::NerfTransactions(1), immediate_no_drain),
+                (
+                    SimScriptAction::UnNerfTransactions(true),
+                    immediate_no_drain,
+                ),
+                (SimScriptAction::BlockCoinReports(1), immediate_no_drain),
+                (
+                    SimScriptAction::UnblockCoinReports(true),
+                    immediate_no_drain,
+                ),
+                (
+                    SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
+                    channel,
+                ),
+                (
+                    SimScriptAction::ProposeNewGame(1, ProposeTrigger::AfterGame(gid)),
+                    after_game,
+                ),
+                (
+                    SimScriptAction::ProposeNewGameWithTimeout(1, ProposeTrigger::Channel, 20),
+                    channel,
+                ),
+                (
+                    SimScriptAction::ProposeNewGameWithTimeout(
+                        1,
+                        ProposeTrigger::AfterGame(gid),
+                        20,
+                    ),
+                    after_game,
+                ),
+                (
+                    SimScriptAction::ProposeNewGameTheirTurn(1, ProposeTrigger::Channel),
+                    channel,
+                ),
+                (
+                    SimScriptAction::ProposeNewGameTheirTurn(1, ProposeTrigger::AfterGame(gid)),
+                    after_game,
+                ),
+                (
+                    SimScriptAction::ProposeKrunkGroup(1, ProposeTrigger::Channel),
+                    channel,
+                ),
+                (
+                    SimScriptAction::ProposeKrunkGroup(1, ProposeTrigger::AfterGame(gid)),
+                    after_game,
+                ),
+                (SimScriptAction::GoOnChain(1), transition_drain),
+                (SimScriptAction::WaitBlocks(3, 1), immediate_no_drain),
+                (SimScriptAction::AcceptSettlement(1, gid), immediate_drain),
+                (SimScriptAction::CleanShutdown(1), immediate_drain),
+                (
+                    SimScriptAction::CorruptStateNumber(1, 9),
+                    immediate_no_drain,
+                ),
+                (
+                    SimScriptAction::Assert(SimAssertion::GameCoinPublished(1, gid)),
+                    immediate_no_drain,
+                ),
+                (
+                    SimScriptAction::Assert(SimAssertion::GameCoinTimeoutRegistered(1, gid)),
+                    immediate_no_drain,
+                ),
+                (SimScriptAction::ForceUnroll(1), transition_no_drain),
+                (
+                    SimScriptAction::UnNerfTransactionsFor(1),
+                    immediate_no_drain,
+                ),
+                (SimScriptAction::NerfMessages(1), immediate_no_drain),
+                (SimScriptAction::UnNerfMessages, immediate_no_drain),
+                (SimScriptAction::AcceptProposal(1, gid), accept),
+                (SimScriptAction::CancelProposal(1, gid), immediate_drain),
+                (SimScriptAction::SaveUnrollSnapshot(1), immediate_no_drain),
+                (SimScriptAction::ForceStaleUnroll(1), transition_no_drain),
+                (
+                    SimScriptAction::InjectRawMessage(1, vec![1]),
+                    immediate_drain,
+                ),
+                (SimScriptAction::SelfAcceptProposal(1, gid), immediate_drain),
+                (SimScriptAction::WrongParityProposal(1), immediate_drain),
+                (
+                    SimScriptAction::InvalidProposalParameters(1),
+                    immediate_drain,
+                ),
+                (SimScriptAction::InvalidProposalTimeout(1), immediate_drain),
+            ];
+
+            for (action, expected) in cases {
+                assert_eq!(action.schedule(), expected, "{action:?}");
+            }
+        }
+    }
 }
 
 #[cfg(feature = "sim-tests")]
 pub use sim_tests::{
-    new_channel_handler_game, ChannelHandlerGame, ProposeTrigger, SimScriptAction,
-    SimScriptActionResult,
+    new_channel_handler_game, ActionReadiness, ActionSchedule, ChannelHandlerGame, PostActionDrain,
+    ProposeTrigger, SimAssertion, SimScriptAction, SimScriptActionResult,
 };

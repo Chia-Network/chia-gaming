@@ -1,9 +1,13 @@
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { EMPTY, Subject } from 'rxjs';
 import {
   KrunkHandler,
   applyKrunkMoveRejected,
   canDraftKrunkGuess,
   canQueueKrunkGuess,
   isKrunkDictionaryRejectionError,
+  krunkBoardNotice,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
   krunkTerminalStatus,
@@ -11,37 +15,63 @@ import {
   type KrunkGameState,
 } from './useKrunkHand';
 import {
-  activeIdsAfterProposalAccepted,
-  clearProposalTracking,
   gameplayEventForMoveRejected,
   gameplayEventsForGameStatus,
-  isValidKrunkStake,
   parseTermsFromNotificationValue,
 } from '../../hooks/useGameSession';
+import { createSessionModel, selectProposalGroupByMemberId } from '../../lib/session/model';
+import { isValidKrunkStake } from './adapter';
 import {
   formatKrunkHandLog,
   krunkGameSlots,
   krunkLetterStatuses,
   newlyResolvedKrunkIndex,
+  type KrunkProps,
 } from './Krunk';
+import Krunk from './Krunk';
+import { initialKrunkGameState, krunkStateCodec } from './stateCodec';
+import type { SessionController } from '../../hooks/SessionController';
+import type { LocalGameActionRequest } from '../../lib/session/sessionMachineTypes';
+import type { GameTerminalModel } from '../../lib/session/types';
+
+function terminal(
+  outcome: GameTerminalModel['outcome'] = null,
+  myReward: string | null = null,
+): GameTerminalModel {
+  return {
+    type: outcome === null ? 'none' : 'settled',
+    outcome,
+    label: null,
+    myReward,
+    rewardCoinHex: null,
+  };
+}
 
 describe('Krunk terms', () => {
-  it('clears proposal terms, group links, and outgoing refs together', () => {
+  it('derives both member lookups from one normalized group', () => {
     const terms = {
       gameType: 'krunk',
       myContribution: 100n,
       theirContribution: 100n,
       gameTimeout: 15n,
-    };
-    const termsById = { '1': terms, '3': terms, stale: terms };
-    const groupsById = { '1': ['1', '3'], '3': ['1', '3'], stale: ['stale'] };
-    const outgoing = new Set(['1', '3', 'stale']);
+    } as const;
+    const model = createSessionModel({
+      betweenHand: {
+        proposalGroups: [
+          {
+            primaryId: '1',
+            memberIds: ['1', '3'],
+            terms,
+            origin: 'local',
+            disposition: 'outgoing',
+          },
+        ],
+      },
+    });
 
-    clearProposalTracking(['1'], termsById, groupsById, outgoing);
-
-    expect(termsById).toEqual({ stale: terms });
-    expect(groupsById).toEqual({ stale: ['stale'] });
-    expect(outgoing).toEqual(new Set(['stale']));
+    expect(selectProposalGroupByMemberId(model, '1')).toBe(
+      selectProposalGroupByMemberId(model, '3'),
+    );
   });
 
   it('requires positive 100-mojo stake increments', () => {
@@ -71,7 +101,288 @@ describe('Krunk terms', () => {
   });
 });
 
-describe('Krunk first guess drafting', () => {
+describe('Krunk draft continuity', () => {
+  it('preserves the picker entry area across both timeouts and terminal presentation', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const persisted = krunkStateCodec.encode({
+      games: {
+        picker: {
+          ...initialKrunkGameState('alice'),
+          handler: KrunkHandler.WaitingCommit,
+          secretWord: null,
+        },
+        guesser: {
+          ...initialKrunkGameState('bob'),
+          handler: KrunkHandler.BobWaiting,
+        },
+      },
+    });
+    const gameplay = new Subject<import('../../hooks/useGameSession').GameplayEvent>();
+    const renderPhases: string[] = [];
+    const controller = {
+      handState: persisted,
+      makeMove: jest.fn(),
+      commitLocalGameAction: jest.fn(),
+      transitionFeatureState: jest.fn((_, __, state) => state),
+    } as unknown as SessionController;
+    const baseProps = {
+      handSource: { interactionMode: 'live' as const, controller },
+      currentHandGameIds: ['picker', 'guesser'],
+      activeGameIds: ['picker', 'guesser'],
+      iProposedHand: true,
+      gameplayEvent$: gameplay,
+      betSize: 100n,
+      onTurnChanged: () => {},
+      onGameLog: () => {},
+      terminalsById: {},
+      amountsById: { picker: '100', guesser: '100' },
+      opponentName: 'Peer',
+    };
+    const renderKrunk = (props: KrunkProps) =>
+      React.createElement(
+        React.Profiler,
+        {
+          id: 'krunk-hand',
+          onRender: (_id, phase) => renderPhases.push(phase),
+        },
+        React.createElement(Krunk, props),
+      );
+    let renderer: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(renderKrunk(baseProps));
+    });
+    for (const letter of ['C', 'R', 'A']) {
+      const key = renderer!.root
+        .findAllByType('button')
+        .find((button) => button.props.children === letter);
+      act(() => key!.props.onClick());
+    }
+    const draftLetters = () =>
+      renderer!.root
+        .findAll(
+          (node) =>
+            typeof node.props.className === 'string' &&
+            node.props.className.includes('border-dashed') &&
+            typeof node.props.children === 'string' &&
+            node.props.children !== '',
+        )
+        .map((node) => node.props.children);
+    expect(draftLetters()).toEqual(['C', 'R', 'A']);
+
+    const pickerTimeout = terminal('opponent_timed_out', '100');
+    act(() => {
+      gameplay.next({
+        Settled: { gameId: 'picker', outcome: 'opponent_timed_out', ourShare: '100' },
+      });
+      renderer!.update(
+        renderKrunk({
+          ...baseProps,
+          activeGameIds: ['guesser'],
+          terminalsById: { picker: pickerTimeout },
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props.children === 'Peer got nothing due to timeout.'),
+    ).toHaveLength(1);
+
+    const guesserTimeout = terminal('timed_out_waiting_for_our_move', '0');
+    act(() => {
+      gameplay.next({
+        Settled: {
+          gameId: 'guesser',
+          outcome: 'timed_out_waiting_for_our_move',
+          ourShare: '0',
+        },
+      });
+      renderer!.update(
+        renderKrunk({
+          ...baseProps,
+          activeGameIds: [],
+          terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props.children === 'You got nothing due to timeout.'),
+    ).toHaveLength(1);
+
+    act(() => {
+      renderer!.update(
+        renderKrunk({
+          ...baseProps,
+          activeGameIds: [],
+          terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
+          handSource: { interactionMode: 'terminal', handState: persisted },
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props['data-testid'] === 'finished-session-game-view'),
+    ).toHaveLength(0);
+    expect(renderPhases.filter((phase) => phase === 'mount')).toHaveLength(1);
+    expect(draftLetters()).toEqual(['C', 'R', 'A']);
+
+    act(() => renderer!.unmount());
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it('does not retry a feature transition when durable authority rejects the commit', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const makeMove = jest.fn();
+    const transitionFeatureState = jest.fn(() => false);
+    const commitLocalGameAction = jest.fn(() => {
+      throw new Error('word rejected');
+    });
+    const persisted = krunkStateCodec.encode({
+      games: {
+        picker: initialKrunkGameState('alice'),
+        guesser: initialKrunkGameState('bob'),
+      },
+    });
+    let renderer: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        React.createElement(Krunk, {
+          handSource: {
+            interactionMode: 'live',
+            controller: {
+              handState: persisted,
+              makeMove,
+              commitLocalGameAction,
+              transitionFeatureState,
+            } as unknown as SessionController,
+          },
+          currentHandGameIds: ['picker', 'guesser'],
+          activeGameIds: ['picker', 'guesser'],
+          iProposedHand: true,
+          gameplayEvent$: EMPTY,
+          betSize: 100n,
+          onTurnChanged: () => {},
+          onGameLog: () => {},
+          terminalsById: {},
+          amountsById: { picker: '100', guesser: '100' },
+        }),
+      );
+    });
+
+    const root = renderer!.root;
+    for (const letter of ['C', 'R', 'A', 'N', 'E']) {
+      const key = root.findAllByType('button').find((button) => button.props.children === letter);
+      act(() => key!.props.onClick());
+    }
+    const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
+    expect(() => act(() => pick!.props.onClick())).toThrow('word rejected');
+
+    expect(commitLocalGameAction).toHaveBeenCalledTimes(1);
+    expect(transitionFeatureState).not.toHaveBeenCalled();
+    expect(makeMove).not.toHaveBeenCalled();
+    act(() => renderer!.unmount());
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it('keeps current-hand picker input available when activeIds omits its game', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const makeMove = jest.fn();
+    const transitionFeatureState = jest.fn(() => true);
+    const commitLocalGameAction = jest.fn((request: LocalGameActionRequest) => {
+      if (request.command.type !== 'make-move') throw new Error('unexpected command');
+      makeMove(request.id, request.command.readable);
+    });
+    const persisted = krunkStateCodec.encode({
+      games: {
+        picker: initialKrunkGameState('alice'),
+        guesser: initialKrunkGameState('bob'),
+      },
+    });
+    let renderer: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        React.createElement(Krunk, {
+          handSource: {
+            interactionMode: 'live',
+            controller: {
+              handState: persisted,
+              makeMove,
+              commitLocalGameAction,
+              transitionFeatureState,
+            } as unknown as SessionController,
+          },
+          currentHandGameIds: ['picker', 'guesser'],
+          activeGameIds: ['guesser'],
+          iProposedHand: true,
+          gameplayEvent$: EMPTY,
+          betSize: 100n,
+          onTurnChanged: () => {},
+          onGameLog: () => {},
+          terminalsById: {},
+          amountsById: { picker: '100', guesser: '100' },
+        }),
+      );
+    });
+
+    const root = renderer!.root;
+    for (const letter of ['C', 'R', 'A', 'N', 'E']) {
+      const key = root.findAllByType('button').find((button) => button.props.children === letter);
+      expect(key).toBeDefined();
+      act(() => key!.props.onClick());
+    }
+    const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
+    expect(pick).toBeDefined();
+    expect(pick!.props.disabled).toBe(false);
+    act(() => pick!.props.onClick());
+
+    expect(commitLocalGameAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gameType: 'krunk',
+        id: 'picker',
+        state: expect.objectContaining({
+          handler: KrunkHandler.AliceWaiting,
+          secretWord: 'CRANE',
+        }),
+      }),
+    );
+    expect(makeMove).toHaveBeenCalledWith('picker', expect.anything());
+    act(() => renderer!.unmount());
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
   it('supplies the new clue index during the render that resolves it', () => {
     expect(newlyResolvedKrunkIndex(1, 0)).toBe(0);
     expect(newlyResolvedKrunkIndex(3, 2)).toBe(2);
@@ -92,6 +403,30 @@ describe('Krunk first guess drafting', () => {
       aliceGameId: '1',
       bobGameId: '0',
       aliceActive: true,
+      bobActive: false,
+    });
+  });
+
+  it('uses persisted roles instead of stale proposal orientation on finished restore', () => {
+    const alice = {
+      ...initialKrunkGameState('alice'),
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      secretWord: 'CRANE',
+      outcome: 'win' as const,
+    };
+    const bob = {
+      ...initialKrunkGameState('bob'),
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      outcome: 'lose' as const,
+    };
+    const persisted = krunkStateCodec.encode({ games: { '0': alice, '1': bob } });
+
+    expect(krunkGameSlots(['0', '1'], false, [], persisted)).toEqual({
+      aliceGameId: '0',
+      bobGameId: '1',
+      aliceActive: false,
       bobActive: false,
     });
   });
@@ -120,14 +455,14 @@ describe('Krunk first guess drafting', () => {
 
   it('appends queued guesses as pending rows after committed guesses', () => {
     expect(krunkGuessesWithQueued([], ['CRANE'])).toEqual([
-      { word: 'CRANE', clue: [-1, -1, -1, -1, -1] },
+      { word: 'CRANE', clue: [-1n, -1n, -1n, -1n, -1n] },
     ]);
     expect(
-      krunkGuessesWithQueued([{ word: 'CRANE', clue: [0, 0, 0, 0, 1] }], ['SLATE', 'AUDIO']),
+      krunkGuessesWithQueued([{ word: 'CRANE', clue: [0n, 0n, 0n, 0n, 1n] }], ['SLATE', 'AUDIO']),
     ).toEqual([
-      { word: 'CRANE', clue: [0, 0, 0, 0, 1] },
-      { word: 'SLATE', clue: [-1, -1, -1, -1, -1] },
-      { word: 'AUDIO', clue: [-1, -1, -1, -1, -1] },
+      { word: 'CRANE', clue: [0n, 0n, 0n, 0n, 1n] },
+      { word: 'SLATE', clue: [-1n, -1n, -1n, -1n, -1n] },
+      { word: 'AUDIO', clue: [-1n, -1n, -1n, -1n, -1n] },
     ]);
     expect(krunkGuessesWithQueued([], [])).toEqual([]);
   });
@@ -148,7 +483,6 @@ describe('Krunk first guess drafting', () => {
       revealedWord: null,
       outcome: null,
       moverShare: null,
-      settlementOutcome: null,
       error: null,
     };
     expect(
@@ -168,7 +502,7 @@ describe('Krunk first guess drafting', () => {
       handler: KrunkHandler.BobWaiting,
       role: 'bob',
       secretWord: null,
-      guesses: [{ word: 'XXXXX', clue: [-1, -1, -1, -1, -1] }],
+      guesses: [{ word: 'XXXXX', clue: [-1n, -1n, -1n, -1n, -1n] }],
     };
     expect(
       applyKrunkMoveRejected(bob, {
@@ -193,39 +527,41 @@ describe('Krunk first guess drafting', () => {
       revealedWord: null,
       outcome: 'lose',
       moverShare: null,
-      settlementOutcome: 'timed_out_waiting_for_our_move',
       error: null,
     };
 
-    expect(krunkTerminalStatus(timedOut, 'Peer')).toBe('We timed out.');
+    expect(krunkTerminalStatus(timedOut, 'Peer', terminal('timed_out_waiting_for_our_move'))).toBe(
+      'You got nothing due to timeout.',
+    );
     expect(
       krunkTerminalStatus(
         {
           ...timedOut,
           role: 'alice',
-          settlementOutcome: 'opponent_timed_out',
         },
         'Peer',
+        terminal('opponent_timed_out'),
       ),
-    ).toBe('Peer timed out.');
+    ).toBe('Peer got nothing due to timeout.');
     expect(
       krunkTerminalStatus(
         {
           ...timedOut,
-          settlementOutcome: 'forfeited_skipped_reveal',
         },
         'Peer',
+        terminal('forfeited_skipped_reveal'),
       ),
     ).toBe('We forfeited.');
     expect(
       krunkTerminalStatus(
         {
           ...timedOut,
-          settlementOutcome: 'settled_cleanly',
         },
         'Peer',
+        terminal('settled_cleanly', '0'),
+        '100',
       ),
-    ).toBe('Settled.');
+    ).toBe("You didn't win anything.");
   });
 
   it('leaves bob correct-guess copy to the win-amount UI', () => {
@@ -233,15 +569,14 @@ describe('Krunk first guess drafting', () => {
       handler: KrunkHandler.Terminal,
       myTurn: false,
       role: 'bob',
-      guesses: [{ word: 'CRANE', clue: [2, 2, 2, 2, 2] }],
+      guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
       secretWord: null,
       revealedWord: 'CRANE',
       outcome: 'win',
       moverShare: '100',
-      settlementOutcome: null,
       error: null,
     };
-    expect(krunkTerminalStatus(bobWin, 'Peer')).toBeNull();
+    expect(krunkTerminalStatus(bobWin, 'Peer', terminal())).toBe('You won 100 mojo!');
     expect(
       krunkTerminalStatus(
         {
@@ -251,8 +586,94 @@ describe('Krunk first guess drafting', () => {
           revealedWord: 'CRANE',
         },
         'Peer',
+        terminal(),
       ),
     ).toBe('Out of guesses.');
+  });
+
+  it.each(
+    (['accept_settlement', 'we_accepted', 'settled_cleanly'] as const).flatMap((settlement) =>
+      (['alice', 'bob'] as const).flatMap((role) =>
+        (['win', 'lose'] as const).map((outcome) => ({ settlement, role, outcome })),
+      ),
+    ),
+  )(
+    'shows the per-game winner for $settlement / $role / $outcome',
+    ({ settlement, role, outcome }) => {
+      const state: KrunkGameState = {
+        handler: KrunkHandler.Terminal,
+        myTurn: false,
+        role,
+        guesses: role === 'bob' ? [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }] : [],
+        secretWord: role === 'alice' ? 'CRANE' : null,
+        revealedWord: 'CRANE',
+        outcome,
+        moverShare: null,
+        error: null,
+      };
+
+      const expected =
+        role === 'alice'
+          ? outcome === 'win'
+            ? "Peer didn't win anything."
+            : 'Peer won 20 mojo!'
+          : outcome === 'win'
+            ? 'You won 20 mojo!'
+            : "You didn't win anything.";
+      expect(
+        krunkBoardNotice(
+          state,
+          'Peer',
+          terminal(settlement, outcome === 'win' ? '20' : '80'),
+          '100',
+        ),
+      ).toEqual({
+        text: expected,
+        kind: role === 'bob' && outcome === 'win' ? 'win' : 'info',
+      });
+    },
+  );
+
+  it.each([
+    ['opponent_timed_out', 'Peer got nothing due to timeout.'],
+    ['timed_out_waiting_for_our_move', 'Peer got 100 mojo due to timeout.'],
+    ['lost', 'We lost.'],
+  ] as const)('keeps %s copy ahead of reward display', (outcome, text) => {
+    const won: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [],
+      secretWord: 'CRANE',
+      revealedWord: 'CRANE',
+      outcome: 'win',
+      moverShare: '100',
+      error: null,
+    };
+
+    expect(krunkBoardNotice(won, 'Peer', terminal(outcome, '100'), '100')).toEqual({
+      text,
+      kind: 'info',
+    });
+  });
+
+  it('shows the local guesser receiving the full amount when the picker times out', () => {
+    const bob: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'bob',
+      guesses: [],
+      secretWord: null,
+      revealedWord: null,
+      outcome: 'win',
+      moverShare: null,
+      error: null,
+    };
+
+    expect(krunkBoardNotice(bob, 'Peer', terminal('opponent_timed_out', '100'), '100')).toEqual({
+      text: 'You got 100 mojo due to timeout.',
+      kind: 'info',
+    });
   });
 
   it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {
@@ -262,11 +683,51 @@ describe('Krunk first guess drafting', () => {
     expect(krunkWinMessage('1000000000000')).toBe('You won 1 chia!');
   });
 
+  it('formats an opponent clean win in chia from game amount minus our share', () => {
+    const lost: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      secretWord: 'CRANE',
+      revealedWord: 'CRANE',
+      outcome: 'lose',
+      moverShare: null,
+      error: null,
+    };
+    expect(
+      krunkBoardNotice(
+        lost,
+        'Bob',
+        terminal('accept_settlement', '1000000000000'),
+        '2000000000000',
+      ),
+    ).toEqual({ text: 'Bob won 1 chia!', kind: 'info' });
+  });
+
+  it('derives the clean winner from completed play when outcome projection is late', () => {
+    const late: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      secretWord: 'CRANE',
+      revealedWord: null,
+      outcome: null,
+      moverShare: null,
+      error: null,
+    };
+    expect(krunkBoardNotice(late, 'Bob', terminal('settled_cleanly', '80'), '100')).toEqual({
+      text: 'Bob won 20 mojo!',
+      kind: 'info',
+    });
+  });
+
   it('aggregates keyboard letter statuses with NYT green-over-amber priority', () => {
     expect(
       krunkLetterStatuses([
-        { word: 'CRANE', clue: [0, 0, 0, 0, 1] }, // E present
-        { word: 'EAGER', clue: [2, 0, 0, 0, 0] }, // E correct
+        { word: 'CRANE', clue: [0n, 0n, 0n, 0n, 1n] }, // E present
+        { word: 'EAGER', clue: [2n, 0n, 0n, 0n, 0n] }, // E correct
       ]),
     ).toEqual({
       C: 'absent',
@@ -284,10 +745,10 @@ describe('Krunk first guess drafting', () => {
         'bob',
         10_000_000_000n, // 0.01 XCH
         [
-          { word: 'RATES', clue: [0, 0, 0, 0, 1] },
-          { word: 'SPOIL', clue: [1, 0, 1, 0, 0] },
-          { word: 'MOUSY', clue: [0, 2, 0, 2, 2] },
-          { word: 'BOSSY', clue: [2, 2, 2, 2, 2] },
+          { word: 'RATES', clue: [0n, 0n, 0n, 0n, 1n] },
+          { word: 'SPOIL', clue: [1n, 0n, 1n, 0n, 0n] },
+          { word: 'MOUSY', clue: [0n, 2n, 0n, 2n, 2n] },
+          { word: 'BOSSY', clue: [2n, 2n, 2n, 2n, 2n] },
         ],
         'BOSSY',
       ),
@@ -306,11 +767,11 @@ describe('Krunk first guess drafting', () => {
         'alice',
         10_000_000_000n,
         [
-          { word: 'RATES', clue: [1, 0, 0, 0, 0] },
-          { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
-          { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'CROWN', clue: [0, 2, 2, 2, 2] },
+          { word: 'RATES', clue: [1n, 0n, 0n, 0n, 0n] },
+          { word: 'GROIN', clue: [0n, 2n, 2n, 0n, 2n] },
+          { word: 'BROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'DROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'CROWN', clue: [0n, 2n, 2n, 2n, 2n] },
         ],
         'FROWN',
       ),
@@ -331,11 +792,11 @@ describe('Krunk first guess drafting', () => {
         'bob',
         10_000_000_000n,
         [
-          { word: 'RATES', clue: [1, 0, 0, 0, 0] },
-          { word: 'GROIN', clue: [0, 2, 2, 0, 2] },
-          { word: 'BROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'DROWN', clue: [0, 2, 2, 2, 2] },
-          { word: 'FROWN', clue: [2, 2, 2, 2, 2] },
+          { word: 'RATES', clue: [1n, 0n, 0n, 0n, 0n] },
+          { word: 'GROIN', clue: [0n, 2n, 2n, 0n, 2n] },
+          { word: 'BROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'DROWN', clue: [0n, 2n, 2n, 2n, 2n] },
+          { word: 'FROWN', clue: [2n, 2n, 2n, 2n, 2n] },
         ],
         'FROWN',
       ),
@@ -368,9 +829,8 @@ describe('Krunk first guess drafting', () => {
   it('exposes the guesser game on the first atomic-group acceptance', () => {
     // First ProposalAccepted seeds activeIds and currentHandGameIds with the
     // full atomic group so both Krunk panels wire immediately.
-    const activeIds = activeIdsAfterProposalAccepted([], '1', ['1', '3']);
+    const activeIds = ['1', '3'];
     expect(activeIds).toEqual(['1', '3']);
-    expect(activeIdsAfterProposalAccepted(activeIds, '3', ['1', '3'])).toEqual(['1', '3']);
 
     const opponentCommit = {
       GameStatus: {

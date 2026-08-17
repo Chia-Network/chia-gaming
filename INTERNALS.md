@@ -382,6 +382,11 @@ game goes on-chain, the system either recognizes that the game coin is already
 at the latest state, or it replays cached moves to advance to the latest state.
 This is the "redo" mechanism.
 
+Redo is entirely Rust-owned. The browser and game UI submit each semantic move
+once; they do not journal move payloads or entropy, consume resync commands, or
+call a replay API. A repeated normal `make_move` command is a caller invariant
+violation and fails at the Rust phase that owns turn and pending-action state.
+
 ### Lifecycle
 
 `cached_redo_actions` on the `ChannelState` is a

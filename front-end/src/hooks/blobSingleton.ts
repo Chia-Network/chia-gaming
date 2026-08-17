@@ -7,6 +7,7 @@ import {
   clearGameSessionPreservingHistory,
   flushSessionSave,
   markSavedSession,
+  LiveSessionSave,
   SessionSave,
 } from './save';
 import { coerceToBytes } from '../util';
@@ -82,6 +83,15 @@ export function destroySessionController(): void {
   }
   initStarted = false;
 }
+
+export function destroyFlushedTerminalSessionController(controller: SessionController): void {
+  if (sessionController !== controller) {
+    throw new Error('Terminal finalization lost ownership of its SessionController');
+  }
+  controller.cleanupAfterTerminalFlush();
+  sessionController = null;
+  initStarted = false;
+}
 /** @deprecated use destroySessionController */
 export { destroySessionController as destroyBlobSingleton };
 
@@ -101,7 +111,8 @@ export async function configSessionController(
   const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
   const rngId = wasmConnection.create_rng(seedHex);
   const address = await blockchain.rpc.getAddress();
-  sc.setBlockchainAddress(address);
+  sc.rewardPuzzleHash = address.puzzleHash;
+  sc.emitRewardAddress();
   const theirContribution = sc.theirContribution;
   const { game: cradle } = wasmStateInit.createGame(
     rngId,
@@ -109,7 +120,7 @@ export async function configSessionController(
     iStarted,
     sc.myContribution,
     theirContribution,
-    address.puzzleHash,
+    sc.rewardPuzzleHash,
     channelTimeout,
     unrollTimeout,
   );
@@ -123,23 +134,14 @@ export async function configSessionController(
 
 export async function restoreSession(
   sc: SessionController,
-  save: SessionSave,
+  save: LiveSessionSave,
   wasmStateInit: WasmStateInit,
 ): Promise<void> {
-  if (!save.serializedGameSession) {
-    throw new Error('restoreSession called without serializedGameSession');
-  }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
   const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
-  if (
-    save.gameSessionSchemaVersion === undefined ||
-    save.gameSessionSchemaVersion !== currentSchema
-  ) {
-    const savedSchema =
-      save.gameSessionSchemaVersion === undefined
-        ? 'missing'
-        : save.gameSessionSchemaVersion.toString();
+  if (save.live.gameSessionSchemaVersion !== currentSchema) {
+    const savedSchema = save.live.gameSessionSchemaVersion.toString();
     await clearSession();
     markSavedSession();
     throw new Error(
@@ -148,43 +150,49 @@ export async function restoreSession(
   }
 
   const cradleBytes =
-    save.serializedGameSession instanceof Uint8Array
-      ? save.serializedGameSession
+    save.live.serializedGameSession instanceof Uint8Array
+      ? save.live.serializedGameSession
       : (() => {
           throw new Error('restoreSession serializedGameSession must be a Uint8Array');
         })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
-  sc.messageNumber = requireBigIntCounter(save.messageNumber, 'messageNumber');
-  sc.remoteNumber = requireBigIntCounter(save.remoteNumber, 'remoteNumber');
-  sc.iStarted = requireBoolean(save.iStarted, 'iStarted');
-  sc.pairingToken = requireString(save.pairingToken, 'pairingToken');
-  if (!Array.isArray(save.unackedMessages)) {
+  sc.messageNumber = requireBigIntCounter(save.live.messageNumber, 'messageNumber');
+  sc.remoteNumber = requireBigIntCounter(save.live.remoteNumber, 'remoteNumber');
+  sc.iStarted = requireBoolean(save.pairing.iStarted, 'iStarted');
+  sc.pairingToken = requireString(save.pairing.token, 'pairingToken');
+  if (!Array.isArray(save.live.unackedMessages)) {
     throw new Error('restoreSession: missing or invalid unackedMessages');
   }
-  sc.unackedMessages = save.unackedMessages.map((m) => ({
+  sc.unackedMessages = save.live.unackedMessages.map((m) => ({
     msgno: requireBigIntCounter(m.msgno, 'unackedMessages.msgno'),
     msg: m.msg,
   }));
   sc.wasmNotificationHistory = recentEntries(
-    save.wasmNotificationHistory ?? [],
+    save.history.wasmNotificationHistory ?? [],
     WASM_NOTIFICATION_HISTORY_LIMIT,
   );
-  sc.diagnosticLog = recentEntries(save.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
-  sc.durabilityWarning = save.durabilityWarning;
-  if (!Array.isArray(save.activeGameIds)) {
+  sc.diagnosticLog = recentEntries(save.history.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
+  sc.durabilityWarning = save.live.durabilityWarning;
+  if (!Array.isArray(save.presentation.activeGameIds)) {
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
-  sc.activeGameIds = [...save.activeGameIds];
-  sc.handState = save.handState ?? null;
+  sc.activeGameIds = [...save.presentation.activeGameIds];
   sc.restoreChannelStatus(
-    save.channelStatus
-      ? { ...save.channelStatus, coin: coerceToBytes(save.channelStatus.coin) }
+    save.presentation.channelStatus
+      ? {
+          ...save.presentation.channelStatus,
+          coin: coerceToBytes(save.presentation.channelStatus.coin),
+        }
       : null,
   );
-  sc.myAlias = save.myAlias;
-  sc.opponentAlias = save.opponentAlias;
-  sc.lastOutcomeWin = save.lastOutcomeWin;
+  sc.myAlias = save.pairing.myAlias;
+  sc.opponentAlias = save.pairing.opponentAlias;
+  sc.lastOutcomeWin = save.presentation.lastOutcomeWin ?? undefined;
+  if (!save.live.rewardPuzzleHash) {
+    throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
+  }
+  sc.rewardPuzzleHash = save.live.rewardPuzzleHash;
   sc.markRestored();
   sc.setGameSession(cradle);
 
@@ -250,7 +258,7 @@ export function getOrCreateSessionController(
 
   // Only cradle restores go through restoreSession. pairingToken-only saves are
   // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
-  if (sessionSave?.serializedGameSession) {
+  if (sessionSave?.phase === 'live') {
     const restoringObject = sessionController;
     const doRestore = async () => {
       try {

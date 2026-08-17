@@ -21,7 +21,7 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
-    GameNotification, GameSessionEvent, GameSessionEventQueue, ResyncInfo, SessionDisposition,
+    GameNotification, GameSessionEvent, GameSessionEventQueue, SessionDisposition,
     TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
@@ -67,7 +67,7 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
+    ) -> Result<Vec<Effect>, Error>;
     fn make_move(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -230,7 +230,7 @@ impl SpendWalletReceiver for Box<dyn PeerLifecyclePhase> {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         (**self).coin_puzzle_and_solution(env, coin_id, puzzle_and_solution)
     }
 }
@@ -301,7 +301,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 #[derive(Default)]
 pub struct DrainResult {
     pub events: GameSessionEventQueue,
-    pub resync: Option<(usize, bool)>,
 }
 
 /// A signed clean-shutdown message that must be durably handed to the peer
@@ -321,7 +320,6 @@ struct GameSessionState {
     funding_coin: Option<CoinString>,
     unfunded_offer: Option<SpendBundle>,
     inbound_messages: VecDeque<Vec<u8>>,
-    resync: Option<(usize, bool)>,
     clean_shutdown_received: bool,
     clean_shutdown: Option<CoinString>,
     identity: ChiaIdentity,
@@ -493,7 +491,6 @@ impl GameSession {
                 funding_coin: None,
                 unfunded_offer: None,
                 clean_shutdown: None,
-                resync: None,
                 clean_shutdown_received: false,
                 peer_disconnected: false,
                 is_failed: false,
@@ -798,7 +795,6 @@ impl GameSession {
         // terminal snapshot. Older notifications must not race the final
         // Abandoned status through an asynchronous host.
         self.state.events.clear();
-        self.state.resync = None;
         self.emit_channel_status_if_changed();
     }
 
@@ -828,7 +824,6 @@ impl GameSession {
         if self.state.session_disposition.is_some() {
             return Ok(DrainResult {
                 events: std::mem::take(&mut self.state.events),
-                resync: self.state.resync.take(),
             });
         }
         while let Some(msg) = self.state.inbound_messages.pop_front() {
@@ -872,7 +867,6 @@ impl GameSession {
 
         Ok(DrainResult {
             events: std::mem::take(&mut self.state.events),
-            resync: self.state.resync.take(),
         })
     }
 
@@ -1740,14 +1734,11 @@ impl GameSession {
         if self.state.session_disposition.is_some() {
             return Ok(());
         }
-        let (reported_effects, resync) = {
+        let reported_effects = {
             let mut env = ChannelEnv::new(allocator)?;
             self.peer
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
-        if let Some(info) = resync {
-            self.state.resync = Some((info.state_number, info.is_my_turn));
-        }
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }
@@ -1843,8 +1834,8 @@ mod sequencing_tests {
             _env: &mut ChannelEnv<'_>,
             _coin: &CoinString,
             _puzzle_and_solution: Option<(&Program, &Program)>,
-        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-            Ok((vec![], None))
+        ) -> Result<Vec<Effect>, Error> {
+            Ok(vec![])
         }
     }
 
@@ -1889,8 +1880,8 @@ mod sequencing_tests {
             _env: &mut ChannelEnv<'_>,
             _coin: &CoinString,
             _puzzle_and_solution: Option<(&Program, &Program)>,
-        ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-            Ok((vec![], None))
+        ) -> Result<Vec<Effect>, Error> {
+            Ok(vec![])
         }
     }
 

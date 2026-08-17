@@ -75,9 +75,21 @@ pub fn krunk_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
-    use crate::session_phases::effects::{ChannelStatus, GameNotification, GameStatusKind};
+    use std::collections::{HashMap, VecDeque};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    use crate::channel_state::types::{ChannelEnv, OnChainGameState, TimeoutClaimState};
+    use crate::common::types::{Amount, CoinString, Hash, PuzzleHash, Timeout};
+    use crate::session_phases::effects::{
+        ChannelStatus, GameNotification, GameStatusKind, SettlementOutcome,
+    };
+    use crate::session_phases::on_chain::{OnChainPhase, OnChainPhaseArgs};
+    use crate::session_phases::types::{GameAction, PotatoState};
     use crate::simulator::tests::session_phases_sim::{
-        run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
+        run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome, TestEvent,
     };
     use crate::test_support::sim_script::ProposeTrigger;
 
@@ -134,6 +146,235 @@ mod sim_tests {
             ));
         }
         moves
+    }
+
+    fn first_wrong_guess_moves(
+        allocator: &mut AllocEncoder,
+        game_id: GameID,
+        picker: usize,
+    ) -> Vec<SimScriptAction> {
+        let guesser = 1 - picker;
+        vec![
+            SimScriptAction::Move(
+                picker,
+                game_id,
+                ReadableMove::from_program(Rc::new(word_program(allocator, b"CRANE"))),
+                true,
+            ),
+            SimScriptAction::Move(
+                guesser,
+                game_id,
+                ReadableMove::from_program(Rc::new(word_program(allocator, b"WORLD"))),
+                true,
+            ),
+            SimScriptAction::Move(
+                picker,
+                game_id,
+                ReadableMove::from_program(Rc::new(
+                    Program::from_hex("80").expect("nil clue move"),
+                )),
+                true,
+            ),
+        ]
+    }
+
+    fn assert_single_scripted_nil(moves: &[SimScriptAction], picker: usize, game_id: GameID) {
+        let count = moves
+            .iter()
+            .filter(|action| {
+                matches!(
+                    action,
+                    SimScriptAction::Move(who, id, readable, _)
+                        if *who == picker
+                            && *id == game_id
+                            && readable.to_program().bytes() == [0x80]
+                )
+            })
+            .count();
+        assert_eq!(
+            count, 1,
+            "the simulator script must submit the picker nil command exactly once"
+        );
+    }
+
+    fn assert_cached_nil_redo(outcome: &GameRunOutcome, picker: usize, game_id: GameID) {
+        let picker_ui = &outcome.local_uis[picker];
+        let replay_coin = picker_ui
+            .notifications
+            .iter()
+            .find_map(|notification| match notification {
+                GameNotification::GameStatus {
+                    id,
+                    status: GameStatusKind::Replaying,
+                    coin_id: Some(coin),
+                    ..
+                } if *id == game_id => Some(coin),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "picker {picker} must report Replaying for {game_id:?}: {:?}",
+                    picker_ui.notifications
+                )
+            });
+        assert_eq!(
+            outcome.transaction_submission_count_for_coin(picker, replay_coin),
+            1,
+            "picker {picker} must submit exactly one redo spend for {game_id:?}"
+        );
+        assert_eq!(
+            picker_ui
+                .notifications
+                .iter()
+                .filter(|notification| matches!(
+                    notification,
+                    GameNotification::GameStatus {
+                        id,
+                        status: GameStatusKind::OnChainTheirTurn,
+                        other_params: Some(params),
+                        ..
+                    } if *id == game_id && params.moved_by_us == Some(true)
+                ))
+                .count(),
+            1,
+            "picker {picker} must confirm exactly one internally redone nil move"
+        );
+        assert!(
+            !picker_ui.notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::GameSettled {
+                    id,
+                    outcome: SettlementOutcome::TimedOutWaitingForOurMove,
+                    ..
+                } if *id == game_id
+            )),
+            "picker {picker} must not time out waiting for the cached nil move"
+        );
+
+        let resolved_index = picker_ui
+            .events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    TestEvent::Notification(GameNotification::ChannelStatus {
+                        state: ChannelStatus::ResolvedUnrolled,
+                        ..
+                    })
+                )
+            })
+            .expect("picker must observe unroll resolution");
+        assert!(
+            !picker_ui.events[resolved_index + 1..]
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    TestEvent::OpponentMoved { id, .. } if *id == game_id
+                )),
+            "Rust redo must not emit a readable event asking the picker UI to replay nil"
+        );
+
+        let guesser = 1 - picker;
+        assert_eq!(
+            outcome.local_uis[guesser]
+                .opponent_moves
+                .iter()
+                .filter(|(id, ..)| *id == game_id)
+                .count(),
+            2,
+            "guesser must see the original commit and exactly one on-chain clue"
+        );
+    }
+
+    fn run_cached_nil_redo_case(picker: usize, game_id: GameID) {
+        let mut allocator = AllocEncoder::new();
+        let mut round = first_wrong_guess_moves(&mut allocator, game_id, picker);
+        let nil_move = round.pop().expect("nil clue");
+        let mut moves = vec![
+            SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
+        ];
+        moves.extend(round);
+        moves.push(SimScriptAction::NerfMessages(picker));
+        moves.push(nil_move);
+        moves.push(SimScriptAction::GoOnChain(picker));
+        moves.push(SimScriptAction::WaitBlocks(45, 0));
+        assert_single_scripted_nil(&moves, picker, game_id);
+
+        let outcome = run_krunk_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            None,
+        )
+        .expect("cached Krunk nil must redo on chain");
+        assert_cached_nil_redo(&outcome, picker, game_id);
+    }
+
+    fn phase_for_move_validation(
+        game_id: GameID,
+        our_turn: bool,
+        game_action_queue: VecDeque<GameAction>,
+    ) -> OnChainPhase {
+        let game_map = HashMap::from([(
+            CoinString::default(),
+            OnChainGameState {
+                game_id,
+                puzzle_hash: PuzzleHash::default(),
+                our_turn,
+                state_number: 0,
+                timeout_claim: TimeoutClaimState::Waiting,
+                pending_slash_amount: None,
+                cheating_move_mover_share: None,
+                timeout_claim_armed: false,
+                notification_sent: false,
+                game_timeout: Timeout::new(15),
+                game_finished: false,
+            },
+        )]);
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        OnChainPhase::new(OnChainPhaseArgs {
+            have_potato: PotatoState::Present,
+            channel_timeout: Timeout::new(15),
+            game_action_queue,
+            game_map,
+            pending_moves: HashMap::new(),
+            private_keys: rng.random(),
+            reward_puzzle_hash: PuzzleHash::default(),
+            their_reward_puzzle_hash: PuzzleHash::default(),
+            my_out_of_game_balance: Amount::default(),
+            their_out_of_game_balance: Amount::default(),
+            my_allocated_balance: Amount::default(),
+            their_allocated_balance: Amount::default(),
+            live_games: Vec::new(),
+            pending_settlements: Vec::new(),
+            unroll_advance_timeout: Timeout::new(15),
+            is_initial_potato: true,
+            state_number: 0,
+            was_stale: false,
+            resolved_clean: false,
+            terminal_reward_coin: None,
+            game_payout_coins: Vec::new(),
+        })
+    }
+
+    fn assert_phase_move_panics(mut phase: OnChainPhase, game_id: GameID, expected: &str) {
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let mut allocator = AllocEncoder::new();
+            let mut env = ChannelEnv::new(&mut allocator).expect("channel environment");
+            let readable = ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
+            let _ = phase.make_move(&mut env, &game_id, &readable, Hash::default());
+        }))
+        .expect_err("phase API must fail loudly");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic>");
+        assert!(
+            message.contains(expected),
+            "expected panic containing {expected:?}, got {message:?}"
+        );
     }
 
     pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
@@ -232,8 +473,12 @@ mod sim_tests {
 
         res.push(("test_play_krunk_go_on_chain", &|| {
             let mut allocator = AllocEncoder::new();
-            let mut moves = full_group_moves(&mut allocator);
-            moves.push(SimScriptAction::GoOnChain(0));
+            let moves = vec![
+                SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::GoOnChain(0),
+                SimScriptAction::WaitBlocks(120, 0),
+            ];
 
             let outcome = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -243,6 +488,55 @@ mod sim_tests {
             )
             .expect("krunk on-chain resolution should complete");
             for (who, ui) in outcome.local_uis.iter().enumerate() {
+                let drain_trace = outcome.host_drain_trace(who);
+                let terminal_events: Vec<_> = drain_trace
+                    .iter()
+                    .flat_map(|drain| {
+                        drain.notifications.iter().filter_map(move |notification| {
+                            if let GameNotification::GameSettled { id, outcome, .. } = notification {
+                                Some((drain.terminal, *id, outcome.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+                let expected_by_id = if who == 0 {
+                    [
+                        (
+                            true,
+                            GameID(1),
+                            SettlementOutcome::TimedOutWaitingForOurMove,
+                        ),
+                        (true, GameID(3), SettlementOutcome::OpponentTimedOut),
+                    ]
+                } else {
+                    [
+                        (true, GameID(1), SettlementOutcome::OpponentTimedOut),
+                        (
+                            true,
+                            GameID(3),
+                            SettlementOutcome::TimedOutWaitingForOurMove,
+                        ),
+                    ]
+                };
+                assert!(
+                    terminal_events == expected_by_id
+                        || terminal_events == [expected_by_id[1].clone(), expected_by_id[0].clone()],
+                    "player {who} host drain must preserve one complete timeout-event permutation: {terminal_events:?}"
+                );
+                assert_eq!(
+                    drain_trace
+                        .iter()
+                        .filter(|drain| {
+                            drain.notifications.iter().any(
+                                |notification| matches!(notification, GameNotification::GameSettled { .. }),
+                            )
+                        })
+                        .count(),
+                    1,
+                    "player {who} should receive both timeout events in one terminal host drain"
+                );
                 assert!(
                     ui.notifications.iter().any(|notification| matches!(
                         notification,
@@ -265,8 +559,128 @@ mod sim_tests {
                     "player {who} should not fail unroll recognition: {:?}",
                     ui.notifications
                 );
+                for game_id in [GameID(1), GameID(3)] {
+                    let terminal_count = ui
+                        .notifications
+                        .iter()
+                        .filter(|notification| {
+                            matches!(
+                                notification,
+                                GameNotification::GameSettled { id, .. } if *id == game_id
+                            )
+                        })
+                        .count();
+                    assert_eq!(
+                        terminal_count, 1,
+                        "player {who} should receive exactly one terminal event for {game_id:?}: {:?}",
+                        ui.notifications
+                    );
+                }
             }
         }));
+
+        res.push(("test_krunk_player_0_picker_cached_nil_redo_id_1", &|| {
+            run_cached_nil_redo_case(0, GameID(1));
+        }));
+
+        res.push(("test_krunk_player_1_picker_cached_nil_redo_id_3", &|| {
+            run_cached_nil_redo_case(1, GameID(3));
+        }));
+
+        res.push((
+            "test_krunk_nil_queued_during_channel_spend_executes_once",
+            &|| {
+                let picker = 0;
+                let game_id = GameID(1);
+                let mut allocator = AllocEncoder::new();
+                let mut round = first_wrong_guess_moves(&mut allocator, game_id, picker);
+                let nil_move = round.pop().expect("nil clue");
+                let mut moves = vec![
+                    SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                ];
+                moves.extend(round);
+                moves.push(SimScriptAction::GoOnChain(picker));
+                moves.push(nil_move);
+                moves.push(SimScriptAction::WaitBlocks(45, 0));
+                assert_single_scripted_nil(&moves, picker, game_id);
+
+                let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    None,
+                    None,
+                )
+                .expect("queued Krunk nil must transfer into on-chain execution");
+                let notifications = &outcome.local_uis[picker].notifications;
+                assert!(
+                    !notifications.iter().any(|notification| matches!(
+                        notification,
+                        GameNotification::GameStatus {
+                            id,
+                            status: GameStatusKind::Replaying,
+                            ..
+                        } if *id == game_id
+                    )),
+                    "a newly queued move must not be labeled cached replay"
+                );
+                let move_coin = notifications
+                    .iter()
+                    .find_map(|notification| match notification {
+                        GameNotification::GameStatus {
+                            id,
+                            status: GameStatusKind::OnChainMyTurn,
+                            coin_id: Some(coin),
+                            ..
+                        } if *id == game_id => Some(coin),
+                        _ => None,
+                    })
+                    .expect("queued move must first expose its actionable game coin");
+                assert_eq!(
+                    outcome.transaction_submission_count_for_coin(picker, move_coin),
+                    1,
+                    "queued nil must execute exactly once after phase transfer"
+                );
+                assert_eq!(
+                    notifications
+                        .iter()
+                        .filter(|notification| matches!(
+                            notification,
+                            GameNotification::GameStatus {
+                                id,
+                                status: GameStatusKind::OnChainTheirTurn,
+                                other_params: Some(params),
+                                ..
+                            } if *id == game_id && params.moved_by_us == Some(true)
+                        ))
+                        .count(),
+                    1,
+                    "queued nil must confirm exactly once without a second UI command"
+                );
+            },
+        ));
+
+        res.push((
+            "test_phase_api_rejects_wrong_turn_and_queued_moves",
+            &|| {
+                let game_id = GameID(7);
+                assert_phase_move_panics(
+                    phase_for_move_validation(game_id, false, VecDeque::new()),
+                    game_id,
+                    "does not give us the turn",
+                );
+                let queued = GameAction::Move(
+                    game_id,
+                    ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80]))),
+                    Hash::default(),
+                );
+                assert_phase_move_panics(
+                    phase_for_move_validation(game_id, true, VecDeque::from([queued])),
+                    game_id,
+                    "already queued",
+                );
+            },
+        ));
 
         res.push(("test_krunk_split_terminal_move_finishes_for_both", &|| {
             let mut allocator = AllocEncoder::new();

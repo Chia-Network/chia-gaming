@@ -372,16 +372,24 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
-    let mut v: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = vec![(
-        "test_unroll_can_verify_own_signature",
-        &test_unroll_can_verify_own_signature,
-    )];
     #[cfg(feature = "sim-tests")]
     {
-        v.push((
-            "test_preemption_parity_constraint",
-            &sim_tests::test_preemption_parity_constraint,
-        ));
+        vec![
+            (
+                "test_unroll_can_verify_own_signature",
+                &test_unroll_can_verify_own_signature,
+            ),
+            (
+                "test_preemption_parity_constraint",
+                &sim_tests::test_preemption_parity_constraint,
+            ),
+        ]
     }
-    v
+    #[cfg(not(feature = "sim-tests"))]
+    {
+        vec![(
+            "test_unroll_can_verify_own_signature",
+            &test_unroll_can_verify_own_signature,
+        )]
+    }
 }

@@ -8,6 +8,7 @@ solution constraints, trust categories), see `CLVM_DOS.md`.
 ## Table of Contents
 
 - [Going On-Chain: Dispute Resolution](#going-on-chain-dispute-resolution)
+- [PlayingMove vs Replaying](#playingmove-vs-replaying)
 - [Clean Shutdown (Advisory)](#clean-shutdown-advisory)
 - [Preemption](#preemption)
 - [Stale Unroll Handling](#stale-unroll-handling)
@@ -106,6 +107,31 @@ referee to the post-move state, generates the spend transaction, and inserts a
 `OnChainPhase` never distinguishes between redo transactions and fresh
 moves; it just tracks pending spends per game coin and reconciles them when
 on-chain confirmation arrives.
+
+### PlayingMove vs Replaying
+
+Both `Replaying` and `PlayingMove` indicate that a move spend has been
+submitted and is awaiting on-chain confirmation, but they have different
+origins and semantics:
+
+- `Replaying` is emitted by the redo path during `finish_on_chain_transition`.
+  It means a cached off-chain move is being replayed as an on-chain
+  transaction. The game coin was created by the unroll at the pre-move state,
+  so the redo is necessary to align the chain with the latest mutually known
+  state.
+- `PlayingMove` is emitted by `do_on_chain_move` when the user manually submits
+  a fresh move while already in the `OnChainPhase`. Before delivering the
+  status, the host has processed watch/transport effects and accepted the spend
+  into its submission path. In the browser, that means the spend has entered
+  the serialized wallet RPC lane; it does not prove the asynchronous wallet
+  call succeeded, reached a full-node mempool, or confirmed. In the simulator,
+  submission is synchronous and the spend has reached the simulator mempool in
+  that same host step. Once the spend lands on chain, it is
+  followed by `OnChainTheirTurn {
+  moved_by_us: true }` for the same game.
+
+The frontend should treat `PlayingMove` as an authoritative "move is being
+published" state and must not downgrade it to a local "your turn" state.
 
 ### Step 5: Timeout Resolution
 
@@ -527,7 +553,7 @@ The zero-reward early-out fires at five distinct points.
 3. **Opponent's turn, mover_share == coin_amount.**  The move was
   acknowledged (no redo needed).  It's the opponent's turn and
    `mover_share == coin_amount`, meaning the opponent gets everything on
-   timeout and has no incentive to move.  `GameSettled { outcome: forfeited_opponent_won, our_share: 0 }`
+   timeout and has no incentive to move.  `GameSettled { outcome: lost, our_share: 0 }`
    fires.  This only applies when it's the opponent's turn — when it's our turn
    and `mover_share == coin_amount`, *we* get everything and auto-accept fires
    instead (see above).

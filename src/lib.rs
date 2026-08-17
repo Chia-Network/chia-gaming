@@ -26,5 +26,10 @@ mod manifest_guards;
 #[cfg(test)]
 pub mod test_support;
 
+// Sim-runner collectors (`test_funs`) are only referenced from `simulator`,
+// which is feature-gated. Without `sim-tests`, `cargo test --no-run` still
+// compiles this module (CI checks that config) but nothing calls the
+// collectors — allow dead_code there so that check stays quiet.
 #[cfg(test)]
+#[cfg_attr(not(feature = "sim-tests"), allow(dead_code))]
 mod tests;

@@ -138,7 +138,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 2;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 4;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -836,15 +836,15 @@ mod gaming_wasm {
             let dr = cradle
                 .cradle
                 .flush_and_collect(&mut cradle.allocator)?;
-            let events = collect_drain_events(&dr)?;
             let ids_arr = js_sys::Array::new();
             for id in &ids {
                 ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
             }
-            let obj = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(&obj, &"ids".into(), &ids_arr);
-            let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
-            Ok(obj.into())
+            let pending_terminal = cradle.cradle.pending_terminal_handoff();
+            let terminal = cradle.cradle.is_fully_resolved();
+            let result = manager_drain_to_js(&dr, pending_terminal, terminal, true)?;
+            let _ = js_sys::Reflect::set(&result, &"ids".into(), &ids_arr);
+            Ok(result)
         })
     }
 
@@ -882,14 +882,30 @@ mod gaming_wasm {
         } else {
             None
         };
-        with_game_action_drain(cid, game_id.clone(), FailedGameAction::MakeMove, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut JsGameSession| {
             let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.random());
-            cradle.cradle.make_move(
+            let action_succeeded = match cradle.cradle.make_move(
                 &mut cradle.allocator,
                 &game_id,
-                readable_move,
-                entropy,
-            )
+                readable_move.clone(),
+                entropy.clone(),
+            ) {
+                Ok(()) => true,
+                Err(e) => {
+                    cradle.cradle.push_event(GameSessionEvent::Notification(
+                        GameNotification::ActionFailed {
+                            id: Some(game_id.clone()),
+                            action: Some(FailedGameAction::MakeMove),
+                            reason: format!("{e:?}"),
+                        },
+                    ));
+                    false
+                }
+            };
+            let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
+            let pending_terminal = cradle.cradle.pending_terminal_handoff();
+            let terminal = cradle.cradle.is_fully_resolved();
+            manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)
         })
     }
 

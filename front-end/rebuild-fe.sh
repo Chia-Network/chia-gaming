@@ -11,7 +11,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR"
-CLSP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/clsp"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLSP_DIR="$REPO_ROOT/clsp"
 
 # Portable millisecond nonce. macOS `date +%s%3N` leaves a literal "3N".
 build_nonce() {
@@ -21,6 +22,9 @@ build_nonce() {
     node -e 'process.stdout.write(String(Date.now()))'
   fi
 }
+
+echo "=== Building chialisp (if needed) ==="
+"$REPO_ROOT/tools/build-chialisp.sh"
 
 echo "=== Building gaming-fe ==="
 (cd "$FE_DIR" && pnpm exec tsc --project . && \

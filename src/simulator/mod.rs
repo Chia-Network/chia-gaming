@@ -500,6 +500,24 @@ impl Simulator {
         }
     }
 
+    /// Whether a pending transaction spends `coin_id`. Test-only.
+    pub fn mempool_spends_coin(&self, coin_id: &CoinID) -> bool {
+        self.state
+            .borrow()
+            .mempool
+            .iter()
+            .any(|pending| pending.removals.contains(coin_id))
+    }
+
+    /// Creation and optional spend heights for a known coin. Test-only.
+    pub fn coin_heights(&self, coin_id: &CoinID) -> Option<(u32, Option<u32>)> {
+        self.state
+            .borrow()
+            .coins
+            .get(coin_id)
+            .map(|record| (record.created_height, record.spent_height))
+    }
+
     /// Coin state for a watched coin id (including spent coins still in the map).
     /// Used by the gaming FE to mirror WalletConnect `getCoinRecordsByNames`.
     pub fn get_watched_coin_snapshot(
@@ -990,11 +1008,18 @@ pub(crate) fn current_test_name() -> Option<String> {
 #[cfg(test)]
 pub fn run_simulation_tests() {
     use std::backtrace::Backtrace;
-    std::panic::set_hook(Box::new(|panic_info| {
+    // Process-global hook shared with cargo's parallel unit tests (including
+    // #[should_panic]). Annotate panics from sim workers only; never exit —
+    // exit(1) when CURRENT_TEST_NAME is unset races with expected unit-test
+    // panics and aborts the whole suite.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
         let test_name = CURRENT_TEST_NAME.with(|cell| cell.borrow().clone());
-        if let Some(name) = &test_name {
-            eprintln!("PANIC IN TEST: {name}");
-        }
+        let Some(name) = test_name else {
+            previous_hook(panic_info);
+            return;
+        };
+        eprintln!("PANIC IN TEST: {name}");
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             eprintln!("panic payload: {s}");
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
@@ -1004,9 +1029,6 @@ pub fn run_simulation_tests() {
         }
         let trace = Backtrace::force_capture();
         eprintln!("{trace}");
-        if test_name.is_none() {
-            std::process::exit(1);
-        }
     }));
     let ref_lists: Vec<Vec<(&str, &(dyn Fn() + Send + Sync))>> = vec![
         divmod_tests(),

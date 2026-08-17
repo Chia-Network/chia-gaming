@@ -266,7 +266,7 @@ describe('BlockchainPoller', () => {
     const p2 = poller.rpc.getBalance();
     const p3 = poller.rpc.createOfferForIds('u', {});
     const p4 = poller.rpc.selectCoins('u', 1n);
-    const p5 = poller.rpc.spend('blob', {});
+    const p5 = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
     first.resolve(7n);
     await advanceLane();

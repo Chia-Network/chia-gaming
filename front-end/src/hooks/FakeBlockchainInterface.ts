@@ -240,6 +240,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   async spend(
     blob: string,
     _spendBundle: unknown,
+    _changePuzzleHash: string,
     _source?: string,
     _fee?: bigint,
   ): Promise<string> {
@@ -274,6 +275,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   async getHeightInfo(): Promise<bigint> {
     return this.sendRequest('get_peak');
+  }
+
+  async farmBlock(): Promise<bigint> {
+    return this.sendRequest('farm_block');
   }
 
   waitForNextBlock(timeoutMs = 15_000): Promise<void> {

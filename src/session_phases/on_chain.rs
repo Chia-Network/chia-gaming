@@ -18,9 +18,9 @@ use crate::referee::types::{
 use crate::referee::Referee;
 use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, ResyncInfo, SettlementOutcome, TimeoutClaimSemantic,
+    GameStatusKind, GameStatusOtherParams, SettlementOutcome, TimeoutClaimSemantic,
 };
-use crate::session_phases::types::{GameAction, PotatoState};
+use crate::session_phases::types::{validate_new_move_action, GameAction, PotatoState};
 
 use std::borrow::Borrow;
 
@@ -98,6 +98,33 @@ pub struct OnChainPhaseArgs {
     pub resolved_clean: bool,
     pub terminal_reward_coin: Option<CoinString>,
     pub game_payout_coins: Vec<(GameID, CoinString)>,
+}
+
+fn on_chain_move_submission_effects(
+    game_id: GameID,
+    current_coin: &CoinString,
+    transaction: Spend,
+) -> Vec<Effect> {
+    vec![
+        Effect::SpendTransaction(
+            SpendBundle {
+                name: Some("on chain move".to_string()),
+                spends: vec![CoinSpend {
+                    coin: current_coin.clone(),
+                    bundle: transaction,
+                }],
+            },
+            None,
+        ),
+        Effect::Notify(GameNotification::GameStatus {
+            id: game_id,
+            status: GameStatusKind::PlayingMove,
+            my_reward: None,
+            coin_id: Some(current_coin.clone()),
+            reason: None,
+            other_params: None,
+        }),
+    ]
 }
 
 impl OnChainPhase {
@@ -237,6 +264,11 @@ impl OnChainPhase {
                     "no live game with the given game id".to_string(),
                 ))
             })
+    }
+
+    pub fn game_state_number(&self, game_id: &GameID) -> Result<usize, Error> {
+        let index = self.get_game_by_id(game_id)?;
+        Ok(self.live_games[index].state_number())
     }
 
     pub fn has_live_game(&self, game_id: &GameID) -> bool {
@@ -472,16 +504,16 @@ impl OnChainPhase {
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
 
-    /// Emit the terminal-loser ("forfeit") notifications for a game whose
+    /// Emit terminal-loser notifications for a game whose
     /// opponent just made the terminal move that leaves us with a zero share.
     /// We can never move again and have no timeout to claim, so we surface the
     /// final move's `readable`/`mover_share` (when available, so the UI can
-    /// display the final hand) and a forfeit terminal, then drop the game from
+    /// display the final hand) and a loss terminal, then drop the game from
     /// on-chain tracking.  Detection is generic — driven by the nil validation
     /// program via `is_game_over()` — not anything
     /// game-specific.  Shared by the `Moved` and `Expected` coin-spend arms so
     /// the loser is handled identically however the move is classified.
-    fn emit_loser_forfeit_terminal(
+    fn emit_loser_terminal(
         &mut self,
         effects: &mut Vec<Effect>,
         game_id: &GameID,
@@ -510,7 +542,7 @@ impl OnChainPhase {
         self.game_map.retain(|_, def| def.game_id != *game_id);
         effects.push(Effect::Notify(GameNotification::game_settled(
             *game_id,
-            SettlementOutcome::ForfeitedOpponentWon,
+            SettlementOutcome::Lost,
             Amount::default(),
             None,
         )));
@@ -664,9 +696,8 @@ impl OnChainPhase {
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
-        let mut resync_info: Option<ResyncInfo> = None;
         let mut unblock_queue = false;
 
         if let Some(pending) = self.pending_moves.remove(coin_id) {
@@ -743,7 +774,7 @@ impl OnChainPhase {
                         ),
                     });
                     effects.extend(self.process_queued_action(env)?);
-                    return Ok((effects, None));
+                    return Ok(effects);
                 }
 
                 if create_ph == self.their_reward_puzzle_hash {
@@ -764,7 +795,7 @@ impl OnChainPhase {
                         effects.push(eff);
                     }
                     effects.extend(self.process_queued_action(env)?);
-                    return Ok((effects, None));
+                    return Ok(effects);
                 }
 
                 self.game_map.insert(
@@ -784,7 +815,7 @@ impl OnChainPhase {
             // Not in the live map: either we already dropped this coin after a
             // terminal outcome, or the host delivered a puzzle/solution for a
             // coin we never tracked. Both are ignore (not a session-level Err).
-            return Ok((effects, None));
+            return Ok(effects);
         };
 
         if old_definition.pending_slash_amount.is_some() {
@@ -869,7 +900,7 @@ impl OnChainPhase {
                 effects.push(eff);
             }
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok(effects);
         }
 
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
@@ -982,12 +1013,12 @@ impl OnChainPhase {
             }
 
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok(effects);
         }
 
         if !self.has_live_game(&old_definition.game_id) {
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok(effects);
         }
 
         let parsed_solution = ParsedRefereeSolution::parse(env.allocator, solution)?;
@@ -1021,7 +1052,7 @@ impl OnChainPhase {
                 effects.push(eff);
             }
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok(effects);
         };
 
         if old_definition.our_turn {
@@ -1051,13 +1082,13 @@ impl OnChainPhase {
                     effects.push(eff);
                 }
                 effects.extend(self.process_queued_action(env)?);
-                return Ok((effects, None));
+                return Ok(effects);
             }
         }
 
         match their_turn_result {
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(
-                state_number,
+                _state_number,
                 ph,
                 amt,
                 _redo,
@@ -1108,8 +1139,8 @@ impl OnChainPhase {
                     // The Expected classification means our referee already
                     // advanced through this terminal move, so its readable was
                     // already delivered; there is no fresh readable to forward
-                    // here.  Emit the forfeit terminal and drop the game.
-                    self.emit_loser_forfeit_terminal(&mut effects, &game_id, None);
+                    // here. Emit the loss terminal and drop the game.
+                    self.emit_loser_terminal(&mut effects, &game_id, None);
                 } else {
                     let finished_flag = if terminal { Some(true) } else { None };
 
@@ -1148,10 +1179,6 @@ impl OnChainPhase {
                     }
                 }
 
-                resync_info = Some(ResyncInfo {
-                    state_number,
-                    is_my_turn,
-                });
                 unblock_queue = true;
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
@@ -1266,11 +1293,7 @@ impl OnChainPhase {
                     && self.get_game_our_current_share(&game_id)? == Amount::default();
 
                 if zero_reward_terminal {
-                    self.emit_loser_forfeit_terminal(
-                        &mut effects,
-                        &game_id,
-                        Some((readable, mover_share)),
-                    );
+                    self.emit_loser_terminal(&mut effects, &game_id, Some((readable, mover_share)));
                 } else {
                     let finished_flag = if terminal { Some(true) } else { None };
 
@@ -1453,7 +1476,7 @@ impl OnChainPhase {
             effects.extend(self.process_queued_action(env)?);
         }
 
-        Ok((effects, resync_info))
+        Ok(effects)
     }
 
     pub fn process_queued_action(
@@ -1476,7 +1499,7 @@ impl OnChainPhase {
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<Option<Effect>, Error> {
+    ) -> Result<Vec<Effect>, Error> {
         let my_turn = self.my_move_in_game(&game_id);
         if my_turn.is_none() {
             return Err(Error::StrErr(format!(
@@ -1514,12 +1537,12 @@ impl OnChainPhase {
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            return Ok(Some(Effect::Notify(GameNotification::game_settled(
+            return Ok(vec![Effect::Notify(GameNotification::game_settled(
                 game_id,
                 SettlementOutcome::ForfeitedSkippedReveal,
                 Amount::default(),
                 None,
-            ))));
+            ))]);
         }
 
         let (post_referee, post_last_ph) = self.save_game_state(&game_id)?;
@@ -1546,16 +1569,11 @@ impl OnChainPhase {
             },
         );
 
-        Ok(Some(Effect::SpendTransaction(
-            SpendBundle {
-                name: Some("on chain move".to_string()),
-                spends: vec![CoinSpend {
-                    coin: current_coin.clone(),
-                    bundle: transaction,
-                }],
-            },
-            None,
-        )))
+        Ok(on_chain_move_submission_effects(
+            game_id,
+            current_coin,
+            transaction,
+        ))
     }
 
     pub fn do_on_chain_action(
@@ -1669,8 +1687,22 @@ impl OnChainPhase {
                 }
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
                     def.timeout_claim_armed = true;
-                    def.game_finished = true;
                 }
+                effects.push(Effect::Notify(GameNotification::GameStatus {
+                    id: game_id,
+                    status: if my_turn == Some(true) {
+                        GameStatusKind::OnChainMyTurn
+                    } else {
+                        GameStatusKind::OnChainTheirTurn
+                    },
+                    my_reward: None,
+                    coin_id: Some(current_coin),
+                    reason: None,
+                    other_params: Some(GameStatusOtherParams {
+                        game_finished: Some(true),
+                        ..Default::default()
+                    }),
+                }));
                 Ok(effects)
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
@@ -1710,6 +1742,16 @@ impl OnChainPhase {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
+        let current_coin = self
+            .game_map
+            .iter()
+            .find_map(|(coin, game)| (game.game_id == *id).then_some(coin));
+        validate_new_move_action(
+            id,
+            self.my_move_in_game(id),
+            &self.game_action_queue,
+            current_coin.is_none_or(|coin| self.pending_moves.contains_key(coin)),
+        )?;
         self.do_on_chain_action(env, GameAction::Move(*id, readable.clone(), new_entropy))
     }
 
@@ -1768,12 +1810,12 @@ impl OnChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         if let Some((p, s)) = puzzle_and_solution {
-            let (game_effects, resync) = self.handle_game_coin_spent(env, coin_id, p, s)?;
+            let game_effects = self.handle_game_coin_spent(env, coin_id, p, s)?;
             effects.extend(game_effects);
-            return Ok((effects, resync));
+            return Ok(effects);
         } else if let Some((game_id, our_turn)) = self.remove_game_coin_info(coin_id) {
             let reason = if our_turn {
                 "our turn coin spent unexpectedly".to_string()
@@ -1794,9 +1836,9 @@ impl OnChainPhase {
             };
             effects.push(Effect::Notify(notification));
             effects.extend(self.process_queued_action(env)?);
-            return Ok((effects, None));
+            return Ok(effects);
         }
-        Ok((effects, None))
+        Ok(effects)
     }
 }
 
@@ -1847,7 +1889,7 @@ impl PeerLifecyclePhase for OnChainPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         OnChainPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 
@@ -1946,5 +1988,26 @@ impl PeerLifecyclePhase for OnChainPhase {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn on_chain_move_submission_precedes_playing_move_notification() {
+        let effects =
+            on_chain_move_submission_effects(GameID(7), &CoinString::default(), Spend::default());
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::SpendTransaction(_, _),
+                Effect::Notify(GameNotification::GameStatus {
+                    status: GameStatusKind::PlayingMove,
+                    ..
+                })
+            ]
+        ));
     }
 }

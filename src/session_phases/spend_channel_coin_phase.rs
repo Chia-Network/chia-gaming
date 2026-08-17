@@ -15,7 +15,7 @@ use crate::common::types::{
 use crate::game_session::PeerLifecyclePhase;
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelSemanticPhase, ChannelStatus, ChannelStatusSnapshot,
-    CoinOfInterest, Effect, GameNotification, GameStatusKind, ResyncInfo, SettlementOutcome,
+    CoinOfInterest, Effect, GameNotification, GameStatusKind, SettlementOutcome,
     TimeoutClaimSemantic, UnrollInitiator,
 };
 use crate::session_phases::handler_base::{
@@ -24,7 +24,9 @@ use crate::session_phases::handler_base::{
 use crate::session_phases::on_chain::{
     OnChainPhase, OnChainPhaseArgs, PendingMoveKind, PendingMoveSavedState,
 };
-use crate::session_phases::types::{GameAction, PotatoState, SpendWalletReceiver};
+use crate::session_phases::types::{
+    validate_new_move_action, GameAction, PotatoState, SpendWalletReceiver,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 enum SpendChannelCoinState {
@@ -265,6 +267,12 @@ impl SpendChannelCoinPhase {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
+        validate_new_move_action(
+            id,
+            self.base.channel_state()?.game_is_my_turn(id),
+            &self.base.game_action_queue,
+            false,
+        )?;
         self.base.park_move(id, readable, new_entropy);
         Ok(vec![])
     }
@@ -401,7 +409,7 @@ impl SpendChannelCoinPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
 
         match &self.state {
@@ -418,7 +426,7 @@ impl SpendChannelCoinPhase {
                         self.transition_to_failed_terminal()?;
                     }
                 }
-                return Ok((effects, None));
+                return Ok(effects);
             }
             SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
@@ -440,7 +448,7 @@ impl SpendChannelCoinPhase {
                         self.transition_to_failed_terminal()?;
                     }
                 }
-                return Ok((effects, None));
+                return Ok(effects);
             }
             SpendChannelCoinState::UnrollConditions {
                 unroll_coin,
@@ -457,12 +465,12 @@ impl SpendChannelCoinPhase {
                         self.transition_to_failed_terminal()?;
                     }
                 }
-                return Ok((effects, None));
+                return Ok(effects);
             }
             _ => {}
         }
 
-        Ok((effects, None))
+        Ok(effects)
     }
 
     // --- Internal methods ---
@@ -913,7 +921,7 @@ impl SpendChannelCoinPhase {
                 } else if *our_turn {
                     SettlementOutcome::ForfeitedSkippedReveal
                 } else {
-                    SettlementOutcome::ForfeitedOpponentWon
+                    SettlementOutcome::Lost
                 };
                 effects.push(Effect::Notify(GameNotification::game_settled(
                     *game_id,
@@ -987,14 +995,8 @@ impl SpendChannelCoinPhase {
                     None => continue,
                 };
 
-                let saved_referee = cached_move
-                    .saved_post_move_referee
-                    .clone()
-                    .ok_or_else(|| Error::StrErr("redo: no saved post-move referee".to_string()))?;
-                let saved_ph = cached_move
-                    .saved_post_move_last_ph
-                    .clone()
-                    .ok_or_else(|| Error::StrErr("redo: no saved post-move last_ph".to_string()))?;
+                let saved_referee = cached_move.saved_post_move_referee.clone();
+                let saved_ph = cached_move.saved_post_move_last_ph.clone();
 
                 let (pre_referee, pre_last_ph) = player_ch.save_game_state(&game_id)?;
                 player_ch.restore_game_state(&game_id, saved_referee, saved_ph)?;
@@ -1098,7 +1100,7 @@ impl SpendWalletReceiver for SpendChannelCoinPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 }
@@ -1137,7 +1139,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+    ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
     fn make_move(

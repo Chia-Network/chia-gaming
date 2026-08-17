@@ -1,7 +1,13 @@
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { EMPTY, Subject } from 'rxjs';
+
+import SpacePoker from './SpacePoker';
 import {
   isTerminalSpacepokerHandler,
   opponentTerminalAction,
   pendingTerminalActionMatchesFailure,
+  reconcilePendingTerminalHistory,
   retainsRevealedTerminalPresentation,
   rollbackOptimisticTerminalHistory,
   SpHandler,
@@ -9,14 +15,32 @@ import {
   terminalRecoveryAfterOpponentMove,
   retainsVoluntaryTerminalPresentation,
   voluntarySpacepokerSettlementAction,
+  useSpacepokerHand,
+  type UseSpacepokerHandResult,
 } from './useSpacepokerHand';
-import { spacePokerFooterPresentation } from './SpacePoker';
+import { spacePokerRankLabel } from './handPresentation';
+import {
+  spacePokerFooterStatus,
+  spacePokerTerminalBanners,
+  spacePokerTerminalCommentary,
+  spacePokerTransitionCommentary,
+} from './statusPresentation';
 import {
   gameplayEventForActionFailed,
   gameplayEventForGameActionError,
+  type GameplayEvent,
 } from '../../hooks/useGameSession';
+import type { SessionController } from '../../hooks/SessionController';
+import { decodeGameFeatureState } from '../../lib/gameRegistry';
+import { INITIAL_GAME_TERMINAL_MODEL } from '../../lib/session/model';
+import type { LocalGameActionRequest } from '../../lib/session/sessionMachineTypes';
+import { spacepokerStateCodec, type SpacepokerHandState } from './stateCodec';
 
 describe('Space Poker terminal UX', () => {
+  it('uses a single-character ten rank', () => {
+    expect(spacePokerRankLabel(10n)).toBe('T');
+  });
+
   it('attributes only actual opponent folds and no-reveal flags', () => {
     expect(opponentTerminalAction({ handler: SpHandler.MidRound, myTurn: false, N: 2n })).toBe(
       'fold',
@@ -42,24 +66,64 @@ describe('Space Poker terminal UX', () => {
     expect(rollbackOptimisticTerminalHistory(history, 'fold')).toEqual(history);
   });
 
+  it('keeps eyes when clean settlement confirms a pending reveal', () => {
+    const history = [
+      { player: 'you' as const, action: 'check' as const },
+      { player: 'you' as const, action: 'reveal' as const },
+    ];
+
+    expect(reconcilePendingTerminalHistory(history, 'reveal', 'settled_cleanly')).toEqual(history);
+    expect(reconcilePendingTerminalHistory(history, null, 'settled_cleanly')).toEqual(history);
+    expect(reconcilePendingTerminalHistory(history, 'reveal', 'attempt_to_move_failed')).toEqual([
+      { player: 'you', action: 'check' },
+      { player: 'you', action: 'failed' },
+    ]);
+  });
+
   it('recognizes terminal handlers', () => {
     expect(isTerminalSpacepokerHandler(SpHandler.Folded)).toBe(true);
     expect(isTerminalSpacepokerHandler(SpHandler.Showdown)).toBe(true);
     expect(isTerminalSpacepokerHandler(SpHandler.End)).toBe(false);
   });
 
-  it('keeps a blank fixed footer when a hand enters showdown', () => {
-    expect(spacePokerFooterPresentation(SpHandler.End, 'Your turn')).toEqual({
-      showControls: true,
-      status: 'Your turn',
-    });
-    expect(spacePokerFooterPresentation(SpHandler.Showdown, 'Your turn')).toEqual({
-      showControls: false,
-      status: '',
-    });
-    expect(spacePokerFooterPresentation(SpHandler.Folded, 'Waiting for opponent…')).toEqual({
-      showControls: false,
-      status: '',
+  it('clears stale live-turn text when terminal commentary takes over', () => {
+    expect(spacePokerFooterStatus(SpHandler.End, 'Your turn')).toBe('Your turn');
+    expect(spacePokerFooterStatus(SpHandler.Showdown, 'Your turn')).toBe('');
+    expect(spacePokerFooterStatus(SpHandler.Folded, 'Waiting for opponent…')).toBe('');
+  });
+
+  it('describes non-betting transitions near the start and end of a hand', () => {
+    expect(spacePokerTransitionCommentary(SpHandler.CommitA, true)).toBe('Dealing cards…');
+    expect(spacePokerTransitionCommentary(SpHandler.CommitB, false)).toBe('Dealing cards…');
+    expect(spacePokerTransitionCommentary(SpHandler.End, true)).toBe('Finishing hand…');
+    expect(spacePokerTransitionCommentary(SpHandler.End, false)).toBe(
+      'Waiting for opponent to finish…',
+    );
+  });
+
+  it('uses one commentary field with a message for every terminal hand', () => {
+    expect(spacePokerTerminalCommentary('conceded-by-opponent', null, 'we_accepted')).toBe(
+      'You revealed first and the opponent conceded.',
+    );
+    expect(spacePokerTerminalCommentary('revealed', 1n, 'settled_cleanly')).toBe(
+      'You won at showdown.',
+    );
+    expect(spacePokerTerminalCommentary('revealed', -1n, 'settled_cleanly')).toBe(
+      'The opponent won at showdown.',
+    );
+    expect(spacePokerTerminalCommentary('revealed', 0n, 'settled_cleanly')).toBe(
+      'The showdown ended in a tie.',
+    );
+    expect(spacePokerTerminalCommentary('settled', null, 'opponent_timed_out')).toBe(
+      'Opponent timed out.',
+    );
+    expect(spacePokerTerminalCommentary('settled', null, null)).toBe('The hand ended.');
+  });
+
+  it('shows a winner rather than fold/reveal iconography for an opponent action failure', () => {
+    expect(spacePokerTerminalBanners('won-by-opponent-failure', null)).toEqual({
+      player: 'win',
+      opponent: null,
     });
   });
 
@@ -199,5 +263,402 @@ describe('Space Poker terminal UX', () => {
     expect(terminalRecoveryAfterOpponentMove('reveal', false)).toBe('reveal');
     expect(terminalRecoveryAfterOpponentMove('concede', false)).toBe('concede');
     expect(terminalRecoveryAfterOpponentMove('reveal', true)).toBeNull();
+  });
+});
+
+describe('Space Poker feature-state authority', () => {
+  let renderer: ReactTestRenderer | null = null;
+  const originalWindow = globalThis.window;
+
+  beforeAll(() => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+  });
+
+  afterEach(() => {
+    if (renderer) act(() => renderer?.unmount());
+    renderer = null;
+  });
+
+  afterAll(() => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: originalWindow,
+    });
+  });
+
+  it('does not project or submit when the session rejects a local action commit', () => {
+    const makeMove = jest.fn();
+    const onTurnChanged = jest.fn();
+    const controller = {
+      handState: spacepokerStateCodec.encode({
+        gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+        playerHoleCards: [1n, 2n],
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [3n, 4n, 5n, null, null],
+        halfPot: 1n,
+        lastRaise: 0n,
+        iRaisedLast: false,
+        handHistory: [],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        pendingTerminalAction: null,
+        coinTossIOpen: true,
+        unitSizeMojos: 10n,
+        displayMode: 'units',
+      }),
+      isChannelReady: () => true,
+      transitionFeatureState: () => false,
+      commitLocalGameAction: () => {
+        throw new Error('check rejected');
+      },
+      makeMove,
+    } as unknown as SessionController;
+    let hand: UseSpacepokerHandResult | undefined;
+
+    function Harness() {
+      hand = useSpacepokerHand(
+        { interactionMode: 'live', controller },
+        '7',
+        false,
+        EMPTY,
+        100n,
+        10n,
+        onTurnChanged,
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    expect(() => act(() => hand?.handleCheck())).toThrow('check rejected');
+
+    expect(hand?.gameState).toEqual({ handler: SpHandler.MidRound, myTurn: true, N: 3n });
+    expect(hand?.handHistory).toEqual([]);
+    expect(makeMove).not.toHaveBeenCalled();
+    expect(onTurnChanged).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an automatic command failure instead of swallowing it', () => {
+    const controller = {
+      handState: spacepokerStateCodec.encode({
+        gameState: { handler: SpHandler.CommitA, myTurn: true, N: 4n },
+        playerHoleCards: null,
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [null, null, null, null, null],
+        halfPot: 1n,
+        lastRaise: 0n,
+        iRaisedLast: false,
+        handHistory: [],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        pendingTerminalAction: null,
+        coinTossIOpen: null,
+        unitSizeMojos: 10n,
+        displayMode: 'units',
+      }),
+      isChannelReady: () => true,
+      commitLocalGameAction: () => {
+        throw new Error('autoplay rejected');
+      },
+    } as unknown as SessionController;
+
+    function Harness() {
+      useSpacepokerHand(
+        { interactionMode: 'live', controller },
+        '7',
+        false,
+        EMPTY,
+        100n,
+        10n,
+        () => {},
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    expect(() =>
+      act(() => {
+        renderer = create(React.createElement(Harness));
+      }),
+    ).toThrow('autoplay rejected');
+  });
+
+  it('commits a fold and its terminal presentation as one codec-valid state', () => {
+    const acceptSettlement = jest.fn();
+    const gameplayEvents = new Subject<GameplayEvent>();
+    const onTurnChanged = jest.fn();
+    const transitions: unknown[] = [];
+    const controller = {
+      handState: spacepokerStateCodec.encode({
+        gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+        playerHoleCards: [1n, 2n],
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [3n, 4n, 5n, null, null],
+        halfPot: 1n,
+        lastRaise: 0n,
+        iRaisedLast: false,
+        handHistory: [],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        pendingTerminalAction: null,
+        coinTossIOpen: true,
+        unitSizeMojos: 10n,
+        displayMode: 'units',
+      }),
+      isChannelReady: () => true,
+      transitionFeatureState: (_gameType: string, _gameId: string, state: unknown) => {
+        transitions.push(state);
+        return decodeGameFeatureState('spacepoker', state) !== null;
+      },
+      transitionFeatureStateWithLocalTurn: (_gameType: string, _gameId: string, state: unknown) => {
+        transitions.push(state);
+        return decodeGameFeatureState('spacepoker', state) !== null;
+      },
+      commitLocalGameAction: (request: LocalGameActionRequest) => {
+        if (request.command.type !== 'accept-settlement') throw new Error('unexpected command');
+        acceptSettlement(request.id);
+        transitions.push(request.state);
+      },
+      acceptSettlement,
+    } as unknown as SessionController;
+    let hand: UseSpacepokerHandResult | undefined;
+
+    function Harness() {
+      hand = useSpacepokerHand(
+        { interactionMode: 'live', controller },
+        '7',
+        false,
+        gameplayEvents,
+        100n,
+        10n,
+        onTurnChanged,
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => {
+      hand?.handleFold();
+    });
+
+    expect(transitions).toHaveLength(1);
+    expect(decodeGameFeatureState('spacepoker', transitions[0])).toMatchObject({
+      gameState: { handler: SpHandler.Folded, myTurn: false, N: 3n },
+      terminalState: 'folded-by-you',
+      handHistory: [{ player: 'you', action: 'fold' }],
+      pendingTerminalAction: {
+        action: 'fold',
+        submission: 'accept-settlement',
+        previousTerminalState: 'none',
+        previousGameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+      },
+    });
+    expect(acceptSettlement).toHaveBeenCalledWith('7');
+    expect(onTurnChanged).not.toHaveBeenCalled();
+
+    act(() => {
+      gameplayEvents.next({
+        GameError: {
+          gameId: '7',
+          action: 'accept-settlement',
+          reason: 'cannot accept',
+          source: 'action',
+        },
+      });
+    });
+
+    expect(transitions).toHaveLength(2);
+    expect(decodeGameFeatureState('spacepoker', transitions[1])).toMatchObject({
+      gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+      terminalState: 'none',
+      handHistory: [],
+      pendingTerminalAction: null,
+    });
+    expect(onTurnChanged).not.toHaveBeenCalled();
+  });
+
+  it('omits the check-only endsStreet flag when calling a raise', () => {
+    const makeMove = jest.fn();
+    const transitions: unknown[] = [];
+    const controller = {
+      handState: spacepokerStateCodec.encode({
+        gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+        playerHoleCards: [1n, 2n],
+        playerBoost: false,
+        opponentHoleCards: null,
+        opponentBoost: null,
+        communityCards: [3n, 4n, 5n, null, null],
+        halfPot: 3n,
+        lastRaise: 2n,
+        iRaisedLast: false,
+        handHistory: [{ player: 'opponent', action: 'raise', units: 2n }],
+        outcome: null,
+        terminalState: 'none',
+        terminalRecovery: null,
+        pendingTerminalAction: null,
+        coinTossIOpen: true,
+        unitSizeMojos: 10n,
+        displayMode: 'units',
+      }),
+      isChannelReady: () => true,
+      transitionFeatureState: (_gameType: string, _gameId: string, state: unknown) => {
+        transitions.push(state);
+        return decodeGameFeatureState('spacepoker', state) !== null;
+      },
+      commitLocalGameAction: (request: LocalGameActionRequest) => {
+        if (request.command.type !== 'make-move') throw new Error('unexpected command');
+        makeMove(request.id, request.command.readable);
+        transitions.push(request.state);
+      },
+      makeMove,
+    } as unknown as SessionController;
+    let hand: UseSpacepokerHandResult | undefined;
+
+    function Harness() {
+      hand = useSpacepokerHand(
+        { interactionMode: 'live', controller },
+        '7',
+        false,
+        EMPTY,
+        100n,
+        10n,
+        jest.fn(),
+        INITIAL_GAME_TERMINAL_MODEL,
+        controller.handState ?? undefined,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => {
+      hand?.handleCall();
+    });
+
+    expect(transitions).toHaveLength(1);
+    expect(decodeGameFeatureState('spacepoker', transitions[0])).toMatchObject({
+      gameState: { handler: SpHandler.BeginRound, myTurn: false, N: 2n },
+      halfPot: 5n,
+      lastRaise: 0n,
+      handHistory: [
+        { player: 'opponent', action: 'raise', units: 2n },
+        { player: 'you', action: 'call' },
+      ],
+    });
+    expect(makeMove).toHaveBeenCalledWith('7', null);
+  });
+
+  it.each([
+    { action: 'raise' as const, lastRaise: 0n },
+    { action: 'call' as const, lastRaise: 2n },
+  ])('keeps the live React boundary bigint-safe for slider/$action', ({ action, lastRaise }) => {
+    const committed: LocalGameActionRequest[] = [];
+    let postCommitStateReads = 0;
+
+    function Harness() {
+      const [, rerender] = React.useState(0);
+      const persistedRef = React.useRef(
+        spacepokerStateCodec.encode({
+          gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
+          playerHoleCards: [1n, 2n],
+          playerBoost: false,
+          opponentHoleCards: null,
+          opponentBoost: null,
+          communityCards: [3n, 4n, 5n, null, null],
+          halfPot: 3n,
+          lastRaise,
+          iRaisedLast: false,
+          handHistory: [],
+          outcome: null,
+          terminalState: 'none',
+          terminalRecovery: null,
+          pendingTerminalAction: null,
+          coinTossIOpen: true,
+          unitSizeMojos: 10n,
+          displayMode: 'units',
+        }),
+      );
+      const controllerRef = React.useRef<SessionController | null>(null);
+      if (!controllerRef.current) {
+        const controller = {
+          isChannelReady: () => true,
+          commitLocalGameAction: (request: LocalGameActionRequest) => {
+            committed.push(request);
+            const canonical = spacepokerStateCodec.encode(request.state as SpacepokerHandState);
+            Object.defineProperty(canonical, 'state', {
+              get: () => {
+                postCommitStateReads += 1;
+                return request.state;
+              },
+              enumerable: true,
+            });
+            persistedRef.current = canonical;
+            rerender((value) => value + 1);
+          },
+        } as unknown as SessionController;
+        Object.defineProperty(controller, 'handState', {
+          get: () => persistedRef.current,
+          enumerable: false,
+        });
+        controllerRef.current = controller;
+      }
+      return React.createElement(SpacePoker, {
+        handSource: { interactionMode: 'live', controller: controllerRef.current },
+        gameId: '7',
+        iStarted: false,
+        gameplayEvent$: EMPTY,
+        betSize: '100',
+        unitSizeMojos: '10',
+        onTurnChanged: () => {},
+        onGameLog: () => {},
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      });
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    if (action === 'raise') {
+      act(() => {
+        renderer!.root.findByType('input').props.onChange({ target: { value: '3' } });
+      });
+    }
+    const button = renderer!.root
+      .findAllByType('button')
+      .find((candidate) => candidate.children[0] === (action === 'raise' ? 'Raise' : 'Call'));
+    expect(button).toBeDefined();
+    expect(() => act(() => button!.props.onClick())).not.toThrow();
+
+    expect(committed).toHaveLength(1);
+    expect(postCommitStateReads).toBe(0);
+    expect(decodeGameFeatureState('spacepoker', committed[0].state)).toMatchObject(
+      action === 'raise'
+        ? { gameState: { myTurn: false }, lastRaise: 3n }
+        : { gameState: { myTurn: false }, lastRaise: 0n },
+    );
   });
 });

@@ -227,7 +227,7 @@ Instead, replace the return expression itself:
 
 1. **Pick the midpoint** of the suspected code path.
 2. **Replace the return** at that point with `(x "MID" relevant_values)`.
-3. **Rebuild** (`tools/build-chialisp.sh` + `./cb.sh`; ~85s total).
+3. **Rebuild** (`./cb.sh`; it runs `tools/build-chialisp.sh` first).
 4. **Run the failing test** (`./ct.sh -o test_name`).
 5. **Interpret:**
    - If the error changes to `Raise(...)` with your marker → execution
@@ -258,17 +258,14 @@ Or use conditional asserts to test specific properties:
 ### Chialisp rebuild cycle
 
 Each chialisp change requires:
-1. `rm -f .build-chialisp.cache` (force rebuild)
-2. `bash tools/build-chialisp.sh` (~85s)
-3. `./cb.sh` (rebuild the test binary; ~1s after a Rust edit, ~0s otherwise —
-   `.hex` files are loaded at runtime, not compiled in)
-4. Run the test
+1. `./cb.sh` (runs the content-addressed Chialisp build, then rebuilds the
+   test binary)
+2. Run the test
 
-To speed things up, delete only the affected hex files instead of the
-cache:
-```bash
-find clsp -name '*.hex' -path '*/spacepoker/*' -delete
-```
+`tools/build-chialisp.sh` automatically rebuilds when source content changes or
+when any generated `.hex` file is missing or modified. Do not delete cache files
+or run `cargo clean`; ordinary Cargo commands intentionally do not compile
+Chialisp.
 
 ### Cleanup
 

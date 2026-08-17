@@ -15,11 +15,8 @@ restore() {
     if [[ -f "$BACKUP" ]]; then
         cp "$BACKUP" "$REPO_ROOT/chialisp.toml"
     fi
-    rm -f "$REPO_ROOT/build.rs"
 }
 trap restore EXIT
-
-cp "$REPO_ROOT/build.rs.disabled" "$REPO_ROOT/build.rs"
 
 find_build_script() {
     find "$REPO_ROOT/target/debug/build" -path '*chia_gaming-*/build-script-build' -type f 2>/dev/null | head -1
@@ -29,9 +26,9 @@ ensure_build_script() {
     local bs
     bs="$(find_build_script || true)"
     if [[ -z "$bs" ]]; then
-        echo "=== Building build-script binary (CHIALISP_NOCOMPILE=1, no lib link) ==="
+        echo "=== Building build-script binary (no Chialisp compile, no lib link) ==="
         ulimit -s unlimited 2>/dev/null || true
-        CHIALISP_NOCOMPILE=1 CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" \
+        CARGO_BUILD_JOBS=1 RUSTFLAGS="-C debuginfo=0" \
             cargo build -q --features sim-server --lib
         bs="$(find_build_script || true)"
     fi
@@ -51,7 +48,7 @@ $name = "$path"
 EOF
     echo "=== Compiling $name ==="
     ulimit -s unlimited 2>/dev/null || true
-    RUST_MIN_STACK=134217728 \
+    CHIALISP_COMPILE=1 RUST_MIN_STACK=134217728 \
         "$BUILD_SCRIPT"
     echo "=== Done: $name ==="
 }
