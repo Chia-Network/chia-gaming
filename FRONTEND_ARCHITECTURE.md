@@ -191,17 +191,23 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
    `session_reject`).
 6. If the accepter consents, that app becomes the channel initiator. It marks
    itself busy, generates a random hex `game_session_id`, sends a bencodex
-   `session_proposal` app message (including the `game_session_id`) to the peer,
+   `session_proposal` app message (including the `game_session_id` and its
+   selected `network`) to the peer,
    starts the WASM session as initiator, and then sends the binary handshake
    frames through the same addressed pipe. Starting persists session state
    asynchronously; a later `session_reject` (or local cancel) must abort that
    in-flight start so it cannot resurrect an orphan handshake.
 7. The peer receives the `session_proposal`, checks local availability and
-   validates amounts/timeouts at the trust boundary, stores the
+   validates amounts/timeouts and `network` at the trust boundary, stores the
    `game_session_id` in its PeerSession, reserves that peer id so early
    handshake bytes can buffer, and shows its own consent prompt. Invalid
-   amounts or out-of-range timeouts are rejected with `session_reject` only —
-   they must not clear a finished freeze or IndexedDB checkpoint. If unavailable
+   amounts, out-of-range timeouts, or a `network` that is missing, malformed, or
+   not equal to the local network preference are rejected with `session_reject`
+   only —
+   they must not clear a finished freeze or IndexedDB checkpoint. The hub is
+   network-blind, so a cross-network match reaches this check and is rejected
+   here before any consent UI (differing genesis challenges would break every
+   signature). If unavailable
    or declined, it sends `session_reject` and discards any buffered handshake
    bytes. Receiving `session_reject` or `delivery_failure` during an Accept
    transition aborts that attempt with the same freeze-safe disposition as

@@ -52,3 +52,19 @@ export function isValidTimeoutString(v: string | undefined): boolean {
   const n = parseOptionalBigInt(v);
   return n !== undefined && n >= BigInt(MIN_TIMEOUT_BLOCKS) && n <= BigInt(MAX_TIMEOUT_BLOCKS);
 }
+
+/**
+ * Trust-boundary check for the network advertised in a peer `session_proposal`.
+ *
+ * The advertised value must be a well-formed network id (`mainnet`/`testnet`)
+ * and equal to our local network preference. A missing, malformed, or opposite
+ * network is rejected: a mainnet client and a testnet client bind different
+ * genesis challenges, so their signatures would never verify on the same chain.
+ */
+export function sessionProposalNetworkMatches(
+  advertised: string | undefined,
+  local: string,
+): boolean {
+  if (advertised !== 'mainnet' && advertised !== 'testnet') return false;
+  return advertised === local;
+}

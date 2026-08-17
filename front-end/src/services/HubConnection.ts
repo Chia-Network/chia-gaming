@@ -57,6 +57,7 @@ export type PeerAppMessage =
       channel_timeout?: string;
       unroll_timeout?: string;
       game_session_id?: string;
+      network?: string;
     }
   | { type: 'session_reject' };
 
@@ -127,6 +128,7 @@ function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
         channel_timeout: optionalText(decoded, 'channel_timeout'),
         unroll_timeout: optionalText(decoded, 'unroll_timeout'),
         game_session_id: optionalText(decoded, 'game_session_id'),
+        network: optionalText(decoded, 'network'),
       };
     case 'session_reject':
       return { type };

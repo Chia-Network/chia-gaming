@@ -136,6 +136,7 @@ import {
   isValidTimeoutString,
   parseOptionalBigInt,
   parseSessionAmount,
+  sessionProposalNetworkMatches,
 } from '../lib/session/peerSessionParams';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
@@ -1587,6 +1588,7 @@ const Shell = () => {
             channel_timeout: advisory.channel_timeout,
             unroll_timeout: advisory.unroll_timeout,
             game_session_id: gameSessionId,
+            network: getNetwork(),
           });
           await startFreshSessionWithPeer({
             peerId: advisory.peer_id,
@@ -1888,6 +1890,13 @@ const Shell = () => {
                 !isValidSessionAmountString(msg.responder_amount)
               ) {
                 log(`[Shell] session_reject to=${fromId}: proposal invalid amounts`);
+                sendSessionReject(fromId);
+                return;
+              }
+              if (!sessionProposalNetworkMatches(msg.network, getNetwork())) {
+                log(
+                  `[Shell] session_reject to=${fromId}: proposal network mismatch theirs=${msg.network ?? 'none'} mine=${getNetwork()}`,
+                );
                 sendSessionReject(fromId);
                 return;
               }

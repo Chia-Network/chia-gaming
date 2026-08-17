@@ -323,6 +323,26 @@ describe('binary message relay', () => {
     expect(cb.onPeerAppMessage).toHaveBeenCalledWith('p_sender', 'p_sender', appMessage);
   });
 
+  it('decodes the network field on a session_proposal', async () => {
+    const cb = makeCallbacks();
+    makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+
+    const appMessage = {
+      type: 'session_proposal',
+      proposer_amount: '500',
+      responder_amount: '500',
+      network: 'testnet',
+    };
+    const payload = encodeBencodex(appMessage);
+    MockWebSocket.instance!._fireBinaryInbound('p_sender', payload);
+    expect(cb.onPeerAppMessage).toHaveBeenCalledWith(
+      'p_sender',
+      'p_sender',
+      expect.objectContaining({ type: 'session_proposal', network: 'testnet' }),
+    );
+  });
+
   it('passes distinct alias from binary frame header', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
