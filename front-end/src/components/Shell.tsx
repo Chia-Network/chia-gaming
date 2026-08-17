@@ -2665,10 +2665,7 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(true);
-      hubConnRef.current?.setBusy(
-        presenceBusy('resolved'),
-        save.terminal.myAlias ?? peekAlias(),
-      );
+      hubConnRef.current?.setBusy(presenceBusy('resolved'), save.terminal.myAlias ?? peekAlias());
       setResuming(false);
     },
     [
