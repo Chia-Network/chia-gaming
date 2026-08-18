@@ -385,6 +385,12 @@ describe('flat state', () => {
     expect(getBlockchainType()).toBe('walletconnect');
   });
 
+  it('getBlockchainType accepts cloud', () => {
+    expect(getBlockchainType()).toBeUndefined();
+    savePreferences({ blockchainType: 'cloud' });
+    expect(getBlockchainType()).toBe('cloud');
+  });
+
   it('saveSession replaces the live phase payload', () => {
     saveLiveFields();
     const state = loadState();
