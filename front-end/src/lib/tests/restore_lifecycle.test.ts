@@ -1,4 +1,5 @@
 import {
+  isAvailableForNewSessionPrompt,
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
   shouldAdvertiseAvailable,
@@ -78,6 +79,17 @@ describe('restore lifecycle gates', () => {
     expect(shouldReportHubBusy('off-chain', true)).toBe(true);
   });
 
+  it('keeps presence busy while the blockchain backend is not ready for play', () => {
+    // Session alone would advertise available — a not-ready backend still holds busy.
+    expect(shouldReportHubBusy('none', true, false)).toBe(true);
+    expect(shouldReportHubBusy('resolved', true, false)).toBe(true);
+    // Backend ready → session phase decides.
+    expect(shouldReportHubBusy('none', true, true)).toBe(false);
+    expect(shouldReportHubBusy('resolved', true, true)).toBe(false);
+    expect(shouldReportHubBusy('off-chain', true, true)).toBe(true);
+    expect(shouldReportHubBusy('on-chain', true, true)).toBe(true);
+  });
+
   it('keeps hub presence busy for a non-terminal restore cradle even when phase is still none', () => {
     // Wallet reconnect mid-resume: phase has not advanced yet, but the cradle
     // means we must not advertise available.
@@ -126,6 +138,61 @@ describe('restore lifecycle gates', () => {
         hasCradle: false,
       }),
     ).toBe(true);
+    // A not-ready backend holds busy even with wallet + no cradle.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: false,
+        terminalSave: false,
+        hasCradle: false,
+        blockchainReady: false,
+      }),
+    ).toBe(true);
+    // Backend ready must not clear restore obligation while phase is still none.
+    expect(
+      shouldReportHubBusyPresence('none', true, {
+        restoring: true,
+        terminalSave: false,
+        hasCradle: true,
+        blockchainReady: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects inbound matchmaking while the backend is not ready or walletless', () => {
+    // Idle session + no pending prompts, but backend not ready → unavailable.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, false)).toBe(
+      false,
+    );
+    expect(
+      isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, false),
+    ).toBe(false);
+    // Walletless → unavailable even with backend ready.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, false, true)).toBe(
+      false,
+    );
+    // Backend ready + wallet → available when otherwise idle.
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, false, true, true)).toBe(
+      true,
+    );
+    expect(isAvailableForNewSessionPrompt('resolved', false, false, false, false, true, true)).toBe(
+      true,
+    );
+    // Session obligation or pending matchmaking still blocks.
+    expect(
+      isAvailableForNewSessionPrompt('off-chain', false, false, false, false, true, true),
+    ).toBe(false);
+    expect(isAvailableForNewSessionPrompt('none', true, false, false, false, true, true)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('none', false, true, false, false, true, true)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('none', false, false, true, false, true, true)).toBe(
+      false,
+    );
+    expect(isAvailableForNewSessionPrompt('none', false, false, false, true, true, true)).toBe(
+      false,
+    );
   });
 
   it('cancels only pre-Active peer hard-disconnects; later sessions stay for on-chain', () => {

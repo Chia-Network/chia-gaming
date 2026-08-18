@@ -65,10 +65,17 @@ export function shouldAdvertiseAvailable(
 /**
  * Without a wallet the player cannot fund or resolve a channel, so we advertise
  * busy to the hub regardless of session phase — the lobby must not offer matches
- * we cannot play. With a wallet, busy tracks the broader session obligation.
+ * we cannot play. The same applies until the blockchain backend reports it is
+ * ready for play (`blockchainReady`); the backend owns that computation (e.g.
+ * WalletConnect waits for a verified full-node peer). With a wallet and a ready
+ * backend, busy tracks the broader session obligation.
  */
-export function shouldReportHubBusy(sessionPhase: SessionPhase, walletConnected = true): boolean {
-  if (!walletConnected) return true;
+export function shouldReportHubBusy(
+  sessionPhase: SessionPhase,
+  walletConnected = true,
+  blockchainReady = true,
+): boolean {
+  if (!walletConnected || !blockchainReady) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
@@ -78,7 +85,8 @@ export function shouldReportHubBusy(sessionPhase: SessionPhase, walletConnected 
  * During restore, `sessionPhase` is often still `none` until WASM reports, so
  * phase alone is not enough: a non-terminal cradle (serialized session or
  * pairing token) must keep us busy so the lobby does not offer matches
- * mid-resume. Terminal Failed/Resolved* cradles do not.
+ * mid-resume. Terminal Failed/Resolved* cradles do not. A backend that is not
+ * yet ready for play (`blockchainReady === false`) also stays busy.
  */
 export function shouldReportHubBusyPresence(
   sessionPhase: SessionPhase,
@@ -87,10 +95,11 @@ export function shouldReportHubBusyPresence(
     restoring: boolean;
     terminalSave: boolean;
     hasCradle: boolean;
+    blockchainReady?: boolean;
   },
 ): boolean {
   return (
-    shouldReportHubBusy(sessionPhase, walletConnected) ||
+    shouldReportHubBusy(sessionPhase, walletConnected, opts.blockchainReady ?? true) ||
     (opts.restoring && !opts.terminalSave && opts.hasCradle)
   );
 }
@@ -125,6 +134,31 @@ export function shouldReportSessionPhase(
   resolvedReported: boolean,
 ): boolean {
   return !restoreBlocked && (sessionPhase !== 'resolved' || !resolvedReported);
+}
+
+/**
+ * Whether inbound matchmaking may open a consent prompt.
+ * Must stay aligned with `shouldReportHubBusy` for session + wallet + backend
+ * readiness, and also exclude temporary local matchmaking state that does not
+ * always set hub `busy` (pending advisory/proposal, live peer session, reserved
+ * peer).
+ */
+export function isAvailableForNewSessionPrompt(
+  sessionPhase: SessionPhase,
+  pendingAdvisory: boolean,
+  pendingProposal: boolean,
+  hasLivePeerSession: boolean,
+  hasReservedPeerId: boolean,
+  walletConnected: boolean,
+  blockchainReady: boolean,
+): boolean {
+  return (
+    !shouldReportHubBusy(sessionPhase, walletConnected, blockchainReady) &&
+    !pendingAdvisory &&
+    !pendingProposal &&
+    !hasLivePeerSession &&
+    !hasReservedPeerId
+  );
 }
 
 /**

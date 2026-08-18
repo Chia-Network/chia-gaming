@@ -32,6 +32,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private uniqueId = '';
   private initialBalance: bigint | undefined;
   private connectionListeners = new Set<(connected: boolean) => void>();
+  private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private autoReconnect = false;
   // Firefox serializes WS connects per host:port and can delay a new
@@ -363,6 +364,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         /* ignore */
       }
     }
+    // Simulator has no full-node peer wait: play readiness tracks connectivity.
+    for (const cb of this.readinessListeners) {
+      try {
+        cb(connected);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   async beginConnect(uniqueId: string, _fresh = false): Promise<ConnectionSetup> {
@@ -397,6 +406,17 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.connectionListeners.add(cb);
     return () => {
       this.connectionListeners.delete(cb);
+    };
+  }
+
+  isReadyForPlay(): boolean {
+    return this.lastConnectedState;
+  }
+
+  onPlayReadinessChange(cb: (ready: boolean) => void): () => void {
+    this.readinessListeners.add(cb);
+    return () => {
+      this.readinessListeners.delete(cb);
     };
   }
 }
