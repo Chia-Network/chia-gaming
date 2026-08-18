@@ -111,7 +111,7 @@ describe('validateSessionSaveEnvelope', () => {
     ).toThrow('unexpected');
   });
 
-  it('decodes one legitimate snapshot for every v12 phase', () => {
+  it('decodes one legitimate snapshot for every v13 phase', () => {
     const preferences = baseSave({ blockchainType: 'simulator' });
     const preHandshake = baseSave({
       pairingToken: 'pair',
@@ -190,7 +190,7 @@ describe('validateSessionSaveEnvelope', () => {
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
   ] satisfies Array<keyof SessionPresentationSave>)(
-    'rejects a v12 presentation missing required %s',
+    'rejects a v13 presentation missing required %s',
     (field) => {
       const save = liveSave();
       if (save.phase !== 'live') throw new Error('expected live fixture');

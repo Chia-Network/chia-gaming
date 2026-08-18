@@ -398,11 +398,11 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`12`. Because the project is
+`13`. Because the project is
 still alpha, every other version is deleted wholesale without decoding or
-migration. A decoded v12 record must also satisfy the complete phase-owned
+migration. A decoded v13 record must also satisfy the complete phase-owned
 envelope contract (keyed game membership, game-owned payload/type agreement,
-terminal data, and frozen terminal coin list); malformed v12 records are
+terminal data, and frozen terminal coin list); malformed v13 records are
 deleted rather than partially restored. The boot marker is retained after an
 incompatible or malformed resumable record is discarded so the failure remains
 visible at the Resume / Start Over boundary. The `version` field is kept as a
@@ -426,7 +426,7 @@ are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save schema version; currently `12`.                                                                                                                                                                                                                                                                            |
+| `version`                       | `bigint`                                                                                                   | Save schema version; currently `13`.                                                                                                                                                                                                                                                                            |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -550,7 +550,7 @@ independently, and the accepted entry is removed only after the hand is fully
 settled. Schema version 12 also makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation and stores the canonical `GameProtocolPresentation` discriminant.
-Under the alpha no-migration policy, version 11 and all other incompatible
+Under the alpha no-migration policy, version 12 and all other incompatible
 records are deleted rather than translated from aggregate current-game fields.
 
 #### Delivery-critical saves
@@ -1572,8 +1572,8 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v12 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v12 presentation snapshot encoder                                                            |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v13 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v13 presentation snapshot encoder                                                            |
 | `front-end/src/lib/gameRegistry.ts`              | Exhaustive pure feature registration and game-owned codec/terms/compose dispatch                                        |
 | `front-end/src/lib/gameMountRegistry.tsx`        | Exhaustive React live/frozen mount registration                                                                         |
 | `front-end/src/features/calPoker/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
@@ -1581,7 +1581,7 @@ not to limit concurrency.
 | `front-end/src/hooks/WasmStateInit.ts`           | WASM initialization: load binary, deposit .hex files, create cradle                                                     |
 | `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                          |
-| `front-end/src/hooks/save.ts`                    | v12 cache/write and live/terminal lifecycle facade                                                                      |
+| `front-end/src/hooks/save.ts`                    | v13 cache/write and live/terminal lifecycle facade                                                                      |
 | `front-end/src/hooks/saveCoordination.ts`        | Resume markers, active-tab lease, and cross-tab persistence fencing                                                     |
 | `front-end/src/hooks/saveHardReset.ts`           | Hard-reset and WalletConnect browser-storage cleanup                                                                     |
 | `front-end/src/hooks/savePreferences.ts`         | Local preference encoding and decoding                                                                                    |
