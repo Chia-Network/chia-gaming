@@ -15,6 +15,7 @@ import {
   SESSION_SAVE_SCHEMA,
   SESSION_SAVE_VERSION,
   type BlockchainType,
+  type ChiaNetwork,
   type LiveSessionSave,
   type PreHandshakeSessionSave,
   type SessionHistorySave,
@@ -552,6 +553,16 @@ export function clearSessionId(): void {
 
 export function getBlockchainType(): BlockchainType | undefined {
   return loadState().preferences.blockchainType;
+}
+
+export function getNetwork(): ChiaNetwork {
+  return loadState().preferences.network ?? 'mainnet';
+}
+
+export function setNetwork(network: ChiaNetwork): void {
+  mutate((s) => {
+    s.preferences.network = network;
+  });
 }
 
 export type SessionCacheUpdate =

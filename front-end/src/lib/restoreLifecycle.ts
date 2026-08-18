@@ -1,5 +1,6 @@
 import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
+import type { SessionSave } from './session/saveEnvelope';
 import {
   createSessionModel,
   isPreActiveChannelStatus,
@@ -77,6 +78,27 @@ export function shouldReportHubBusy(
 ): boolean {
   if (!walletConnected || !blockchainReady) return true;
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
+}
+
+/**
+ * True when a WASM cradle already exists — or is about to be created — with a
+ * baked-in genesis challenge. Changing the network preference would let
+ * WalletConnect pair a different chain id than that challenge, so signatures
+ * would not verify on the connected chain.
+ *
+ * A resolved freeze does not lock: the next match may choose a new network.
+ * Mid-resume still locks while phase is `none` if a live or pre-handshake
+ * save (or pairing token) is present.
+ */
+export function sessionLocksNetwork(
+  sessionPhase: SessionPhase,
+  savePhase?: SessionSave['phase'],
+  pairingToken?: string,
+): boolean {
+  if (sessionPhase === 'off-chain' || sessionPhase === 'on-chain') return true;
+  if (sessionPhase === 'resolved') return false;
+  if (savePhase === 'live' || savePhase === 'pre-handshake') return true;
+  return !!pairingToken;
 }
 
 /**

@@ -103,6 +103,14 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
           new Set(['simulator', 'walletconnect']),
           'preferences.blockchainType',
         );
+  const network =
+    fields.network === undefined
+      ? undefined
+      : parseDiscriminant<'mainnet' | 'testnet'>(
+          fields.network,
+          new Set(['mainnet', 'testnet']),
+          'preferences.network',
+        );
   return {
     alias: optionalString(fields.alias, 'preferences.alias', true),
     theme,
@@ -126,6 +134,7 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
         ? undefined
         : requireBoolean(fields.hubAlert, 'preferences.hubAlert'),
     blockchainType,
+    network,
   };
 }
 

@@ -3,6 +3,7 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import { GameplayEvent } from '../../hooks/useGameSession';
 import { requireLiveGameHandSource, type GameHandSource } from '../../lib/gameMount';
+import { getCurrencyLabels } from '../../constants/currency';
 import { krunkSettlementStatus } from '../../lib/settlement';
 import type { GameTerminalModel } from '../../lib/session/types';
 import { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './adapter';
@@ -224,14 +225,15 @@ export function krunkWinMessage(moverShare: string): string {
 }
 
 function krunkAmountLabel(amount: string): string {
+  const labels = getCurrencyLabels();
   const mojos = BigInt(amount);
-  if (mojos < 1_000_000n) return `${mojos} mojo`;
+  if (mojos < 1_000_000n) return `${mojos} ${labels.mojo}`;
   const TRILLION = 1_000_000_000_000n;
   const whole = mojos / TRILLION;
   const frac = mojos % TRILLION;
-  if (frac === 0n) return `${whole} chia`;
+  if (frac === 0n) return `${whole} ${labels.chia}`;
   const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `${whole}.${fracStr} chia`;
+  return `${whole}.${fracStr} ${labels.chia}`;
 }
 
 export function krunkWinnerMessage(winner: string, amount: string): string {

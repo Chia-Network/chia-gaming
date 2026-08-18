@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { getCurrencyLabels } from '../constants/currency';
 
 function mojosToXchStr(mojos: bigint): string {
   const s = mojos.toString().padStart(13, '0');
@@ -57,6 +58,7 @@ export function AmountInput({
   exceedsLabel = 'Exceeds available balance.',
   onKeyDown,
 }: AmountInputProps) {
+  const labels = getCurrencyLabels();
   const [unit, setUnit] = useState<AmountUnit>('mojo');
   const [rawInput, setRawInput] = useState(() => valueMojos.toString());
   const lastExternalMojos = useRef(valueMojos);
@@ -119,14 +121,14 @@ export function AmountInput({
             onClick={() => handleUnitChange('mojo')}
             className={`px-2 py-0.5 transition-colors ${unit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
           >
-            mojo
+            {labels.mojo}
           </button>
           <button
             type="button"
             onClick={() => handleUnitChange('xch')}
             className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${unit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
           >
-            XCH
+            {labels.xch}
           </button>
         </div>
       </div>
@@ -151,7 +153,9 @@ export function AmountInput({
               className="underline font-medium hover:text-alert-text-contrast transition-colors"
             >
               Use max (
-              {unit === 'xch' ? `${mojosToXchStr(maxMojos!)} XCH` : `${maxMojos!.toString()} mojos`}
+              {unit === 'xch'
+                ? `${mojosToXchStr(maxMojos!)} ${labels.xch}`
+                : `${maxMojos!.toString()} ${labels.mojos}`}
               )
             </button>
           )}

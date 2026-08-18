@@ -14,6 +14,8 @@ export const SESSION_SAVE_VERSION = 12n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
+export type ChiaNetwork = 'mainnet' | 'testnet';
+
 export interface SessionIdentitySave {
   playerId: string;
   sessionId?: string;
@@ -31,6 +33,7 @@ export interface SessionPreferencesSave {
   walletAlert?: boolean;
   hubAlert?: boolean;
   blockchainType?: BlockchainType;
+  network?: ChiaNetwork;
 }
 
 export interface SessionHistorySave {

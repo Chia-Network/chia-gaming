@@ -2,8 +2,8 @@ import Client from '@walletconnect/sign-client';
 import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
-import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
-import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
+import { PROJECT_ID, RELAY_URL } from '../constants/env';
+import { getChainId, getRequiredNamespaces } from '../constants/wallet-connect';
 import { log } from '../services/log';
 
 export interface StartConnectResult {
@@ -51,7 +51,7 @@ class WalletState {
   }
 
   getChainId() {
-    return this.chainId ?? CHAIN_ID;
+    return this.chainId ?? getChainId();
   }
 
   getAddress() {
@@ -71,11 +71,11 @@ class WalletState {
     const accounts = namespace.accounts ?? [];
     const methods = namespace.methods ?? [];
     const chains = namespace.chains ?? [];
-    const account = accounts.find((candidate) => candidate.startsWith(`${CHAIN_ID}:`)) ?? null;
-    const chainGranted = chains.includes(CHAIN_ID) || !!account;
-    const methodsGranted = REQUIRED_NAMESPACES.chia.methods.every((method) =>
-      methods.includes(method),
-    );
+    const chainId = getChainId();
+    const account = accounts.find((candidate) => candidate.startsWith(`${chainId}:`)) ?? null;
+    const chainGranted = chains.includes(chainId) || !!account;
+    const requiredMethods = getRequiredNamespaces().chia.methods ?? [];
+    const methodsGranted = requiredMethods.every((method) => methods.includes(method));
 
     return account && chainGranted && methodsGranted ? account : null;
   }
@@ -240,7 +240,7 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        requiredNamespaces: REQUIRED_NAMESPACES,
+        requiredNamespaces: getRequiredNamespaces(),
       });
 
       this.observable.next({

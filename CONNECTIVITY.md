@@ -372,12 +372,18 @@ The hub does not create a session. It can only advise and relay:
    it **ignores** the advisory (no `session_reject`).
 4. If the target consents, it marks itself busy, generates a random hex
    `game_session_id`, sends a bencodex `session_proposal` app message (including
-   the `game_session_id`) to the challenger through the addressed relay, starts
+   the `game_session_id` and its selected `network`) to the challenger through
+   the addressed relay, starts
    WASM as initiator, and sends binary handshake frames. Persist of that start
    is async; `session_reject` / local cancel must abort any in-flight start so
    it cannot resurrect an orphan handshake.
 5. The challenger app checks local availability before showing the proposal
-   prompt. While the prompt is open it reserves that peer id so early
+   prompt. The hub is network-blind, so cross-network challenges can reach this
+   point; the challenger rejects a proposal whose `network` is missing,
+   malformed, or not equal to its own network preference with `session_reject`
+   and no consent UI (a mainnet and a testnet client bind different genesis
+   challenges, so a session between them could never verify signatures). While
+   the prompt is open it reserves that peer id so early
    `HandshakeA` bytes can buffer. If unavailable or declined, it sends
    `session_reject` and discards buffered handshake bytes. Receiving
    `session_reject` during pre-active matchmaking cancels the attempt
@@ -428,7 +434,10 @@ The hub does not create a session. It can only advise and relay:
   (`shouldReportHubBusy(phase, false)` forces busy regardless of phase) and
   cancels any pending pre-Active matchmaking attempt; wallet reconnect
   recomputes presence from the session phase and any in-progress non-terminal
-  restore cradle (phase alone is often still `none` mid-resume). (`Shell.tsx`)
+  restore cradle (phase alone is often still `none` mid-resume). The Choose
+  Connection network toggle is locked while a session binds a genesis
+  challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
+  chain id than the existing WASM cradle. (`Shell.tsx`)
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via

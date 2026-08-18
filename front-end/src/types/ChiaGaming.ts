@@ -254,6 +254,7 @@ interface GameSessionCreateConfig {
   channel_timeout: number;
   unroll_timeout: number;
   reward_puzzle_hash: string;
+  genesis_challenge: string;
 }
 
 /// A labeled coin id (hex) surfaced in the dashboard for explorer lookup.

@@ -3,6 +3,7 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import { GameplayEvent } from '../../hooks/useGameSession';
 import { requireLiveGameHandSource, type GameHandSource } from '../../lib/gameMount';
+import { getCurrencyLabels } from '../../constants/currency';
 import type { PersistedGameState } from '../../lib/session/gameStateCodec';
 import type { GameTerminalModel } from '../../lib/session/types';
 import type { StateUpdate } from '../../lib/gameAdapter';
@@ -180,7 +181,7 @@ function formatXch(mojos: bigint): string {
   const s = abs.toString().padStart(13, '0');
   const whole = s.slice(0, -12).replace(/^0+/, '') || '0';
   const frac = s.slice(-12).replace(/0+$/, '');
-  return `${sign}${frac ? `${whole}.${frac}` : whole} XCH`;
+  return `${sign}${frac ? `${whole}.${frac}` : whole} ${getCurrencyLabels().xch}`;
 }
 
 export function rollbackOptimisticTerminalHistory(
@@ -857,7 +858,7 @@ export function useSpacepokerHand(
     (units: bigint): string => {
       if (displayMode === 'units') return String(units);
       const mojos = units * betUnit;
-      if (displayMode === 'mojos') return `${mojos.toLocaleString()} mojos`;
+      if (displayMode === 'mojos') return `${mojos.toLocaleString()} ${getCurrencyLabels().mojos}`;
       return formatXch(mojos);
     },
     [betUnit, displayMode],

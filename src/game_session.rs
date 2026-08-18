@@ -340,6 +340,12 @@ struct GameSessionState {
     #[serde(default)]
     channel_expired: bool,
 
+    /// Genesis challenge (AGG_SIG_ME additional data) for the network this
+    /// session is bound to. Threaded in at creation so all on-chain signing
+    /// (channel funding, unroll, clean-shutdown payout) matches the connected
+    /// network. Persisted so restored sessions keep signing correctly.
+    agg_sig_me_additional_data: Hash,
+
     #[serde(skip)]
     events: GameSessionEventQueue,
 }
@@ -419,6 +425,8 @@ pub struct GameSessionConfig {
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
+    /// Genesis challenge (AGG_SIG_ME additional data) for the target network.
+    pub agg_sig_me_additional_data: Hash,
 }
 
 /// Scan a wallet `SpendBundle` for settlement-payment outputs created by
@@ -501,6 +509,7 @@ impl GameSession {
                 channel_creation_expiry: None,
                 channel_established: false,
                 channel_expired: false,
+                agg_sig_me_additional_data: config.agg_sig_me_additional_data.clone(),
                 events: GameSessionEventQueue::default(),
                 inbound_messages: VecDeque::default(),
             },
@@ -605,7 +614,8 @@ impl GameSession {
 
     #[cfg(test)]
     pub fn force_unroll_spend(&self, allocator: &mut AllocEncoder) -> Result<SpendBundle, Error> {
-        let mut env = ChannelEnv::new(allocator)?;
+        let mut env =
+            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
         if let Some(ph) = self.peer.as_any().downcast_ref::<OffChainPhase>() {
             return ph.force_unroll_spend(&mut env);
         }
@@ -632,7 +642,8 @@ impl GameSession {
         let saved = self.saved_unroll_snapshot.as_ref().ok_or_else(|| {
             Error::StrErr("force_stale_unroll_spend: no snapshot saved".to_string())
         })?;
-        let mut env = ChannelEnv::new(allocator)?;
+        let mut env =
+            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
         let ph = self
             .peer
             .as_any()
@@ -740,7 +751,8 @@ impl GameSession {
         launcher_coin: CoinString,
     ) -> Result<(), Error> {
         let effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.provide_launcher_coin(&mut env, launcher_coin)?
         };
         self.process_effects(effects, allocator)?;
@@ -754,7 +766,8 @@ impl GameSession {
     ) -> Result<(), Error> {
         let bundle = claim_settlement_coins(allocator, bundle);
         let effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.provide_coin_spend_bundle(&mut env, bundle)?
         };
         self.process_effects(effects, allocator)?;
@@ -828,7 +841,10 @@ impl GameSession {
         }
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
-                let mut env = ChannelEnv::new(allocator)?;
+                let mut env = ChannelEnv::new_with_genesis(
+                    allocator,
+                    &self.state.agg_sig_me_additional_data,
+                )?;
                 self.peer.received_message(&mut env, msg)
             };
             match recv_result {
@@ -847,7 +863,8 @@ impl GameSession {
         let res = if self.state.session_disposition.is_some() {
             None
         } else {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             Some(self.peer.flush_pending_actions(&mut env))
         };
         match res {
@@ -1179,7 +1196,10 @@ impl GameSession {
         if self.peer.handshake_finished() {
             while self.peer.has_queued_message() {
                 let recv_result = {
-                    let mut env = ChannelEnv::new(allocator)?;
+                    let mut env = ChannelEnv::new_with_genesis(
+                        allocator,
+                        &self.state.agg_sig_me_additional_data,
+                    )?;
                     self.peer.process_queued_message(&mut env)
                 };
                 match recv_result {
@@ -1198,7 +1218,10 @@ impl GameSession {
             }
             while self.peer.has_queued_action() {
                 let action_result = {
-                    let mut env = ChannelEnv::new(allocator)?;
+                    let mut env = ChannelEnv::new_with_genesis(
+                        allocator,
+                        &self.state.agg_sig_me_additional_data,
+                    )?;
                     self.peer.process_queued_action(&mut env)
                 };
                 match action_result {
@@ -1270,7 +1293,8 @@ impl GameSession {
         .into_gen()?;
 
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             let spend = standard_solution_partial(
                 env.allocator,
                 &self.state.identity.synthetic_private_key,
@@ -1316,7 +1340,8 @@ impl GameSession {
         self.state.unfunded_offer = None;
 
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
             let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
             let solution = solution_for_conditions(env.allocator, empty_conditions)?;
@@ -1366,7 +1391,8 @@ impl GameSession {
     #[cfg(test)]
     pub fn flush_pending(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.flush_pending_actions(&mut env)?
         };
         self.process_effects(effects, allocator)?;
@@ -1407,7 +1433,8 @@ impl GameSession {
         game_id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.self_accept_proposal(&mut env, game_id)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1422,7 +1449,8 @@ impl GameSession {
     ) -> Result<(), Error> {
         let entropy: Hash = Hash::default();
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer
                 .cheat_game(&mut env, game_id, mover_share, entropy)?
         };
@@ -1442,7 +1470,8 @@ impl GameSession {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
-        let mut env = ChannelEnv::new(allocator)?;
+        let mut env =
+            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
         self.peer.channel_state()?.get_reward_puzzle_hash(&mut env)
     }
 
@@ -1450,7 +1479,8 @@ impl GameSession {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<Option<Hash>, Error> {
-        let mut env = ChannelEnv::new(allocator)?;
+        let mut env =
+            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
         match self.peer.channel_state() {
             Ok(ch) => ch.get_game_state_id(&mut env).map(Some),
             Err(_) => Ok(None),
@@ -1469,7 +1499,8 @@ impl GameSession {
         }
 
         let start_effect = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             if let Some(hh) = self
                 .peer
                 .as_any_mut()
@@ -1493,7 +1524,8 @@ impl GameSession {
         }
 
         let start_effect = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             if let Some(hh) = self
                 .peer
                 .as_any_mut()
@@ -1521,7 +1553,8 @@ impl GameSession {
         games: &[GameProposal],
     ) -> Result<Vec<GameID>, Error> {
         let (result, reported_effects) = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.propose_games(&mut env, games)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1534,7 +1567,8 @@ impl GameSession {
         game_id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.accept_proposal(&mut env, game_id)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1547,7 +1581,8 @@ impl GameSession {
         game_id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.cancel_proposal(&mut env, game_id)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1567,7 +1602,8 @@ impl GameSession {
         new_entropy: Hash,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.make_move(&mut env, id, &readable, new_entropy)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1582,7 +1618,8 @@ impl GameSession {
         new_entropy: Hash,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
             effects.extend(self.peer.make_move(&mut env, id, &readable, new_entropy)?);
             effects
@@ -1598,7 +1635,8 @@ impl GameSession {
         id: &GameID,
     ) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.accept_settlement(&mut env, id)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1608,7 +1646,8 @@ impl GameSession {
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     pub fn shut_down(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.shut_down(&mut env)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1628,7 +1667,10 @@ impl GameSession {
         self.state.current_height = height;
         for observation in observations {
             let effects = {
-                let mut env = ChannelEnv::new(allocator)?;
+                let mut env = ChannelEnv::new_with_genesis(
+                    allocator,
+                    &self.state.agg_sig_me_additional_data,
+                )?;
                 match observation {
                     CoinObservation::Created(coin) => {
                         self.peer.coin_created(&mut env, coin)?.unwrap_or_default()
@@ -1711,7 +1753,8 @@ impl GameSession {
         }
         self.state.peer_disconnected = true;
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer.go_on_chain(&mut env, got_error)?
         };
         if !reported_effects.is_empty() {
@@ -1735,7 +1778,8 @@ impl GameSession {
             return Ok(());
         }
         let reported_effects = {
-            let mut env = ChannelEnv::new(allocator)?;
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
@@ -1935,6 +1979,61 @@ mod sequencing_tests {
         assert!(
             replacement_rec.borrow().created.is_empty(),
             "coin_created went to the handshake handler, not the replacement"
+        );
+    }
+}
+
+#[cfg(test)]
+mod genesis_challenge_tests {
+    use super::*;
+    use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+    use crate::common::types::PrivateKey;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    #[test]
+    fn channel_env_new_with_genesis_uses_provided_challenge() {
+        let mut allocator = AllocEncoder::new();
+        let testnet = Hash::from_bytes([0x11; 32]);
+        let env = ChannelEnv::new_with_genesis(&mut allocator, &testnet).expect("env");
+        assert_eq!(env.agg_sig_me_additional_data, testnet);
+
+        let mut mainnet_allocator = AllocEncoder::new();
+        let env_default = ChannelEnv::new(&mut mainnet_allocator).expect("env");
+        assert_eq!(
+            env_default.agg_sig_me_additional_data,
+            Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA)
+        );
+    }
+
+    #[test]
+    fn game_session_persists_genesis_challenge_across_serialize() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([1u8; 32]);
+        let private_key: PrivateKey = rng.random();
+        let identity = ChiaIdentity::new(&mut allocator, private_key).expect("identity");
+        let testnet = Hash::from_bytes([0x11; 32]);
+        let config = GameSessionConfig {
+            game_types: BTreeMap::new(),
+            have_potato: true,
+            identity,
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(5),
+            unroll_timeout: Timeout::new(15),
+            reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+            agg_sig_me_additional_data: testnet.clone(),
+        };
+        let private_keys: ChannelPrivateKeys = rng.random();
+        let session = GameSession::new_with_keys(config, private_keys);
+        assert_eq!(session.state.agg_sig_me_additional_data, testnet);
+
+        let bytes = bencodex::to_vec(&session).expect("serialize");
+        let restored: GameSession = bencodex::from_slice(&bytes).expect("deserialize");
+        assert_eq!(restored.state.agg_sig_me_additional_data, testnet);
+        assert_ne!(
+            restored.state.agg_sig_me_additional_data,
+            Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA)
         );
     }
 }

@@ -8,11 +8,11 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
-use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, IntoErr,
+    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
     PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
@@ -962,6 +962,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(15),
             reward_puzzle_hash: identities[0].puzzle_hash.clone(),
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         },
         private_keys[0].clone(),
     );
@@ -975,6 +976,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(15),
             reward_puzzle_hash: identities[1].puzzle_hash.clone(),
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         },
         private_keys[1].clone(),
     );

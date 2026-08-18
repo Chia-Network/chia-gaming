@@ -2,6 +2,7 @@ import {
   isValidSessionAmountString,
   isValidTimeoutString,
   parseSessionAmount,
+  sessionProposalNetworkMatches,
 } from '../session/peerSessionParams';
 
 describe('peerSessionParams', () => {
@@ -53,6 +54,25 @@ describe('peerSessionParams', () => {
       expect(() => parseSessionAmount('0')).toThrow(/positive/);
       expect(() => parseSessionAmount('bad')).toThrow(/invalid session amount/);
       expect(() => parseSessionAmount('08')).toThrow(/invalid session amount/);
+    });
+  });
+
+  describe('sessionProposalNetworkMatches', () => {
+    it('accepts a well-formed network that equals the local preference', () => {
+      expect(sessionProposalNetworkMatches('mainnet', 'mainnet')).toBe(true);
+      expect(sessionProposalNetworkMatches('testnet', 'testnet')).toBe(true);
+    });
+
+    it('rejects the opposite network', () => {
+      expect(sessionProposalNetworkMatches('mainnet', 'testnet')).toBe(false);
+      expect(sessionProposalNetworkMatches('testnet', 'mainnet')).toBe(false);
+    });
+
+    it('rejects a missing or malformed advertised network', () => {
+      expect(sessionProposalNetworkMatches(undefined, 'mainnet')).toBe(false);
+      expect(sessionProposalNetworkMatches('', 'mainnet')).toBe(false);
+      expect(sessionProposalNetworkMatches('Mainnet', 'mainnet')).toBe(false);
+      expect(sessionProposalNetworkMatches('chia:mainnet', 'mainnet')).toBe(false);
     });
   });
 });

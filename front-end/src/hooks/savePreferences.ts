@@ -2,12 +2,13 @@ import {
   SESSION_SAVE_SCHEMA,
   SESSION_SAVE_VERSION,
   type BlockchainType,
+  type ChiaNetwork,
   type SessionSave,
 } from '../lib/session/saveEnvelope';
 import { randomHex } from './saveCoordination';
 
 const STATE_KEY = 'appState';
-const PREFERENCES_KEY = 'appPreferences';
+export const PREFERENCES_KEY = 'appPreferences';
 
 interface StoredPreferences {
   playerId: string;
@@ -23,6 +24,7 @@ interface StoredPreferences {
   walletAlert?: boolean;
   hubAlert?: boolean;
   blockchainType?: BlockchainType;
+  network?: ChiaNetwork;
 }
 
 export function savePreferences(state: SessionSave): void {
@@ -40,6 +42,7 @@ export function savePreferences(state: SessionSave): void {
     walletAlert: state.preferences.walletAlert,
     hubAlert: state.preferences.hubAlert,
     blockchainType: state.preferences.blockchainType,
+    network: state.preferences.network,
   };
   try {
     localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
@@ -77,6 +80,7 @@ export function loadPreferences(): SessionSave {
             walletAlert: preferences.walletAlert,
             hubAlert: preferences.hubAlert,
             blockchainType: preferences.blockchainType,
+            network: preferences.network,
           },
           history: {},
         };
