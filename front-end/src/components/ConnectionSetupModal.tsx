@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './button';
 import type { ConnectionField, ConnectionFieldValues } from '../types/ChiaGaming';
 
@@ -29,7 +29,7 @@ export function ConnectionSetupModal({
   );
   const offsetRef = useRef({ x: 0, y: 0 });
 
-  const fieldEntries = fields ? Object.entries(fields) : [];
+  const fieldEntries = useMemo(() => (fields ? Object.entries(fields) : []), [fields]);
   const [inputs, setInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -42,7 +42,6 @@ export function ConnectionSetupModal({
     offsetRef.current = { x: 0, y: 0 };
     if (panelRef.current) panelRef.current.style.transform = 'translate(-50%, -50%)';
     // Re-initialize whenever the modal opens or the field set changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, fields]);
 
   const clampToContainer = useCallback((x: number, y: number) => {
