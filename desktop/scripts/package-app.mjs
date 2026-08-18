@@ -20,8 +20,7 @@ const RELEASE_DIR = join(DESKTOP, 'release');
 const ELECTRON_BUILDER_CLI = createRequire(import.meta.url).resolve('electron-builder/cli.js');
 
 const INSTALLER_EXTENSIONS = ['.dmg', '.zip', '.exe', '.AppImage', '.deb'];
-const WINDOWS_SIGNING =
-  process.platform === 'win32' && process.env.HAS_SIGNING_SECRET === 'true';
+const WINDOWS_SIGNING = process.platform === 'win32' && process.env.HAS_SIGNING_SECRET === 'true';
 
 rmSync(BUILD_DIR, { recursive: true, force: true });
 mkdirSync(BUILD_DIR, { recursive: true });
