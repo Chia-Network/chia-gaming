@@ -3,10 +3,18 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "build": "./tools/build-deploy.sh",
+    "build:check": "./cb.sh",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck",
+    "dev": "./run-local-demo.sh",
     "format": "prettier --write 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
     "format:check": "prettier --check 'front-end/src/**/*.{ts,tsx,js,jsx,mjs,json,css}' 'front-end/scripts/**/*.{ts,js,mjs}' 'front-end/*.{ts,js,mjs,json}' 'front-end/public/**/*.html' 'hub/*/src/**/*.{ts,tsx,js,jsx,mjs,json}' 'hub/*/*.{ts,js,mjs,json}' '*.{ts,js,mjs,json}'",
     "lint": "eslint . --max-warnings 0",
-    "lint:fix": "pnpm run lint --fix"
+    "lint:fix": "pnpm run lint --fix",
+    "start": "./run-local-demo.sh --skip-build",
+    "test": "./ct.sh",
+    "test:js": "./tools/local-wasm-tests.sh",
+    "typecheck": "pnpm --filter chia-gaming-fe exec tsc --project tsconfig.json --noEmit && pnpm --filter chia-gaming-hub-frontend exec tsc --project tsconfig.json --noEmit && pnpm --filter chia-gaming-hub-service exec tsc --project tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
