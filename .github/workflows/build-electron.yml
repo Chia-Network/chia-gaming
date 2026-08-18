@@ -121,6 +121,76 @@ jobs:
           p12-file-base64: ${{ secrets.APPLE_DEV_ID_APP }}
           p12-password: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
 
+      - name: Check for Windows signing credentials
+        if: matrix.platform == 'win' && github.event_name != 'pull_request'
+        id: windows-signing
+        shell: bash
+        env:
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_CERTKEY_ALIAS: ${{ secrets.SM_CERTKEY_ALIAS }}
+        run: |
+          configured=0
+          for value in \
+            "$SM_CLIENT_CERT_FILE_B64" \
+            "$SM_CLIENT_CERT_PASSWORD" \
+            "$SM_HOST" \
+            "$SM_API_KEY" \
+            "$SM_CODE_SIGNING_CERT_SHA1_HASH" \
+            "$SM_CERTKEY_ALIAS"; do
+            if [[ -n "$value" ]]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [[ "$configured" -eq 6 ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$configured" -eq 0 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Windows signing is partially configured; all six DigiCert secrets are required"
+            exit 1
+          fi
+
+      - name: Configure DigiCert Signing Manager
+        if: steps.windows-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+        run: |
+          cert_file="D:/Certificate_pkcs12.p12"
+          echo "$SM_CLIENT_CERT_FILE_B64" | base64 --decode > /d/Certificate_pkcs12.p12
+          {
+            echo "SM_HOST=$SM_HOST"
+            echo "SM_API_KEY=$SM_API_KEY"
+            echo "SM_CLIENT_CERT_FILE=$cert_file"
+            echo "SM_CLIENT_CERT_PASSWORD=$SM_CLIENT_CERT_PASSWORD"
+            echo "SM_CODE_SIGNING_CERT_SHA1_HASH=$SM_CODE_SIGNING_CERT_SHA1_HASH"
+          } >> "$GITHUB_ENV"
+          {
+            echo "C:/Program Files (x86)/Windows Kits/10/App Certification Kit"
+            echo "C:/Program Files (x86)/Microsoft SDKs/Windows/v10.0A/bin/NETFX 4.8 Tools"
+            echo "C:/Program Files/DigiCert/DigiCert One Signing Manager Tools"
+          } >> "$GITHUB_PATH"
+
+      - name: Install DigiCert Signing Manager tools
+        if: steps.windows-signing.outputs.available == 'true'
+        shell: cmd
+        run: |
+          curl -X GET https://download.chia.net/dc/smtools-windows-x64.msi -o smtools-windows-x64.msi
+          msiexec /i smtools-windows-x64.msi /quiet /qn
+          smksp_registrar.exe list
+          smctl.exe keypair ls
+          C:\Windows\System32\certutil.exe -csp "DigiCert Signing Manager KSP" -key -user
+          smctl.exe windows certsync --keypair-alias=${{ secrets.SM_CERTKEY_ALIAS }}
+
       - name: Build signed Electron installer
         if: steps.apple-signing.outputs.available == 'true'
         shell: bash
@@ -129,8 +199,15 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
         run: tools/build-electron.sh --platform=${{ matrix.platform }}
 
+      - name: Build signed Windows Electron installer
+        if: steps.windows-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          HAS_SIGNING_SECRET: 'true'
+        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+
       - name: Build unsigned Electron installer
-        if: steps.apple-signing.outputs.available != 'true'
+        if: steps.apple-signing.outputs.available != 'true' && steps.windows-signing.outputs.available != 'true'
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
