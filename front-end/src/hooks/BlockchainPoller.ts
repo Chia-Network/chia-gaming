@@ -154,6 +154,8 @@ export class BlockchainPoller {
       disconnect: () => adapter.disconnect(),
       isConnected: () => adapter.isConnected(),
       onConnectionChange: (cb) => adapter.onConnectionChange(cb),
+      isReadyForPlay: () => adapter.isReadyForPlay(),
+      onPlayReadinessChange: (cb) => adapter.onPlayReadinessChange(cb),
     };
   }
 
