@@ -185,7 +185,9 @@ jobs:
         shell: cmd
         run: |
           curl -X GET https://download.chia.net/dc/smtools-windows-x64.msi -o smtools-windows-x64.msi
-          msiexec /i smtools-windows-x64.msi /quiet /qn
+          start "" /wait msiexec.exe /i smtools-windows-x64.msi /qn /norestart
+          set "installer_exit=%ERRORLEVEL%"
+          if not "%installer_exit%"=="0" if not "%installer_exit%"=="3010" exit /b %installer_exit%
           smksp_registrar.exe list
           smctl.exe keypair ls
           C:\Windows\System32\certutil.exe -csp "DigiCert Signing Manager KSP" -key -user
