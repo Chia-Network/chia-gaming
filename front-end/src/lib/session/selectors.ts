@@ -10,9 +10,12 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   ON_CHAIN_CHANNEL_STATES,
   gameInstanceView,
+  unrollActionDetail,
+  unrollActionLabel,
 } from './presentation';
 import { RESOLVED_CHANNEL_STATES, WINDING_DOWN_CHANNEL_STATES } from './normalization';
 import type {
+  BannerTone,
   BetweenHandModeModel,
   ChannelStatusModel,
   GameCoinModel,
@@ -32,7 +35,7 @@ import type {
 /** Shared empty dashboard fields; setupPending / no-session override labels + action. */
 export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
   GameDashboardViewModel,
-  'channelStatusLabel' | 'actionLabel' | 'actionEnabled' | 'actionKind'
+  'bannerTone' | 'channelStatusLabel' | 'actionLabel' | 'actionEnabled' | 'actionKind'
 > = {
   channelDetail: null,
   havePotato: false,
@@ -153,6 +156,8 @@ const HAND_STATUS_LABELS: Record<HandStatus, string> = {
   slashing: 'Slashing cheater',
   'submitting-timeout': 'Submitting timeout claim',
   finishing: 'Finishing',
+  'finishing-waiting-timeout': 'Finalizing waiting for timeout',
+  'finishing-spending': 'Finalizing spending',
   ended: 'Ended',
 };
 
@@ -244,8 +249,6 @@ export function selectShellView(model: SessionModel, phase: SessionPhase): Shell
   };
 }
 
-export type GameTabDotColor = 'green' | 'yellow' | 'red' | 'gray';
-
 /** True while a cooperative close is in flight (not yet terminal). */
 export function isCleanShutdownInProgress(model: SessionModel | null): boolean {
   if (!model) return false;
@@ -258,29 +261,18 @@ export function isCleanShutdownInProgress(model: SessionModel | null): boolean {
 }
 
 /**
- * Game-tab connectivity dot. Clean shutdown keeps the peer live (keepalives
- * continue); yellow only if the peer becomes unreachable. Red is for genuine
- * errors / FOAD-style peer death outside cooperative close.
+ * Game-tab pipe mark. A live session counts as connected, including handshake
+ * before the first keepalive (`peerLiveness === null`). Degraded pings stay
+ * connected; `dead` or no/resolved session is disconnected.
  */
-export function selectGameTabDotColor(args: {
+export function selectGameTabConnected(args: {
   sessionPhase: SessionPhase;
-  sessionError: boolean;
   peerLiveness: PeerLiveness;
-  cleanShutdownInProgress: boolean;
-}): GameTabDotColor {
-  const { sessionPhase, sessionError, peerLiveness, cleanShutdownInProgress } = args;
-  if (sessionPhase === 'none' || sessionPhase === 'resolved') return 'gray';
-  if (sessionError) return 'red';
-  if (cleanShutdownInProgress) {
-    // Peer should not be marked dead during cooperative close; if liveness
-    // still reports dead/degraded, treat it as unreachable rather than error.
-    if (peerLiveness === 'dead' || peerLiveness === 'degraded') return 'yellow';
-    return 'green';
-  }
-  if (peerLiveness === 'dead') return 'red';
-  if (sessionPhase === 'on-chain' || peerLiveness === 'degraded') return 'yellow';
-  if (peerLiveness === 'connected') return 'green';
-  return 'gray';
+}): boolean {
+  const { sessionPhase, peerLiveness } = args;
+  if (sessionPhase === 'none' || sessionPhase === 'resolved') return false;
+  if (peerLiveness === 'dead') return false;
+  return true;
 }
 
 export interface GameDashboardSelectorOptions {
@@ -288,6 +280,29 @@ export interface GameDashboardSelectorOptions {
   setupPending?: boolean;
   cleanShutdownGraceActive?: boolean;
   abandonEnabled?: boolean;
+  peerLiveness?: PeerLiveness;
+}
+
+function isOnChainBanner(model: SessionModel): boolean {
+  const state = model.channel.status.state;
+  if (state === 'GoingOnChain' || state === 'Unrolling') return true;
+  return (
+    (state === 'ResolvedUnrolled' || state === 'ResolvedStale') && model.game.activeIds.length > 0
+  );
+}
+
+function selectBannerTone(
+  model: SessionModel | null,
+  options: GameDashboardSelectorOptions,
+): BannerTone {
+  if (options.setupPending) {
+    return options.peerLiveness === 'degraded' ? 'pings-bad' : 'playing';
+  }
+  if (!model || options.hasSession === false) return 'idle';
+  if (isOnChainBanner(model)) return 'on-chain';
+  if (isTerminalChannelSnapshot(model.channel.status)) return 'ended';
+  if (options.peerLiveness === 'degraded') return 'pings-bad';
+  return 'playing';
 }
 
 function channelStatusDetail(model: SessionModel): string | null {
@@ -298,26 +313,17 @@ function channelStatusDetail(model: SessionModel): string | null {
   if (channel.sessionDisposition === 'AwaitOutboundTerminal') {
     return channel.advisory ?? 'Waiting for peer to acknowledge close';
   }
-  const phaseLabels: Record<NonNullable<ChannelStatusModel['semanticPhase']>, string> = {
-    submitting_channel_spend: 'Submitting channel spend',
-    resolving_opponent_channel_spend: 'Resolving opponent channel spend',
-    preempting: 'Preempting unroll',
-    waiting_timeout: 'Waiting for timeout',
-    submitting_timeout_finish: 'Submitting timeout finish',
-    resolving: 'Resolving',
-  };
-  if (channel.semanticPhase) {
-    const phase = phaseLabels[channel.semanticPhase];
-    const initiator =
-      channel.unrollInitiator === 'us'
-        ? ' (initiated by you)'
-        : channel.unrollInitiator === 'opponent'
-          ? ' (initiated by opponent)'
-          : '';
-    const detail = `${phase}${initiator}`;
-    return channel.advisory ? `${detail}: ${channel.advisory}` : detail;
+  const unrollDetail = unrollActionDetail(channel);
+  if (unrollDetail) {
+    return channel.advisory ? `${unrollDetail}: ${channel.advisory}` : unrollDetail;
   }
   switch (channel.state) {
+    case 'Active':
+      if (channel.stateNumber != null) {
+        const stateDetail = `state ${channel.stateNumber}`;
+        return channel.advisory ? `${stateDetail}: ${channel.advisory}` : stateDetail;
+      }
+      return channel.advisory;
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
     default:
@@ -359,6 +365,10 @@ function selectHandStatus(model: SessionModel): HandStatus {
         return 'replaying-move';
       case 'finishing':
         return 'finishing';
+      case 'finishing-waiting-timeout':
+        return 'finishing-waiting-timeout';
+      case 'finishing-spending':
+        return 'finishing-spending';
     }
   }
   return 'active';
@@ -503,9 +513,11 @@ export function selectGameDashboardView(
   // Accepting a new session after a terminal display leaves that model in place
   // until retireTerminalDisplay runs after async replaceSession; without this
   // override the dashboard would keep a disabled Done action for that window.
+  const bannerTone = selectBannerTone(model, options);
   if (options.setupPending) {
     return {
       ...EMPTY_DASHBOARD_VIEW_BASE,
+      bannerTone,
       channelStatusLabel: 'Setting Up',
       actionLabel: 'Cancel',
       actionEnabled: true,
@@ -515,6 +527,7 @@ export function selectGameDashboardView(
   if (!model || options.hasSession === false) {
     return {
       ...EMPTY_DASHBOARD_VIEW_BASE,
+      bannerTone,
       channelStatusLabel: 'No Session',
       actionLabel: 'No Session',
       actionEnabled: false,
@@ -530,12 +543,13 @@ export function selectGameDashboardView(
   );
 
   return {
+    bannerTone,
     channelStatusLabel:
       channel.sessionDisposition === 'Abandoned'
         ? 'Abandoned'
         : channel.sessionDisposition === 'AwaitOutboundTerminal'
           ? 'Waiting for Peer'
-          : CHANNEL_STATUS_LABELS[channel.state],
+          : (unrollActionLabel(channel) ?? CHANNEL_STATUS_LABELS[channel.state]),
     channelDetail: channelStatusDetail(model),
     havePotato: channel.havePotato === true,
     handStatusLabel: collapsedHandStatusLabel(model),

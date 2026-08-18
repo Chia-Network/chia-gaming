@@ -80,6 +80,11 @@ export function shouldReportHubBusy(
   return sessionPhase !== 'none' && sessionPhase !== 'resolved';
 }
 
+/** Native leave-page warning: an off-chain or on-chain session is still live. */
+export function shouldWarnOnSessionUnload(sessionPhase: SessionPhase): boolean {
+  return sessionPhase === 'off-chain' || sessionPhase === 'on-chain';
+}
+
 /**
  * True when a WASM cradle already exists — or is about to be created — with a
  * baked-in genesis challenge. Changing the network preference would let

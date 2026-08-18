@@ -79,6 +79,7 @@ import {
   onFenced,
   offFenced,
   peekAlias,
+  releaseLeaseIfOwner,
   setAlias,
 } from '../hooks/save';
 import type { ChiaNetwork } from '../lib/session/saveEnvelope';
@@ -112,23 +113,23 @@ import {
   shouldReportHubBusyPresence,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
+  shouldWarnOnSessionUnload,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
-  isCleanShutdownInProgress,
   PRE_ACTIVE_CHANNEL_STATES,
   selectGameDashboardView,
-  selectGameTabDotColor,
+  selectGameTabConnected,
   selectStatusBarBalances,
   sessionAmountsFromSave,
   sessionModelFromSave,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
+  type BannerTone,
   type GameDashboardActionKind,
   type GameDashboardViewModel,
-  type GameTabDotColor,
   type SessionModel,
   type StatusBarBalanceSegment,
 } from '../lib/session/model';
@@ -299,6 +300,17 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'log', label: 'Log' },
 ];
 
+const TAB_PIPE_CONNECTED = '\u{1F517}';
+const TAB_PIPE_DISCONNECTED = '\u{26D3}\u{FE0F}\u{200D}\u{1F4A5}';
+
+const BANNER_TONE_BAR: Record<BannerTone, string> = {
+  idle: 'var(--color-canvas-text-subtle)',
+  playing: 'var(--color-success-solid)',
+  'pings-bad': 'var(--color-warning-solid)',
+  'on-chain': 'var(--color-alert-solid)',
+  ended: 'var(--color-info-solid)',
+};
+
 const ABANDON_DELAY_MS = 120_000n;
 const GRACE_DELAY_MS = 10_000n;
 
@@ -403,112 +415,121 @@ function GameDashboard({
     if (expanded) refreshProtocolState();
   }, [expanded, refreshProtocolState]);
 
+  const barColor = BANNER_TONE_BAR[view.bannerTone];
   return (
-    <div className="flex-shrink-0 border-b border-canvas-border bg-canvas-bg-subtle px-4 py-2 text-canvas-text sm:px-6 md:px-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2 text-sm">
-          <button
-            type="button"
-            onClick={() => setExpanded((prev) => !prev)}
-            aria-expanded={expanded}
-            aria-label={expanded ? 'Hide dashboard details' : 'Show dashboard details'}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-solid"
-          >
-            <span
-              aria-hidden="true"
-              className={`text-sm leading-none transition-transform ${expanded ? 'rotate-90' : ''}`}
+    <div className="flex flex-shrink-0 border-b border-canvas-border bg-canvas-bg-subtle text-canvas-text">
+      <div aria-hidden="true" className="w-10 shrink-0" style={{ background: barColor }} />
+      <div className="min-w-0 flex-1 px-4 py-2 sm:px-6 md:px-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <button
+              type="button"
+              onClick={() => setExpanded((prev) => !prev)}
+              aria-expanded={expanded}
+              aria-label={expanded ? 'Hide dashboard details' : 'Show dashboard details'}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-solid"
             >
-              ▶
-            </span>
-          </button>
-          <div className="flex min-w-0 flex-col gap-y-0.5">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
-              <span className="flex min-w-0 flex-wrap gap-x-1">
-                <span className="text-canvas-solid">Channel:</span>
-                <span className="font-medium text-canvas-text-contrast">
-                  {view.channelStatusLabel}
-                </span>
-                {view.havePotato && (
-                  <span aria-label="You have the potato" title="You have the potato">
-                    🥔
-                  </span>
-                )}
-                {view.channelDetail && (
-                  <span className="text-canvas-text">{view.channelDetail}</span>
-                )}
+              <span
+                aria-hidden="true"
+                className={`text-sm leading-none transition-transform ${expanded ? 'rotate-90' : ''}`}
+              >
+                ▶
               </span>
-              {view.lifecycleRows.length === 0 &&
-                view.handStatusLabel !== 'Active' &&
-                view.handStatusLabel !== 'No hand' && (
-                  <span className="flex min-w-0 flex-wrap gap-x-1">
-                    <span className="text-canvas-solid">Hand:</span>
-                    <span className="font-medium text-canvas-text-contrast">
-                      {view.handStatusLabel}
-                    </span>
-                    {view.handDetail && <span className="text-canvas-text">{view.handDetail}</span>}
-                  </span>
-                )}
-              {view.lifecycleRows.map((row) => (
-                <span key={row.id} className="flex min-w-0 flex-wrap gap-x-1">
-                  <span className="text-canvas-solid">{row.label}:</span>
-                  <span className="font-medium text-canvas-text-contrast">{row.statusLabel}</span>
-                  {row.detail && <span className="text-canvas-text">{row.detail}</span>}
-                </span>
-              ))}
-            </div>
-            {balances && (
+            </button>
+            <div className="flex min-w-0 flex-col gap-y-0.5">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
-                {balances.map((seg) => (
-                  <span key={seg.label} className="flex min-w-0 flex-wrap gap-x-1">
-                    <span className="text-canvas-solid">{seg.label}:</span>
-                    <span className="font-medium text-canvas-text-contrast">
-                      {formatBalanceValue(seg.value)}
-                      {seg.value2 !== undefined ? ` / ${formatBalanceValue(seg.value2)}` : ''}
+                <span className="flex min-w-0 flex-wrap gap-x-1">
+                  <span className="text-canvas-solid">Channel:</span>
+                  <span className="font-medium text-canvas-text-contrast">
+                    {view.channelStatusLabel}
+                  </span>
+                  {view.channelDetail && (
+                    <span className="text-canvas-text">{view.channelDetail}</span>
+                  )}
+                  {view.havePotato && (
+                    <span aria-label="You have the potato" title="You have the potato">
+                      🥔
+                    </span>
+                  )}
+                  {view.bannerTone === 'pings-bad' && (
+                    <span className="text-warning-text">Peer pings look stuck</span>
+                  )}
+                </span>
+                {view.lifecycleRows.length === 0 &&
+                  view.handStatusLabel !== 'Active' &&
+                  view.handStatusLabel !== 'No hand' && (
+                    <span className="flex min-w-0 flex-wrap gap-x-1">
+                      <span className="text-canvas-solid">Hand:</span>
+                      <span className="font-medium text-canvas-text-contrast">
+                        {view.handStatusLabel}
+                      </span>
+                      {view.handDetail && (
+                        <span className="text-canvas-text">{view.handDetail}</span>
+                      )}
+                    </span>
+                  )}
+                {view.lifecycleRows.map((row) => (
+                  <span key={row.id} className="flex min-w-0 flex-wrap gap-x-1">
+                    <span className="text-canvas-solid">{row.label}:</span>
+                    <span className="font-medium text-canvas-text-contrast">{row.statusLabel}</span>
+                    {row.detail && <span className="text-canvas-text">{row.detail}</span>}
+                  </span>
+                ))}
+              </div>
+              {balances && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
+                  {balances.map((seg) => (
+                    <span key={seg.label} className="flex min-w-0 flex-wrap gap-x-1">
+                      <span className="text-canvas-solid">{seg.label}:</span>
+                      <span className="font-medium text-canvas-text-contrast">
+                        {formatBalanceValue(seg.value)}
+                        {seg.value2 !== undefined ? ` / ${formatBalanceValue(seg.value2)}` : ''}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="solid"
+              color="primary"
+              size="sm"
+              className="min-w-40"
+              disabled={!view.actionEnabled}
+              onClick={() => onAction(view.actionKind)}
+            >
+              {view.actionLabel}
+            </Button>
+          </div>
+        </div>
+        {expanded && (
+          <div className="mt-2">
+            {coins.length > 0 && (
+              <div className="mb-2 flex flex-col gap-y-0.5 text-xs">
+                {coins.map((coin) => (
+                  <span key={`${coin.label}:${coin.id}`} className="flex min-w-0 flex-wrap gap-x-1">
+                    <span className="text-canvas-solid">{coin.label}:</span>
+                    <span className="break-all font-mono text-canvas-text-contrast select-text cursor-text">
+                      {coin.id}
                     </span>
                   </span>
                 ))}
               </div>
             )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="solid"
-            color="primary"
-            size="sm"
-            className="min-w-40"
-            disabled={!view.actionEnabled}
-            onClick={() => onAction(view.actionKind)}
-          >
-            {view.actionLabel}
-          </Button>
-        </div>
-      </div>
-      {expanded && (
-        <div className="mt-2">
-          {coins.length > 0 && (
-            <div className="mb-2 flex flex-col gap-y-0.5 text-xs">
-              {coins.map((coin) => (
-                <span key={`${coin.label}:${coin.id}`} className="flex min-w-0 flex-wrap gap-x-1">
-                  <span className="text-canvas-solid">{coin.label}:</span>
-                  <span className="break-all font-mono text-canvas-text-contrast select-text cursor-text">
-                    {coin.id}
-                  </span>
-                </span>
-              ))}
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs text-canvas-solid">Protocol state</span>
+              <Button variant="ghost" color="neutral" size="sm" onClick={refreshProtocolState}>
+                Refresh
+              </Button>
             </div>
-          )}
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-xs text-canvas-solid">Protocol state</span>
-            <Button variant="ghost" color="neutral" size="sm" onClick={refreshProtocolState}>
-              Refresh
-            </Button>
+            <pre className="max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text">
+              {protocolText ?? 'No active channel.'}
+            </pre>
           </div>
-          <pre className="max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text">
-            {protocolText ?? 'No active channel.'}
-          </pre>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -761,8 +782,6 @@ const Shell = () => {
     shellDispatchRef.current({ type: 'setSessionError', value });
   }, []);
 
-  const sessionError = shellState.sessionError;
-
   const setRestoreStatus = useCallback((value: RestoreStatus) => {
     shellDispatchRef.current({ type: 'setRestoreStatus', value });
   }, []);
@@ -947,10 +966,18 @@ const Shell = () => {
     };
   }, []);
 
-  // Close WebSocket connections on page unload/reload so the browser doesn't
-  // leave stale TCP sockets that block new connections in the reloaded page.
+  // Warn before closing a tab with a live session. Disconnect sockets only on
+  // actual leave (`pagehide`): `beforeunload` also runs if the user stays, and
+  // dropping the hub there would strand a session they chose to keep.
   useEffect(() => {
-    const cleanup = () => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!shouldWarnOnSessionUnload(sessionPhaseRef.current)) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    const cleanup = (event: PageTransitionEvent) => {
+      if (event.persisted) return;
+      releaseLeaseIfOwner();
       hubConnRef.current?.disconnect();
       // WalletConnect sessions are intentionally durable across reloads.
       // Calling disconnect() here sends a protocol-level session_delete.
@@ -958,9 +985,11 @@ const Shell = () => {
         activeBlockchainRef.current?.disconnect().catch(() => {});
       }
     };
-    window.addEventListener('beforeunload', cleanup);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', cleanup);
     return () => {
-      window.removeEventListener('beforeunload', cleanup);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('pagehide', cleanup);
     };
   }, []);
 
@@ -3524,6 +3553,7 @@ const Shell = () => {
     setupPending: shouldSynthesizeSetupPending(sessionPaneTransition, hasLiveSessionModel),
     cleanShutdownGraceActive,
     abandonEnabled,
+    peerLiveness,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
   const sessionConsentOverlay = pendingAdvisory ? (
@@ -3626,46 +3656,29 @@ const Shell = () => {
                 (tab.id === 'wallet' && walletAlert) ||
                 (tab.id === 'hub' && hubAlert));
 
-            let dotColor: string | null = null;
+            let pipeConnected: boolean | null = null;
             switch (tab.id) {
               case 'wallet':
-                dotColor = walletConnected
-                  ? 'var(--color-success-solid)'
-                  : 'var(--color-alert-solid)';
+                pipeConnected = walletConnected;
                 break;
               case 'hub':
-                if (hubLiveness === 'connected') {
-                  dotColor = 'var(--color-success-solid)';
-                } else if (hubLiveness === 'reconnecting') {
-                  dotColor = 'var(--color-warning-solid)';
-                } else if (hubLiveness === 'inactive') {
-                  dotColor = 'var(--color-alert-solid)';
-                } else {
-                  dotColor = 'var(--color-canvas-text-subtle)';
-                }
+                pipeConnected = hubLiveness === 'connected';
                 break;
-              case 'game': {
-                const gameDot: GameTabDotColor = selectGameTabDotColor({
-                  sessionPhase,
-                  sessionError,
-                  peerLiveness,
-                  cleanShutdownInProgress: isCleanShutdownInProgress(dashboardSessionModel),
-                });
-                const gameDotCss: Record<GameTabDotColor, string> = {
-                  green: 'var(--color-success-solid)',
-                  yellow: 'var(--color-warning-solid)',
-                  red: 'var(--color-alert-solid)',
-                  gray: 'var(--color-canvas-text-subtle)',
-                };
-                dotColor = gameDotCss[gameDot];
+              case 'game':
+                pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
                 break;
-              }
             }
+            const walletDisconnected = tab.id === 'wallet' && !walletConnected;
+            const pipeLabel =
+              pipeConnected === null
+                ? tab.label
+                : `${tab.label}, ${pipeConnected ? 'connected' : 'disconnected'}`;
 
             return (
               <button
                 key={tab.id}
                 onClick={() => handleTabChange(tab.id)}
+                aria-label={pipeLabel}
                 style={
                   active
                     ? {
@@ -3683,18 +3696,14 @@ const Shell = () => {
                     : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
                 }
               >
-                {dotColor && (
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: dotColor,
-                      flexShrink: 0,
-                    }}
-                  />
+                {pipeConnected !== null && (
+                  <span aria-hidden="true" className="text-base leading-none">
+                    {pipeConnected ? TAB_PIPE_CONNECTED : TAB_PIPE_DISCONNECTED}
+                  </span>
                 )}
-                {tab.label}
+                <span className={walletDisconnected ? 'text-alert-text' : undefined}>
+                  {tab.label}
+                </span>
                 {showDot && (
                   <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
                 )}

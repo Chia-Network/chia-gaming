@@ -19,6 +19,8 @@ export type GameTurnState =
   | 'opponent-illegal-move'
   | 'submitting-timeout'
   | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended';
 
 export type HandStatus =
@@ -31,6 +33,8 @@ export type HandStatus =
   | 'slashing'
   | 'submitting-timeout'
   | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended';
 
 export type GameProtocolPresentation =
@@ -43,6 +47,8 @@ export type GameProtocolPresentation =
   | 'illegal-move'
   | 'submitting-timeout'
   | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended';
 
 export type GameTerminalType =
@@ -107,6 +113,9 @@ export interface ChannelStatusModel {
   zeroPayout: boolean | null;
   unrollInitiator: 'us' | 'opponent' | null;
   semanticPhase: ChannelStatusPayload['semantic_phase'] | null;
+  stateNumber: bigint | null;
+  unrollingStateNumber: bigint | null;
+  preemptingStateNumber: bigint | null;
 }
 
 export interface QueuedNotificationModel {
@@ -237,7 +246,10 @@ export type GameDashboardActionLabel =
   | 'Abandon'
   | 'Done';
 
+export type BannerTone = 'idle' | 'playing' | 'pings-bad' | 'on-chain' | 'ended';
+
 export interface GameDashboardViewModel {
+  bannerTone: BannerTone;
   channelStatusLabel: string;
   channelDetail: string | null;
   havePotato: boolean;

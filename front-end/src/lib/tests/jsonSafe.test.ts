@@ -1,4 +1,5 @@
 import {
+  integersToBigInt,
   jsonParse,
   jsonParseLossless,
   jsonStringify,
@@ -41,5 +42,21 @@ describe('jsonSafe codecs', () => {
   it('keeps the existing rpc/debug codec shape unchanged', () => {
     expect(jsonStringify({ value: 42n })).toBe('{"value":42}');
     expect(jsonParse('{"value":42}')).toEqual({ value: 42n });
+  });
+
+  it('promotes integer numbers to bigint and leaves typed arrays alone', () => {
+    const coin = new Uint8Array([1, 2, 3]);
+    expect(
+      integersToBigInt({
+        state_number: 0,
+        nested: { count: 7 },
+        coin,
+      }),
+    ).toEqual({
+      state_number: 0n,
+      nested: { count: 7n },
+      coin,
+    });
+    expect(integersToBigInt({ coin }).coin).toBe(coin);
   });
 });

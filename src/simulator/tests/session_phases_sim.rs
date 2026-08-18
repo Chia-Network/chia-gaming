@@ -17,8 +17,8 @@ use crate::common::types::{
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
-    CancelReason, ChannelStatus, GameNotification, GameSessionEvent, GameStatusKind,
-    SettlementOutcome, UnrollInitiator,
+    CancelReason, ChannelStatus, ChannelStatusSnapshot, GameNotification, GameSessionEvent,
+    GameStatusKind, SettlementOutcome, UnrollInitiator,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -225,7 +225,7 @@ impl ToLocalUI for SimulatedPeer {
                 }
                 Ok(())
             }
-            GameNotification::ChannelStatus { state, .. } => {
+            GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => {
                 use crate::session_phases::effects::ChannelStatus;
                 match state {
                     ChannelStatus::GoingOnChain
@@ -425,7 +425,8 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                 ) => true,
                 (
                     GameNotification::GameStatus {
-                        status: GameStatusKind::OnChainTheirTurn,
+                        status:
+                            GameStatusKind::OnChainTheirTurn | GameStatusKind::FinishingWaitingTimeout,
                         other_params: Some(params),
                         ..
                     },
@@ -443,7 +444,9 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                         status:
                             GameStatusKind::OnChainMyTurn
                             | GameStatusKind::OnChainTheirTurn
-                            | GameStatusKind::Replaying,
+                            | GameStatusKind::Replaying
+                            | GameStatusKind::FinishingWaitingTimeout
+                            | GameStatusKind::FinishingSpending,
                         ..
                     },
                     ExpectedNotification::GameStatusOnChainTurn,
@@ -477,10 +480,10 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     ExpectedNotification::InsufficientBalance,
                 ) => true,
                 (
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: actual_state,
                         ..
-                    },
+                    }),
                     ExpectedNotification::ChannelStatus(expected_state),
                 ) => actual_state == expected_state,
                 _ => false,
@@ -496,7 +499,10 @@ fn event_shape(actual: &TestEvent) -> String {
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
         TestEvent::Notification(n) => match n {
             GameNotification::GameStatus { id, status, other_params, .. } => {
-                if matches!(status, GameStatusKind::OnChainTheirTurn)
+                if matches!(
+                    status,
+                    GameStatusKind::OnChainTheirTurn | GameStatusKind::FinishingWaitingTimeout
+                )
                     && other_params
                         .as_ref()
                         .and_then(|p| p.moved_by_us)
@@ -515,7 +521,7 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason, .. } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
-            GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
+            GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => format!("Notif(ChannelStatus(state={state:?}))"),
         },
     }
 }
@@ -700,10 +706,10 @@ impl LocalTestUIReceiver {
 impl ToLocalUI for LocalTestUIReceiver {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::ChannelStatus {
+            GameNotification::ChannelStatus(ChannelStatusSnapshot {
                 state: ChannelStatus::Active,
                 ..
-            } => {
+            }) => {
                 self.channel_created = true;
             }
             GameNotification::GameStatus {
@@ -757,15 +763,19 @@ impl ToLocalUI for LocalTestUIReceiver {
                         | GameStatusKind::Replaying
                         | GameStatusKind::PlayingMove
                         | GameStatusKind::IllegalMoveDetected
+                        | GameStatusKind::FinishingWaitingTimeout
+                        | GameStatusKind::FinishingSpending
                 ) {
                     self.events
                         .push(TestEvent::Notification(notification.clone()));
                 }
-                if matches!(status, GameStatusKind::OnChainTheirTurn)
-                    && other_params
-                        .as_ref()
-                        .and_then(|p| p.moved_by_us)
-                        .unwrap_or(false)
+                if matches!(
+                    status,
+                    GameStatusKind::OnChainTheirTurn | GameStatusKind::FinishingWaitingTimeout
+                ) && other_params
+                    .as_ref()
+                    .and_then(|p| p.moved_by_us)
+                    .unwrap_or(false)
                 {
                     // Preserve event-count parity for tests expecting a separate GameStatusMovedByUs signal.
                     self.events
@@ -802,7 +812,7 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::ChannelStatus { state, .. } => {
+            GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => {
                 if matches!(state, ChannelStatus::Active) {
                     self.channel_created = true;
                 }
@@ -1010,10 +1020,10 @@ fn run_game_container_with_action_list_with_success_predicate(
         let channel_failed = lui.notifications.iter().any(|n| {
             matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Failed,
                     ..
-                }
+                })
             )
         });
         assert!(
@@ -1168,6 +1178,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameStatusKind::OnChainMyTurn
                         | GameStatusKind::OnChainTheirTurn
                         | GameStatusKind::Replaying
+                        | GameStatusKind::FinishingWaitingTimeout
+                        | GameStatusKind::FinishingSpending
                 ) {
                     continue;
                 }
@@ -1190,6 +1202,8 @@ fn run_game_container_with_action_list_with_success_predicate(
             GameStatusKind::OnChainMyTurn
                 | GameStatusKind::OnChainTheirTurn
                 | GameStatusKind::Replaying
+                | GameStatusKind::FinishingWaitingTimeout
+                | GameStatusKind::FinishingSpending
                 | GameStatusKind::EndedCancelled
                 | GameStatusKind::EndedError
         )
@@ -1198,10 +1212,10 @@ fn run_game_container_with_action_list_with_success_predicate(
         let first_unrolling_idx = lui.notifications.iter().position(|n| {
             matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
                     ..
-                }
+                })
             )
         });
         let Some(unroll_idx) = first_unrolling_idx else {
@@ -1282,7 +1296,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     for (i, lui) in local_uis.iter().enumerate() {
         let mut last_state: Option<ChannelStatus> = None;
         for n in &lui.notifications {
-            if let GameNotification::ChannelStatus { state, .. } = n {
+            if let GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) = n {
                 let ord = channel_state_ordinal(state);
                 if let Some(ref prev) = last_state {
                     let prev_ord = channel_state_ordinal(prev);
@@ -2061,10 +2075,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
                     n,
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: ChannelStatus::Failed,
                         ..
-                    }
+                    })
                 )
             });
             assert!(
@@ -2097,10 +2111,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
                     n,
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: ChannelStatus::Failed,
                         ..
-                    }
+                    })
                 )
             });
             assert!(
@@ -3308,20 +3322,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
                     ..
-                }
+                })
             )),
             "player 1 should see Unrolling channel status, got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
                     ..
-                }
+                })
             )),
             "player 0 should see Unrolling channel status, got: {p0_notifs:?}"
         );
@@ -3383,20 +3397,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
                     ..
-                }
+                })
             )),
             "player 1 should see Unrolling channel status, got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
                     ..
-                }
+                })
             )),
             "player 0 should see Unrolling channel status, got: {p0_notifs:?}"
         );
@@ -3562,10 +3576,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 .position(|event| {
                     matches!(
                         event,
-                        TestEvent::Notification(GameNotification::ChannelStatus {
+                        TestEvent::Notification(GameNotification::ChannelStatus(ChannelStatusSnapshot {
                             state: ChannelStatus::ResolvedUnrolled,
                             ..
-                        })
+                        }))
                     )
                 })
                 .expect("alice should observe the unroll resolution");
@@ -4750,7 +4764,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 p0_notifs
                     .iter()
                     .any(|n| has_status(n, GameStatusKind::EndedError))
-                || p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::Failed, .. })),
+                || p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::Failed, .. }))),
                 "player 0 should get GameError or ChannelError when coin is force-destroyed, got: {p0_notifs:?}"
             );
 
@@ -4824,19 +4838,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             );
             assert!(outcome.local_uis[0].notifications.iter().any(|notification| matches!(
                 notification,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
                     unroll_initiator: Some(UnrollInitiator::Opponent),
                     ..
-                }
+                })
             )));
             assert!(outcome.local_uis[1].notifications.iter().any(|notification| matches!(
                 notification,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Unrolling,
-                    unroll_initiator: None,
+                    unroll_initiator: Some(UnrollInitiator::Us),
                     ..
-                }
+                })
             )));
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
@@ -5044,9 +5058,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             SimScriptAction::AcceptProposal(1, GameID(1)),
             // Let the handshake + empty potato exchanges settle.
             SimScriptAction::WaitBlocks(5, 0),
-            // Corrupt player 1: pretend we're at state 0.
-            // This wipes stored unroll/timeout so the real on-chain
-            // state number will be "from the future" AND unmatchable.
+            // Corrupt player 1: pretend we're at state 0 and wipe stored
+            // unroll records so the real on-chain unroll is one we never signed.
             SimScriptAction::CorruptStateNumber(1, 0),
             // Player 0 goes on chain normally (real state number).
             SimScriptAction::GoOnChain(0),
@@ -5071,22 +5084,22 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Failed,
                     ..
-                }
+                })
             )),
-            "player 1 should get ChannelError for state-from-the-future, got: {p1_notifs:?}"
+            "player 1 should get ChannelError for an unroll they never signed, got: {p1_notifs:?}"
         );
         let channel_error_idx = p1_notifs
             .iter()
             .position(|n| {
                 matches!(
                     n,
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: ChannelStatus::Failed,
                         ..
-                    }
+                    })
                 )
             })
             .unwrap();
@@ -5165,10 +5178,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Failed,
                     ..
-                }
+                })
             )),
             "player 1 should get ChannelError for wrong-parity old state, got: {p1_notifs:?}"
         );
@@ -5177,10 +5190,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .position(|n| {
                 matches!(
                     n,
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: ChannelStatus::Failed,
                         ..
-                    }
+                    })
                 )
             })
             .unwrap();
@@ -5262,10 +5275,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 assert!(
                     !matches!(
                         n,
-                        GameNotification::ChannelStatus {
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
                             state: ChannelStatus::Failed,
                             ..
-                        }
+                        })
                     ),
                     "player {i} should not get ChannelError, got: {n:?}"
                 );
@@ -5375,10 +5388,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             !p1_notifs.iter().any(|n| {
                 matches!(
                     n,
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: ChannelStatus::Failed,
                         ..
-                    }
+                    })
                 )
             }),
             "Bob should not fail when proposal arrives before channel coin report, got: {p1_notifs:?}"
@@ -5862,7 +5875,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::ResolvedStale, .. })),
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::ResolvedStale, .. }))),
             "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The accept round-tripped, so the second game is fully live (not a
@@ -5876,7 +5889,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::Failed, .. })),
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::Failed, .. }))),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -5947,7 +5960,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::ResolvedStale, .. })),
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::ResolvedStale, .. }))),
             "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The redo recovers the first game, but the second game's accept
@@ -5961,7 +5974,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::Failed, .. })),
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::Failed, .. }))),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -6045,10 +6058,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::ResolvedStale,
                     ..
-                }
+                })
             )),
             "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
@@ -6065,10 +6078,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             !p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::ChannelStatus {
+                GameNotification::ChannelStatus(ChannelStatusSnapshot {
                     state: ChannelStatus::Failed,
                     ..
-                }
+                })
             )),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
@@ -6136,7 +6149,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::ResolvedStale, .. })),
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::ResolvedStale, .. }))),
             "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The second game (fully live, round-tripped) is absent → GameError.
@@ -6158,7 +6171,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "player 0 should get exactly one EndedCancelled for the in-flight accept, got: {game_cancels:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelStatus::Failed, .. })),
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus(ChannelStatusSnapshot { state: ChannelStatus::Failed, .. }))),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -6480,7 +6493,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(
                 n,
                 GameNotification::GameStatus {
-                    status: GameStatusKind::OnChainTheirTurn,
+                    status: GameStatusKind::FinishingWaitingTimeout,
                     other_params: Some(params),
                     ..
                 } if params.moved_by_us == Some(true)
@@ -6695,10 +6708,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                 matches!(
                     n,
-                    GameNotification::ChannelStatus {
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
                         state: ChannelStatus::Failed,
                         ..
-                    }
+                    })
                 )
             });
             assert!(
@@ -6735,10 +6748,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                     matches!(
                         n,
-                        GameNotification::ChannelStatus {
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
                             state: ChannelStatus::Failed,
                             ..
-                        }
+                        })
                     )
                 });
                 assert!(
@@ -6776,10 +6789,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
                     matches!(
                         n,
-                        GameNotification::ChannelStatus {
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
                             state: ChannelStatus::Failed,
                             ..
-                        }
+                        })
                     )
                 });
                 assert!(

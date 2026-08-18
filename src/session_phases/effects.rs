@@ -66,6 +66,37 @@ pub struct ChannelStatusSnapshot {
     pub unroll_initiator: Option<UnrollInitiator>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_phase: Option<ChannelSemanticPhase>,
+    /// Most recent channel state number this side is aware of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_number: Option<usize>,
+    /// State number of the unroll we are publishing, or of the unroll coin
+    /// that landed on-chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unrolling_state_number: Option<usize>,
+    /// State number we are (or were) preempting the landed unroll with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preempting_state_number: Option<usize>,
+}
+
+impl ChannelStatusSnapshot {
+    pub fn new(state: ChannelStatus) -> Self {
+        Self {
+            state,
+            session_disposition: None,
+            advisory: None,
+            coin: None,
+            our_balance: None,
+            their_balance: None,
+            game_allocated: None,
+            have_potato: None,
+            zero_payout: None,
+            unroll_initiator: None,
+            semantic_phase: None,
+            state_number: None,
+            unrolling_state_number: None,
+            preempting_state_number: None,
+        }
+    }
 }
 
 /// Which party caused the observed channel-to-unroll transition.
@@ -77,14 +108,17 @@ pub enum UnrollInitiator {
 }
 
 /// Fine-grained progress within the existing on-chain channel lifecycle.
+/// Actor (us vs opponent) is `unroll_initiator`, not this enum.
+/// UI copy is an exhaustive map from this enum plus initiator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelSemanticPhase {
     SubmittingChannelSpend,
-    ResolvingOpponentChannelSpend,
+    Unrolling,
+    FindingState,
     Preempting,
-    WaitingTimeout,
-    SubmittingTimeoutFinish,
+    FinishingWaitingTimeout,
+    FinishingSpending,
     Resolving,
 }
 
@@ -93,6 +127,7 @@ pub enum ChannelSemanticPhase {
 pub enum TimeoutClaimSemantic {
     ChannelTimeoutFinish,
     GameOpponentTurn { id: GameID },
+    GameFinishTimeout { id: GameID },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -105,6 +140,8 @@ pub enum GameStatusKind {
     Replaying,
     PlayingMove,
     IllegalMoveDetected,
+    FinishingWaitingTimeout,
+    FinishingSpending,
     EndedCancelled,
     EndedError,
 }
@@ -239,24 +276,7 @@ pub enum GameNotification {
         tag: String,
         message: String,
     },
-    ChannelStatus {
-        state: ChannelStatus,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_disposition: Option<SessionDisposition>,
-        advisory: Option<String>,
-        coin: Option<CoinString>,
-        our_balance: Option<Amount>,
-        their_balance: Option<Amount>,
-        game_allocated: Option<Amount>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        have_potato: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        zero_payout: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        unroll_initiator: Option<UnrollInitiator>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        semantic_phase: Option<ChannelSemanticPhase>,
-    },
+    ChannelStatus(ChannelStatusSnapshot),
 }
 
 /// A coin id worth surfacing in the dashboard so the user can look it up in a
@@ -531,6 +551,9 @@ mod tests {
         assert_eq!(restored.zero_payout, None);
         assert_eq!(restored.unroll_initiator, None);
         assert_eq!(restored.semantic_phase, None);
+        assert_eq!(restored.state_number, None);
+        assert_eq!(restored.unrolling_state_number, None);
+        assert_eq!(restored.preempting_state_number, None);
     }
 
     #[test]

@@ -133,6 +133,8 @@ export type GameStatusState =
   | 'replaying'
   | 'playing-move'
   | 'illegal-move-detected'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
   | 'ended-cancelled'
   | 'ended-error';
 
@@ -193,15 +195,22 @@ export interface ChannelStatusPayload {
   zero_payout?: boolean | null;
   unroll_initiator?: 'us' | 'opponent' | null;
   semantic_phase?: ChannelSemanticPhase | null;
+  state_number?: bigint | null;
+  unrolling_state_number?: bigint | null;
+  preempting_state_number?: bigint | null;
 }
 
-export type ChannelSemanticPhase =
-  | 'submitting_channel_spend'
-  | 'resolving_opponent_channel_spend'
-  | 'preempting'
-  | 'waiting_timeout'
-  | 'submitting_timeout_finish'
-  | 'resolving';
+export const CHANNEL_SEMANTIC_PHASES = [
+  'submitting_channel_spend',
+  'unrolling',
+  'finding_state',
+  'preempting',
+  'finishing_waiting_timeout',
+  'finishing_spending',
+  'resolving',
+] as const;
+
+export type ChannelSemanticPhase = (typeof CHANNEL_SEMANTIC_PHASES)[number];
 
 export interface ProposalAcceptedPayload {
   id: bigint | number | string;

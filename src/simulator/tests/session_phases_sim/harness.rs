@@ -777,19 +777,12 @@ impl SimulationHarness {
                     }
                     GameSessionEvent::ReceiveError(error) => {
                         eprintln!("SIM receive error p{player_index}: {error}");
-                        deferred_notifications.push(GameNotification::ChannelStatus {
-                            state: ChannelStatus::Failed,
-                            session_disposition: None,
-                            advisory: Some(format!("error receiving peer message: {error}")),
-                            coin: None,
-                            our_balance: None,
-                            their_balance: None,
-                            game_allocated: None,
-                            have_potato: None,
-                            zero_payout: None,
-                            unroll_initiator: None,
-                            semantic_phase: None,
-                        });
+                        deferred_notifications.push(GameNotification::ChannelStatus(
+                            ChannelStatusSnapshot {
+                                advisory: Some(format!("error receiving peer message: {error}")),
+                                ..ChannelStatusSnapshot::new(ChannelStatus::Failed)
+                            },
+                        ));
                     }
                     GameSessionEvent::CoinSolutionRequest(coin) => {
                         coin_requests.push(coin.clone());

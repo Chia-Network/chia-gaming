@@ -29,7 +29,7 @@ import {
   GetFullNodePeerCountResponse,
 } from '../types/rpc/GetFullNodePeerCount';
 import { log } from '../services/log';
-import { jsonStringify } from '../util/jsonSafe';
+import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -94,19 +94,6 @@ function shouldLogRpcTraffic(method: ChiaMethod): boolean {
 function summarizeRpcValue(value: unknown, maxLen = 400): string {
   const text = toDebugJson(value);
   return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
-}
-
-function deepNumbersToBigInt(value: unknown): unknown {
-  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
-  if (Array.isArray(value)) return value.map(deepNumbersToBigInt);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = deepNumbersToBigInt(v);
-    }
-    return out;
-  }
-  return value;
 }
 
 /** WC wire hack: negative BigInt → decimal string (avoids WC "-100n" leftover). Positives stay bigint. */
@@ -239,7 +226,7 @@ class WalletConnectRpcClient {
   }
 
   private normalizeResult<T>(prepared: PreparedRpc, raw: unknown): T {
-    const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
+    const result = integersToBigInt(raw) as Record<string, unknown> | undefined;
     if (result?.error) {
       const errorText = toDebugJson(result.error);
       const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';

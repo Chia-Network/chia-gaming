@@ -931,26 +931,14 @@ impl GameSession {
         {
             return true;
         }
-        // In Active state, re-emit on balance changes (potato firings).
+        // In Active state, re-emit on balance / potato / state_number changes.
         // In other states, suppress same-state re-emissions (e.g. coin
         // changes within Unrolling).
         new_state == Some(&ChannelStatus::Active)
     }
 
     fn make_channel_status_notification(snap: &ChannelStatusSnapshot) -> GameNotification {
-        GameNotification::ChannelStatus {
-            state: snap.state.clone(),
-            session_disposition: snap.session_disposition.clone(),
-            advisory: snap.advisory.clone(),
-            coin: snap.coin.clone(),
-            our_balance: snap.our_balance.clone(),
-            their_balance: snap.their_balance.clone(),
-            game_allocated: snap.game_allocated.clone(),
-            have_potato: snap.have_potato,
-            zero_payout: snap.zero_payout,
-            unroll_initiator: snap.unroll_initiator,
-            semantic_phase: snap.semantic_phase,
-        }
+        GameNotification::ChannelStatus(snap.clone())
     }
 
     fn emit_channel_status_if_changed(&mut self) {
@@ -963,19 +951,7 @@ impl GameSession {
                 .peer
                 .channel_status_snapshot()
                 .or_else(|| self.last_channel_status.clone())
-                .unwrap_or(ChannelStatusSnapshot {
-                    state: ChannelStatus::Handshaking,
-                    session_disposition: None,
-                    advisory: None,
-                    coin: None,
-                    our_balance: None,
-                    their_balance: None,
-                    game_allocated: None,
-                    have_potato: None,
-                    zero_payout: None,
-                    unroll_initiator: None,
-                    semantic_phase: None,
-                });
+                .unwrap_or_else(|| ChannelStatusSnapshot::new(ChannelStatus::Handshaking));
             snapshot.session_disposition = Some(session_disposition);
             Some(snapshot)
         } else {
@@ -1026,7 +1002,8 @@ impl GameSession {
                     self.emit_channel_status_if_changed();
                 }
             }
-            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+            TimeoutClaimSemantic::GameOpponentTurn { id }
+            | TimeoutClaimSemantic::GameFinishTimeout { id } => {
                 let notification = self
                     .peer
                     .as_any_mut()
@@ -1059,7 +1036,8 @@ impl GameSession {
                     self.emit_channel_status_if_changed();
                 }
             }
-            TimeoutClaimSemantic::GameOpponentTurn { id } => {
+            TimeoutClaimSemantic::GameOpponentTurn { id }
+            | TimeoutClaimSemantic::GameFinishTimeout { id } => {
                 let notification = self
                     .peer
                     .as_any_mut()
@@ -1096,17 +1074,8 @@ impl GameSession {
         self.state.channel_expired = true;
         self.state.is_failed = true;
         let snapshot = ChannelStatusSnapshot {
-            state: ChannelStatus::Failed,
-            session_disposition: None,
             advisory: Some("channel coin not confirmed in time".to_string()),
-            coin: None,
-            our_balance: None,
-            their_balance: None,
-            game_allocated: None,
-            have_potato: None,
-            zero_payout: None,
-            unroll_initiator: None,
-            semantic_phase: None,
+            ..ChannelStatusSnapshot::new(ChannelStatus::Failed)
         };
         self.state.events.push_back(GameSessionEvent::Notification(
             Self::make_channel_status_notification(&snapshot),
@@ -1813,17 +1782,9 @@ mod sequencing_tests {
         phase: Option<crate::session_phases::effects::ChannelSemanticPhase>,
     ) -> Option<ChannelStatusSnapshot> {
         Some(ChannelStatusSnapshot {
-            state: ChannelStatus::Unrolling,
-            session_disposition: None,
-            advisory: None,
-            coin: None,
-            our_balance: None,
-            their_balance: None,
-            game_allocated: None,
-            have_potato: None,
-            zero_payout: None,
             unroll_initiator: initiator,
             semantic_phase: phase,
+            ..ChannelStatusSnapshot::new(ChannelStatus::Unrolling)
         })
     }
 
@@ -1832,14 +1793,14 @@ mod sequencing_tests {
         use crate::session_phases::effects::{ChannelSemanticPhase, UnrollInitiator};
 
         assert!(GameSession::should_emit_status(
-            &unrolling_snapshot(None, Some(ChannelSemanticPhase::WaitingTimeout)),
-            &unrolling_snapshot(None, Some(ChannelSemanticPhase::SubmittingTimeoutFinish)),
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::FinishingWaitingTimeout),),
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::FinishingSpending)),
         ));
         assert!(GameSession::should_emit_status(
-            &unrolling_snapshot(None, Some(ChannelSemanticPhase::WaitingTimeout)),
+            &unrolling_snapshot(None, Some(ChannelSemanticPhase::FinishingWaitingTimeout),),
             &unrolling_snapshot(
                 Some(UnrollInitiator::Opponent),
-                Some(ChannelSemanticPhase::WaitingTimeout),
+                Some(ChannelSemanticPhase::FinishingWaitingTimeout),
             ),
         ));
     }

@@ -17,7 +17,7 @@ import {
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import { spend_bundle_to_clvm, coerceToBytes } from '../util';
 import { log, diagStack } from '../services/log';
-import { jsonStringify } from '../util/jsonSafe';
+import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
 import type { PersistedGameState } from './save';
 import type { RegisteredGameType } from '../lib/session/types';
@@ -733,6 +733,7 @@ export class SessionController implements PollingGameSession {
     if (this.protocolStopped) {
       return;
     }
+    result = integersToBigInt(result);
 
     const disposition = result.disposition ?? { kind: 'active' as const };
     const terminal = disposition.kind === 'terminal';

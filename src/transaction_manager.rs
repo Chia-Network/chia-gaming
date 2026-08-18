@@ -498,7 +498,9 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     /// Report a trusted chain height when the watched-coin snapshot is not
     /// available or is known partial. This advances handshake protocol clocks
     /// through the manager without inventing coin creations/deletions or
-    /// evaluating channel-creation expiry from absent coin data.
+    /// evaluating channel-creation expiry from absent coin data. Timeout claims
+    /// wait for `report_coin_states`: a height-only observation cannot tell
+    /// whether the coin is still unspent.
     pub fn report_height(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -515,7 +517,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             self.report_timeout_claim_rearms(rearmed)?;
         }
         self.reconcile_timeout_claim_status()?;
-        self.evaluate_mature_timeout_claims(height)?;
         self.cradle.session_observe(allocator, height, None)
     }
 
@@ -587,11 +588,18 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         Ok(())
     }
 
+    /// Queue eager timeout spends whose relative lock is ripe. Called only from
+    /// `report_coin_states`, after spend reconciliation, so a coin that was
+    /// spent at or before this height is not claimed.
     fn evaluate_mature_timeout_claims(&mut self, height: u64) -> Result<(), Error> {
         let mut to_submit: Vec<(SpendBundle, Option<TimeoutClaimSemantic>)> = Vec::new();
-        for watched in self.watched_coins.values_mut() {
+        for (coin, watched) in self.watched_coins.iter_mut() {
             let ripe = matches!(watched.birthday, Some(b) if b + watched.timeout_blocks.to_u64() <= height);
-            if ripe && !watched.claim_submitted && watched.spent_confirmed_at.is_none() {
+            if ripe
+                && !watched.claim_submitted
+                && watched.spent_confirmed_at.is_none()
+                && self.present_coins.contains(coin)
+            {
                 if let Some(spend) = &watched.timeout_spend {
                     to_submit.push((spend.clone(), watched.timeout_claim_semantic));
                     watched.claim_submitted = true;
@@ -1375,7 +1383,7 @@ mod tests {
     }
 
     #[test]
-    fn height_only_report_matures_known_timeout_claim() {
+    fn height_only_report_does_not_submit_timeout_before_snapshot() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(14);
         let mut mock = MockGameSession::default();
@@ -1384,6 +1392,45 @@ mod tests {
             coin_string: coin.clone(),
             timeout: Timeout::new(5),
             spend: Some(test_bundle("height-only-timeout")),
+            semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
+        }]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+        let live = [CoinStateRecord {
+            coin: coin.clone(),
+            created_height: Some(10),
+            spent_height: None,
+        }];
+        mgr.report_coin_states(&mut allocator, 10, &live)
+            .expect("observe birthday");
+
+        mgr.report_height(&mut allocator, 15)
+            .expect("height-only at maturity");
+        assert!(
+            mgr.drain_submissions().unwrap().is_empty(),
+            "height-only cannot know the coin is still unspent"
+        );
+        assert!(mgr.cradle().submitted_timeout_claims.is_empty());
+
+        mgr.report_coin_states(&mut allocator, 15, &live)
+            .expect("live snapshot at maturity");
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+        assert_eq!(
+            mgr.cradle().submitted_timeout_claims,
+            vec![TimeoutClaimSemantic::ChannelTimeoutFinish]
+        );
+    }
+
+    #[test]
+    fn timeout_claim_skipped_when_coin_spent_at_maturity() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(19);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::WatchCoin {
+            coin_name: coin.to_coin_id(),
+            coin_string: coin.clone(),
+            timeout: Timeout::new(5),
+            spend: Some(test_bundle("spent-at-maturity")),
             semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
         }]);
         let mut mgr = TransactionManager::new(mock);
@@ -1400,12 +1447,24 @@ mod tests {
         .expect("observe birthday");
 
         mgr.report_height(&mut allocator, 15)
-            .expect("height-only maturity");
-        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
-        assert_eq!(
-            mgr.cradle().submitted_timeout_claims,
-            vec![TimeoutClaimSemantic::ChannelTimeoutFinish]
+            .expect("height-only at maturity");
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+
+        mgr.report_coin_states(
+            &mut allocator,
+            15,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(15),
+            }],
+        )
+        .expect("spent at maturity");
+        assert!(
+            mgr.drain_submissions().unwrap().is_empty(),
+            "do not timeout-spend a coin already spent when the claim matures"
         );
+        assert!(mgr.cradle().submitted_timeout_claims.is_empty());
     }
 
     #[test]
@@ -1429,7 +1488,8 @@ mod tests {
         }];
         mgr.report_coin_states(&mut allocator, 10, &live)
             .expect("observe birthday");
-        mgr.report_height(&mut allocator, 15).expect("mature");
+        mgr.report_coin_states(&mut allocator, 15, &live)
+            .expect("mature");
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         mgr.report_height(&mut allocator, 14)
@@ -1440,7 +1500,7 @@ mod tests {
         );
         assert!(mgr.drain_submissions().unwrap().is_empty());
 
-        mgr.report_height(&mut allocator, 15)
+        mgr.report_coin_states(&mut allocator, 15, &live)
             .expect("recover maturity");
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
     }
@@ -1469,14 +1529,14 @@ mod tests {
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // Production first observes the lower trusted tip, then reconciles the
-        // same tip from the complete coin snapshot. Height 14 is still mature,
-        // so the first report re-arms and requeues exactly one claim.
+        // same tip from the complete coin snapshot. Height-only re-arms; the
+        // snapshot is what requeues the still-live claim.
         mgr.report_height(&mut allocator, 14)
             .expect("lowered height");
-        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+        assert!(mgr.drain_submissions().unwrap().is_empty());
         mgr.report_coin_states(&mut allocator, 14, &live)
             .expect("same-tip snapshot");
-        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
         assert_eq!(
             mgr.cradle().rearmed_timeout_claims,
             vec![TimeoutClaimSemantic::ChannelTimeoutFinish]

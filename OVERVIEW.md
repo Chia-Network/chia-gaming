@@ -188,11 +188,15 @@ conditions. The map deliberately does not retain historical signatures or
 preemption conditions; preemption always uses a latest full record. When a
 channel coin spend is detected, the `CREATE_COIN` puzzle hashes in the
 on-chain conditions are matched against this map to identify which unroll
-landed. An old opposite-parity state is preempted, while an old same-parity
-state is resolved with its stored timeout conditions. Those old puzzle hashes
-cannot be discarded: the opponent may publish any previously signed unroll,
-so recognizing every historical hash is the minimum needed to choose the
-correct timeout record safely.
+landed. Classification happens then, in `channel_coin_spent`: an old
+opposite-parity state is preempted, an old same-parity state we signed is
+resolved with its stored timeout conditions, and a spend we never signed
+(unknown puzzle hash) or whose conditions do not match the signed record is
+an error. A state we have not reached cannot be in the map, so it fails the
+same never-signed check. Those old puzzle hashes cannot be
+discarded: the opponent may publish any previously signed unroll, so
+recognizing every historical hash is how we tell a signed timeout record
+from a spend we never signed.
 
 Browser session persistence stores the serialized game session as raw binary in
 IndexedDB. Compact historical unroll records are therefore part of the durable

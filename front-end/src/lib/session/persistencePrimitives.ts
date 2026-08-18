@@ -51,6 +51,25 @@ export function requireBigint(value: unknown, label: string, minimum = 0n): bigi
   return value;
 }
 
+/** Inbound integer (`bigint` or JS `number`) → `bigint`. */
+export function requireOptionalBigint(
+  value: unknown,
+  label: string,
+  minimum = 0n,
+): bigint | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value === 'bigint') {
+    if (value < minimum) throw new Error(`Garbled save: invalid ${label}`);
+    return value;
+  }
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    const parsed = BigInt(value);
+    if (parsed < minimum) throw new Error(`Garbled save: invalid ${label}`);
+    return parsed;
+  }
+  throw new Error(`Garbled save: invalid ${label}`);
+}
+
 export function parseDecimalString(value: unknown, label: string, minimum?: bigint): bigint {
   if (typeof value !== 'string' || !/^-?\d+$/.test(value)) {
     throw new Error(`Garbled save: invalid ${label}: ${String(value)}`);

@@ -201,10 +201,11 @@ advisory, coin identity and amount, both balances, game allocation,
 `havePotato`, `zeroPayout`, and optional on-chain progress context. During an
 unroll, `unrollInitiator` identifies whether we or the opponent caused the
 observed channel spend when that attribution is definitive; a locally queued
-spend or cooperative-close setup alone leaves it unknown. `semanticPhase` refines the existing `GoingOnChain` /
-`Unrolling` state as submitting or resolving the channel spend, preempting,
-waiting for the relative timeout, submitting the timeout finish, or resolving
-the unroll spend. These are display facts, not new lifecycle states. Banner text, the potato indicator, dashboard
+spend or cooperative-close setup alone leaves it unknown. `semanticPhase` is
+the situation within `GoingOnChain` / `Unrolling`: submitting or resolving a
+channel spend, finding the landed unroll state, preempting, waiting for the
+relative timeout, or spending the timeout finish. Actor is not encoded in the
+phase. These are display facts, not new lifecycle states. Banner text, the potato indicator, dashboard
 actions, phase selection, persistence, and restore all project from that one
 snapshot instead of maintaining parallel channel-status shapes.
 During a cooperative terminal handoff, Rust sets
@@ -226,12 +227,13 @@ Monotonicity applies across all three lenses:
 When a watched timeout spend becomes mature, `TransactionManager` is the sole
 component that queues its submission. Before the host drains the submission
 buffer, it updates the session's canonical status snapshot to
-`submitting_timeout_finish`; the normal `ChannelStatus` notification then
-persists and restores that fact. The UI never infers timeout maturity, submits
+`finishing_spending` (with `unrollInitiator` naming who started the unroll);
+the normal `ChannelStatus` notification then persists and restores that fact. The UI never infers timeout maturity, submits
 the transaction, or mutates a durable channel snapshot from a transient event.
 If a reorg changes or clears the watched coin's birthday, the manager re-arms
-the relative timeout and restores the canonical phase to `waiting_timeout`
-until the claim becomes mature again.
+the relative timeout and restores the canonical waiting phase
+(`finishing_waiting_timeout`) until the claim becomes mature
+again.
 
 ---
 

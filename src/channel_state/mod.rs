@@ -5,7 +5,6 @@ pub mod game_start_info;
 pub mod runner;
 pub mod types;
 
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -169,6 +168,17 @@ impl ChannelState {
         self.latest_received_unroll
             .as_ref()
             .map(|t| t.coin.state_number)
+    }
+
+    /// Last fully co-signed unroll we can spend the channel coin to.
+    /// Equal to `state_number()` when we hold the potato; one behind after we
+    /// send, until the peer countersigns the new channel spend.
+    pub fn unroll_target_state_number(&self) -> Option<usize> {
+        self.timeout_state_number().or(Some(if self.have_potato {
+            self.state_number
+        } else {
+            0
+        }))
     }
 
     pub fn have_potato(&self) -> bool {
@@ -1575,74 +1585,36 @@ impl ChannelState {
         ))
     }
 
-    /// Ensure that we include the last state sequence number in a memo so we can
-    /// possibly supercede an earlier unroll.
+    /// Classify a parsed channel-coin spend from its CREATE_COIN conditions.
+    /// Who submitted the spend is not an input; the conditions are.
     ///
-    /// Look at the conditions:
-    ///
-    /// The current sequence number is always either
-    /// We have two sequence numbers:
-    ///  - unroll state number
-    ///  - channel coin spend state number
-    ///
-    /// Whenever the channel coin gets spent, either we'll want to make it hit
-    /// its timeout or supercede the state that's in it.
-    ///
-    /// If the sequence number in the unroll is equal to our current state number
-    /// then force the timeout.
-    ///
-    /// Otherwise
-    ///   Not equal, and parity equal - hard error
-    ///   Less than our current unroll number - either same parity (fucked) or
-    ///   opposite (return a spend to supercede the spend it gave)
-    ///   Equal to unroll, try to timeout
-    ///   Equal to state, not unroll, try to timeout (different)
-    ///   Greater than state number - hard error
-    ///
-    /// Conditions on spending the channel should have default_conditions_hash
-    /// and state number as rems.
-    ///
-    /// Happens because one of us decided to start spending it.
-    /// Play has not necessarily ended.
-    /// One way in which this is spent is the clean unroll.
-    ///   Clean unroll won't reach here.
-    /// One of the two sides, started unrolling.
-    ///   So we must unroll as well.
-    ///
-    /// Give a spend to do as well to start our part of the unroll given that
-    /// the channel coin is spent.
-    ///
-    /// Must have the option that games were outright canceled.
-    /// Need to make the result richer to communicate that.
+    /// - Unknown puzzle hash (never signed) fails in
+    ///   `resolve_unroll_from_conditions`. A state we have not reached cannot
+    ///   be in the map, so "future" is the same check.
+    /// - Equal to our current state number → timeout.
+    /// - Older, opposite parity, signed preemption source → preempt.
+    /// - Older, same parity (or no signed preemption source) → timeout using
+    ///   the compact historical record we signed.
+    /// - Conditions-hash mismatch vs the signed historical record → error.
     pub fn channel_coin_spent(
         &self,
         env: &mut ChannelEnv<'_>,
-        myself: bool,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let (unrolling_state_number, conditions_hash) =
             self.resolve_unroll_from_conditions(env, conditions)?;
+        game_assert!(
+            unrolling_state_number <= self.state_number,
+            "signed unroll {unrolling_state_number} cannot exceed our state {}",
+            self.state_number
+        );
 
-        // Always let the retained full latest records determine whether an
-        // older state can be preempted. Their state-number parity, not
-        // `self.state_number`'s parity, controls whether the spend is valid.
-        // If neither latest record has the required parity and peer signature,
-        // the exact compact historical record still provides a valid timeout.
-        let mut result = match (myself, unrolling_state_number.cmp(&self.state_number)) {
-            (true, _) | (_, Ordering::Equal) => {
-                self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
-            }
-            // On-chain state is from the future relative to us - error.
-            (_, Ordering::Greater) => Err(Error::StrErr(format!(
-                "Reply from the future onchain {} (me {})",
-                unrolling_state_number, self.state_number,
-            ))),
-            (_, Ordering::Less) if self.preemption_source(unrolling_state_number).is_some() => {
-                self.make_preemption_unroll_spend(env, unrolling_state_number, &conditions_hash)
-            }
-            (_, Ordering::Less) => {
-                self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
-            }
+        let mut result = if unrolling_state_number < self.state_number
+            && self.preemption_source(unrolling_state_number).is_some()
+        {
+            self.make_preemption_unroll_spend(env, unrolling_state_number, &conditions_hash)
+        } else {
+            self.make_timeout_unroll_spend(env, unrolling_state_number, &conditions_hash)
         };
         if let Ok(ref mut r) = result {
             r.unrolling_state_number = unrolling_state_number;
@@ -1685,11 +1657,15 @@ impl ChannelState {
         })
     }
 
-    /// Build a preemption (challenge-path) spend of the unroll coin.
-    /// The PUZZLE must match the on-chain coin (built from the state that
-    /// matches the on-chain unroll).  The SOLUTION and SIGNATURE come from
-    /// our latest state that satisfies the CLSP parity constraint:
-    ///   logand(1, logxor(our_state_number, OLD_SEQUENCE_NUMBER)) == 1
+    /// State number we would preempt `old_state_number` with, if any eligible
+    /// stored unroll record has the required parity and peer half-signature.
+    pub fn preempting_state_number_for(&self, old_state_number: usize) -> Option<usize> {
+        self.preemption_source(old_state_number)
+            .map(|info| info.coin.state_number)
+    }
+
+    /// Pick a stored unroll whose state number has opposite parity from
+    /// `old_state_number` and that carries the peer's preemption half-signature.
     fn preemption_source(&self, old_state_number: usize) -> Option<&ChannelUnrollSpendInfo> {
         let has_peer_sig = |info: &ChannelUnrollSpendInfo| {
             info.signatures.unroll_preempt_half_sig != Aggsig::default()
@@ -1707,6 +1683,11 @@ impl ChannelState {
         }
     }
 
+    /// Build a preemption (challenge-path) spend of the unroll coin.
+    /// The PUZZLE must match the on-chain coin (built from the state that
+    /// matches the on-chain unroll).  The SOLUTION and SIGNATURE come from
+    /// our latest state that satisfies the CLSP parity constraint:
+    ///   logand(1, logxor(our_state_number, OLD_SEQUENCE_NUMBER)) == 1
     fn make_preemption_unroll_spend(
         &self,
         env: &mut ChannelEnv<'_>,

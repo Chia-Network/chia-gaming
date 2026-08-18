@@ -64,10 +64,11 @@ unroll is extracted from the on-chain conditions.
 
 ### Step 2: Preempt or Wait
 
-The player compares the on-chain unroll state number against their own latest
-state to decide whether to preempt or wait for the timeout path (see
-[Preemption](#preemption)). Both outcomes produce the same result: the unroll
-coin is spent, creating game coins and reward coins.
+`channel_coin_spent` classifies the parsed channel-coin spend (see
+[Preemption](#preemption)). Timeout and preempt both spend the unroll coin,
+creating game coins and reward coins. A spend we never signed (unknown puzzle
+hash) or whose conditions do not match the signed historical record is an
+error at parse time — it is not turned into a timeout.
 
 When the unroll coin spend is detected, a `ChannelStatus` notification with
 state `ResolvedUnrolled` (or `ResolvedStale` if the unroll was stale) is
@@ -347,12 +348,12 @@ a player sees the channel coin being spent to an unroll coin, they compare the
 on-chain sequence number against their own latest state:
 
 
-| On-chain SN vs ours | Action                  | Explanation                                                                         |
-| ------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
-| On-chain < ours, opposite parity | **Preempt** (immediate) | Spend the unroll coin immediately with our higher SN and more up-to-date conditions |
-| On-chain < ours, same parity | **Wait for timeout** | The parity rule forbids our latest state from preempting this coin; use its compact historical timeout record |
-| On-chain == ours    | **Wait for timeout**    | The unroll is at the state we expect; wait for it to resolve                        |
-| On-chain > ours     | **Error**               | We've been hacked or something went very wrong                                      |
+| On-chain SN vs ours | Action | Explanation |
+| ------------------- | ------ | ----------- |
+| On-chain < ours, opposite parity, signed preemption source | **Preempt** (immediate) | Spend the unroll coin immediately with our higher SN and more up-to-date conditions |
+| On-chain < ours, same parity (or no signed preemption source) | **Wait for timeout** | The parity rule forbids preemption; use the compact historical timeout record we signed |
+| On-chain == ours | **Wait for timeout** | The unroll is at the state we expect; wait for it to resolve |
+| Unknown puzzle hash or conditions-hash mismatch | **Error** | Never signed, or not the unroll we signed — classified when the channel coin spend is parsed |
 
 
 Preemption is **immediate** — no timelock. This is by design: the preempting

@@ -54,7 +54,7 @@ describe('save boundary enforcement', () => {
     expect(await readSessionRecord()).toBeNull();
   });
 
-  it('deletes an invalid current-v12 game envelope while retaining the boot marker', async () => {
+  it('deletes an invalid current-v13 game envelope while retaining the boot marker', async () => {
     markSavedSession();
     await writeSessionRecord(
       activeSave({
@@ -69,7 +69,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a cross-phase v12 payload during hydration', async () => {
+  it('deletes a cross-phase v13 payload during hydration', async () => {
     markSavedSession();
     await writeSessionRecord(
       baseSave({
@@ -99,7 +99,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a live v12 record that restoreSession cannot consume', async () => {
+  it('deletes a live v13 record that restoreSession cannot consume', async () => {
     markSavedSession();
     await writeSessionRecord(liveSave({ messageNumber: undefined }));
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -125,7 +125,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a malformed current-v12 metadata envelope read from IndexedDB', async () => {
+  it('deletes a malformed current-v13 metadata envelope read from IndexedDB', async () => {
     markSavedSession();
     await writeSessionRecord(
       baseSave({

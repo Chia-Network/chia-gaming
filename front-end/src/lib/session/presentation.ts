@@ -1,5 +1,11 @@
-import type { ChannelStatus, GameStatusPayload, GameStatusState } from '../../types/ChiaGaming';
 import type {
+  ChannelSemanticPhase,
+  ChannelStatus,
+  GameStatusPayload,
+  GameStatusState,
+} from '../../types/ChiaGaming';
+import type {
+  ChannelStatusModel,
   GameCoinModel,
   GameInstanceModel,
   GameInstanceViewModel,
@@ -66,6 +72,8 @@ export function gameCoinIdentityForGameStatus(
     'replaying',
     'playing-move',
     'illegal-move-detected',
+    'finishing-waiting-timeout',
+    'finishing-spending',
   ].includes(status);
   return {
     coinHex: hasNewCoinIdentity ? null : previous.coinHex,
@@ -98,6 +106,18 @@ export function projectGameStatus({
     (status === 'on-chain-my-turn' && isActivelyPlayingOnChain(previous.coin.turnState))
   ) {
     return { coin: { ...previous.coin, ...identity }, handStatus: previous.handStatus };
+  }
+  if (status === 'finishing-waiting-timeout') {
+    return {
+      coin: { ...identity, turnState: 'finishing-waiting-timeout', onChain: true },
+      handStatus: 'finishing-waiting-timeout',
+    };
+  }
+  if (status === 'finishing-spending') {
+    return {
+      coin: { ...identity, turnState: 'finishing-spending', onChain: true },
+      handStatus: 'finishing-spending',
+    };
   }
   if (status === 'my-turn' || status === 'on-chain-my-turn') {
     return {
@@ -179,6 +199,10 @@ export function presentationFromView(instance: GameInstanceViewModel): GameProto
       return 'submitting-timeout';
     case 'finishing':
       return 'finishing';
+    case 'finishing-waiting-timeout':
+      return 'finishing-waiting-timeout';
+    case 'finishing-spending':
+      return 'finishing-spending';
     case 'ended':
       return 'ended';
   }
@@ -236,6 +260,18 @@ export function gameInstanceView(instance: GameInstanceModel): GameInstanceViewM
       coin: { coinHex: instance.coinHex, turnState: 'finishing' },
       handStatus: 'finishing',
     },
+    'finishing-waiting-timeout': {
+      coin: {
+        coinHex: instance.coinHex,
+        turnState: 'finishing-waiting-timeout',
+        onChain: true,
+      },
+      handStatus: 'finishing-waiting-timeout',
+    },
+    'finishing-spending': {
+      coin: { coinHex: instance.coinHex, turnState: 'finishing-spending', onChain: true },
+      handStatus: 'finishing-spending',
+    },
     ended: { coin: { coinHex: instance.coinHex, turnState: 'ended' }, handStatus: 'ended' },
   };
   return { ...base, ...mapping[instance.presentation] };
@@ -248,4 +284,56 @@ export function nextGameInstanceAfterLocalTurn(
 ): GameInstanceViewModel {
   const next = nextGamePresentationAfterLocalTurn(instance, isMyTurn, channelState);
   return next === instance ? instance : { ...instance, ...next };
+}
+
+type UnrollCopyChannel = Pick<
+  ChannelStatusModel,
+  'semanticPhase' | 'unrollInitiator' | 'unrollingStateNumber' | 'preemptingStateNumber'
+>;
+
+const finishingUnrollLabel = (opponent: boolean) =>
+  opponent ? 'Finishing opponent unroll' : 'Finishing unroll';
+
+const UNROLL_PHASE_LABEL: Record<ChannelSemanticPhase, (opponent: boolean) => string | null> = {
+  submitting_channel_spend: () => null,
+  unrolling: () => 'Unrolling',
+  finding_state: (opponent) => (opponent ? 'Opponent unrolled' : 'Unrolled'),
+  preempting: () => 'Preempting',
+  finishing_waiting_timeout: finishingUnrollLabel,
+  finishing_spending: finishingUnrollLabel,
+  resolving: () => null,
+};
+
+const UNROLL_PHASE_DETAIL: Record<
+  ChannelSemanticPhase,
+  (channel: UnrollCopyChannel) => string | null
+> = {
+  submitting_channel_spend: () => 'Submitting channel spend',
+  unrolling: (channel) =>
+    channel.unrollingStateNumber != null ? `to state ${channel.unrollingStateNumber}` : null,
+  finding_state: () => 'finding state',
+  preempting: (channel) => {
+    const landed = channel.unrollingStateNumber;
+    const preempting = channel.preemptingStateNumber;
+    if (landed != null && preempting != null) return `from ${landed} to ${preempting}`;
+    if (landed != null) return `from ${landed}`;
+    return null;
+  },
+  finishing_waiting_timeout: (channel) =>
+    channel.unrollingStateNumber != null
+      ? `waiting for timeout state ${channel.unrollingStateNumber}`
+      : 'waiting for timeout',
+  finishing_spending: (channel) =>
+    channel.unrollingStateNumber != null ? `spending state ${channel.unrollingStateNumber}` : null,
+  resolving: () => 'Resolving',
+};
+
+export function unrollActionLabel(channel: UnrollCopyChannel): string | null {
+  return channel.semanticPhase
+    ? UNROLL_PHASE_LABEL[channel.semanticPhase](channel.unrollInitiator === 'opponent')
+    : null;
+}
+
+export function unrollActionDetail(channel: UnrollCopyChannel): string | null {
+  return channel.semanticPhase ? UNROLL_PHASE_DETAIL[channel.semanticPhase](channel) : null;
 }

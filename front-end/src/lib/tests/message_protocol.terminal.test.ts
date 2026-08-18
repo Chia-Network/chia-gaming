@@ -315,7 +315,7 @@ describe('terminal protocol cleanup', () => {
             ChannelStatus: channelStatus({
               state: 'Unrolling',
               unroll_initiator: 'opponent',
-              semantic_phase: 'submitting_timeout_finish',
+              semantic_phase: 'finishing_spending',
             }),
           },
         },
@@ -326,7 +326,7 @@ describe('terminal protocol cleanup', () => {
     expect((blob as any).lastChannelStatus).toMatchObject({
       state: 'Unrolling',
       unroll_initiator: 'opponent',
-      semantic_phase: 'submitting_timeout_finish',
+      semantic_phase: 'finishing_spending',
     });
   });
 });
