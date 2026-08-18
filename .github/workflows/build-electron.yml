@@ -3,8 +3,9 @@ name: Electron desktop
 on:
   push:
     branches:
-      - base
-      - dev
+      - main
+      - 'release/**'
+      - 'long_lived/**'
   release:
     types: [published]
   pull_request:
