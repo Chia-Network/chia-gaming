@@ -455,7 +455,7 @@ are grouped under those phase-owned payloads:
 | `unreadGame`                    | `boolean?`                                                                                                 | Whether the Game tab has unread activity.                                                                                                                                                                                                                                                                       |
 | `walletAlert`                   | `boolean?`                                                                                                 | Whether the Wallet tab should show an alert dot.                                                                                                                                                                                                                                                                |
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
-| `blockchainType`                | `'simulator' \| 'walletconnect'?`                                                                          | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
+| `blockchainType`                | `'simulator' \| 'walletconnect' \| 'cloud'?`                                                               | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
 | `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `6`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
@@ -1127,13 +1127,14 @@ Shell manages wallet connections through two abstractions defined in
 
 - **`InternalBlockchainInterface`** — the backend-specific implementation
   (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
-  the simulator). Each exposes `beginConnect()`, `disconnect()`,
-  `isConnected()`, `spend()`, etc.
+  the simulator, `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
+  exposes `beginConnect()`, `disconnect()`, `isConnected()`, `spend()`, etc.
 - **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
   the QR code and a `finalize()` promise that resolves when the wallet is
   paired. Optionally contains `fields` (a map of input descriptors) indicating
   the backend needs extra user input before connecting (e.g. the simulator's
-  initial balance).
+  initial balance). Cloud Wallet returns `skipQr: true` and completes OAuth
+  inside `finalize()`.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
@@ -1142,15 +1143,19 @@ and poll interval; the rest of the flow is generic.
 
 **Connection lifecycle:**
 
-1. User picks "Simulator" or "Link Wallet" → `handleConnect(bcType)`.
+1. User picks "Simulator", "Link Wallet", or "Cloud Wallet" →
+   `handleConnect(bcType)`.
 2. `handleConnect` calls `iface.beginConnect(uniqueId)`, which returns a
    `ConnectionSetup`.
 3. If `setup.fields` is present, Shell shows the `SimulatorSetupModal` overlay
    so the user can provide the required values, then `handleFinalize()` calls
    `setup.finalize()`.
-4. If `setup.fields` is absent (WalletConnect), Shell renders the QR code and
-   immediately awaits `setup.finalize()`, which resolves when the wallet scans.
-5. After finalize resolves, `completeConnection()` activates polling and
+4. If `setup.skipQr` is set (Cloud Wallet, or a restored WC session), Shell
+   awaits `setup.finalize()` without showing a QR panel.
+5. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
+   renders the QR code and awaits `setup.finalize()`, which resolves when the
+   wallet scans.
+6. After finalize resolves, `completeConnection()` activates polling and
    switches to the Hub tab.
 
 **Auto-reconnect:** Both backends implement their own WebSocket reconnect
