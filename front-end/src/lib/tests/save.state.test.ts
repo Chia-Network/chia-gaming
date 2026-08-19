@@ -385,10 +385,14 @@ describe('flat state', () => {
     expect(getBlockchainType()).toBe('walletconnect');
   });
 
-  it('getBlockchainType accepts cloud', () => {
+  it('getBlockchainType accepts cloud', async () => {
+    _resetForTests();
+    setTestGlobal('localStorage', makeStorage());
     expect(getBlockchainType()).toBeUndefined();
-    savePreferences({ blockchainType: 'cloud' });
+    await savePreferences({ blockchainType: 'cloud' });
     expect(getBlockchainType()).toBe('cloud');
+    await flushSessionSave();
+    expect(decodeSessionSaveEnvelope(loadState()).save.preferences.blockchainType).toBe('cloud');
   });
 
   it('saveSession replaces the live phase payload', () => {
