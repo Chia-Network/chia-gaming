@@ -53,6 +53,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   private auth: CloudWalletAuthState | null = null;
   private connectionListeners = new Set<(connected: boolean) => void>();
+  private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private monitoringReady = false;
   private tokenProvider: TokenProvider;
@@ -84,6 +85,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (this.lastConnectedState === connected) return;
     this.lastConnectedState = connected;
     for (const cb of this.connectionListeners) {
+      try {
+        cb(connected);
+      } catch {
+        // ignore
+      }
+    }
+    // Cloud Wallet has no full-node peer wait: play readiness tracks connectivity.
+    for (const cb of this.readinessListeners) {
       try {
         cb(connected);
       } catch {
@@ -638,6 +647,17 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     this.connectionListeners.add(cb);
     return () => {
       this.connectionListeners.delete(cb);
+    };
+  }
+
+  isReadyForPlay(): boolean {
+    return this.lastConnectedState;
+  }
+
+  onPlayReadinessChange(cb: (ready: boolean) => void): () => void {
+    this.readinessListeners.add(cb);
+    return () => {
+      this.readinessListeners.delete(cb);
     };
   }
 }
