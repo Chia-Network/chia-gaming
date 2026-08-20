@@ -8,8 +8,9 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 REPO="$TEST_ROOT/repo"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG="$TEST_ROOT/cargo.log"
-mkdir -p "$REPO/tools" "$REPO/clsp" "$FAKE_BIN"
+mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
 cp "$SCRIPT_DIR/build-chialisp.sh" "$REPO/tools/build-chialisp.sh"
+printf '%s\n' '{}' > "$REPO/games/registry.json"
 # Reject GNU-only find early-exit usage (unsupported on macOS BSD find).
 if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh" >/dev/null; then
     echo "build-chialisp.sh must not use find's GNU-only early-exit primary" >&2

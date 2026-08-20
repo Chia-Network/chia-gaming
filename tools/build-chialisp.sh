@@ -10,18 +10,32 @@ STATE_FILE=".build-chialisp.state"
 CURRENT_STATE=$(mktemp)
 trap 'rm -f "$CURRENT_STATE"' EXIT
 
+# GNU find errors if a named root is missing. Only search directories that exist.
+find_chialisp() {
+    local dirs=()
+    [ -d clsp ] && dirs+=(clsp)
+    [ -d games ] && dirs+=(games)
+    if [ ${#dirs[@]} -eq 0 ]; then
+        return 0
+    fi
+    find "${dirs[@]}" "$@"
+}
+
 clsp_sources() {
     {
-        find clsp games -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
-        printf '%s\n' \
+        find_chialisp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+        for file in \
             build.rs Cargo.toml Cargo.lock chialisp.toml \
             games/registry.json \
             tools/build-chialisp.sh
+        do
+            [ -f "$file" ] && printf '%s\n' "$file"
+        done
     } | LC_ALL=C sort
 }
 
 clsp_hex() {
-    find clsp games -type f -name '*.hex' -print | LC_ALL=C sort
+    find_chialisp -type f -name '*.hex' -print | LC_ALL=C sort
 }
 
 write_state() {
@@ -48,14 +62,14 @@ elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
 fi
 
 SECONDS=0
-find clsp games -name '*.hex' -delete
+find_chialisp -name '*.hex' -delete
 
 # CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
 # input, so this forces one Chialisp compile without deleting Cargo's package
 # cache. Ordinary cargo commands leave it unset and never compile Chialisp.
 CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
 
-if ! { find clsp games -type f -name '*.hex' -print | head -n 1 | grep -q .; }; then
+if ! { find_chialisp -type f -name '*.hex' -print | head -n 1 | grep -q .; }; then
     echo "Error: Chialisp build produced no .hex files" >&2
     exit 1
 fi
