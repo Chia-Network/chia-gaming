@@ -178,6 +178,7 @@ jobs:
 
           Add-Content -Path $env:GITHUB_ENV -Value "AZURE_CODE_SIGNING_DLIB=$($dlib.FullName)"
           Add-Content -Path $env:GITHUB_ENV -Value "AZURE_CODE_SIGNING_METADATA=$metadataPath"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files (x86)\Windows Kits\10\App Certification Kit"
           Pop-Location
 
       - name: Build signed Electron installer
