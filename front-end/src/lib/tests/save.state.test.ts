@@ -11,6 +11,7 @@ import {
   ensureHubIdentity,
   getMyHubPlayerId,
   clearSessionId,
+  regenerateSessionId,
   getBlockchainType,
   loadState,
   setAlias,
@@ -121,6 +122,32 @@ describe('flat state', () => {
     const restored = await ensureHubIdentity();
     expect(restored).toBe(sid);
     expect(getSessionId()).toBe(sid);
+  });
+
+  it('keeps a regenerated sessionId over a stale IndexedDB identity after reload', async () => {
+    const staleSessionId = getSessionId();
+    markSavedSession();
+    await replaceSession(
+      baseSave({
+        pairingToken: 'tok-regenerated-sid',
+        iStarted: true,
+        sessionId: staleSessionId,
+        myContribution: '100',
+        theirContribution: '100',
+        perGameAmount: '10',
+        blockchainType: 'simulator',
+      }),
+    );
+    await flushSessionSave();
+
+    const regeneratedSessionId = regenerateSessionId();
+    expect(regeneratedSessionId).not.toBe(staleSessionId);
+
+    // Simulate the trust-grant reload before the debounced IndexedDB write.
+    _resetForTests();
+
+    expect(await ensureHubIdentity()).toBe(regeneratedSessionId);
+    expect(getSessionId()).toBe(regeneratedSessionId);
   });
 
   it('persists myHubPlayerId in preferences and restores it across reload', async () => {

@@ -38,6 +38,7 @@ import {
   getSessionId,
   ensureHubIdentity,
   clearSessionId,
+  regenerateSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
@@ -2165,6 +2166,7 @@ const Shell = () => {
         return;
       }
       if (trust === 'granted') {
+        regenerateSessionId();
         saveHubUrl(origin);
         window.location.reload();
         return;
